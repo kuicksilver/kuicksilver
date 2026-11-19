@@ -71,7 +71,7 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README, docs
 commit() { git add -A; git commit -qm "$1"; }
 
 # base: the 0.2.1 line prepared (the fork point of release/0.2.x); main then moves to 0.3.0
-printf '# Changelog\n\n## [0.15.0] - 2028-01-01\n\n## [0.12.0] - 2027-10-01\n\n## [0.11.0] - 2027-09-01\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
+printf '# Changelog\n\n## [0.15.0] - 2028-01-01\n\n## [0.14.0] - 2027-12-01\n\n## [0.13.0] - 2027-11-01\n\n## [0.12.0] - 2027-10-01\n\n## [0.11.0] - 2027-09-01\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
 tree_version 0.2.1 0.2.1; commit base
 git remote add origin "$tmp/origin.git"; git push -q origin main
 git branch release/0.2.x
@@ -88,6 +88,8 @@ git checkout -q -b release/0.9.x main; tree_version 0.9.0 0.9.0; printf '> This 
 git checkout -q -b release/0.10.x main; tree_version 0.10.0 0.10.0; printf 'Until 0.10.0 is on Maven Central, build it from a checkout.\n' >> README.md; commit "0.10 line, README still has the build-it-yourself note"
 git checkout -q -b release/0.11.x main; tree_version 0.11.0 0.11.0; printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:0.3.0"))\n' >> docs/install.md; commit "0.11 line, a block of docs/install.md not moved"
 git checkout -q -b release/0.12.x main; tree_version 0.12.0 0.12.0; printf '**Until 0.12.0 is on Maven Central**, build it from a checkout of main.\n' >> docs/install.md; commit "0.12 line, docs/install.md still has the build-it-yourself note"
+git checkout -q -b release/0.13.x main; tree_version 0.13.0 0.13.0; rm docs/install.md; commit "0.13 line, docs/install.md missing"
+git checkout -q -b release/0.14.x main; tree_version 0.14.0 0.14.0; printf '.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),\n' >> docs/install.md; commit "0.14 line, SwiftPM line in docs/install.md not moved"
 git checkout -q -b release/0.15.x main; tree_version 0.15.0 0.15.0; printf '    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),\n' >> docs/guide/ios.md; commit "0.15 line, SwiftPM line in the iOS guide not moved"
 git checkout -q main
 
@@ -143,6 +145,8 @@ t "release/0.8.x, 0.8.0, BOM fallback missing"           "refuse:kuicksilver-bom
 t "release/0.9.x, 0.9.0, README 'in preparation'"        "refuse:in preparation"        release/0.9.x 0.9.0
 t "release/0.10.x, 0.10.0, README 'Until ... on Central'" "refuse:Until 0.10.0 is on Maven Central" release/0.10.x 0.10.0
 t "negative_installPageCoordinatesNotMoved"              "refuse:docs/install.md names 0.11.0 0.3.0 instead of 0.11.0" release/0.11.x 0.11.0
+t "negative_installPageMissing"                          "refuse:docs/install.md names no version instead of 0.13.0" release/0.13.x 0.13.0
+t "negative_installPageSwiftLineNotMoved"                "refuse:docs/install.md names 0.14.0 0.3.0 instead of 0.14.0" release/0.14.x 0.14.0
 t "negative_installPageStillInPreparation"               "refuse:docs/install.md still calls 0.12.0 the release in preparation" release/0.12.x 0.12.0
 # the Swift package (swift-package.sh prepare, before the gate): a tag of the version there means it is released already
 KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "Swift package already tagged 0.2.1" "refuse:tag 0.2.1 is already in" release/0.2.x 0.2.1
