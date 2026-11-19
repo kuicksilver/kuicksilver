@@ -69,3 +69,6 @@ private fun set(
     } catch (_: ErrnoException) {
         false
     }
+
+/** Null: Android's `SocketException` names the errno ("sendto failed: EMSGSIZE (Message too long)"). */
+internal actual fun localizedEmsgsizeText(): String? = null

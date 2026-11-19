@@ -40,6 +40,12 @@ public object KslFdSocket {
     public fun dfProbe(fd: Long): Int = KslNative.udpFdDfProbe(fd)
 
     /**
+     * `strerror(EMSGSIZE)` in the process's locale: the text the JDK puts in a send's `SocketException` on Linux and Apple
+     * (localized under a non-English locale); null on Windows.
+     */
+    public fun emsgsizeText(): String? = KslNative.udpEmsgsizeText()
+
+    /**
      * `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of the open socket [fd]: 3 PROBE (Linux 2 DO, 1 WANT, 0 DONT;
      * Windows 1 DO, 2 DONT, 0 NOT_SET); -1 unreadable or Apple.
      */

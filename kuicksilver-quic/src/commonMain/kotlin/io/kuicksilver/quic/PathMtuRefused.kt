@@ -8,12 +8,16 @@ import kotlinx.io.IOException
  * The system refused a datagram of [size] bytes, no more than QUIC's smallest allowed maximum datagram size (1200), as larger
  * than the path MTU it has cached for the peer (EMSGSIZE / WSAEMSGSIZE): a socket with DF in DO mode (probe mode refused, or
  * not available: the portable socket without `ksl`), after an ICMP Fragmentation Needed or Packet Too Big claimed less than
- * 1200, which RFC 9000 section 14.2.1 says to ignore. In DO mode the system enforces it all the same, so the path cannot carry
- * QUIC: the endpoint loop closes the connection ([QuicException.ConnectionLost.NoViablePath]), which an HTTP/3 client answers
- * with its fallback to TCP, instead of losing every datagram until the idle timeout.
+ * 1200, which RFC 9000 section 14.2.1 says to ignore. In DO mode the system enforces it all the same, so that path cannot carry
+ * QUIC (section 14: "cease sending QUIC packets ... on the affected path"): the endpoint loop closes the path when it is not
+ * the connection's active one, else the connection with a CONNECTION_CLOSE of NO_VIABLE_PATH (an HTTP/3 client falls back to
+ * TCP), instead of losing every datagram until the idle timeout. [destination]: where the refused datagram went, when known.
+ * The portable socket throws it only after a retry was refused too: a connected socket's one-shot socket error from an ICMP
+ * message (Linux `sk_err`, even in probe mode) passes the retry.
  */
 internal class PathMtuRefusedException(
     val size: Int,
+    val destination: io.ktor.network.sockets.InetSocketAddress? = null,
     cause: Throwable? = null,
 ) : IOException("the system refused a $size-byte datagram as above the path MTU it cached (EMSGSIZE)", cause)
 

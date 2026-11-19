@@ -195,18 +195,95 @@ class NioDatagramIoTest {
         assertFalse(dfComplete(DF_INET6 or DF_V4))
     }
 
-    /** EMSGSIZE as the JDK reports it on Linux, Android and Windows; anything else is not a path MTU refusal. */
+    /**
+     * EMSGSIZE as the JDK reports it on Linux (strerror under the process's locale: also a localized text, which `ksl` gives),
+     * Android and Windows; anything else is not a path MTU refusal.
+     */
     @Test fun messageTooLongPerPlatform() {
-        val tooLong = NioDatagramIo.Companion::isMessageTooLong
-        assertTrue(tooLong(java.net.SocketException("Message too long")), "Linux")
-        assertTrue(tooLong(java.net.SocketException("sendto failed: EMSGSIZE (Message too long)")), "Android")
+        fun tooLong(
+            m: String?,
+            localized: String? = null,
+        ) = NioDatagramIo.isMessageTooLong(java.net.SocketException(m), localized)
+        assertTrue(tooLong("Message too long"), "Linux, C locale")
+        assertTrue(tooLong("sendto failed: EMSGSIZE (Message too long)"), "Android")
         assertTrue(
-            tooLong(java.net.SocketException("sendto: The message is larger than the maximum supported by the underlying transport")),
+            tooLong("sendto: The message is larger than the maximum supported by the underlying transport"),
             "Windows (net_util_md.c)",
         )
-        assertFalse(tooLong(java.net.SocketException("Network is unreachable")))
-        assertFalse(tooLong(java.net.SocketException()))
+        assertTrue(tooLong("Nachricht zu lang", localized = "Nachricht zu lang"), "Linux, de_DE: strerror(EMSGSIZE) through ksl")
+        assertFalse(tooLong("Nachricht zu lang"), "a localized text without ksl's strerror is not recognized")
+        assertFalse(tooLong("Network is unreachable", localized = "Nachricht zu lang"))
+        assertFalse(tooLong(null))
+        assertFalse(tooLong("", localized = ""), "an empty localized text matches nothing")
+        // the system's own text in this process, where ksl is loaded
+        val own = localizedEmsgsizeText()
+        if (own != null) assertTrue(tooLong(own, localized = own))
     }
+
+    /**
+     * A refusal as too large fails the path only when the retry is refused too: a connected socket's one-shot ICMP error (Linux
+     * `sk_err`, even in probe mode) passes the retry; DO mode refuses both. Larger datagrams and other errors propagate as they are.
+     */
+    @Test fun aRefusalFailsThePathOnlyWhenTheRetryIsRefusedToo() {
+        val to = InetSocketAddress("127.0.0.1", 9)
+        val tooLong = java.net.SocketException("Message too long")
+        var calls = 0
+        assertEquals(1200, NioDatagramIo.sendRefusalAware(1200, to, null) { if (calls++ == 0) throw tooLong else 1200 })
+        assertEquals(2, calls, "one retry after a one-shot refusal")
+        calls = 0
+        val e =
+            assertFails {
+                NioDatagramIo.sendRefusalAware(1200, to, null) {
+                    calls++
+                    throw tooLong
+                }
+            }
+        assertTrue(e is PathMtuRefusedException && e.size == 1200 && e.destination == to, "refused twice: $e")
+        assertEquals(2, calls)
+        calls = 0
+        assertSame(
+            tooLong,
+            assertFails {
+                NioDatagramIo.sendRefusalAware(1201, to, null) {
+                    calls++
+                    throw tooLong
+                }
+            },
+        )
+        assertEquals(1, calls, "above QUIC's floor: no retry, a lost datagram")
+        val other = java.net.SocketException("Network is unreachable")
+        assertSame(other, assertFails { NioDatagramIo.sendRefusalAware(100, to, null) { throw other } })
+    }
+
+    /**
+     * Where DF cannot reach some traffic (RFC 9000 section 14 "if possible"): nothing to set it with, a dual-stack channel bound
+     * to an IPv6 address without `ksl` (the JDK's option sets the IPv6 half only, except Darwin's), a half refusing both modes.
+     */
+    @Test fun dfGapPerCase() {
+        val gap = NioDatagramIo.Companion::dfGap
+        assertEquals(null, gap(DF_V4, false, true, false, false), "AF_INET in probe mode")
+        assertEquals(null, gap(DF_INET6 or DF_V4 or DF_V6, false, false, true, false), "dual-stack, both halves in probe mode")
+        assertEquals(null, gap(-1, true, true, false, false), "no ksl, AF_INET: the JDK's option")
+        assertEquals(null, gap(-1, true, false, true, true), "Apple: IP_DONTFRAG covers v4-mapped traffic")
+        assertEquals(null, gap(DF_INET6 or DF_V4, true, false, true, false), "the JDK's option covers the IPv6 half ksl left")
+        assertTrue(gap(-1, false, false, false, false)!!.contains("JDK 19"), "no ksl below JDK 19: not possible")
+        assertTrue(gap(-1, true, false, true, false)!!.contains("IPv4-mapped"), "no ksl, dual-stack on an IPv6 address")
+        assertTrue(gap(DF_INET6 or DF_V6, true, false, true, false)!!.contains("IPv4-mapped"), "the IPv4 half refused both modes")
+        assertTrue(gap(DF_INET6 or DF_V6, false, false, true, false)!!.contains("refused both"))
+    }
+
+    /** No ksl on an IPv4 bind: the channel is AF_INET, so the JDK's option reaches its traffic (with ksl: the dual-stack channel). */
+    @Test fun ipv4BindGetsDfOnItsTraffic() =
+        runBlocking {
+            val (a, b) = pair()
+            try {
+                a as NioDatagramIo
+                assertEquals(null, NioDatagramIo.dfGap(a.dfProbeGranted, a.dontFragmentForTest() == true, true, false, false))
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
 
     @Test fun nioClearsTosAfterValidationFailure() =
         runBlocking {

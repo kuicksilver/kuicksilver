@@ -39,6 +39,14 @@ public object KslSocketDf {
      */
     public fun apply(channel: DatagramChannel): Int = withFd(channel) { fd -> KslFdSocket.dfProbe(fd) }
 
+    /** `strerror(EMSGSIZE)` in the process's locale (the JDK's text for it on Linux and Apple); null without `ksl` or on Windows. */
+    public fun emsgsizeText(): String? =
+        try {
+            if (KslLoader.isAvailable()) KslFdSocket.emsgsizeText() else null
+        } catch (_: LinkageError) {
+            null
+        }
+
     /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of the open [channel]; -1 when it cannot be read. */
     public fun mode(
         channel: DatagramChannel,

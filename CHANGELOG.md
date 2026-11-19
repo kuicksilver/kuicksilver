@@ -2365,16 +2365,21 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   "Upon exiting loss recovery (RTO recovery or Fast Recovery)"). Before, it was never restored, except by a spurious-loss
   undo.
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
-  bit is always set, as RFC 9000 section 14 requires. Each half of the socket is in probe mode where the system takes it
-  (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl` on the JVM and Windows and
-  `android.system.Os` on Android, so a forged ICMP Fragmentation Needed can neither make the system refuse sends nor
-  fragment them (quic-go CVE-2024-53259; section 14.2.1). Where probe mode is refused or `ksl` is missing, DF is in DO
-  mode (the JDK's `IP_DONTFRAGMENT` on Linux and Windows): such a message can then make the system refuse sends to the
-  peer (EMSGSIZE; on Windows WSAEMSGSIZE, checked on a Windows 11 VM against a non-loopback peer), and a refused datagram
-  of at most 1200 bytes now ends the connection at once with `NoViablePath` (an HTTP/3 client falls back to TCP) instead
-  of losing datagrams until the idle timeout; the accelerated socket does the same with its EMSGSIZE count. Apple keeps
-  the JDK's option (JDK 19 and later); whether a forged message affects it there is not verified. `open` loads `ksl` on
-  the JVM. Datagrams there stay within 1200 bytes, so PMTUD stays off.
+  bit is set wherever possible, as RFC 9000 section 14 requires. Each half of the socket is in probe mode where the
+  system takes it (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl` on the JVM
+  and Windows and `android.system.Os` on Android, so a forged ICMP Fragmentation Needed can neither make the system
+  refuse sends nor fragment them (quic-go CVE-2024-53259; section 14.2.1). Where probe mode is refused, or `ksl` is
+  missing (the JDK's `IP_DONTFRAGMENT`, JDK 19 and later), DF is in DO mode; an IPv4 bind without `ksl` gets an AF_INET
+  channel, since the JDK's option sets only the IPv6 half of a dual-stack one (bound to 0.0.0.0 it then reaches IPv4
+  peers only). In DO mode such a message can make the system refuse sends to the peer (EMSGSIZE; on Windows
+  WSAEMSGSIZE, checked on a Windows 11 VM against a non-loopback peer): a datagram of at most 1200 bytes refused twice
+  in a row now closes that path, or on the active path ends the connection with a CONNECTION_CLOSE of NO_VIABLE_PATH (an
+  HTTP/3 client falls back to TCP), instead of losing datagrams until the idle timeout; the accelerated socket does the
+  same with its EMSGSIZE count, never charging a refusal of a stateless send to a connection. DF is not possible, and a
+  warning is logged once, without `ksl` below JDK 19, for IPv4-mapped traffic of a dual-stack socket bound to an IPv6
+  address without `ksl`, and on Android where the options are refused. Apple keeps the JDK's option; whether a forged
+  message affects it there is not verified. `open` loads `ksl` on the JVM. Datagrams there stay within 1200 bytes, so
+  PMTUD stays off.
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).

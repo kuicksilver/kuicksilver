@@ -185,13 +185,11 @@ internal class NioDatagramIo private constructor(
                 batch.address(i) ?: continue // nothing to send: not a refusal
             val view = batch.buffer(i).asByteBuffer()
             view.limit(batch.length(i))
+            val to = javaOf(a)
             val n =
-                try {
-                    channel.send(view, javaOf(a))
-                } catch (e: java.net.SocketException) {
-                    // DF in DO mode: a cached path MTU below QUIC's floor is a failed path, not a lost datagram
-                    if (isMessageTooLong(e) && batch.length(i) <= PATH_MTU_FLOOR) throw PathMtuRefusedException(batch.length(i), e)
-                    throw e
+                sendRefusalAware(batch.length(i), a, emsgsizeText) {
+                    view.position(0)
+                    channel.send(view, to)
                 }
             if (n == 0 && batch.length(i) > 0) return i // a non-blocking channel takes all or nothing
         }
@@ -226,15 +224,48 @@ internal class NioDatagramIo private constructor(
 
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
+        /** [localizedEmsgsizeText], read once. */
+        private val emsgsizeText: String? by lazy { localizedEmsgsizeText() }
+
         /**
-         * EMSGSIZE / WSAEMSGSIZE as the JDK reports a send's: "Message too long" (Linux strerror; Android adds "EMSGSIZE"), and
-         * on Windows the JDK's own text for WSAEMSGSIZE (net_util_md.c: "The message is larger than the maximum supported by the
-         * underlying transport").
+         * EMSGSIZE / WSAEMSGSIZE as the JDK reports a send's: the system's `strerror(EMSGSIZE)` under the process's locale
+         * ([localized], through `ksl`; the JDK formats errno under `setlocale(LC_ALL, "")`), its English text "Message too
+         * long" (Linux and Apple in the C locale; Android adds "EMSGSIZE"), and on Windows the JDK's own text for WSAEMSGSIZE
+         * (net_util_md.c: "The message is larger than the maximum supported by the underlying transport"). Without `ksl` under
+         * a non-English locale a Linux refusal is not recognized: its datagrams are lost until the idle timeout.
          */
-        internal fun isMessageTooLong(e: java.net.SocketException): Boolean {
+        internal fun isMessageTooLong(
+            e: java.net.SocketException,
+            localized: String? = null,
+        ): Boolean {
             val m = e.message ?: return false
-            return m.contains("Message too long", ignoreCase = true) || m.contains("EMSGSIZE") ||
-                m.contains("larger than the maximum supported by the underlying transport", ignoreCase = true)
+            return (!localized.isNullOrEmpty() && m.contains(localized)) || m.contains("Message too long", ignoreCase = true) ||
+                m.contains("EMSGSIZE") || m.contains("larger than the maximum supported by the underlying transport", ignoreCase = true)
+        }
+
+        /**
+         * One datagram of [len] bytes to [to] through [send]. A refusal as too large of a datagram of at most 1200 bytes is a
+         * failed path ([PathMtuRefusedException]) only when the immediate retry is refused too: a connected socket gets an ICMP
+         * message as a one-shot socket error (Linux `sk_err`, even in probe mode), which the retry clears, while DO mode refuses
+         * every send above the cached MTU. Other exceptions, and refusals of larger datagrams, propagate.
+         */
+        internal inline fun sendRefusalAware(
+            len: Int,
+            to: InetSocketAddress,
+            localized: String?,
+            send: () -> Int,
+        ): Int {
+            try {
+                return send()
+            } catch (e: java.net.SocketException) {
+                if (len > PATH_MTU_FLOOR || !isMessageTooLong(e, localized)) throw e
+            }
+            try {
+                return send()
+            } catch (e: java.net.SocketException) {
+                if (isMessageTooLong(e, localized)) throw PathMtuRefusedException(len, to, e)
+                throw e
+            }
         }
 
         /**
@@ -254,57 +285,140 @@ internal class NioDatagramIo private constructor(
             java.util.concurrent.atomic
                 .AtomicBoolean(false)
 
+        private val apple = (System.getProperty("os.name") ?: "").lowercase().let { it.contains("mac") || it.contains("darwin") }
+
+        /** Set once the first socket with a half that has no DF was reported. */
+        private val dfMissingLogged =
+            java.util.concurrent.atomic
+                .AtomicBoolean(false)
+
         /**
-         * RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST
-         * be set if possible"; section 14.2.1: an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased
-         * below QUIC's smallest allowed maximum datagram size". DF is always set. Probe mode (`IP_PMTUDISC_PROBE` /
-         * `IPV6_PMTUDISC_PROBE`, through `ksl` on the JVM and `android.system.Os` on Android: [dfProbe]) meets both: no
-         * fragmentation and no path MTU cache an ICMP message could lower. Where a half refuses probe mode (`ksl` present but
-         * the system says no: a seccomp filter, gVisor, Windows without the option) it gets DO mode, and where nothing could
-         * be asked (the JVM without `ksl`; Apple, which has only IP_DONTFRAG) the JDK's `IP_DONTFRAGMENT` (JDK 19 and later),
-         * DO mode on Linux and Windows. DO mode never fragments either, but there section 14.2.1 is a limitation the system
-         * imposes: a forged ICMP message claiming less than 1200 makes it refuse sends to that peer (Linux EMSGSIZE for ten
-         * minutes; Windows WSAEMSGSIZE, verified on a Windows 11 VM against a non-loopback peer, loopback unaffected). Such a
-         * refusal of a datagram of at most 1200 bytes is [PathMtuRefusedException]: the connection ends with no viable path
-         * (an HTTP/3 client falls back to TCP) instead of losing datagrams until its idle timeout. On a dual-stack channel
-         * without `ksl` the JDK's option covers the IPv6 half only; IPv4-mapped traffic keeps the system's default. Real QUIC
-         * on the JVM needs `ksl` anyway (its TLS), so the paths without probe mode matter only where the system refuses it or
-         * with a third-party `QuicCrypto`. This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df`
-         * capability false); with probe mode it could run here later. Returns the [dfProbe] bits.
+         * Why some traffic of the socket goes without DF, or null when none does: [bits] from [dfProbe], [jdkSet] whether the
+         * JDK's `IP_DONTFRAGMENT` took, [inet] whether the channel was opened AF_INET, [localV6] whether the bind address is
+         * IPv6 (the channel then stays dual-stack), [onApple] whether the JDK's option is Darwin's `IP_DONTFRAG` (which on an
+         * AF_INET6 socket covers v4-mapped traffic too); on Linux and Windows it covers the IPv6 half of an AF_INET6 socket only.
          */
-        private fun setDontFragment(ch: DatagramChannel): Int {
-            val bits = dfProbe(ch)
+        internal fun dfGap(
+            bits: Int,
+            jdkSet: Boolean,
+            inet: Boolean,
+            localV6: Boolean,
+            onApple: Boolean,
+        ): String? {
+            if (dfComplete(bits)) return null
+            if (!jdkSet) {
+                return if (bits >
+                    0
+                ) {
+                    "a half refused both probe and DO mode"
+                } else {
+                    "no means to set DF: the JVM without ksl below JDK 19, or Android refusing the options"
+                }
+            }
+            if (inet || onApple) return null
+            // the JDK's option covered the IPv6 half of a dual-stack channel; the IPv4 half is only covered by ksl
+            val v4 = bits > 0 && bits and (DF_V4 or DF_V4_DO) != 0
+            return if (v4 || !localV6) null else "IPv4-mapped traffic of a dual-stack socket bound to an IPv6 address (no ksl)"
+        }
+
+        private fun jdkDontFragment(ch: DatagramChannel): Boolean {
+            val opt = dontFragmentOption() ?: return false
+            return try {
+                if (opt in ch.supportedOptions()) {
+                    ch.setOption(opt, true)
+                    true
+                } else {
+                    false
+                }
+            } catch (_: java.io.IOException) {
+                false
+            } catch (_: UnsupportedOperationException) {
+                false
+            }
+        }
+
+        /** A channel with the buffers and DF of [open]: [inet] opens it AF_INET; returns it, the [dfProbe] bits and whether the JDK's option took. */
+        private fun newChannel(inet: Boolean): Triple<DatagramChannel, Int, Boolean> {
+            val ch = if (inet) DatagramChannel.open(java.net.StandardProtocolFamily.INET) else DatagramChannel.open()
+            try {
+                ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
+                ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
+                val bits = dfProbe(ch)
+                val jdk = usesJdkDontFragment(bits) && jdkDontFragment(ch)
+                return Triple(ch, bits, jdk)
+            } catch (e: Throwable) {
+                ch.close()
+                throw e
+            }
+        }
+
+        /**
+         * The channel for [local], with DF where possible. RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP
+         * layer. In IPv4, the Don't Fragment (DF) bit MUST be set if possible"; section 14.2.1: an endpoint "MUST ignore an
+         * ICMP message that claims the PMTU has decreased below QUIC's smallest allowed maximum datagram size".
+         * - Probe mode (`IP_PMTUDISC_PROBE` / `IPV6_PMTUDISC_PROBE`, per half: [dfProbe], through `ksl` on the JVM and
+         *   `android.system.Os` on Android) meets both: no fragmentation, and no path MTU cache an ICMP message could lower.
+         * - A half that refuses probe mode (`ksl` present but the system says no: a seccomp filter, gVisor, Windows without the
+         *   option) gets DO mode; where nothing could be asked (the JVM without `ksl`) the JDK's `IP_DONTFRAGMENT` (JDK 19 and
+         *   later) is set: DO mode on Linux and Windows, `IP_DONTFRAG` on Apple (no modes). DO mode never fragments either, but
+         *   there section 14.2.1 is a limitation the system imposes: a forged ICMP message claiming less than 1200 makes it
+         *   refuse sends to that peer (Linux EMSGSIZE for ten minutes; Windows WSAEMSGSIZE, verified on a Windows 11 VM against
+         *   a non-loopback peer, loopback unaffected). Such a refusal of a datagram of at most 1200 bytes, repeated on the
+         *   retry, is [PathMtuRefusedException]: the endpoint loop closes that path, or the connection with NO_VIABLE_PATH (an
+         *   HTTP/3 client falls back to TCP), instead of losing datagrams until the idle timeout.
+         * - The JDK's option on a dual-stack (AF_INET6) channel sets only the IPv6 half on Linux and Windows. So when the IPv4
+         *   half has no DF and [local] is IPv4, the channel is opened AF_INET instead (bound to 0.0.0.0 it then reaches IPv4
+         *   peers only); bound to an IPv6 address, its IPv4-mapped traffic goes without DF (not possible there without `ksl`).
+         * - Not possible at all: the JVM without `ksl` below JDK 19 (no `IP_DONTFRAGMENT`), Android where the options are
+         *   refused. A warning is logged once for such a socket, and once for a socket without probe mode on every half.
+         * Real QUIC with kuicksilver's TLS needs `ksl`, which sets probe mode; the other cases matter where the system refuses
+         * it or with a third-party `QuicCrypto`. This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df`
+         * capability false); with probe mode it could run here later. Returns the channel and the [dfProbe] bits.
+         */
+        private fun openWithDf(local: InetSocketAddress): Pair<DatagramChannel, Int> {
+            val localV6 = local.ipBytesNoDns()?.size == 16
+            var (ch, bits, jdk) = newChannel(inet = false)
+            var inet = false
+            val v4Missing = bits <= 0 || (bits and DF_INET6 != 0 && bits and (DF_V4 or DF_V4_DO) == 0)
+            if (!localV6 && !apple && v4Missing && dontFragmentOption() != null && !dfComplete(bits)) {
+                ch.close()
+                val r = newChannel(inet = true)
+                ch = r.first
+                bits = r.second
+                jdk = r.third
+                inet = true
+            }
             if ((bits > 0 || (bits == 0 && linuxKernel)) && !probeComplete(bits) && probeMissingLogged.compareAndSet(false, true)) {
                 printWarning(
                     "kuicksilver: the portable UDP socket has no DF probe mode on every half (bits $bits): DO mode, so a " +
                         "forged ICMP message can end its connections (RFC 9000 section 14.2.1)",
                 )
             }
-            if (!usesJdkDontFragment(bits)) return bits
-            val opt = dontFragmentOption() ?: return bits
-            try {
-                if (opt in ch.supportedOptions()) ch.setOption(opt, true)
-            } catch (_: java.io.IOException) {
-            } catch (_: UnsupportedOperationException) {
+            val gap = dfGap(bits, jdk, inet, localV6, apple)
+            if (gap != null && dfMissingLogged.compareAndSet(false, true)) {
+                printWarning(
+                    "kuicksilver: the portable UDP socket cannot set DF on all its traffic ($gap; bits $bits): RFC 9000 " +
+                        "section 14 sets it only where possible. QUIC with kuicksilver's TLS needs ksl, which sets it",
+                )
             }
-            return bits
+            return ch to bits
         }
 
         /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
         private const val WRITE_WAIT_MS = 5L
 
-        /** [configure] runs on the unbound channel before `bind` (Android binds it to a network); if anything throws, the channel is closed. */
+        /**
+         * [configure] runs on the unbound channel before `bind` (Android binds it to a network); if anything throws, the channel
+         * is closed. It should not connect the channel: a connected socket also gets an ICMP message as a one-shot error on its
+         * next send (Linux, even in probe mode), which [sendRefusalAware] then retries once.
+         */
         fun open(
             local: InetSocketAddress,
             configure: (DatagramChannel) -> Unit = {},
         ): NioDatagramIo {
-            val ch = DatagramChannel.open()
+            val (ch, probe) = openWithDf(local)
             val selector: Selector
-            val probe: Int
             try {
-                ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
-                ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
-                probe = setDontFragment(ch)
                 configure(ch)
                 ch.bind(local.toJavaAddress())
                 ch.configureBlocking(false)

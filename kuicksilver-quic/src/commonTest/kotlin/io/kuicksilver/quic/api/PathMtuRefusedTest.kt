@@ -2,18 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.api
 
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.MemoryDatagramIo
+import io.kuicksilver.quic.NonSuspendingSend
+import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathMtuRefusedException
+import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -22,9 +31,11 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * RFC 9000 section 14.2.1 where the socket's DF is in DO mode (probe mode refused, or the JVM's portable socket without `ksl`):
  * a forged ICMP message claiming less than 1200 makes the system refuse every datagram to the peer (EMSGSIZE / WSAEMSGSIZE). A
- * refusal of a datagram of at most 1200 bytes ([PathMtuRefusedException]) ends the connection at once with no viable path (an
- * HTTP/3 client then falls back to TCP) instead of losing datagrams until the idle timeout; a larger one stays a lost datagram.
- * Fault injection on the in-memory socket.
+ * refusal of a datagram of at most 1200 bytes ([PathMtuRefusedException], or the accelerated socket's EMSGSIZE count) fails
+ * that path (section 14: "cease sending QUIC packets ... on the affected path"): a path other than the active one is closed,
+ * the active one ends the connection with a CONNECTION_CLOSE of NO_VIABLE_PATH (an HTTP/3 client then falls back to TCP)
+ * instead of losing datagrams until the idle timeout; a larger one stays a lost datagram, and a refusal of a stateless send
+ * is never charged to a connection. Fault injection on the in-memory socket.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class PathMtuRefusedTest {
@@ -60,7 +71,7 @@ class PathMtuRefusedTest {
                         st.output.writeFully(byteArrayOf(1), 0, 1)
                         st.output.flush()
                     }
-                    assertIs<QuicException.ConnectionLost.NoViablePath>(c.closed.await())
+                    assertNoViablePath(c.closed.await())
                 }
             }
         }
@@ -74,7 +85,7 @@ class PathMtuRefusedTest {
                     val st = c.openBidi()
                     st.output.writeFully(byteArrayOf(1), 0, 1)
                     st.output.flush() // the server acknowledges: its send is refused
-                    assertIs<QuicException.ConnectionLost.NoViablePath>(s.closed.await())
+                    assertNoViablePath(s.closed.await())
                     p.serverIo.sendFailure = null
                     val (c2, s2) = p.connect() // the server's endpoint stays up
                     ping(c2, s2)
@@ -97,4 +108,98 @@ class PathMtuRefusedTest {
                 }
             }
         }
+
+    private fun assertNoViablePath(e: Throwable) {
+        val t = assertIs<QuicException.ConnectionLost.TransportClosed>(e)
+        assertEquals(TransportError.NO_VIABLE_PATH, t.code)
+        assertEquals(Initiator.Local, t.initiator)
+    }
+
+    /** Section 14: a refusal on a path other than the active one closes that path; the connection goes on. */
+    @Test fun negative_aRefusalOnAProbedPathClosesThatPathOnly() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, s) = p.connect()
+                    val other = p.net.open(InetSocketAddress("10.0.0.3", 3003))
+                    other.sendFailure = PathMtuRefusedException(1200)
+                    val path = c.addPath(other)
+                    assertFalse(path.probe(), "the path whose socket refuses never validates")
+                    assertEquals(PathState.Closed, path.state.value)
+                    assertFalse(c.closed.isCompleted, "the connection survives on its active path")
+                    ping(c, s)
+                }
+            }
+        }
+
+    /**
+     * A refusal reported after a stateless send (here a Version Negotiation answer, through an accelerated-style socket that
+     * reports EMSGSIZE after the batch) is taken with that send: the next connection batch on the socket is not charged with it.
+     */
+    @Test fun negative_aRefusedStatelessSendDoesNotEndTheNextConnection() =
+        runBlocking<Unit> {
+            var wrapped: EmsgsizeIo? = null
+            ApiPair
+                .open(serverConfigure = {
+                    val inner = io!!
+                    io = { a -> EmsgsizeIo(inner(a) as MemoryDatagramIo).also { wrapped = it } }
+                })
+                .use { p ->
+                    withTimeout(30.seconds) {
+                        val (c, s) = p.connect()
+                        val w = wrapped!!
+                        val stranger = InetSocketAddress("10.0.0.66", 666)
+                        w.refuseTo = stranger
+                        // a long-header datagram of an unknown version: the server answers with Version Negotiation (stateless)
+                        val vn = ByteArray(1200)
+                        vn[0] = 0xc0.toByte()
+                        byteArrayOf(0x1a, 0x2a, 0x3a, 0x4a).copyInto(vn, 1)
+                        vn[5] = 8
+                        vn[14] = 8
+                        p.net.deliver(stranger, p.serverIo.localAddress, vn)
+                        while (!w.refused) kotlinx.coroutines.yield()
+                        ping(c, s) // the server's connection sends on the same socket
+                        assertFalse(s.closed.isCompleted, "the stateless send's refusal was not charged to the connection")
+                        assertTrue(w.takes > 0, "the loop asked the socket for refusals: ${w.takes}")
+                    }
+                }
+        }
+}
+
+/** A socket that reports one batch to [refuseTo] as refused (EMSGSIZE, as the accelerated socket counts it) after sending it. */
+private class EmsgsizeIo(
+    private val inner: MemoryDatagramIo,
+) : DatagramIo by inner,
+    NonSuspendingSend {
+    @kotlin.concurrent.Volatile
+    var refuseTo: InetSocketAddress? = null
+
+    @kotlin.concurrent.Volatile
+    var refused = false
+    private var pending = 0
+
+    override suspend fun send(batch: PacketBatch): Int = trySend(batch)
+
+    override fun trySend(batch: PacketBatch): Int {
+        val n = inner.trySend(batch)
+        val r = refuseTo
+        if (r != null) {
+            for (i in 0 until batch.count) {
+                if (batch.address(i) == r) {
+                    pending = batch.length(i)
+                    refuseTo = null
+                    refused = true
+                }
+            }
+        }
+        return n
+    }
+
+    @kotlin.concurrent.Volatile
+    var takes = 0
+
+    override fun takeEmsgsize(): Int {
+        takes++
+        return pending.also { pending = 0 }
+    }
 }

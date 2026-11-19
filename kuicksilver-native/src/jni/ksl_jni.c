@@ -5,6 +5,7 @@
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "ksl.h"
 
 #define H(x) ((jlong)(intptr_t)(x))
@@ -832,6 +833,18 @@ static jint j_udp_channel_fd(JNIEnv *e, jclass c, jobject channel) {
     }
     return (*e)->GetIntField(e, channel, f);
 }
+/* strerror(EMSGSIZE) in this process's locale, the text the JDK puts in a send's SocketException on Linux and Apple (it formats
+   errno under setlocale(LC_ALL, "")); null on Windows, whose JDK uses its own table */
+static jstring j_udp_emsgsize_text(JNIEnv *e, jclass c) {
+    (void)c;
+#ifdef _WIN32
+    (void)e;
+    return NULL;
+#else
+    const char *t = strerror(EMSGSIZE);
+    return t ? (*e)->NewStringUTF(e, t) : NULL;
+#endif
+}
 static jint j_udp_fd_df_probe(JNIEnv *e, jclass c, jlong fd) {
     (void)e;
     (void)c;
@@ -1044,6 +1057,7 @@ static const JNINativeMethod methods[] = {
     {"udpChannelFd", "(Ljava/lang/Object;)I", (void *)j_udp_channel_fd},
     {"udpFdDfProbe", "(J)I", (void *)j_udp_fd_df_probe},
     {"udpFdDfMode", "(JI)I", (void *)j_udp_fd_df_mode},
+    {"udpEmsgsizeText", "()Ljava/lang/String;", (void *)j_udp_emsgsize_text},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
     {"resolve", "(" S_STR "I)[B", (void *)j_resolve},

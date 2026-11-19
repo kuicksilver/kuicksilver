@@ -25,6 +25,12 @@ internal expect fun dfModeOf(
     family: Int,
 ): Int
 
+/**
+ * The system's own text for EMSGSIZE in this process's locale (`strerror`, through `ksl` on the JVM), which the JDK puts in a
+ * send's `SocketException` on Linux; null where it is not known (no `ksl`, Windows, Android, whose text names EMSGSIZE).
+ */
+internal expect fun localizedEmsgsizeText(): String?
+
 /** Every half of the socket in probe mode. */
 internal fun probeComplete(bits: Int): Boolean = bits > 0 && bits and DF_V4 != 0 && (bits and DF_INET6 == 0 || bits and DF_V6 != 0)
 

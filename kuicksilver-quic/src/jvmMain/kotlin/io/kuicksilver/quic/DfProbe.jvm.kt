@@ -15,3 +15,5 @@ internal actual fun dfModeOf(
     ch: DatagramChannel,
     family: Int,
 ): Int = KslSocketDf.mode(ch, family)
+
+internal actual fun localizedEmsgsizeText(): String? = KslSocketDf.emsgsizeText()

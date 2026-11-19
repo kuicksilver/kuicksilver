@@ -102,14 +102,20 @@ private inline fun EndpointLoop.sendOrLoseWith(
                 // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
                 val full = isFullThisFlush(target)
                 val sent = send(full).coerceIn(0, batch.count)
-                // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
-                if (rt != null && target is NonSuspendingSend) {
+                // a datagram of this batch the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6). Taken after
+                // every batch, stateless ones (rt null) too, so a refusal is never charged to the next connection's batch
+                if (target is NonSuspendingSend) {
                     val tooBig = target.takeEmsgsize()
-                    if (tooBig in 1..PATH_MTU_FLOOR) {
-                        rt.onPathMtuRefused(tooBig) // DF in DO mode (probe refused) met a cached path MTU below QUIC's floor
-                    } else if (tooBig > 0) {
-                        rt.core.onEmsgsize(tooBig)
-                        core.markDirty(rt.core)
+                    if (rt != null && tooBig > 0) {
+                        val to = slotOfLength(batch, tooBig)
+                        if (tooBig <= PATH_MTU_FLOOR) {
+                            // DF in DO mode (probe refused) met a cached path MTU below QUIC's floor; a refusal that matches no
+                            // datagram of this batch is not this connection's
+                            if (to != null) rt.onPathMtuRefused(tooBig, target, to)
+                        } else {
+                            rt.core.onEmsgsize(tooBig)
+                            core.markDirty(rt.core)
+                        }
                     }
                 }
                 if (sent < batch.count && !full) fullThisFlush.add(target)
@@ -121,7 +127,7 @@ private inline fun EndpointLoop.sendOrLoseWith(
                 batch.count
             } catch (e: PathMtuRefusedException) {
                 sendFailures++
-                if (rt != null && e.size <= PATH_MTU_FLOOR) rt.onPathMtuRefused(e.size)
+                if (rt != null && e.size <= PATH_MTU_FLOOR) rt.onPathMtuRefused(e.size, target, e.destination)
                 batch.count
             } catch (e: SocketDefunctException) {
                 sendFailures++
@@ -134,6 +140,15 @@ private inline fun EndpointLoop.sendOrLoseWith(
             }
         }
     if (lost > 0) lose(lost, rt)
+}
+
+/** The destination of the first slot of [batch] that is [length] bytes long, or null when none is. */
+private fun slotOfLength(
+    batch: PacketBatch,
+    length: Int,
+): io.ktor.network.sockets.InetSocketAddress? {
+    for (i in 0 until batch.count) if (batch.length(i) == length) return batch.address(i)
+    return null
 }
 
 internal fun EndpointLoop.lose(
