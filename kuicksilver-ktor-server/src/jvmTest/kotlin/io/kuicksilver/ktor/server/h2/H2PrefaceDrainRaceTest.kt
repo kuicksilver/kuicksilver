@@ -256,6 +256,8 @@ class H2PrefaceDrainRaceTest {
     /**
      * The octets the channel's writer flushed that no reader has moved into its read buffer yet (ktor-io's ByteChannel
      * keeps them apart until the next awaitContent or read): found through the channel views around it, by reflection.
+     * Depends on ktor-io 3.6.1's private `ByteChannel.flushBufferSize`: check it on every Ktor upgrade
+     * (docs/ktor-internal-api.md lists it).
      */
     private fun flushedNotRead(channel: Any): Int {
         if (channel is ByteChannel) {

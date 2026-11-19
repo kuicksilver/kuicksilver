@@ -133,7 +133,8 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         coroutineScope {
             val reader = input ?: sock.openDeliveringReadChannel()
             // the whole client preface already in the input as the connection begins (one the h2c check looked at, or one
-            // that came right behind the TLS handshake): it is the preface whatever the stop does, read by the core at once
+            // that came right behind the TLS handshake): it is the preface whatever the stop does, read by the core within
+            // the request-head deadline (awaitPreface also takes the client's SETTINGS, which may still be on its way)
             val prefaceIn = reader.h2PrefaceAtOnce()
             val c =
                 H2ServerConnection.start(
