@@ -26,6 +26,16 @@ import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class)
 class KtorDatagramIoTest {
+    /** No DF, no QUIC (RFC 9000 section 14): the portable socket, which cannot set DF, is refused with a typed error. */
+    @Test fun negative_thePortableSocketIsRefusedWithoutDf() =
+        runBlocking {
+            val e =
+                assertFailsWith<QuicException.DontFragmentUnavailable> {
+                    DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
+                }
+            assertEquals(0, e.family)
+        }
+
     @Test fun loopbackClientSendReceive() =
         runBlocking {
             val a = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
@@ -55,14 +65,14 @@ class KtorDatagramIoTest {
      */
     @Test fun negative_refusedPortableBindReleasesItsSelector() =
         runBlocking {
-            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            val held = KtorDatagramIo.open(InetSocketAddress("127.0.0.1", 0))
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
-                assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                assertFailsWith<Throwable> { KtorDatagramIo.open(taken).close() } // warm-up
                 val diag = HandleDiagnostics("refused binds")
                 val before = openDescriptors()
                 diag.mark("before")
-                repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                repeat(20) { assertFailsWith<Throwable> { KtorDatagramIo.open(taken).close() } }
                 assertEquals(0, refusedSelectorsRunning(), "a refused portable bind returned before its selector ended")
                 diag.mark("after 20 portable")
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
@@ -103,10 +113,10 @@ class KtorDatagramIoTest {
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
-            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            val held = KtorDatagramIo.open(InetSocketAddress("127.0.0.1", 0))
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
-                assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                assertFailsWith<Throwable> { KtorDatagramIo.open(taken).close() } // warm-up
                 val diag = HandleDiagnostics("refused binds under busy dispatchers")
                 val initial = settledDescriptors()
                 diag.mark("initial")
@@ -246,7 +256,7 @@ class KtorDatagramIoTest {
             val binds =
                 async(start = CoroutineStart.UNDISPATCHED) {
                     if (!binds) return@async
-                    repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                    repeat(20) { assertFailsWith<Throwable> { KtorDatagramIo.open(taken).close() } }
                     repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
                 }
             if (binds.isCompleted) whileHeld()
@@ -264,14 +274,14 @@ class KtorDatagramIoTest {
      */
     @Test fun negative_portableRefusesASpecificIpv6Address() =
         runBlocking {
-            assertFailsWith<UnsupportedOperationException> { DatagramIo.open(InetSocketAddress("::1", 0), IoPreference.Portable).close() }
+            assertFailsWith<UnsupportedOperationException> { KtorDatagramIo.open(InetSocketAddress("::1", 0)).close() }
             Unit
         }
 
     /** ... and refuses to send to an IPv6 address. */
     @Test fun negative_portableRefusesIpv6Destinations() =
         runBlocking {
-            val a = DatagramIo.open(InetSocketAddress("0.0.0.0", 0), IoPreference.Portable)
+            val a = KtorDatagramIo.open(InetSocketAddress("0.0.0.0", 0))
             val out = PacketBatch(1)
             try {
                 out.buffer(0).copyFrom(byteArrayOf(1), 0, 0, 1)
@@ -289,7 +299,7 @@ class KtorDatagramIoTest {
     /** The IPv6 wildcard `::` is allowed (a host without IPv6 fails with its own error). */
     @Test fun portableBindsTheIpv6Wildcard() =
         runBlocking {
-            val r = runCatching { DatagramIo.open(InetSocketAddress("::", 0), IoPreference.Portable).close() }
+            val r = runCatching { KtorDatagramIo.open(InetSocketAddress("::", 0)).close() }
             assertTrue(r.exceptionOrNull() !is UnsupportedOperationException, "$r")
         }
 

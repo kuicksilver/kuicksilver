@@ -44,8 +44,9 @@ class QueuedReceiveNativeTest {
 
     private fun queuedAndInterrupt(prefer: IoPreference): Unit =
         runBlocking {
-            val a = DatagramIo.open(lo, prefer)
-            val b = DatagramIo.open(lo, prefer)
+            // the portable socket itself: DatagramIo.open refuses it (no DF, no QUIC), the class is still tested
+            val a: DatagramIo = if (prefer == IoPreference.Portable) KtorDatagramIo.open(lo) else DatagramIo.open(lo, prefer)
+            val b: DatagramIo = if (prefer == IoPreference.Portable) KtorDatagramIo.open(lo) else DatagramIo.open(lo, prefer)
             val inb = PacketBatch(16)
             try {
                 val q = assertIs<QueuedReceive>(b)

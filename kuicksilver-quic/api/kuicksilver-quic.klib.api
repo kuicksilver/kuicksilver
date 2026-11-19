@@ -1622,6 +1622,17 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
         final fun createCopy(): io.kuicksilver.quic/QuicException.DatagramUnsupported // io.kuicksilver.quic/QuicException.DatagramUnsupported.createCopy|createCopy(){}[0]
     }
 
+    final class DontFragmentUnavailable : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.DontFragmentUnavailable|null[0]
+        constructor <init>(kotlin/Int, kotlin/String) // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.<init>|<init>(kotlin.Int;kotlin.String){}[0]
+
+        final val detail // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail|{}detail[0]
+            final fun <get-detail>(): kotlin/String // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail.<get-detail>|<get-detail>(){}[0]
+        final val family // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family|{}family[0]
+            final fun <get-family>(): kotlin/Int // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family.<get-family>|<get-family>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.quic/QuicException.DontFragmentUnavailable // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.createCopy|createCopy(){}[0]
+    }
+
     final class EndpointClosing : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.EndpointClosing|null[0]
         constructor <init>() // io.kuicksilver.quic/QuicException.EndpointClosing.<init>|<init>(){}[0]
 
@@ -1649,7 +1660,7 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
         }
 
         final class NoViablePath : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath|null[0]
-            constructor <init>() // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.<init>|<init>(){}[0]
+            constructor <init>(kotlin/Throwable? = ...) // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.<init>|<init>(kotlin.Throwable?){}[0]
 
             final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.createCopy|createCopy(){}[0]
         }

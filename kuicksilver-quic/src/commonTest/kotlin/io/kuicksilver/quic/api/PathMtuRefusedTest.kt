@@ -6,6 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.MemoryDatagramIo
@@ -14,7 +15,10 @@ import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathMtuRefusedException
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -23,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -129,6 +134,42 @@ class PathMtuRefusedTest {
                     assertFalse(c.closed.isCompleted, "the connection survives on its active path")
                     ping(c, s)
                 }
+            }
+        }
+
+    /** No DF for the peer's address family (one half of a dual-stack socket): nothing is sent, the connection has no viable path. */
+    @Test fun negative_noDontFragmentForThePeerEndsTheConnection() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, _) = p.connect()
+                    val noDf = QuicException.DontFragmentUnavailable(4, "test: no DF on the IPv4 half")
+                    p.clientIo.sendFailure = noDf
+                    val st = c.openBidi()
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }
+                    val closed = assertIs<QuicException.ConnectionLost.NoViablePath>(c.closed.await())
+                    assertEquals(noDf, closed.cause)
+                }
+            }
+        }
+
+    /** No DF, no QUIC: a server endpoint whose socket cannot set DF does not start. */
+    @Test fun negative_aServerWithoutDontFragmentDoesNotStart() =
+        runBlocking<Unit> {
+            assertFailsWith<QuicException.DontFragmentUnavailable> {
+                QuicEndpoint
+                    .bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                io = { throw QuicException.DontFragmentUnavailable(0, "test: no DF") }
+                            }.build(),
+                    ).close()
             }
         }
 

@@ -30,4 +30,25 @@ class ServerH3DisabledTest {
                 server.stop(100, 500)
             }
         }
+
+    /** No DF, no QUIC: a UDP socket that cannot set Don't Fragment leaves the server on HTTP/1.1, without Alt-Svc. */
+    @Test fun h3DisabledWithoutDontFragment() =
+        serverTest {
+            val log = CapturedLog()
+            val (server, port) =
+                tlsServer(configure = {
+                    http3Bind =
+                        { _, _, _ ->
+                            throw io.kuicksilver.quic.QuicException
+                                .DontFragmentUnavailable(0, "test: no DF")
+                        }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
+                log.assertLogged("WARN", "HTTP/3 is not served on port", "cannot set Don't Fragment")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }

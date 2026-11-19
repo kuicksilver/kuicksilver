@@ -520,8 +520,9 @@ int ksl_udp_fd_df_probe(int64_t fd);
             forge: quic-go CVE-2024-53259), else DO mode (never fragmented either, but a send above a cached path MTU is refused with
             EMSGSIZE / WSAEMSGSIZE: the caller treats that as a failed path). It replaces a mode set before (the JDK's IP_DONTFRAGMENT is
             DO). Returns the KSL_FD_DF_* bits of the result: KSL_FD_DF_INET6 for an AF_INET6 socket, and per half V4 or V4_DO, V6 or
-            V6_DO; a half with neither bit has no DF (the system refused both modes); 0 on Apple (no modes: the caller sets IP_DONTFRAG)
-            and other platforms; KSL_ERROR when fd is no IPv4 or IPv6 socket. Linux, Android and Windows */
+            V6_DO; a half with neither bit has no DF (the system refused both modes). Apple has no modes: IP_DONTFRAG (AF_INET) or
+            IPV6_DONTFRAG (AF_INET6, which covers v4-mapped traffic there), reported as DO; 0 on other platforms; KSL_ERROR when fd is
+            no IPv4 or IPv6 socket */
 int ksl_udp_fd_df_mode(int64_t fd, int family);
 /* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 0 = DONT, 1 = WANT, 2 = DO;
             Windows 0 = NOT_SET, 1 = DO, 2 = DONT); -1 when it cannot be read or on Apple (no PMTUDISC modes). For tests and

@@ -340,6 +340,18 @@ internal class ConnectionRuntime(
         drainEvents()
     }
 
+    /**
+     * A send of this connection was refused because the socket has no DF for the destination's address family (a dual-stack
+     * socket whose other half has it): no QUIC without DF (RFC 9000 section 14), so the connection ends at once with
+     * [QuicException.ConnectionLost.NoViablePath] caused by [e]; nothing of it is sent. Loop dispatcher only.
+     */
+    internal fun onDontFragmentUnavailable(e: QuicException.DontFragmentUnavailable) {
+        if (finished) return
+        loop.observer.logger.emit(LogLevel.Warn) { "${e.message}; closing the connection: no viable path" }
+        core.silentClose(QuicException.ConnectionLost.NoViablePath(e))
+        drainEvents()
+    }
+
     /** Loop dispatcher only; never called for the active path. */
     internal fun closePath(p: PathRuntime) {
         if (core.pathState(p.id) != PathState.Closed &&

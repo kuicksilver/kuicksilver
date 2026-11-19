@@ -42,6 +42,7 @@ import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.splitAbsoluteForm
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
@@ -116,6 +117,10 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                 } catch (e: UnsupportedOperationException) {
                     environment.log.warn("HTTP/3 is not served: ${e.message}")
                     return bindTcp(selector, l.config.host, l.config.port) to null
+                } catch (e: QuicException.DontFragmentUnavailable) {
+                    // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 only, as without a QUIC server
+                    environment.log.warn("HTTP/3 is not served: ${e.message}")
+                    return bindTcp(selector, l.config.host, l.config.port) to null
                 } catch (e: Throwable) {
                     if (!mayBeTaken(e)) throw e
                     environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
@@ -145,6 +150,10 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             server.close()
             throw e
         } catch (e: UnsupportedOperationException) {
+            environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            return server to null
+        } catch (e: QuicException.DontFragmentUnavailable) {
+            // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 only, as without a QUIC server
             environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
             return server to null
         } catch (e: Throwable) {

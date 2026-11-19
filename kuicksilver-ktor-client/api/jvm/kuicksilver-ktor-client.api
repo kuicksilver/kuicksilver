@@ -73,6 +73,7 @@ public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static final field NotSecure Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Other Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Proxy Lio/kuicksilver/ktor/client/FallbackReason;
+	public static final field QuicUnavailable Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Refused Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field StreamFailed Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field TlsFailure Lio/kuicksilver/ktor/client/FallbackReason;

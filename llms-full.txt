@@ -532,11 +532,11 @@ size; probes are not congestion controlled and their loss is not a congestion si
 packets, or two PTOs in a row while sending above 1200, mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF wherever possible
+dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF on all its traffic
 (RFC 9000 section 14), in probe mode where the system takes it (Linux, Android, Windows; through `ksl` on the JVM), else
 in DO mode, where a forged ICMP message can make the system refuse sends to the peer: such a refusal of a datagram of at
-most 1200 bytes closes that path, or ends the connection with NO_VIABLE_PATH (an HTTP/3 client falls back to TCP);
-without `ksl` below JDK 19 it cannot set DF at all. It reports no DF capability,
+most 1200 bytes closes that path, or ends the connection with NO_VIABLE_PATH (an HTTP/3 client falls back to TCP). A
+socket that cannot set DF is not used for QUIC (`QuicException.DontFragmentUnavailable`). It reports no DF capability,
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 
@@ -6071,6 +6071,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
+| `QuicException.DontFragmentUnavailable`, "QUIC not used: the UDP socket cannot set Don't Fragment", `fallback = QuicUnavailable` | [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 
 ### Getting more information
 
@@ -6397,6 +6398,24 @@ datagram per call.
   Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".
 
+#### QUIC is not used (`DontFragmentUnavailable`)
+
+QUIC is used only on a UDP socket that sets the Don't Fragment bit (RFC 9000 section 14). Where it cannot,
+`DatagramIo.open` and `QuicEndpoint.bind` throw `QuicException.DontFragmentUnavailable` ("QUIC not used: the UDP socket
+cannot set Don't Fragment (RFC 9000 section 14) <on any traffic>: <why>"), a Ktor server serves HTTP/1.1 only, and the Ktor
+client sends the call over TCP at once (`fallback = QuicUnavailable`). Where only one half of a dual-stack socket lacks
+it, sends to that family fail the same way ("… for IPv4 destinations: …") and the connection ends with
+`ConnectionLost.NoViablePath` caused by it.
+
+- The JVM without the `ksl` native library below JDK 19 (no `IP_DONTFRAGMENT`): load `ksl`
+  ([native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)) or use JDK 19 or later. QUIC with
+  kuicksilver's TLS needs `ksl` anyway.
+- The system refuses both DF modes (probe and DO), for example a seccomp filter or a sandboxed network stack: allow
+  `setsockopt` of `IP_MTU_DISCOVER` / `IPV6_MTU_DISCOVER`.
+- Kotlin/Native when the accelerated socket cannot open: the portable `ktor-network` socket cannot set DF.
+- Without `ksl` on Linux and Windows, an IPv6-bound dual-stack socket has no DF for IPv4-mapped traffic: IPv4
+  destinations are refused, IPv6 works.
+
 #### A QUIC-LB configuration is refused
 
 `QuicEndpointConfig.Builder.build()` refuses a `loadBalancer` whose `1 + serverId + nonceLength` differs from
@@ -6580,6 +6599,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
 | `HandshakeTimeout` | QUIC got no answer within the connect timeout: UDP blocked, see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
 | `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
+| `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment, so QUIC is not used: [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | `H3NotReady` | HTTP/1.1 won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
 | `Refused` | the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other code marks the alternative broken |
 | `TlsFailure` | a TLS alert or a local verification failure in the QUIC handshake: [certificate errors](#the-handshake-fails-with-a-certificate-error), [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |

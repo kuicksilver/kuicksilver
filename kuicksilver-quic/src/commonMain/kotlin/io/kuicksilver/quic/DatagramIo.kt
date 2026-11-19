@@ -41,8 +41,9 @@ public enum class IoPreference {
 
     /**
      * Always the portable socket: NIO on the JVM, `ktor-network` on Native. On the JVM it still loads `ksl` (once per
-     * process), to put the socket's DF in probe mode (RFC 9000 sections 14 and 14.2.1); without the library it opens all
-     * the same, with the JDK's `IP_DONTFRAGMENT`.
+     * process), to put the socket's DF in probe mode (RFC 9000 sections 14 and 14.2.1); without the library it uses the
+     * JDK's `IP_DONTFRAGMENT`, and where DF cannot be set at all (below JDK 19; on Kotlin/Native, whose portable socket has
+     * no DF) [DatagramIo.open] throws [QuicException.DontFragmentUnavailable].
      */
     Portable,
 }
@@ -79,7 +80,11 @@ public interface DatagramIo : AutoCloseable {
 
     /** Holds [open], the platform's socket factory. */
     public companion object {
-        /** Binds [local] (port 0 picks a free port): the accelerated transport when [prefer] asks for it and the platform has it, the portable one otherwise. */
+        /**
+         * Binds [local] (port 0 picks a free port): the accelerated transport when [prefer] asks for it and the platform has it,
+         * the portable one otherwise. No DF, no QUIC (RFC 9000 section 14): throws [QuicException.DontFragmentUnavailable] when
+         * the socket cannot set the Don't Fragment bit on any of its traffic.
+         */
         public suspend fun open(
             local: InetSocketAddress,
             prefer: IoPreference = IoPreference.Accelerated,

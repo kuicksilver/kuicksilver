@@ -569,8 +569,14 @@ int ksl_udp_fd_df_probe(int64_t fd64) {
     int fd = (int)fd64, family = fd64 < 0 || fd64 > INT32_MAX ? -1 : fd_family(fd);
     if (family < 0)
         return KSL_ERROR;
-#ifdef __APPLE__ /* Darwin has only the DF bit (ksl_udp_open): no probe mode to set */
-    return 0;
+#ifdef __APPLE__ /* Darwin has only the DF bit (ksl_udp_open), DO-like: on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (checked on macOS 26:
+                    a v4-mapped send above lo0's MTU is refused; IP_DONTFRAG is EINVAL on that socket) */
+    int one = 1;
+    if (family == AF_INET6)
+        return setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0
+                   ? KSL_FD_DF_INET6 | KSL_FD_DF_V4_DO | KSL_FD_DF_V6_DO
+                   : KSL_FD_DF_INET6;
+    return setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0 ? KSL_FD_DF_V4_DO : 0;
 #else
     int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE, d4 = IP_PMTUDISC_DO, d6 = IPV6_PMTUDISC_DO, one = 1,
         granted = 0;

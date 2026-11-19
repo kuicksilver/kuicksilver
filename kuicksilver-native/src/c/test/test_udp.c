@@ -1624,7 +1624,27 @@ void run_udp(void) {
             CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR && ksl_udp_fd_df_probe((int64_t)INT32_MAX + 1) == KSL_ERROR,
                   "no descriptor: KSL_ERROR");
 #ifdef __APPLE__
-            CHECK(ksl_udp_fd_df_probe(s4) == 0 && ksl_udp_fd_df_mode(s4, 4) == -1, "Darwin: no probe mode");
+            CHECK(ksl_udp_fd_df_probe(s4) == KSL_FD_DF_V4_DO && ksl_udp_fd_df_mode(s4, 4) == -1,
+                  "Darwin: IP_DONTFRAG, no modes");
+            if (s6 >= 0) {
+                int off = 0;
+                setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off);
+                CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_INET6 | KSL_FD_DF_V4_DO | KSL_FD_DF_V6_DO),
+                      "Darwin AF_INET6: IPV6_DONTFRAG, which covers v4-mapped traffic");
+                /* the coverage itself: a v4-mapped datagram above lo0's 16384-byte MTU is refused, not fragmented */
+                struct sockaddr_in6 m;
+                memset(&m, 0, sizeof m);
+                m.sin6_family = AF_INET6;
+                m.sin6_port = htons(9);
+                m.sin6_addr.s6_addr[10] = 0xff;
+                m.sin6_addr.s6_addr[11] = 0xff;
+                m.sin6_addr.s6_addr[12] = 127;
+                m.sin6_addr.s6_addr[15] = 1;
+                static uint8_t big[20000];
+                CHECK(
+                    sendto(s6, big, sizeof big, 0, (struct sockaddr *)&m, sizeof m) < 0 && errno == EMSGSIZE,
+                    "Darwin AF_INET6 with IPV6_DONTFRAG: 20000 bytes to ::ffff:127.0.0.1 refused (DF), not fragmented");
+            }
 #else
             int dmode = IP_PMTUDISC_DO;
             CHECK(setsockopt(s4, IPPROTO_IP, IP_MTU_DISCOVER, &dmode, sizeof dmode) == 0 &&

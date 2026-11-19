@@ -1109,6 +1109,8 @@ public final class io/kuicksilver/quic/QuicException$ConnectionLost$Internal : i
 
 public final class io/kuicksilver/quic/QuicException$ConnectionLost$NoViablePath : io/kuicksilver/quic/QuicException$ConnectionLost {
 	public fun <init> ()V
+	public fun <init> (Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$NoViablePath;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 }
@@ -1166,6 +1168,14 @@ public final class io/kuicksilver/quic/QuicException$DatagramUnsupported : io/ku
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DatagramUnsupported;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 	public final fun getReason ()Lio/kuicksilver/quic/DatagramUnsupportedReason;
+}
+
+public final class io/kuicksilver/quic/QuicException$DontFragmentUnavailable : io/kuicksilver/quic/QuicException {
+	public fun <init> (ILjava/lang/String;)V
+	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DontFragmentUnavailable;
+	public synthetic fun createCopy ()Ljava/lang/Throwable;
+	public final fun getDetail ()Ljava/lang/String;
+	public final fun getFamily ()I
 }
 
 public final class io/kuicksilver/quic/QuicException$EndpointClosing : io/kuicksilver/quic/QuicException {

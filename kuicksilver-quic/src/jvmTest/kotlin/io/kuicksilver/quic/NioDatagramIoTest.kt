@@ -12,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -119,10 +120,10 @@ class NioDatagramIoTest {
     /**
      * RFC 9000 section 14 ("UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST be
      * set if possible") and section 14.2.1 (an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased below
-     * QUIC's smallest allowed maximum datagram size"): DF always. On Linux every half of the portable socket is in probe mode
-     * (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and the JDK's
-     * `IP_DONTFRAGMENT` (DO mode there) is not added; on Windows probe mode where the system takes it, else DO; Apple has no
-     * modes: the JDK's option (JDK 19 and later). Datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
+     * QUIC's smallest allowed maximum datagram size"): DF on all traffic, or no QUIC. On Linux every half of the portable socket
+     * is in probe mode (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and the
+     * JDK's `IP_DONTFRAGMENT` (DO mode there) is not added; on Windows probe mode where the system takes it, else DO; Apple has
+     * no modes: `IPV6_DONTFRAG` through `ksl`, which covers v4-mapped traffic. Datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
      * false). The forged-ICMP attack itself is `test_udp.c` `udp_fd_df_probe_forged_ptb` (Linux: a raw socket in a user and
      * network namespace of its own); on Windows it cannot be reproduced over loopback, which ignores the cached path MTU
      * (checked on a Windows 11 VM against a real peer instead).
@@ -149,7 +150,8 @@ class NioDatagramIoTest {
                     }
 
                     os.startsWith("mac") -> {
-                        assertEquals(0, bits, "Darwin has no modes")
+                        assertEquals(DF_INET6 or DF_V4_DO or DF_V6_DO, bits, "Darwin: IPV6_DONTFRAG through ksl, no modes")
+                        // the JDK reads Darwin's IPV6_DONTFRAG back, which ksl set
                         assertEquals(if (jdk19) true else null, a.dontFragmentForTest())
                     }
 
@@ -256,21 +258,97 @@ class NioDatagramIoTest {
     }
 
     /**
-     * Where DF cannot reach some traffic (RFC 9000 section 14 "if possible"): nothing to set it with, a dual-stack channel bound
-     * to an IPv6 address without `ksl` (the JDK's option sets the IPv6 half only, except Darwin's), a half refusing both modes.
+     * Which traffic goes without DF (no DF, no QUIC): none, one half of a dual-stack socket (its sends are refused), or all
+     * of it (open fails). The JDK's option covers an AF_INET socket, the IPv6 half of a dual-stack one on Linux and Windows,
+     * and both halves on Apple (IPV6_DONTFRAG covers v4-mapped traffic there).
      */
-    @Test fun dfGapPerCase() {
-        val gap = NioDatagramIo.Companion::dfGap
-        assertEquals(null, gap(DF_V4, false, true, false), "AF_INET in probe mode")
-        assertEquals(null, gap(DF_INET6 or DF_V4 or DF_V6, false, false, false), "dual-stack, both halves in probe mode")
-        assertEquals(null, gap(-1, true, true, false), "no ksl, AF_INET: the JDK's option")
-        assertEquals(null, gap(-1, true, false, true), "Apple: IPV6_DONTFRAG covers v4-mapped traffic")
-        assertEquals(null, gap(DF_INET6 or DF_V4, true, false, false), "the JDK's option covers the IPv6 half ksl left")
-        assertTrue(gap(-1, false, false, false)!!.contains("JDK 19"), "no ksl below JDK 19: not possible")
-        assertTrue(gap(-1, true, false, false)!!.contains("IPv4-mapped"), "no ksl, dual-stack: its IPv4 half")
-        assertTrue(gap(DF_INET6 or DF_V6, true, false, false)!!.contains("IPv4-mapped"), "the IPv4 half refused both modes")
-        assertTrue(gap(DF_INET6 or DF_V6, false, false, false)!!.contains("refused both"))
+    @Test fun noDfFamilyPerCase() {
+        val f = NioDatagramIo.Companion::noDfFamily
+        // (bits, the JDK's option took, AF_INET, Apple)
+        assertEquals(NioDatagramIo.DF_ALL, f(DF_V4, false, true, false), "AF_INET in probe mode")
+        assertEquals(NioDatagramIo.DF_ALL, f(DF_INET6 or DF_V4 or DF_V6, false, false, false), "dual-stack, both in probe mode")
+        assertEquals(NioDatagramIo.DF_ALL, f(DF_INET6 or DF_V4_DO or DF_V6_DO, false, false, true), "Apple through ksl")
+        assertEquals(NioDatagramIo.DF_ALL, f(-1, true, true, false), "no ksl, AF_INET: the JDK's option")
+        assertEquals(NioDatagramIo.DF_ALL, f(-1, true, false, true), "no ksl, Apple: IPV6_DONTFRAG covers v4-mapped traffic")
+        assertEquals(NioDatagramIo.DF_ALL, f(DF_INET6 or DF_V4, true, false, false), "the JDK's option covers the IPv6 half ksl left")
+        assertEquals(4, f(-1, true, false, false), "no ksl, dual-stack on Linux or Windows: the IPv4 half has none")
+        assertEquals(4, f(DF_INET6 or DF_V6, false, false, false), "the IPv4 half refused both modes")
+        assertEquals(6, f(DF_INET6 or DF_V4, false, false, false), "the IPv6 half refused both modes, no JDK option")
+        assertEquals(NioDatagramIo.DF_NONE, f(-1, false, false, false), "no ksl below JDK 19")
+        assertEquals(NioDatagramIo.DF_NONE, f(-1, false, true, false))
+        assertEquals(NioDatagramIo.DF_NONE, f(DF_INET6, false, false, false), "both halves refused both modes")
+        assertTrue(NioDatagramIo.dfUnavailableDetail(-1, false).contains("below 19"))
+        assertTrue(NioDatagramIo.dfUnavailableDetail(DF_INET6, false).contains("refused both"))
     }
+
+    /** No DF on any traffic: the socket does not open, with the typed error. */
+    @Test fun negative_aSocketWithoutDfDoesNotOpen() =
+        runBlocking {
+            NioDatagramIo.dfForTest = { -1 to false } // no ksl, no IP_DONTFRAGMENT (below JDK 19)
+            try {
+                val e =
+                    assertFailsWith<QuicException.DontFragmentUnavailable> {
+                        DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
+                    }
+                assertEquals(0, e.family)
+                assertTrue("Don't Fragment" in e.message!!, e.message)
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+        }
+
+    /** A dual-stack socket whose IPv4 half has no DF refuses IPv4 destinations and still carries IPv6. */
+    @Test fun negative_aDualStackSocketWithoutDfOnItsIpv4HalfRefusesIpv4Sends() =
+        runBlocking {
+            NioDatagramIo.dfForTest = { inet -> if (inet) 0 to false else (DF_INET6 or DF_V6) to false }
+            val a: DatagramIo
+            val b: DatagramIo
+            try {
+                a = DatagramIo.open(InetSocketAddress("::1", 0), IoPreference.Portable)
+                b = DatagramIo.open(InetSocketAddress("::1", 0), IoPreference.Portable)
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+            try {
+                assertEquals(4, (a as NioDatagramIo).noDf)
+                val v4 = batchOf(ByteArray(100), to = InetSocketAddress("127.0.0.1", b.localAddress.port))
+                val e = assertFailsWith<QuicException.DontFragmentUnavailable> { a.send(v4) }
+                assertEquals(4, e.family)
+                val mapped = batchOf(ByteArray(100), to = InetSocketAddress("::ffff:127.0.0.1", b.localAddress.port))
+                assertFailsWith<QuicException.DontFragmentUnavailable> { a.send(mapped) }
+                val v6 = batchOf(ByteArray(100), to = b.localAddress)
+                assertEquals(1, a.send(v6), "IPv6 still works")
+                val inb = PacketBatch(1)
+                withTimeout(5.seconds) { while (b.receive(inb) == 0) continue }
+                assertEquals(100, inb.length(0))
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    /** An IPv4 bind keeps the AF_INET channel when DF took on it, else the dual-stack one, whose IPv4 sends are refused. */
+    @Test fun anIpv4BindTakesAfInetOnlyWithDf() =
+        runBlocking {
+            val v4 = InetSocketAddress("127.0.0.1", 0)
+            NioDatagramIo.dfForTest = { inet -> if (inet) -1 to true else -1 to true } // no ksl, the JDK's option takes
+            try {
+                DatagramIo.open(v4, IoPreference.Portable).use { assertEquals(NioDatagramIo.DF_ALL, (it as NioDatagramIo).noDf) }
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+            NioDatagramIo.dfForTest = { inet -> if (inet) 0 to false else (DF_INET6 or DF_V6) to false } // AF_INET took nothing
+            try {
+                DatagramIo
+                    .open(
+                        v4,
+                        IoPreference.Portable,
+                    ).use { assertEquals(4, (it as NioDatagramIo).noDf, "the dual-stack channel stayed") }
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+        }
 
     /**
      * The channel family: an AF_INET channel is tried for an IPv4 bind whose dual-stack channel has no DF on its IPv4 half

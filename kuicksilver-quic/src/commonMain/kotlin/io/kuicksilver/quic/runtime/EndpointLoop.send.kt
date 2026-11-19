@@ -14,6 +14,7 @@ import io.kuicksilver.quic.PATH_MTU_FLOOR
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathMtuRefusedException
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
@@ -126,6 +127,11 @@ private inline fun EndpointLoop.sendOrLoseWith(
             } catch (e: CancellationException) {
                 ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
                 sendFailures++
+                batch.count
+            } catch (e: QuicException.DontFragmentUnavailable) {
+                // no DF for this destination's address family: nothing goes out without it, the connection has no viable path
+                sendFailures++
+                rt?.onDontFragmentUnavailable(e)
                 batch.count
             } catch (e: PathMtuRefusedException) {
                 sendFailures++
