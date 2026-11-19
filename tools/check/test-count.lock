@@ -3801,6 +3801,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamBridgeTest.waiting
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamRetirementTest.peerResetStreamsReturnStreamCredit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamRetirementTest.stoppedStreamsAreRetiredWhenThePeerResets
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamRetirementTest.streamResetByUsGoesAtRetirementAndFinishesAtTheAcknowledgment
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aConnectionClosedAtOncePinsItsKeyAndAnotherKeyIsRefused
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aStoreThatFailsFailsTheConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.keyedByAddressWithoutServerName
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.keyedByServerName
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.memoryStoreIsBounded
@@ -5932,6 +5934,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.tcpFirstContact
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.anchoredCaNeedsRoots
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.expectedNameNeedsName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.expectedNameOverPinnedIsConfigError
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.negative_tcpStoreThatFailsFailsTheConnection
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.handedOutBytesAreCopies
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.negative_pinnedOverExpectedNameCustomIsConfigError
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.pinnedNeedsPins

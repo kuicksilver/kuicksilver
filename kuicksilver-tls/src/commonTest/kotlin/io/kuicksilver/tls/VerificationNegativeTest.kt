@@ -188,8 +188,8 @@ class VerificationNegativeTest {
                 }
             }
         expectReject(run(Fixtures.client(TrustConfig.Tofu(store), name = "wrong.test")), 42, {
-            true
-        }, "tofu first use but name mismatch -> ksl matcher")
+            it is VerifyReason.HostnameMismatch
+        }, "tofu first use but name mismatch")
         assertEquals(null, m["wrong.test"], "no key remembered for a name the certificate does not carry")
     }
 

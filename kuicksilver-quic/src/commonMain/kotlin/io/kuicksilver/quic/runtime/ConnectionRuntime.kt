@@ -600,16 +600,13 @@ internal class ConnectionRuntime(
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     ownCertificates = core.localCertificates
                     group = core.keyExchangeGroup
-                    // a Tofu first contact is remembered only now (the store may suspend: off the loop; its failure is the store's)
-                    if (!serverSide) {
-                        val session = core.handshake.session
-                        loop.scope.launch(Dispatchers.Default) { runCatching { session.commitTrust() } }
-                    }
-                    handshake.complete(Unit)
-                    try {
-                        loop.observer.handshakeCompleted(this)
-                    } finally {
-                        loop.onHandshakeCompleted(this) // a server connection reaches accept() whatever the callback did
+                    // a Tofu first contact is remembered before the application gets the connection (the store may suspend: off
+                    // the loop); a store that fails fails the connection, as over TCP
+                    val session = core.handshake.session
+                    if (!serverSide && session.trustCommitPending) {
+                        loop.scope.launch(Dispatchers.Default) { commitTrustThenComplete(session) }
+                    } else {
+                        completeHandshake()
                     }
                 }
 
@@ -745,6 +742,41 @@ internal class ConnectionRuntime(
     /** Client: where NEW_TOKEN tokens of this connection go (`QuicClientConfig.tokenStore`) and under which key; null: dropped. */
     internal var tokenStore: io.kuicksilver.quic.QuicTokenStore? = null
     internal var tokenKey: String? = null
+
+    /** The handshake completed and what it had to remember is stored: the application gets the connection. Loop dispatcher only. */
+    private fun completeHandshake() {
+        handshake.complete(Unit)
+        try {
+            loop.observer.handshakeCompleted(this)
+        } finally {
+            loop.onHandshakeCompleted(this) // a server connection reaches accept() whatever the callback did
+        }
+    }
+
+    /** Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]), then completes the handshake, or fails the connection with the store's error. */
+    private suspend fun commitTrustThenComplete(session: io.kuicksilver.tls.QuicTlsSession) {
+        val failure =
+            try {
+                session.commitTrust()
+                null
+            } catch (t: Throwable) {
+                if (t is CancellationException) kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                t
+            }
+        withContext(loop.dispatcher) {
+            if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining ||
+                core.state == ConnectionState.Closed
+            ) {
+                return@withContext
+            }
+            if (failure == null) {
+                completeHandshake()
+            } else {
+                core.failInternal(failure)
+                loop.flush(core)
+            }
+        }
+    }
 
     /**
      * Runs the (possibly application-supplied) verifier off the loop. A verifier that throws rejects the peer; a result that

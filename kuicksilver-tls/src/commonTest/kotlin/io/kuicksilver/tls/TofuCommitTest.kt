@@ -184,4 +184,23 @@ class TofuCommitTest {
             s.close()
         }
     }
+
+    @Test fun negative_tcpStoreThatFailsFailsTheConnection() {
+        val boom = IllegalStateException("store unavailable")
+        val failing =
+            object : TofuStore {
+                override suspend fun get(name: String): SpkiSha256? = null
+
+                override suspend fun put(
+                    name: String,
+                    pin: SpkiSha256,
+                ): Unit = throw boom
+            }
+        val (cd, sd) = connect(TcpFixtures.client { trust = TrustConfig.Tofu(failing) }, TcpFixtures.server())
+        runBlocking {
+            val e = runCatching { withTimeout(10.seconds) { cd.await() } }.exceptionOrNull()
+            assertTrue(e != null && generateSequence(e) { it.cause }.any { it === boom }, "failed with the store's error: $e")
+            runCatching { withTimeout(10.seconds) { sd.await() } }.getOrNull()?.close()
+        }
+    }
 }

@@ -566,6 +566,8 @@ internal class KslQuicTlsSession(
 
     override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult = verification.verify(chain, reference)
 
+    override val trustCommitPending: Boolean get() = done && failure == null && verification.trustPending
+
     override suspend fun commitTrust() {
         if (done && failure == null) verification.commitTrust()
     }

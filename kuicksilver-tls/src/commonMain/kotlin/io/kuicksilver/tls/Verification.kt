@@ -181,7 +181,14 @@ internal class Verification(
      * The key a `Tofu` first contact is to remember, held until the handshake completed ([commitTrust]): the store is never
      * written for a peer that has not proved it holds the key (CertificateVerify) and the handshake (Finished).
      */
+    // set by verify() on the thread that runs the verifier (a QUIC connection: off its loop) and read and cleared by commitTrust()
+    // on another, after the handshake's completion was seen on the loop: volatile, so the hand-over does not rest on the
+    // dispatchers' ordering alone. One verification and one commit per handshake, never concurrent.
+    @kotlin.concurrent.Volatile
     private var pendingTofu: PendingTofu? = null
+
+    /** A `Tofu` first contact waits for [commitTrust]. */
+    val trustPending: Boolean get() = pendingTofu != null
 
     private class PendingTofu(
         val store: TofuStore,
