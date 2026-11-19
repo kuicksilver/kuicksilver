@@ -1388,7 +1388,11 @@ public class SessionCache(
         }
     }
 
-    /** Drops every cached session (tests, credential rotation). */
+    /**
+     * Drops every cached session (tests, credential rotation). A connection's reader stores the tickets the server sends after
+     * the handshake, also after [TlsConnection.close] returned (close does not wait for it): a ticket of a connection whose
+     * pumps were not awaited (`closeAndAwaitPumps`) may still be stored after this call.
+     */
     public suspend fun clear() {
         mutex.withLock {
             entries.values.forEach { l -> l.forEach { it.close() } }
