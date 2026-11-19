@@ -230,6 +230,10 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
    group a ClientHello key_share extension has a share for (-1 none, -2 malformed); the server's choice by o's order (ksl_client_hello_cb) */
 int ksl_group_id_of_name(const char *name);
 int ksl_key_share_choice(const ksl_ctx *o, const uint8_t *p, size_t len);
+/* Appends a, b and name to buf (cap bytes, *out of them used, *out < cap) for a group list: 0 when they do not fit, and nothing
+   appended. A truncated snprintf returns the length it would have written, so its result is checked before it moves *out:
+   unchecked, the next call's size (cap - *out) would wrap and write past the buffer. */
+int ksl_append_group(char *buf, size_t cap, size_t *out, const char *a, const char *b, const char *name);
 int ksl_prefer_server_groups(const ksl_ctx *o, SSL *ssl, int choice);
 
 /* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */

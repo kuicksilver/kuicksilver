@@ -416,6 +416,15 @@ int ksl_group_id_of_name(const char *name) {
     int i = name ? group_lookup(name, strlen(name)) : -1;
     return i < 0 ? 0 : group_table[i].id;
 }
+int ksl_append_group(char *buf, size_t cap, size_t *out, const char *a, const char *b, const char *name) {
+    int w = snprintf(buf + *out, cap - *out, "%s%s%s", a, b, name);
+    if (w < 0 || (size_t)w >= cap - *out) {
+        buf[*out] = '\0';
+        return 0;
+    }
+    *out += (size_t)w;
+    return 1;
+}
 /* Parses and installs a group list (ksl_ctx_set_groups); KSL_ERROR with the context's error set, the context unchanged */
 static int set_groups(ksl_ctx *c, const char *list) {
     char canon[KSL_GROUPS_LIST_MAX];
@@ -438,10 +447,11 @@ static int set_groups(ksl_ctx *c, const char *list) {
             why = "ksl: a server sends no key share in a ClientHello: '*' is for clients";
         else if (share && ++shares > KSL_GROUP_SHARES_MAX)
             why = "ksl: at most 4 key shares";
+        /* never short: the canonical list is as long as the one given, which ksl_ctx_set_groups bounded */
+        if (!why && !ksl_append_group(canon, sizeof canon, &out, n ? ":" : "", share ? "*" : "", group_table[i].name))
+            why = "ksl: the group list is too long";
         if (why)
             break;
-        out += (size_t)snprintf(canon + out, sizeof canon - out, "%s%s%s", n ? ":" : "", share ? "*" : "",
-                                group_table[i].name);
         idx[n++] = (uint8_t)i;
         if (!end)
             break;
@@ -521,7 +531,9 @@ int ksl_prefer_server_groups(const ksl_ctx *o, SSL *ssl, int choice) {
     size_t out = 0;
     for (size_t k = 0; k < o->group_count; k++) {
         const char *sep = k == 0 ? "" : choice < 0 || (int)k == choice + 1 ? "/" : ":";
-        out += (size_t)snprintf(l + out, sizeof l - out, "%s%s", sep, group_table[o->group_idx[k]].name);
+        /* never short: as long as the list set_groups made, with one separator less per share mark */
+        if (!ksl_append_group(l, sizeof l, &out, sep, "", group_table[o->group_idx[k]].name))
+            return 0;
     }
     return o->group_count == 0 || SSL_set1_groups_list(ssl, l) == 1;
 }
