@@ -1397,7 +1397,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   had already ended, the request was refused as malformed, or its caller gave up while it waited for stream credit. Only
   the body's sender, never started then, ended the body. A failed request now ends its body with the failure; one refused
   before anything of it left (`RequestNotProcessed.neverSent`) still leaves it unread, and the Ktor engine still sends it
-  again with that body.
+  again with that body. The body's writer fails with the exception the request threw, also from `request()` on a
+  server's connection.
+- Ktor client: a request whose body comes from a writer (`WriteChannelContent`), refused by a GOAWAY before anything of it
+  went out and sent again (on a new HTTP/3 connection or over HTTP/1.1), never ended: the refused attempt's writer waited
+  forever on a channel no one read, in the call's context, so the call's Job never completed and the connection the
+  answering attempt used was never released. A failed attempt now ends its own body channel.
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

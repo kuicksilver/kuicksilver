@@ -21,6 +21,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Connection
@@ -584,6 +585,60 @@ class ClientKillSwitchTest {
                         assertEquals("streamed body", r.bodyAsText(), "the repeated request carried the same body")
                         assertEquals(2, r.kuicksilverDiagnostics?.attempts, "the request went twice")
                         assertEquals(2, accepted.load().size, "the second attempt used a new connection")
+                    }
+                } finally {
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
+     * A body from a writer (replayable: each attempt runs its own writer into its own channel) refused by this client's own
+     * GOAWAY before anything went out: the request goes again with a new writer, and the first attempt's writer ends
+     * instead of waiting forever on a channel no one reads. It ran in the call's context, so it held the call's Job open,
+     * and with it the release of the connection the second attempt used (H3Pool.execute releases at the Job's completion).
+     */
+    @Test fun writerBodyOfARefusedAttemptEndsAndTheConnectionIsReleased() =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted)
+                val port = ep.localAddress.port
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        val fired = AtomicBoolean(false)
+                        engine.h3.afterAcquireForTest = { if (fired.compareAndSet(false, true)) c.closeHttp3Connections() }
+                        val size = 4 * 1024 * 1024 // far more than a channel buffers: the refused attempt's writer suspends
+                        val started = AtomicInt(0)
+                        val firstEnded = CompletableDeferred<Unit>()
+                        val body =
+                            object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                                override val contentLength: Long = size.toLong()
+
+                                override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                                    val attempt = started.addAndFetch(1)
+                                    try {
+                                        val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+                                        repeat(size / chunk.size) { channel.writeFully(chunk) }
+                                    } finally {
+                                        if (attempt == 1) firstEnded.complete(Unit)
+                                    }
+                                }
+                            }
+                        val text =
+                            withTimeoutOrNull(20.seconds) { c.post("https://127.0.0.1:$port/echo") { setBody(body) }.bodyAsText() }
+                                ?: fail("the call never ended (writers started: ${started.load()})")
+                        assertEquals(size, text.length, "the repeated request carried the whole body")
+                        assertTrue(fired.load(), "the first attempt was refused by the client's GOAWAY")
+                        assertEquals(2, started.load(), "each attempt ran its own writer")
+                        withTimeoutOrNull(5.seconds) { firstEnded.await() } ?: fail("the refused attempt's writer never ended")
+                        withTimeoutOrNull(5.seconds) {
+                            engine.h3.releasesForTest.first { engine.h3.activeForTest().all { (_, active) -> active == 0 } }
+                        } ?: fail("a connection is still counted in use after the call: ${engine.h3.activeForTest()}")
                     }
                 } finally {
                     ep.close()

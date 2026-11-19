@@ -1805,6 +1805,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webSocketWhileDisabledIsHttp3Disabled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webTransportConnectingWhenClosedFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webTransportSessionTrackedAfterCloseIsDrained
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.writerBodyOfARefusedAttemptEndsAndTheConnectionIsReleased
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.downloadSurvivesNetworkSwitch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.hookNotCalledWithoutHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.migratorClosedByCloseHttp3Connections

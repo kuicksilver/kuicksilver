@@ -1701,22 +1701,33 @@ internal class H3Pool(
         // the socket timeout measures inactivity (Ktor: "maximum time of inactivity between two data packets"): the body
         // goes out while the response is awaited, and every piece of it the stream takes restarts the timer
         val activity = data.socketTimeoutMillis()?.let { Activity() }
+        // this attempt's own channel when the body is replayable (bytes, or a writer started for this attempt alone): a retry
+        // or the fallback makes a new one. A streamed body's channel is the application's, the same for every attempt
+        val channel = bodyChannel(body, callContext)
         val response: Http3Response =
-            withSocketInactivityTimeout(data, activity) {
-                conn.request(
-                    http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
-                        headers =
-                            (headersOf(data, body) + Http3Headers(extraHeaders)).let { h ->
-                                val marked = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty()
-                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                                if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
-                            }
-                        this.body = bodyChannel(body, callContext)?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
-                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                        allowEarlyData = config.http3.earlyData
-                        priority = data.priority
-                    },
-                )
+            try {
+                withSocketInactivityTimeout(data, activity) {
+                    conn.request(
+                        http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
+                            headers =
+                                (headersOf(data, body) + Http3Headers(extraHeaders)).let { h ->
+                                    val marked = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty()
+                                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                    if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
+                                }
+                            this.body = channel?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
+                            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                            allowEarlyData = config.http3.earlyData
+                            priority = data.priority
+                        },
+                    )
+                }
+            } catch (e: Throwable) {
+                // a request refused before anything of it left (RequestNotProcessed.neverSent) keeps its body unread for the
+                // retry, so nothing ended this attempt's channel: a writer filling it waited forever in the call's context,
+                // and the call's Job, which releases the connection of the attempt that answered, never completed
+                if (body.isReplayable()) channel?.cancel(e)
+                throw e
             }
         data.attributes.put(PriorityUpdaterKey, response.priorityUpdater()) // for HttpResponse.updatePriority
         callContext[Job]?.invokeOnCompletion { cause ->
