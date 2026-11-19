@@ -602,7 +602,8 @@ message does not name the scheme a proxy URL from the environment gave: a user n
 `transport` is `Quic` or `Tcp`, `h3Failure` is HTTP/3's failure when TCP came after it, and `connectFailures` names each
 setup that failed with its stage and address (a QUIC one also with `quicProgress`: `NoPacketReceived` is UDP blocked or
 a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
-attempt it cut short: a `TlsHandshake` failure with `TlsException.AlertReceived`
+attempt it cut short, or as `NameLookup`, `PoolWait` or `H2DialWait` when the time went to waiting before any address
+was tried (`PoolWait`: raise `maxConnectionsPerRoute`, or find the calls holding the connections): a `TlsHandshake` failure with `TlsException.AlertReceived`
 (`protocol_version`) is a server without TLS 1.3 (allow TLS 1.2 on the client with `tls = { versions =
 TlsVersions.Tls12And13 }` if you must reach it); `TcpConnect` failures for every address mean nothing listens there or a
 firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).

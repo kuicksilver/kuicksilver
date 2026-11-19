@@ -36,8 +36,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `TcpConnect`, `ProxyHandshake`, `TlsHandshake` or `QuicHandshake`, address, cause). The new
   `KuicksilverEventListener.connectFailed` reports each one as it happens, so a TCP or TLS handshake that fails — a
   `protocol_version` alert from a TLS 1.2-only server, say — is reported with its address although `protocolSelected`
-  never comes for it. The connect timeout is reported too, per attempt it cut short and at the step it was in; a QUIC
-  failure says how far the handshake got (`QuicHandshakeProgress`: no packet from the server, or started); a handshake
+  never comes for it. The connect timeout is reported too, per attempt it cut short and at the step it was in, or as
+  what the time went to before an address was tried (`NameLookup`, `PoolWait`, `H2DialWait`); a QUIC failure says how
+  far the handshake got (`QuicHandshakeProgress`: no packet from the server, or started) and names its connection
+  (`connectionId`, tied to the attempt by the connection its own `connect` created, not by address); a handshake
   that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Ktor's
   `HttpRequestTimeoutException` carries the diagnostics like any other failure.
 

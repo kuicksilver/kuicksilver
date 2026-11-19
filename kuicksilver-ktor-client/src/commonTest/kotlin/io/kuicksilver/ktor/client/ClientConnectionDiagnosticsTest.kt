@@ -414,7 +414,7 @@ class ClientConnectionDiagnosticsTest {
             }
         }
 
-    /** A name lookup that never answers uses the whole connect timeout: one TcpConnect failure without an address. */
+    /** A name lookup that never answers uses the whole connect timeout: one NameLookup failure, without an address. */
     @Test fun negative_aLookupThatNeverAnswersIsATimeoutWithoutAnAddress() =
         clientTest {
             testClient(Http3DiscoveryMode.H1Only, engine = {
@@ -423,7 +423,7 @@ class ClientConnectionDiagnosticsTest {
             }).use { c ->
                 val e = assertFailsWith<ConnectTimeoutException> { c.get("https://never.test/") }
                 val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
-                assertEquals(ConnectStage.TcpConnect, f.stage)
+                assertEquals(ConnectStage.NameLookup, f.stage)
                 assertNull(f.address)
                 assertIs<ConnectTimeoutException>(f.cause)
             }
@@ -592,6 +592,94 @@ class ClientConnectionDiagnosticsTest {
                             engine.h3.afterAcquireForTest = null
                             done.complete(Unit)
                         }
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** The route's only connection slot is taken: the connect timeout is spent waiting for it, and says PoolWait. */
+    @Test fun negative_aConnectTimeoutWaitingForAPoolSlotSaysPoolWait() =
+        clientTest {
+            val reached = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(module = {
+                    routing {
+                        get("/slow") {
+                            reached.complete(Unit)
+                            release.await()
+                            call.respondText("late")
+                        }
+                    }
+                })
+            try {
+                testClient(Http3DiscoveryMode.H1Only, engine = {
+                    maxConnectionsPerRoute = 1
+                    connectTimeout = 500.milliseconds
+                    http2 { enabled = false }
+                }).use { c ->
+                    coroutineScope {
+                        val holder = async { c.get("https://127.0.0.1:$port/slow") }
+                        withTimeout(10.seconds) { reached.await() }
+                        val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/slow") }
+                        val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
+                        assertEquals(ConnectStage.PoolWait, f.stage)
+                        assertNull(f.address)
+                        release.complete(Unit)
+                        holder.await()
+                    }
+                }
+            } finally {
+                release.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Attack on how a QUIC failure finds its connection: two origins set up at once to one address, one whose certificate
+     * matches (`server.test`) and one whose does not (`other.test`). The failure names the connection its own setup made,
+     * the one the listener saw closed by the TLS failure, never the other origin's.
+     */
+    @Test fun twoSetupsToOneAddressEachNameTheirOwnConnection() =
+        h3Test {
+            val (server, port) = testServer(module = okServer())
+            val heard = Heard()
+            val closedByTls = AtomicReference(emptyList<String>())
+            val quic =
+                object : ConnectionListener {
+                    override fun onClosed(
+                        connection: ConnectionInfo,
+                        reason: QuicException.ConnectionLost,
+                    ) {
+                        if (reason is QuicException.ConnectionLost.TransportClosed && reason.code in 0x100L..0x1ffL) {
+                            closedByTls.update { it + connection.id }
+                        }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    eventListener = heard
+                    http3 { connectionListener = quic }
+                    resolverForTest = { _, p ->
+                        listOf(
+                            io.kuicksilver.ktor.network
+                                .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                        )
+                    }
+                }).use { c ->
+                    coroutineScope {
+                        val good = async { c.get("https://server.test:$port/") }
+                        val bad = async { runCatching { c.get("https://other.test:$port/") }.exceptionOrNull() }
+                        val ok = assertIs<QuicConnectionSnapshot>(good.await().kuicksilverDiagnostics?.connection)
+                        val e = assertNotNull(bad.await(), "other.test does not match the certificate")
+                        val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
+                        assertEquals(ConnectStage.QuicHandshake, f.stage)
+                        assertEquals(QuicHandshakeProgress.HandshakeStarted, f.quicProgress)
+                        val id = assertNotNull(f.connectionId)
+                        assertTrue(id != ok.info?.id, "the failure names the other origin's connection")
+                        withTimeout(10.seconds) { while (id !in closedByTls.load()) kotlinx.coroutines.yield() }
                     }
                 }
             } finally {

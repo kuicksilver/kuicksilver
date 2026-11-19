@@ -22,6 +22,9 @@ final enum class io.kuicksilver.ktor.client/AlternativeSource : kotlin/Enum<io.k
 }
 
 final enum class io.kuicksilver.ktor.client/ConnectStage : kotlin/Enum<io.kuicksilver.ktor.client/ConnectStage> { // io.kuicksilver.ktor.client/ConnectStage|null[0]
+    enum entry H2DialWait // io.kuicksilver.ktor.client/ConnectStage.H2DialWait|null[0]
+    enum entry NameLookup // io.kuicksilver.ktor.client/ConnectStage.NameLookup|null[0]
+    enum entry PoolWait // io.kuicksilver.ktor.client/ConnectStage.PoolWait|null[0]
     enum entry ProxyHandshake // io.kuicksilver.ktor.client/ConnectStage.ProxyHandshake|null[0]
     enum entry QuicHandshake // io.kuicksilver.ktor.client/ConnectStage.QuicHandshake|null[0]
     enum entry TcpConnect // io.kuicksilver.ktor.client/ConnectStage.TcpConnect|null[0]
@@ -239,6 +242,8 @@ final class io.kuicksilver.ktor.client/ConnectFailure { // io.kuicksilver.ktor.c
         final fun <get-address>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/ConnectFailure.address.<get-address>|<get-address>(){}[0]
     final val cause // io.kuicksilver.ktor.client/ConnectFailure.cause|{}cause[0]
         final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.ktor.client/ConnectFailure.cause.<get-cause>|<get-cause>(){}[0]
+    final val connectionId // io.kuicksilver.ktor.client/ConnectFailure.connectionId|{}connectionId[0]
+        final fun <get-connectionId>(): kotlin/String? // io.kuicksilver.ktor.client/ConnectFailure.connectionId.<get-connectionId>|<get-connectionId>(){}[0]
     final val quicProgress // io.kuicksilver.ktor.client/ConnectFailure.quicProgress|{}quicProgress[0]
         final fun <get-quicProgress>(): io.kuicksilver.ktor.client/QuicHandshakeProgress? // io.kuicksilver.ktor.client/ConnectFailure.quicProgress.<get-quicProgress>|<get-quicProgress>(){}[0]
     final val stage // io.kuicksilver.ktor.client/ConnectFailure.stage|{}stage[0]

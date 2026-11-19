@@ -314,76 +314,6 @@ internal class H3Pool(
      */
     private val tickets = io.kuicksilver.tls.SessionCache()
 
-    /** The QUIC attempts of setups in progress, each waiting for the connection its endpoint opens ([AttemptListener]). */
-    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private val attemptsInFlight = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
-
-    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private fun inFlight(
-        a: QuicAttemptProgress,
-        add: Boolean,
-    ) {
-        while (true) {
-            val now = attemptsInFlight.load()
-            if (attemptsInFlight.compareAndSet(now, if (add) now + a else now - a)) return
-        }
-    }
-
-    /**
-     * The engine's endpoint listener: the application's `connectionListener` (every callback goes to it as it is), and
-     * before it, at each client connection's [io.kuicksilver.quic.ConnectionListener.onOpened], the setup attempt that
-     * connection belongs to learns its handle, so a failed or timed-out handshake can say how far it got. One lookup per
-     * connection opened, nothing per packet.
-     */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private inner class AttemptListener(
-        private val user: io.kuicksilver.quic.ConnectionListener?,
-    ) : io.kuicksilver.quic.ConnectionListener {
-        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-        override fun onOpened(connection: io.kuicksilver.quic.ConnectionInfo) {
-            if (connection.role == io.kuicksilver.tls.TlsRole.Client) {
-                val r = connection.remoteAddress
-                for (a in attemptsInFlight.load()) {
-                    val to = a.remote ?: continue
-                    if ((to === r || to == r) && a.info.compareAndSet(null, connection)) break
-                }
-            }
-            user?.onOpened(connection)
-        }
-
-        override fun onHandshakeCompleted(connection: io.kuicksilver.quic.ConnectionInfo) {
-            user?.onHandshakeCompleted(connection)
-        }
-
-        override fun onZeroRtt(
-            connection: io.kuicksilver.quic.ConnectionInfo,
-            outcome: io.kuicksilver.quic.ZeroRttOutcome,
-        ) {
-            user?.onZeroRtt(connection, outcome)
-        }
-
-        override fun onPathChanged(
-            connection: io.kuicksilver.quic.ConnectionInfo,
-            change: io.kuicksilver.quic.PathEvent.Changed,
-        ) {
-            user?.onPathChanged(connection, change)
-        }
-
-        override fun onPathsUpdated(
-            connection: io.kuicksilver.quic.ConnectionInfo,
-            paths: List<io.kuicksilver.quic.PathInfo>,
-        ) {
-            user?.onPathsUpdated(connection, paths)
-        }
-
-        override fun onClosed(
-            connection: io.kuicksilver.quic.ConnectionInfo,
-            reason: io.kuicksilver.quic.QuicException.ConnectionLost,
-        ) {
-            user?.onClosed(connection, reason)
-        }
-    }
-
     /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
@@ -391,7 +321,7 @@ internal class H3Pool(
             .toBuilder()
             .apply {
                 config.logger?.let { logger = it }
-                listener = AttemptListener(config.http3.connectionListener ?: config.http3.endpoint.listener)
+                config.http3.connectionListener?.let { listener = it }
                 connectionIdLength = this@H3Pool.connectionIdLength
                 sessionCache = tickets
             }.build()
@@ -1276,7 +1206,7 @@ internal class H3Pool(
                         data,
                         io.kuicksilver.ktor.client.ConnectFailure(
                             io.kuicksilver.ktor.client.Transport.Quic,
-                            io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
+                            io.kuicksilver.ktor.client.ConnectStage.NameLookup,
                             null,
                             false,
                             timeout,
@@ -1335,13 +1265,11 @@ internal class H3Pool(
         wt: Boolean,
     ): Http3Connection {
         val (ep, remote) = endpointFor(a.destination)
-        // known before the endpoint opens the connection: its listener's onOpened finds the attempt by this address
-        a.remote = remote
-        inFlight(a, add = true)
-        try {
-            return connectAttempt(t, ep, remote, data, wt)
-        } finally {
-            inFlight(a, add = false)
+        // the connection this very call creates tells the attempt its handle (by identity, not by address: two setups to
+        // one address from different origins never mix up)
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.compareAndSet(null, it) }) {
+            connectAttempt(t, ep, remote, data, wt)
         }
     }
 
@@ -2186,15 +2114,13 @@ internal fun h3WebSocketStreamEnd(
     )
 
 /**
- * One QUIC attempt of a setup race ([H3Pool]): where it goes ([destination], then the literal the endpoint sends to,
- * [remote]), the connection its endpoint opened for it once the listener heard of it ([info]), and whether it was cancelled.
+ * One QUIC attempt of a setup race ([H3Pool]): where it goes ([destination]), the connection its `connect` call created
+ * ([info], from [io.kuicksilver.quic.ConnectionCreated]), and whether it was cancelled.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class QuicAttemptProgress(
     val destination: InetSocketAddress,
 ) {
-    @kotlin.concurrent.Volatile var remote: InetSocketAddress? = null
-
     val info = kotlin.concurrent.atomics.AtomicReference<io.kuicksilver.quic.ConnectionInfo?>(null)
 
     @kotlin.concurrent.Volatile var cancelled = false
@@ -2218,5 +2144,6 @@ internal class QuicAttemptProgress(
             false,
             cause,
             progress(),
+            info.load()?.id,
         )
 }

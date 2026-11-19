@@ -713,7 +713,9 @@ internal class H1Pool(
                                     return@attempt
                                 }
                             }
+                            progress.stage = io.kuicksilver.ktor.client.ConnectStage.PoolWait
                             val got = acquireOrChange(key, signal, seen)
+                            progress.stage = null
                             if (got === CHANGED) continue
                             if (got is H1Connection) {
                                 conn = got
@@ -727,7 +729,9 @@ internal class H1Pool(
                             beforeDialForTest?.invoke()
                             if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
                                 pool.releasePermit(key)
+                                progress.stage = io.kuicksilver.ktor.client.ConnectStage.H2DialWait
                                 signal.first { it > seen }
+                                progress.stage = null
                                 continue
                             }
                             val dialer = offerH2 && signal != null
@@ -1522,6 +1526,8 @@ internal class H1Pool(
         progress: TcpProgress? = null,
     ): PooledConnection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        progress?.stage = io.kuicksilver.ktor.client.ConnectStage.NameLookup // until an address is tried
         // through socks5:// (names resolved here) each address of the origin in turn while the proxy answers "network
         // unreachable" or "host unreachable" (RFC 1928 section 6, REP 3 and 4), each on a new connection to the proxy
         val socksTargets =
@@ -1970,7 +1976,10 @@ internal class TcpProgress {
 
     @kotlin.concurrent.Volatile private var address: io.ktor.network.sockets.InetSocketAddress? = null
 
-    /** The step on the connected socket; null before one is connected, and once the connection is set up. */
+    /**
+     * What the setup is doing: a wait before any address ([io.kuicksilver.ktor.client.ConnectStage.PoolWait],
+     * `H2DialWait`, `NameLookup`), or the step on the connected socket (`ProxyHandshake`, `TlsHandshake`); null once set up.
+     */
     @kotlin.concurrent.Volatile var stage: io.kuicksilver.ktor.client.ConnectStage? = null
 
     fun trying(
@@ -2000,16 +2009,20 @@ internal class TcpProgress {
     }
 
     /**
-     * The connect timeout ended the setup with [timeout]: one failure for the step on the connected socket, else one per
-     * address still being connected to, else one without an address (the lookup or the wait for a connection used the time).
+     * The connect timeout ended the setup with [timeout]: one per address still being connected to, else one for the step
+     * on the connected socket (its address), else one for what the time went to before an address was tried (the lookup, a
+     * pool slot, another request's HTTP/2 connect).
      */
     fun timedOut(timeout: Throwable): List<io.kuicksilver.ktor.client.ConnectFailure> {
         val step = stage
         val trying = connecting.load()
+        val waiting =
+            step == io.kuicksilver.ktor.client.ConnectStage.NameLookup || step == io.kuicksilver.ktor.client.ConnectStage.PoolWait ||
+                step == io.kuicksilver.ktor.client.ConnectStage.H2DialWait
         val reports =
             when {
-                step != null -> listOf(step to address)
-                trying.isNotEmpty() -> trying.map { io.kuicksilver.ktor.client.ConnectStage.TcpConnect to it }
+                trying.isNotEmpty() && (step == null || waiting) -> trying.map { io.kuicksilver.ktor.client.ConnectStage.TcpConnect to it }
+                step != null -> listOf(step to if (waiting) null else address)
                 else -> listOf(io.kuicksilver.ktor.client.ConnectStage.TcpConnect to null)
             }
         return reports.map { (st, a) ->

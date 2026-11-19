@@ -2252,13 +2252,15 @@ exception or one of its causes) is the call's `ProtocolDiagnostics`, which the r
 - `connection` is the connection the failure came from, when one was up: a `TcpConnectionSnapshot` with a null
   `protocol` when its TLS handshake failed.
 - `connectFailures` lists every connection setup that failed for the call, in order: each a `ConnectFailure` with the
-  `transport`, the `stage` (`TcpConnect`, `ProxyHandshake`, `TlsHandshake`, `QuicHandshake`), the `address` tried and the
+  `transport`, the `stage` (`TcpConnect`, `ProxyHandshake`, `TlsHandshake`, `QuicHandshake`, or a wait below), the `address` tried and the
   `cause`. A TLS 1.2-only server's answer to this client's TLS 1.3 ClientHello, for example, is a `TlsHandshake` failure
   whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. A QUIC failure says how far the
-  handshake got (`quicProgress`: `NoPacketReceived` — UDP blocked or the server silent — or `HandshakeStarted`). The
+  handshake got (`quicProgress`: `NoPacketReceived` — UDP blocked or the server silent — or `HandshakeStarted`) and
+  names the connection by its `connectionId` (the `ConnectionInfo.id` the `connectionListener` and qlog use). The
   connect timeout is a failure too: one per attempt it cut short, at the step it was in (`TcpConnect`, `TlsHandshake`,
-  `QuicHandshake`...), with the call's `ConnectTimeoutException` as the cause, or one without an address when the name
-  lookup or the wait for a pooled connection used the time. Attempts the engine cancelled because another won (the
+  `QuicHandshake`...), with the call's `ConnectTimeoutException` as the cause, or one without an address naming what
+  the time went to before any address was tried: `NameLookup`, `PoolWait` (every connection slot of the route,
+  `maxConnectionsPerRoute`, in use) or `H2DialWait` (another request's HTTP/2 connect to the route). Attempts the engine cancelled because another won (the
   address race, the HTTP/3 and TCP race) are not failures. With `earlyData`, a handshake that fails after the request
   went out in 0-RTT is reported when it fails, which may be after the call ended.
 

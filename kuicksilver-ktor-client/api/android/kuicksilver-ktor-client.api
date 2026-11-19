@@ -45,6 +45,7 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 public final class io/kuicksilver/ktor/client/ConnectFailure {
 	public final fun getAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getConnectionId ()Ljava/lang/String;
 	public final fun getQuicProgress ()Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
 	public final fun getStage ()Lio/kuicksilver/ktor/client/ConnectStage;
 	public final fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
@@ -53,6 +54,9 @@ public final class io/kuicksilver/ktor/client/ConnectFailure {
 }
 
 public final class io/kuicksilver/ktor/client/ConnectStage : java/lang/Enum {
+	public static final field H2DialWait Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field NameLookup Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field PoolWait Lio/kuicksilver/ktor/client/ConnectStage;
 	public static final field ProxyHandshake Lio/kuicksilver/ktor/client/ConnectStage;
 	public static final field QuicHandshake Lio/kuicksilver/ktor/client/ConnectStage;
 	public static final field TcpConnect Lio/kuicksilver/ktor/client/ConnectStage;

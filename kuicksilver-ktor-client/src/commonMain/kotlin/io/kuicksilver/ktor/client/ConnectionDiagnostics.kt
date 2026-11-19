@@ -109,9 +109,24 @@ public class TcpConnectionSnapshot internal constructor(
             "viaProxy=$viaProxy, reused=$reused)"
 }
 
-/** Where a connection setup failed ([ConnectFailure.stage]). */
+/**
+ * Where a connection setup failed ([ConnectFailure.stage]). The first three name what a connect timeout spent its time
+ * waiting for before any address was tried; the others are steps with an address.
+ */
 @ExperimentalKuicksilverApi
 public enum class ConnectStage {
+    /** The name lookup of the host (or of the proxy) had not given an address to try yet. */
+    NameLookup,
+
+    /** A connection slot of the route (`maxConnectionsPerRoute`): every one was in use, and none came free in time. */
+    PoolWait,
+
+    /**
+     * Another request's HTTP/2 connect to the route (one at a time, RFC 9113 section 9.1): this request waited for it to
+     * share that connection, and it did not come in time.
+     */
+    H2DialWait,
+
     /** The TCP connect to one address (refused, unreachable, reset). */
     TcpConnect,
 
@@ -140,8 +155,8 @@ public enum class QuicHandshakeProgress {
  * whether or not the call then succeeded another way (another address, the other transport). An attempt the engine
  * cancelled because another one won (the address race, the HTTP/3 and TCP race) is no failure and is not reported. The
  * connect timeout ending a setup is one: reported with the call's `ConnectTimeoutException` as [cause], once per attempt
- * still running then (or once, with a null [address], when none had started: the name lookup or the wait for a pooled
- * connection used the time).
+ * still running then, at its step; or once, without an [address], at what the time went to before any address was tried
+ * ([ConnectStage.NameLookup], [ConnectStage.PoolWait], [ConnectStage.H2DialWait]).
  *
  * @property transport [Transport.Tcp] or [Transport.Quic].
  * @property stage Where it failed (for a timeout: the step the attempt was in).
@@ -153,6 +168,9 @@ public enum class QuicHandshakeProgress {
  *   call's `ConnectTimeoutException`; for a QUIC handshake that timed out on its own a `QuicException.ConnectionLost.Timeout`.
  * @property quicProgress For a [ConnectStage.QuicHandshake] failure, how far the handshake got: no packet from the server,
  *   or started; null for TCP, and when the connection was never opened (the endpoint could not be bound).
+ * @property connectionId For a [ConnectStage.QuicHandshake] failure, the [io.kuicksilver.quic.ConnectionInfo.id] of the
+ *   QUIC connection this attempt made (the original destination connection ID, the name `connectionListener` and qlog
+ *   know it by), taken from the connection the attempt's own `connect` created; null for TCP and when none was made.
  */
 @ExperimentalKuicksilverApi
 public class ConnectFailure internal constructor(
@@ -162,6 +180,7 @@ public class ConnectFailure internal constructor(
     public val viaProxy: Boolean,
     public val cause: Throwable,
     public val quicProgress: QuicHandshakeProgress? = null,
+    public val connectionId: String? = null,
 ) {
     /** For logs: `TlsHandshake to 192.0.2.1:443 failed: AlertReceived: ...`. */
     override fun toString(): String =
