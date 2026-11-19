@@ -523,10 +523,10 @@ class RapidResetTest {
             QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
-                var started: kotlinx.coroutines.Job? = null
+                val started = kotlin.concurrent.atomics.AtomicReference<kotlinx.coroutines.Job?>(null)
                 server.session.stopWatchStartedForTest = { req, watch ->
                     req.responseComplete() // as the writer's thread would, before the watch is stored
-                    started = watch
+                    started.store(watch)
                 }
                 val raw = RawPeer(c)
                 raw.openControl()
@@ -534,10 +534,10 @@ class RapidResetTest {
                 st.output.writeFully(raw.headers(st.id, GET))
                 st.output.flushAndClose()
                 val r = withTimeout(10.seconds) { server.acceptRequest() } as ServerRequestImpl
-                awaitCondition("the watch's start") { started != null }
+                awaitCondition("the watch's start") { started.load() != null }
                 assertTrue(r.respondedInFull)
-                awaitCondition("the watch ending") { started!!.isCompleted }
-                assertTrue(started!!.isCancelled, "the starter cancelled the watch of a response complete before it was stored")
+                awaitCondition("the watch ending") { started.load()!!.isCompleted }
+                assertTrue(started.load()!!.isCancelled, "the starter cancelled the watch of a response complete before it was stored")
                 assertEquals(null, r.stopWatch)
                 server.close()
             }
