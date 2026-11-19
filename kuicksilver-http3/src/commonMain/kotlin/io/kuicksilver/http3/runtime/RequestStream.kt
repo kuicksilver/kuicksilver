@@ -23,10 +23,14 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 
-/** A failure confined to one stream (RFC 9114 section 8): abort it with [code] and give the application [error]. */
+/**
+ * A failure confined to one stream (RFC 9114 section 8): abort it with [code] and give the application [error].
+ * [byPeer]: what the peer sent caused it (a malformed message), not our own clock (a field section past its deadline).
+ */
 internal class StreamFailure(
     val code: Long,
     val error: Throwable,
+    val byPeer: Boolean = true,
 ) : Exception(error)
 
 internal const val CHUNK = 16_384
@@ -224,9 +228,10 @@ internal suspend fun H3Session.pumpBody(
         out.cancel(e.error)
         trailers.completeExceptionally(e.error)
         // server: a request handed to the application that the client made us reset (content-length broken, trailers too
-        // large) is a glitch, as a malformed head is (RFC 9114 section 10.5; MadeYouReset, CVE-2025-8671); last: an empty
-        // budget ends the connection
-        if (abandoned != null) glitch("a malformed request (${e.code})")
+        // large) is a glitch, as a malformed head is (RFC 9114 section 10.5; MadeYouReset, CVE-2025-8671); trailers past
+        // their deadline are not (our clock cancelled them; a lossy link delays them too). Last: an empty budget ends the
+        // connection
+        if (abandoned != null && e.byPeer) glitch("a malformed request (${e.code})")
     } catch (
         e: IncompleteFrame,
     ) {
