@@ -50,9 +50,13 @@ class ServerConnectUdpTest {
     /** A proxy that may reach 127.0.0.1 only (tests), on sockets bound there. */
     private fun loopbackProxy() =
         UdpProxy(
-            UdpProxyConfig(targetFilter = UdpTargetFilter.addresses("127.0.0.1"), refuseOwnAddresses = false, socketFactory = {
-                DatagramIo.open(loopback)
-            }),
+            UdpProxyConfig(
+                targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
+                refuseOwnAddresses = false,
+                // no real ICMP Packet Too Big to 127.0.0.1: it would lower the kernel's cached path MTU there for later tests
+                packetTooBig = false,
+                socketFactory = { DatagramIo.open(loopback) },
+            ),
         )
 
     private suspend fun <T> h3(

@@ -35,6 +35,7 @@ import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.PacketTooBigSender
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
 import kotlinx.coroutines.CancellationException
@@ -97,7 +98,12 @@ internal class ProxyRig(
                 val io = pair.quic.net.open(InetSocketAddress("10.0.0.2", nextPort.incrementAndFetch()))
                 ClosingIo(io) { socketsClosed.trySend(io.localAddress) }.also { sockets += it }
             },
-        )
+        ).also {
+            // tests send no ICMP: as root (the local matrix's containers) the real probe opens a raw socket, and a real Packet
+            // Too Big lowers the kernel's cached path MTU of its destination for every later test in that network namespace;
+            // a test of RFC 9298 section 6.1 sets its own probe and sender (LinuxIcmpCheckTest alone sends real ones)
+            it.impl.probeForTest = { PacketTooBigSender.Probe(false, "tests send no ICMP") }
+        }
 
     /** The address of the [n]th socket the proxy opened (from 1). */
     fun proxySocket(n: Int): InetSocketAddress = InetSocketAddress("10.0.0.2", 40_000 + n)

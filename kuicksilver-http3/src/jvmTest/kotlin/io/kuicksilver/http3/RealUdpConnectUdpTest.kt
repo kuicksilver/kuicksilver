@@ -53,6 +53,8 @@ class RealUdpConnectUdpTest {
                 UdpProxyConfig(
                     targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
                     refuseOwnAddresses = false, // proxy and target share this host's loopback by construction
+                    // no real ICMP Packet Too Big to 127.0.0.1: it would lower the kernel's cached path MTU there for later tests
+                    packetTooBig = false,
                     socketFactory = { DatagramIo.open(loopback).also { opened += it } },
                 ),
             )

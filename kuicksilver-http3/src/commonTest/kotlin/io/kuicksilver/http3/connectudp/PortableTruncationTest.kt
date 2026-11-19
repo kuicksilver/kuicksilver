@@ -30,11 +30,12 @@ import kotlin.time.Duration.Companion.seconds
  * datagram to their slot; the proxy's slot is one byte longer than the link carries, so a cut one is recognised. HTTP/3
  * datagrams are off, so a payload of any size would reach the client as a DATAGRAM capsule.
  *
- * The oversized datagram must still leave the target's socket: that socket sets DF (RFC 9000 section 14), so a send larger
- * than the path MTU the kernel knows fails with EMSGSIZE ("Message too long") instead of being fragmented; the Linux
- * containers of the local matrix refused 1600 bytes so. The proxy therefore runs at the smallest link MTU it accepts (1280)
- * and the target sends [OVERSIZED] bytes: above that MTU, yet within any path of at least an Ethernet MTU (1500 - 20 - 8
- * bytes of IPv4 and UDP headers = 1472), and far below the 65507-byte UDP maximum.
+ * The oversized datagram must leave the target's socket, which sets DF (RFC 9000 section 14): a send above the path MTU the
+ * kernel has cached for 127.0.0.1 fails with EMSGSIZE ("Message too long"). In the local matrix's Linux containers (root)
+ * earlier proxy tests once sent real ICMP Packet Too Big messages to 127.0.0.1, which lowered that cache for ten minutes;
+ * the tests are hermetic now (only `LinuxIcmpCheckTest` sends real ICMP). The proxy runs at the smallest link MTU it
+ * accepts (1280) and the target sends [OVERSIZED] bytes: above that MTU, within any path of at least an Ethernet MTU
+ * (1500 - 20 - 8 bytes of IPv4 and UDP headers = 1472), and far below the 65507-byte UDP maximum.
  */
 class PortableTruncationTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -89,7 +90,7 @@ class PortableTruncationTest {
     private companion object {
         const val LINK_MTU = 1280
 
-        /** Above [LINK_MTU] (and the proxy's receive slot of `LINK_MTU + 1`), within a 1500-byte loopback with DF set. */
+        /** Above [LINK_MTU] (and the proxy's receive slot of `LINK_MTU + 1`), within a path of an Ethernet MTU with DF set. */
         const val OVERSIZED = 1400
     }
 }
