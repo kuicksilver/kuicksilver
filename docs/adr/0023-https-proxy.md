@@ -85,3 +85,10 @@ or the wrong trust (CWE-295) would hand the CONNECT, the credentials and the ori
   `https://` proxy there comes from a resolver. What `ProxySelector.getDefault()` answers on the JVM and Android is a `java.net.Proxy` too, so
   `ProxyResolvers.System` there never yields an `https://` proxy.
 - HTTP/2 to the proxy can be added later behind an option without changing this API.
+- The QUIC hop to a CONNECT-UDP proxy (`connectUdpProxy`, RFC 9298) follows this decision too (amended 2026-11-20):
+  its TLS configuration is the proxy's (`proxyTlsConfigFor`), with the proxy's host as SNI and reference identifier,
+  `proxyTls` or the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxyTls` sets one,
+  and ALPN `h3` instead of `http/1.1`; a failed handshake with it is `ProxyTlsException`, and its connections leave from
+  endpoints of their own whose session tickets are the proxies'. Before, never released, it took the origin's
+  configuration, client certificate included (threat model 3.29). The origin's connection inside the tunnel keeps the
+  origin's configuration.

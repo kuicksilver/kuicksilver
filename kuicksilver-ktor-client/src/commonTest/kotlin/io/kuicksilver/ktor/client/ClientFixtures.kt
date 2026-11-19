@@ -48,6 +48,8 @@ internal suspend fun testServer(
     port: Int = 0,
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
     log: CapturedLog? = null,
+    /** Applied to the TLS connector after its host and port (another identity, `clientAuth`...); unused when [plain]. */
+    tls: io.kuicksilver.ktor.server.KuicksilverTlsConnector.Builder.() -> Unit = {},
     module: Application.() -> Unit,
 ): Pair<TestServer, Int> {
     val configuration: KuicksilverApplicationEngine.Configuration.() -> Unit = {
@@ -60,6 +62,7 @@ internal suspend fun testServer(
             tlsConnector(ClientFixtures.identity()) {
                 this.host = host
                 this.port = port
+                tls()
             }
         }
         configure()

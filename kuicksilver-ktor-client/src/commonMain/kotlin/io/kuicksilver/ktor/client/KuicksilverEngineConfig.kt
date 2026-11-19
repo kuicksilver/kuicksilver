@@ -414,13 +414,13 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var proxyCredentials: ProxyCredentials? = null
 
     /**
-     * The TLS settings of connections to an `https://` proxy ([ResolvedProxy.https]: TLS to the proxy itself), separate
-     * from the origin's. Null (the default) takes the origin's: the [tls] block over [trust], then that trust without
+     * The TLS settings of connections to an `https://` proxy ([ResolvedProxy.https]: TLS to the proxy itself) and of the
+     * QUIC connections to a [connectUdpProxy], separate from the origin's. Null (the default) takes the origin's: the [tls] block over [trust], then that trust without
      * what names the origin (a `TrustConfig.ExpectedName` gives way to its base, a `TrustConfig.Pinned` to its base: the
      * proxy has another name and another key), and no client certificate ([identity] is the origin's and is not shown to
      * the proxy). A block starts from that same trust and no identity and may set anything (`trust`, `identity` for a
      * proxy that wants a client certificate, `versions`...). Whatever it says, the server name, which is both SNI and
-     * the name the certificate is verified against (RFC 9525), is the proxy's host and ALPN offers `http/1.1` only; set
+     * the name the certificate is verified against (RFC 9525), is the proxy's host and ALPN offers `http/1.1` only (`h3` to a CONNECT-UDP proxy); set
      * after the block. The origin's TLS inside the proxy's tunnel keeps [trust], [identity] and [tls], as without a
      * proxy. docs/guide/ktor.md, "Proxies".
      */
@@ -446,7 +446,9 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * (`Http3Exception.ConnectRejected` with its `proxy-status`), under `http3 { discovery = H1Only }` or while
      * `http3Allowed` says no (UnsupportedOperationException). `Alt-Svc` is neither used nor learned for it, and the origin's
      * name is resolved by the proxy, not here. WebTransport refuses such URLs unless `http3 { webTransportIgnoresConnectUdpProxy }`.
-     * docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
+     * The QUIC connection to the proxy itself has [proxyTls] (by default the origin's trust without what names the origin,
+     * and no client certificate), as an `https://` proxy; the origin's connection inside the tunnel has [trust],
+     * [identity] and [tls]. docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
      */
     @ExperimentalKuicksilverApi
     public var connectUdpProxy: ConnectUdpProxy? = null

@@ -1957,8 +1957,13 @@ val overTls = HttpClient(Kuicksilver) {
 `connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
 origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
 origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). The proxy is
-reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
-tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+reached directly over HTTP/3 (its template's authority, port 443 when it names none) with the proxy's TLS settings, as
+an `https://` proxy over TCP ([Proxies](#proxies)): `proxyTls`, or by default the engine's trust without an
+`ExpectedName` or pins and without the client certificate (`identity` goes to the origin only); the certificate is
+verified against the proxy's host, and a failed handshake with the proxy is a `ProxyTlsException`. Each tunnelled
+connection has its own connection to the proxy, closed with it; connections to proxies keep their session tickets apart
+from those to origins. Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
+direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
 What it changes, for the `https` URLs its `applies` admits (all of them by default):

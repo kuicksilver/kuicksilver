@@ -2719,6 +2719,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   work (STOP_SENDING and a reset with `H3_REQUEST_CANCELLED`); before, such a request stayed open with its receive half
   for the connection's life and held off the GOAWAY idle close. Released 0.2.1 has no limit on HTTP/3 request resets at
   all (see the Rapid Reset entry below).
+- Ktor client, CONNECT-UDP proxy (`connectUdpProxy`): the QUIC connection to the proxy itself was set up with the
+  origin's TLS configuration. The origin's client certificate (`identity`) was presented to the proxy, a third party
+  (CWE-200); the origin's pins (`TrustConfig.Pinned`) were applied to the proxy, which failed every request through a
+  proxy with another key, and the origin's `TrustConfig.ExpectedName` replaced the proxy's name, so a proxy presenting
+  the origin's certificate passed; `proxyTls` was ignored. The proxy hop now takes the proxy's own configuration exactly
+  as the TCP hop to an `https://` proxy does (ADR-0023): the proxy's host as SNI and reference identifier, `proxyTls` or
+  by default the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxyTls` sets one,
+  ALPN `h3`; a failed handshake with the proxy is `ProxyTlsException`. Its connections leave from endpoints of their own
+  whose TLS session tickets are the proxies', never the origins'. The origin's connection inside the tunnel keeps the
+  origin's client certificate, trust and pins (threat model 3.29). 0.2.x is not affected: CONNECT-UDP is new in this
+  release.
 - Ktor client on Android: the Network Security Configuration was asked about the host of an `http://` or `ws://` URL
   as written, and it matches strings, so a rule for an address was passed by another spelling of it (`127.1` or
   `2130706433` for `127.0.0.1`, `[0:0:0:0:0:0:0:1]` for `::1`, `[::ffff:192.168.1.1]` for `192.168.1.1`). It is now

@@ -58,6 +58,7 @@ import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.priorityUpdater
+import io.kuicksilver.ktor.client.proxyTlsConfigFor
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
@@ -351,21 +352,53 @@ internal class H3Pool(
         }
     }
 
-    /** The endpoint of every destination that is not a loopback address: the wildcard address, dual-stack. */
-    @kotlin.concurrent.Volatile
-    private var endpoint: Http3Endpoint? = null
+    /**
+     * One set of endpoints, each bound at its first use ([endpointFor]) with [config]: [wildcard] for every destination
+     * that is not a loopback address (dual-stack), and [loopback4] and [loopback6] for loopback destinations, on 127.0.0.1
+     * and ::1: a socket on the wildcard address shares its port with a socket another local process holds on the loopback
+     * address (BSD sockets: macOS, iOS), and the kernel even hands a wildcard bind such a port, so the replies of a server
+     * on localhost would reach that process ([loopbackLocalFor]).
+     */
+    private class Endpoints(
+        val config: io.kuicksilver.quic.QuicEndpointConfig,
+    ) {
+        @kotlin.concurrent.Volatile
+        var wildcard: Http3Endpoint? = null
+
+        @kotlin.concurrent.Volatile
+        var loopback4: Http3Endpoint? = null
+
+        @kotlin.concurrent.Volatile
+        var loopback6: Http3Endpoint? = null
+
+        val bound: Boolean get() = wildcard != null || loopback4 != null || loopback6 != null
+
+        fun close() {
+            wildcard?.close()
+            wildcard = null
+            loopback4?.close()
+            loopback4 = null
+            loopback6?.close()
+            loopback6 = null
+        }
+    }
+
+    /** The endpoints of the connections to origins (direct ones), with the pool's [tickets]. */
+    private val direct = Endpoints(endpointConfig)
 
     /**
-     * The endpoints of loopback destinations, on 127.0.0.1 and ::1, each bound at its first use: a socket on the wildcard
-     * address shares its port with a socket another local process holds on the loopback address (BSD sockets: macOS, iOS),
-     * and the kernel even hands a wildcard bind such a port, so the replies of a server on localhost would reach that process
-     * ([loopbackLocalFor]).
+     * The session tickets of the connections to CONNECT-UDP proxies, apart from [tickets] (as the TCP hop's `proxySessions`,
+     * ADR-0023): a proxy's ticket never goes to an origin nor an origin's to a proxy, whatever their names (one host can be
+     * both). Closed by [closeSessions] after the endpoints.
      */
-    @kotlin.concurrent.Volatile
-    private var loopback4: Http3Endpoint? = null
+    private val proxyTickets = io.kuicksilver.tls.SessionCache()
 
-    @kotlin.concurrent.Volatile
-    private var loopback6: Http3Endpoint? = null
+    /**
+     * The endpoints of the connections to CONNECT-UDP proxies ([connectThroughUdpProxy]), with [proxyTickets]: an endpoint's
+     * session cache is the one its connections resume from.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val proxyHop = Endpoints(endpointConfig.toBuilder().apply { sessionCache = proxyTickets }.build())
 
     /** Test hook (this pool's): runs with each destination of a connection attempt and the endpoint chosen for it. */
     internal var endpointChosenForTest: ((InetSocketAddress, Http3Endpoint) -> Unit)? = null
@@ -415,12 +448,16 @@ internal class H3Pool(
     /**
      * The endpoint a connection to [remote] (an address literal) leaves from, and the address it connects to: the one bound
      * to the loopback address of its family for a loopback destination (127.0.0.0/8 and its IPv4-mapped form, sent to as
-     * IPv4; ::1), else the shared one on the wildcard address and [remote] as it is. Each is bound once,
-     * at its first use, and closed with the pool. The endpoints share the pool's [tickets], so a session ticket resumes
-     * whichever endpoint the next connection to that server leaves from; Alt-Svc entries, the address race and the pooled
+     * IPv4; ::1), else the shared one on the wildcard address and [remote] as it is, from [set]: the origins' ([direct]) or
+     * the CONNECT-UDP proxies' ([proxyHop]). Each is bound once, at its first use, and closed with the pool. The endpoints
+     * of a set share its session cache (the pool's [tickets] for [direct]), so a session ticket resumes whichever endpoint
+     * the next connection to that server leaves from; Alt-Svc entries, the address race and the pooled
      * connections do not depend on the endpoint.
      */
-    private suspend fun endpointFor(remote: InetSocketAddress): Pair<Http3Endpoint, InetSocketAddress> {
+    private suspend fun endpointFor(
+        remote: InetSocketAddress,
+        set: Endpoints = direct,
+    ): Pair<Http3Endpoint, InetSocketAddress> {
         val local = loopbackLocalFor(remote)
         val v6 = local?.ipLiteral() == "::1"
         val chosen =
@@ -428,26 +465,26 @@ internal class H3Pool(
                 ensureOpen()
                 val bound =
                     when {
-                        local == null -> endpoint
-                        v6 -> loopback6
-                        else -> loopback4
+                        local == null -> set.wildcard
+                        v6 -> set.loopback6
+                        else -> set.loopback4
                     }
-                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also {
+                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, config.http3.settings).also {
                     endpointBindStepForTest?.invoke(it, false)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
                     // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
                     when {
-                        local == null -> endpoint = it
-                        v6 -> loopback6 = it
-                        else -> loopback4 = it
+                        local == null -> set.wildcard = it
+                        v6 -> set.loopback6 = it
+                        else -> set.loopback4 = it
                     }
                     endpointBindStepForTest?.invoke(it, true)
                     if (closed) {
                         it.close()
                         when {
-                            local == null -> endpoint = null
-                            v6 -> loopback6 = null
-                            else -> loopback4 = null
+                            local == null -> set.wildcard = null
+                            v6 -> set.loopback6 = null
+                            else -> set.loopback4 = null
                         }
                         throw IllegalStateException("the client is closed")
                     }
@@ -495,8 +532,8 @@ internal class H3Pool(
     internal suspend fun entryCountForTest(): Int =
         lock.withLock { (connections.values + retired + wtExtras.values.flatten()).distinct().size }
 
-    /** Test hook: whether an endpoint (the shared one or a loopback one) is bound. */
-    internal val endpointBoundForTest: Boolean get() = endpoint != null || loopback4 != null || loopback6 != null
+    /** Test hook: whether an endpoint (a shared one or a loopback one, of origins or of proxies) is bound. */
+    internal val endpointBoundForTest: Boolean get() = direct.bound || proxyHop.bound
 
     /** WebTransport sessions of this client, open or being set up (the `maxWebTransportSessions` cap, a test hook and the resource probe). */
     internal val webTransportSessions = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -847,6 +884,7 @@ internal class H3Pool(
     /** Drops the pool's session tickets: the engine's cleanup calls it after [close]. */
     suspend fun closeSessions() {
         tickets.close()
+        proxyTickets.close()
         lock.withLock { tunnelTickets.values.toList().also { tunnelTickets.clear() } }.forEach { it.close() }
     }
 
@@ -862,6 +900,9 @@ internal class H3Pool(
 
     internal val directTicketsForTest: io.kuicksilver.tls.SessionCache get() = tickets
 
+    /** Tests: the session cache of the connections to CONNECT-UDP proxies. */
+    internal val proxyTicketsForTest: io.kuicksilver.tls.SessionCache get() = proxyTickets
+
     /** Tests: the session cache the latest tunnelled endpoint was built with. */
     @kotlin.concurrent.Volatile
     internal var tunnelTicketsUsedForTest: io.kuicksilver.tls.SessionCache? = null
@@ -869,12 +910,8 @@ internal class H3Pool(
     fun close() {
         refusingWebTransport = true
         closed = true
-        endpoint?.close()
-        endpoint = null
-        loopback4?.close()
-        loopback4 = null
-        loopback6?.close()
-        loopback6 = null
+        direct.close()
+        proxyHop.close()
         fresh.clear()
     }
 
@@ -1262,7 +1299,9 @@ internal class H3Pool(
 
     /**
      * An HTTP/3 connection to [t]'s origin through its CONNECT-UDP proxy (RFC 9298): a connection to the proxy (raced over
-     * the proxy's addresses as any direct connection, from the pool's endpoints), a UDP tunnel on it to the origin's name
+     * the proxy's addresses as any direct connection, from the proxies' endpoints [proxyHop] and with the proxy's TLS
+     * configuration, `proxyTlsConfigFor` as for an `https://` proxy over TCP, ADR-0023; a TLS failure there is a
+     * `ProxyTlsException`), a UDP tunnel on it to the origin's name
      * and port (the proxy resolves the name; `proxy-authorization` from the proxy's credentials), and an endpoint of its own
      * whose socket is the tunnel (`UdpTunnel.asDatagramIo`), connected with the origin's TLS configuration. The connection
      * to the proxy carries this one tunnel and lives as long as the tunnelled connection: when that one closes, its endpoint
@@ -1275,10 +1314,19 @@ internal class H3Pool(
         failures: MutableList<Throwable>,
     ): Http3Connection {
         val p = t.udpProxy!!
+        // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
+        // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
+        val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
             raceQuic(p.host, p.port, dns, failures) { destination ->
-                val (ep, remote) = endpointFor(destination)
-                ep.connect(remote, config.tlsConfigFor(p.host, listOf(Http3Endpoint.H3)), quic, config.http3.settings)
+                val (ep, remote) = endpointFor(destination, proxyHop)
+                try {
+                    ep.connect(remote, proxyTls, quic, config.http3.settings)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    throw proxyTlsFailure(p, e) ?: e
+                }
             }
         var inner: Http3Endpoint? = null
         try {
@@ -1318,6 +1366,28 @@ internal class H3Pool(
             outer.close()
             throw e
         }
+    }
+
+    /**
+     * [e], a failed handshake with the CONNECT-UDP proxy [p], as [io.kuicksilver.ktor.client.ProxyTlsException] around the
+     * TLS layer's error when the TLS layer failed it (a certificate that does not verify, an alert), as for an `https://`
+     * proxy: the failure is the proxy's, not the origin's. Null for any other failure (a refusal, a timeout), which the
+     * address race judges as it is, and for the `proxyTls` block's own [io.kuicksilver.tls.TlsException.Config].
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun proxyTlsFailure(
+        p: io.kuicksilver.ktor.client.ConnectUdpProxy,
+        e: Throwable,
+    ): io.kuicksilver.ktor.client.ProxyTlsException? {
+        val tls =
+            generateSequence(e) { it.cause }
+                .take(8)
+                .firstOrNull { it is io.kuicksilver.tls.TlsException }
+                ?.takeIf { it !is io.kuicksilver.tls.TlsException.Config } ?: return null
+        return io.kuicksilver.ktor.client.ProxyTlsException(
+            "TLS with the CONNECT-UDP proxy $p failed: ${tls.message ?: tls::class.simpleName}",
+            tls,
+        )
     }
 
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
