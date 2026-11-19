@@ -858,6 +858,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.noE
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.resetsAndOtherGlitchesHaveSeparateBudgets
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.resetsWithinTheBudgetKeepTheConnection
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.stopAndResetOfOneRequestSpendOneToken
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.theStopWatchEndsWithTheCompleteResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RemoteAddressTest.requestRemoteAddressFollowsAMigrationTheSessionMissed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestFramesTest.negative_headersLengthAboveIntRangeIsTooLarge
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aCallerCancelledAsTheRequestReturnsAbandonsTheStream

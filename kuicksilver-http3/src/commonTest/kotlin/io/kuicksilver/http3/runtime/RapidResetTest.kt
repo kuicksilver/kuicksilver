@@ -474,6 +474,45 @@ class RapidResetTest {
         }
 
     /**
+     * The watch for a client's STOP_SENDING ends with the complete response, not with the request stream: a stop after the
+     * complete response costs nothing, so the watch has nothing left to do, and waiting on for the stream's end it held the
+     * whole request (its body channel, headers and deferreds) as long as the transport kept the stream, an idle connection's
+     * last request included (about 1.2-1.9 KiB per connection; IdleFootprintTest, the HTTP/3 ceiling). A stop that comes
+     * after the complete response leaves the connection up.
+     */
+    @Test fun theStopWatchEndsWithTheCompleteResponse() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(10.seconds) { server.acceptRequest() } as ServerRequestImpl
+                // the session starts the watch right after it handed the request over, maybe after acceptRequest returned here
+                awaitCondition("the request's stop watch") { r.stopWatch != null }
+                val watch = r.stopWatch!!
+                assertTrue(watch.isActive, "a request handed to the application is watched for a stop")
+                r.respond(200).finish()
+                assertTrue(withTimeout(10.seconds) { st.input.readAllBytes() }.isNotEmpty())
+                awaitCondition("the watch ending with the complete response") { watch.isCompleted }
+                assertTrue(watch.isCancelled, "the complete response ended the watch, not the stream's end")
+                // a stop now abandons nothing: the connection stays up and the next request is answered
+                runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+                val next = c.openBidi()
+                next.output.writeFully(raw.headers(next.id, GET))
+                next.output.flushAndClose()
+                withTimeout(10.seconds) { server.acceptRequest() }.respond(204).finish()
+                assertTrue(withTimeout(10.seconds) { next.input.readAllBytes() }.isNotEmpty())
+                assertTrue(!server.closed.isCompleted)
+                server.close()
+            }
+        }
+
+    /**
      * Resets the client makes us send (MadeYouReset, CVE-2025-8671; RFC 9114 section 10.5), as HTTP/2 counts them: a
      * malformed request head (no :path, RFC 9114 section 4.3.1) is reset with H3_MESSAGE_ERROR before it reaches the
      * application, and each is a glitch, so 1500 of them end the connection with H3_EXCESSIVE_LOAD. Before, a client that
