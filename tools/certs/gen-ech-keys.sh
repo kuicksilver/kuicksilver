@@ -4,7 +4,7 @@
 # Generates the Encrypted Client Hello test keys (RFC 9849; ADR-0019): two keys, A and B, for the public_name ech.wild.test
 # (covered by the test server certificate's *.wild.test), each as the PEM `openssl ech` writes (a PKCS#8 private key and the
 # ECHCONFIG block of its ECHConfigList), into kuicksilver-native/src/c/test/testdata/ech/ (the fuzz harness's ECH server and
-# seeds) and as EchTestKeys.kt for the kuicksilver-tls, kuicksilver-ktor-client and kuicksilver-ktor-server tests. Test keys only. Requires an OpenSSL 4.x CLI (Homebrew's
+# seeds) and as EchTestKeys.kt for the kuicksilver-tls, kuicksilver-quic, kuicksilver-ktor-client and kuicksilver-ktor-server tests. Test keys only. Requires an OpenSSL 4.x CLI (Homebrew's
 # openssl@4). Usage: gen-ech-keys.sh
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,4 +23,5 @@ emit() { # <package>: EchTestKeys.kt of that package
 emit io.kuicksilver.tls > "$kt"
 emit io.kuicksilver.ktor.client > "$root/kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/EchTestKeys.kt"
 emit io.kuicksilver.ktor.server > "$root/kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/EchTestKeys.kt"
-echo "generated $der/ech-a.pem, $der/ech-b.pem and the three EchTestKeys.kt"
+emit io.kuicksilver.quic > "$root/kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/EchTestKeys.kt"
+echo "generated $der/ech-a.pem, $der/ech-b.pem and the four EchTestKeys.kt"

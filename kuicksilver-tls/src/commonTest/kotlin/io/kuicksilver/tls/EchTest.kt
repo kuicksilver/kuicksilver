@@ -476,7 +476,17 @@ class EchTest {
                 )
             val e = assertFailsWith<TlsException.EchRejected> { withTimeout(10.seconds) { rd.await() } }
             assertContentEquals(listB.bytes, e.retryConfigs?.bytes)
-            assertFailsWith<TlsException> { withTimeout(10.seconds) { rs.await() } }
+            // RFC 9849 section 6.1.6: the client completes the handshake for the public_name (the eighth carried patch), so the
+            // server's handshake ends with the client's Finished, and the ech_required that follows is its first read
+            val srv = withTimeout(10.seconds) { rs.await() }
+            try {
+                val failure = runCatching { withTimeout(10.seconds) { srv.input.readExactly(1) } }.exceptionOrNull()
+                var cause = failure
+                while (cause != null && cause !is TlsException.AlertReceived) cause = cause.cause
+                assertEquals(121, cause?.code, "the server reads ech_required: $failure")
+            } finally {
+                srv.close()
+            }
         }
 
     /** One TCP connection with a byte each way (so the ticket arrives); whether it resumed. [ech]: the partition of its ticket. */

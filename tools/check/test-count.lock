@@ -4182,6 +4182,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.DatagramWriterTest.rema
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EarlyMigrationTest.migrationRightAfterHandshakeCompletesOnceTheConnectionIdArrives
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EarlyMigrationTest.probeWithoutSpareConnectionIdFailsWithNoSpareConnectionId
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EarlyMigrationTest.serverIssuesConnectionIdsInItsFirstPostHandshakeFlight
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EchRejectionFlightTest.aRejectedClientSendsItsFlightThenEchRequired
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EcnTest.ackEcnCountsReported
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EcnTest.ceMarkTriggersOneCongestionEventPerRecovery
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.EcnTest.ceMarkedPacketIsAcknowledgedAtOnce

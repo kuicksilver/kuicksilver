@@ -1186,8 +1186,8 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   protected (RFC 9849 §10.2, "Unauthenticated and Plaintext DNS"; RFC 9848 §8), and so is an attacker's ability to block
   that query and with it ECH (RFC 9848 §8: abandoning the request on a failed protected lookup, `Exchange(secure = true)`,
   is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
-  client-facing server forwarding to a backend) is not implemented. §6.1.7's empty Certificate is not sent (accepted deviation, upstream issue
-  https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
+  client-facing server forwarding to a backend) is not implemented. On a rejection the client answers a CertificateRequest with an empty Certificate (§6.1.7, the eighth carried patch, upstream
+  issue https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
   hook for it). Certificate validation under an accepted ECH stays offline on Windows and Apple (§10.7); on the JVM revocation is off per
   connection, and a missing intermediate is fetched from the AIA extension only when the process turned that on,
   process-wide.

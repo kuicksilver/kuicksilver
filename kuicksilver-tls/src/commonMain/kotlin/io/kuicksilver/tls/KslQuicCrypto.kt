@@ -679,12 +679,20 @@ internal class KslQuicTlsSession(
     }
 
     override fun nextEvent(): TlsEvent? {
-        if (failure !=
-            null
-        ) {
-            while (Ksl.quicNextEvent(s(), event)) if (event.type == KslConst.EV_KEY) Ksl.keyFree(event.key)
+        failure?.let { f ->
+            // a failed session hands out nothing, not even keys; except the flight a client whose ECH was rejected wrote
+            // before its ech_required (RFC 9849 sections 6.1.6 and 6.1.7: an empty Certificate when asked, the Finished),
+            // which the transport sends with its CONNECTION_CLOSE
+            val flight = f.exception is TlsException.EchRejected
+            while (Ksl.quicNextEvent(s(), event)) {
+                if (event.type == KslConst.EV_KEY) {
+                    Ksl.keyFree(event.key)
+                } else if (flight && event.type == KslConst.EV_CRYPTO_SEND) {
+                    return TlsEvent.CryptoData(EncryptionLevel.of(event.level), event.payload)
+                }
+            }
             return null
-        } // a failed session hands out nothing, not even keys
+        }
         if (!Ksl.quicNextEvent(s(), event)) return pendingTickets.removeFirstOrNull()?.let { TlsEvent.SessionTicket(it) }
         return when (event.type) {
             KslConst.EV_CRYPTO_SEND -> {

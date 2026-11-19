@@ -62,10 +62,11 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   shared mode with key rotation and retry configurations. No split mode.
 - **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
   reported to OpenSSL as well.
-- **Seven carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
-  the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length).
+- **Eight carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
+  the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length;
+  2026-11-20: the client's flight on a rejection, section 6.1.7).
   Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and
-  nothing else. The build carries seven minimal patches, applied in this order:
+  nothing else. The build carries eight minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
      extension, which every QUIC client has). Upstream code: the `ssl/statem/extensions.c` hunk of OpenSSL commit
      openssl/openssl@981f976bb0 (pull request #33246, issue #33231), merged to master, openssl-4.1 and openssl-4.0 on 2026-11-13;
@@ -88,12 +89,17 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      the ServerHello after a rejection, section 6.1.2; 4.1.0 resumed with the inner session's key);
   7. `openssl-4.1.0-ech-grease-length.patch` (Kuicksilver's own code: a GREASE payload of L+C, L the padded
      EncodedClientHelloInner a real offer of the same ClientHello would have, section 6.2.1; 4.1.0 picked 144 to 240 at
-     random).
-  The rules for all seven:
+     random);
+  8. `openssl-4.1.0-ech-reject-client-flight.patch` (Kuicksilver's own code, the fix posted with upstream issue #33831: on
+     a rejection the client answers a CertificateRequest with an empty Certificate and no CertificateVerify, section
+     6.1.7, sends its Finished and then `ech_required` under the application keys, section 6.1.6; 4.1.0 sent the alert
+     while the server's Finished was processed, before any of its flight, and with middlebox compatibility mode in a
+     plaintext record).
+  The rules for all eight:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
     covers part of the bug. The rest of patch 3 and patches 5 to 7 are drafted (2026-11-19) as one upstream report, to be
-    filed (drafts E, H, I, J, K). Only the section 6.1.7 deviation is filed (#33831). Patches 3 to 7 are minimal, apply to OpenSSL master
+    filed (drafts E, H, I, J, K). Patch 8's bug is filed (#33831), with the patch as its proposed fix. Patches 3 to 7 are minimal, apply to OpenSSL master
     at 4a5704abc6d2 and 3a3f13563825 too (git apply), and their headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
     that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
@@ -298,8 +304,9 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   configuration (section 6.2.1) and never the origin's configuration.
 - **Server.** `echKeys` on the TLS connector (TCP and HTTP/3) and `kuicksilver.tls.echKeys`; the `sniSelector` sees the
   `public_name` during a rejection and its certificate is the one the client checks.
-- **No client certificate on a rejection.** OpenSSL 4.1 sends `ech_required` once the server's Finished is verified, before
-  the client's flight, so no Certificate message leaves (RFC 9849 section 6.1.7 asks for an empty one if the client goes on;
-  BoringSSL goes on and sends it); the C test `ech_rejection_sends_no_client_certificate` pins it. Accepted deviation,
-  upstream issue https://github.com/openssl/openssl/issues/33831 (no patch is carried for it).
+- **No client certificate on a rejection.** With the eighth patch the client answers a CertificateRequest with an empty
+  Certificate (RFC 9849 section 6.1.7), sends no CertificateVerify, sends its Finished and then `ech_required` (section
+  6.1.6), as BoringSSL does; over QUIC that flight leaves in the packets of the CONNECTION_CLOSE. The C test
+  `ech_rejection_sends_no_client_certificate` (the server reads the empty Certificate, the Finished and then the alert) and
+  `EchRejectionFlightTest` (QUIC transport) pin it. Upstream issue https://github.com/openssl/openssl/issues/33831.
 

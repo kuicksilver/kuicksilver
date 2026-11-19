@@ -1001,6 +1001,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     have (section 6.2.1), not a random one.
   - These alerts now go out over TCP too, before any `ech_required`.
   - `tools/openssl/build.sh` refuses a pin key it does not read, such as `patch_10`.
+- The bundled OpenSSL carries an eighth ECH patch (`patch_8`, `openssl-4.1.0-ech-reject-client-flight.patch`, the fix
+  posted with upstream issue openssl/openssl#33831). On a rejection the client sent `ech_required` while it processed the
+  server's Finished, before its own flight. Now it answers a CertificateRequest with an empty Certificate and no
+  CertificateVerify (RFC 9849 section 6.1.7), sends its Finished, and then `ech_required` under the application keys
+  (section 6.1.6), as BoringSSL does. Over QUIC the transport sends that flight in the packets of the CONNECTION_CLOSE
+  (before, a failed TLS session's last CRYPTO was dropped). With middlebox compatibility mode the alert no longer leaves
+  in a plaintext record over TCP.
 - TLS, Encrypted Client Hello: a server key set whose keys share a config_id is refused (`TlsException.Config` from
   `EchServerKeys`). OpenSSL tries only the first key of a config_id, so a client of the other would have been rejected.
   Make one of the keys again.

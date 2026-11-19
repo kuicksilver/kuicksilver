@@ -39,3 +39,8 @@ patch_6_sha256 = "e2b37d68ef29140306fafab17bdcd85bb4fd6eed65c04ba7be8ef943ed3c5b
 # 9849 section 6.2.1: L+C). Kuicksilver's own code; dropped with the first release that fixes it.
 patch_7 = "tools/openssl/patches/openssl-4.1.0-ech-grease-length.patch"
 patch_7_sha256 = "dd007b63bb37d0989dc49dd1eb609de966e3adf8ebbd8a0afb7b730108b74279"
+# The eighth carried patch (ADR-0019): on an ECH rejection the client completes its flight (an empty Certificate when asked for
+# one, RFC 9849 section 6.1.7; its Finished) and then sends ech_required (section 6.1.6). Kuicksilver's own code, the fix posted
+# with upstream issue openssl/openssl#33831; dropped with the first release that fixes it.
+patch_8 = "tools/openssl/patches/openssl-4.1.0-ech-reject-client-flight.patch"
+patch_8_sha256 = "f0abcb89c18e2504bf7ee4d2fd2df99d9e41341ed56cc453488a7d847948e8a5"

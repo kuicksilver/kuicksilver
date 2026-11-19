@@ -283,6 +283,10 @@ typedef struct {
     size_t last_c_len;
     int status_c_late; /* the client's KSL_GET_ECH_STATUS after session_hook_late */
     int wire_alert_c;  /* TCP: the alert of the client's last record, read off the wire (-1: none) */
+    char
+        server_flight[64]; /* with watch_server: what the server read from the client after its ServerHello, in order: C
+                               (a Certificate, E when its certificate_list is empty), V (CertificateVerify), F (Finished),
+                               A<n> (an alert) */
 } run;
 /* called on each client session right after it is made (test hooks of ksl_internal.h), and before the outcome is read */
 static void (*session_hook)(ksl_ssl *c);
@@ -294,8 +298,46 @@ static void sni_seen(ksl_ssl *s, char *out, size_t cap) {
     if (n)
         snprintf(out, cap, "%s", n);
 }
+/* the server's reads, recorded by srv_msg_cb (then handed to ksl's own callback) when watch_server is set */
+static int watch_server;
+static char srv_flight[64];
+static void srv_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    const uint8_t *b = buf;
+    size_t at = strlen(srv_flight);
+    if (!write_p && at + 6 < sizeof srv_flight) {
+        if (content_type == SSL3_RT_HANDSHAKE && len >= 4) {
+            srv_flight[at + 1] = 0;
+            if (b[0] == SSL3_MT_CERTIFICATE) /* TLS 1.3: context<0..255>, then certificate_list<0..2^24-1> */
+                srv_flight[at] =
+                    len >= 8 && 4 + 1 + b[4] + 3 <= len && (b[5 + b[4]] | b[6 + b[4]] | b[7 + b[4]]) == 0 ? 'E' : 'C';
+            else if (b[0] == SSL3_MT_CERTIFICATE_VERIFY)
+                srv_flight[at] = 'V';
+            else if (b[0] == SSL3_MT_COMPRESSED_CERTIFICATE) /* RFC 8879: never empty (an empty list goes plain) */
+                srv_flight[at] = 'Z';
+            else if (b[0] == SSL3_MT_FINISHED)
+                srv_flight[at] = 'F';
+
+        } else if (content_type == SSL3_RT_ALERT && len == 2)
+            snprintf(srv_flight + at, sizeof srv_flight - at, "A%d", b[1]);
+    }
+    ksl_msg_cb(write_p, version, content_type, buf, len, ssl, arg);
+}
+/* the rejection's flight (RFC 9849 sections 6.1.6, 6.1.7): an empty Certificate, no CertificateVerify, the Finished, then (over
+   TCP, where the server reads it) ech_required after the Finished */
+static int empty_cert_then_finished(const char *f, int tcp) {
+    const char *e = strchr(f, 'E'), *fin = strchr(f, 'F'), *a = strstr(f, "A121");
+    return e && fin && e < fin && !strchr(f, 'C') && !strchr(f, 'Z') && !strchr(f, 'V') && (tcp ? a && fin < a : !a);
+}
+static void watch(ksl_ssl *s) {
+    srv_flight[0] = 0;
+    if (watch_server) {
+        SSL_set_msg_callback(ksl_ssl_raw_for_test(s), srv_msg_cb);
+        SSL_set_msg_callback_arg(ksl_ssl_raw_for_test(s), s);
+    }
+}
 static char last_msg_c[256];
 static void finish(run *r, ksl_ssl *c, ksl_ssl *s) {
+    snprintf(r->server_flight, sizeof r->server_flight, "%s", srv_flight);
     r->wire_ech_kdf = hello_ech_kdf;
     r->wire_ech_aead = hello_ech_aead;
     r->wire_ech_payload = hello_ech_payload;
@@ -569,6 +611,7 @@ static run quic_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k, char *paused_name
     ksl_ssl *c = ech_session(cc, KSL_MODE_QUIC, k), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
     if (session_hook)
         session_hook(c);
+    watch(s);
     ksl_quic_set_transport_params(s, TP, sizeof TP);
     ksl_drive(c);
     ksl_event ev;
@@ -576,6 +619,9 @@ static run quic_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k, char *paused_name
         hello_sni(ev.buf, ev.len, r.wire_sni, sizeof r.wire_sni, &r.wire_ech);
     side cs = {0}, ss = {0};
     r.rc = (rewrite_msg ? ech_pump : pump)(c, s, &cs, &ss, 40, accept_verify, paused_name);
+    if (watch_server && r.rc == KSL_ERROR)
+        ksl_drive(
+            s); /* the CRYPTO the client wrote before it failed (its flight before ech_required), read by the server */
     r.done = cs.done && ss.done;
     finish(&r, c, s);
     ksl_ssl_free(c);
@@ -607,6 +653,7 @@ static run tcp_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k) {
     ksl_ssl *c = ech_session(cc, KSL_MODE_TCP, k), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     if (session_hook)
         session_hook(c);
+    watch(s);
     client_wire_len = 0;
     srv_len = 0, srv_seq = 0;
     uint8_t first[8192];
@@ -873,17 +920,25 @@ static void test_reject_client_certificate(void) {
         ksl_ctx_set_roots(sc, ca_root.buf, ca_root.len);
         CHECK(ksl_ctx_set_option(sc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_OPTIONAL) == KSL_OK,
               "server asks for a certificate");
+        watch_server = 1;
         run qs[2] = {quic_run(cc, sc, &key_a, NULL), tcp_run(cc, sc, &key_a)};
+        watch_server = 0;
         for (int m = 0; m < 2; m++) {
             run r = qs[m];
-            /* nor a session ticket ("MUST ignore all session tickets and session IDs presented by the server") */
+            /* nor a session ticket ("MUST ignore all session tickets and session IDs presented by the server"). RFC 9849
+               section 6.1.7: "the client MUST respond with an empty Certificate message", then (section 6.1.6) completes
+               the handshake and aborts with ech_required: the server reads an empty Certificate, no CertificateVerify,
+               the Finished, then alert 121 (QUIC: the CONNECTION_CLOSE carries it, so the server reads no alert) */
             int ok = rejected ? (r.alert_c == 121 && r.status_c == KSL_ECH_REJECTED && !r.server_got_cert &&
-                                 !r.client_resumable)
-                              : (ACCEPTED(r) && r.server_got_cert);
+                                 !r.client_resumable && empty_cert_then_finished(r.server_flight, m == 1))
+                              : (ACCEPTED(r) && r.server_got_cert && strchr(r.server_flight, 'Z') &&
+                                 strchr(r.server_flight, 'V') && strchr(r.server_flight, 'F'));
             CHECK(ok, rejected ? (m == 0 ? "negative_ech_rejected_no_client_certificate over QUIC" : "... over TCP")
                                : (m == 0 ? "accepted: the server holds the client certificate (QUIC)" : "... (TCP)"));
-            if (!ok)
+            if (!ok) {
                 report(m == 0 ? "quic client cert" : "tcp client cert", r);
+                printf("  the server read: %s\n", r.server_flight);
+            }
         }
         ksl_ctx_free(sc);
     }

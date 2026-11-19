@@ -608,6 +608,8 @@ internal class ConnectionHandshakeSink(
         // PROTOCOL_VIOLATION"; OpenSSL fails it with illegal_parameter (SSL_R_INVALID_MAX_EARLY_DATA)
         val code = (exception as? TlsException.Protocol)?.openSslCode
         val invalidMaxEarlyData = code == (OPENSSL_LIB_SSL shl 16 or SSL_R_INVALID_MAX_EARLY_DATA)
+        // RFC 9849 sections 6.1.6 and 6.1.7: the flight before an ech_required is sent with the close
+        core.closeAfterFlight = alert == ECH_REQUIRED_ALERT && exception is TlsException.EchRejected
         core.fail(
             if (invalidMaxEarlyData) TransportError.PROTOCOL_VIOLATION else TransportError.crypto(alert ?: 80),
             0,
@@ -618,4 +620,5 @@ internal class ConnectionHandshakeSink(
 }
 
 private const val OPENSSL_LIB_SSL = 20
+private const val ECH_REQUIRED_ALERT = 121
 private const val SSL_R_INVALID_MAX_EARLY_DATA = 174
