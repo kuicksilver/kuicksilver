@@ -51,3 +51,10 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     inputs.property("leakSites", providers.environmentVariable("KUICKSILVER_LEAK_SITES").orElse(""))
     inputs.property("leakWait", providers.environmentVariable("KUICKSILVER_LEAK_WAIT_MS").orElse(""))
 }
+
+// the same two variables for a Kotlin/Native test executable, which gets only what its task passes on
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest>().configureEach {
+    for (name in listOf("KUICKSILVER_LEAK_SITES", "KUICKSILVER_LEAK_WAIT_MS")) {
+        providers.environmentVariable(name).orNull?.let { environment(name, it) }
+    }
+}
