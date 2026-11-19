@@ -184,7 +184,9 @@ public class TlsSocket private constructor(
         val job = relayTo(channel)
         attachedReader = job
         // a close that began meanwhile may have looked for the relay before it was set: it ends here then (both sides set
-        // their own flag before they read the other's, so one of them sees the other's)
+        // their own flag before they read the other's, so one of them sees the other's). It cannot read alongside the
+        // close's drop either way: the close cancels the session's input (TlsConnection.cancelInput) once the relay it saw
+        // has ended, and a relay that came after reads only that cancelled input
         if (closeBegun) job.job.cancel()
         return job
     }
@@ -290,13 +292,15 @@ public class TlsSocket private constructor(
         }
         launch {
             try {
-                // the application reads no more: what is still coming is dropped, so the peer's close_notify is not held
-                // behind it (and the peer's writes behind that) until the bound
+                // the application reads no more: its relay ends, and the session's input is cancelled, so that what is still
+                // coming is read and dropped (TlsConnection.cancelInput) and the peer's close_notify is not held behind it
+                // (and the peer's writes behind that) until the bound; a relay attached as the close began fails on the
+                // cancelled input, so nothing reads it alongside the drop
                 attachedReader?.job?.let {
                     it.cancel()
                     it.join()
                 }
-                tls.discardInput()
+                tls.cancelInput(CancellationException("the TLS socket is closed: nothing more is read"))
                 attachedWriter?.let { rj ->
                     runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()

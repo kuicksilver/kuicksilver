@@ -1425,7 +1425,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`ClientOrderlyCloseTest.negative_aRefusedResponseDoesNotHoldTheOrderlyClose`,
   `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`). The same for HTTP/2: a connection that ended (a connection
   error, a missed health PING, a local failure) while the server still sent DATA waited for its close_notify behind it,
-  its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`).
+  its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`). A closing TLS
+  socket now drops its input the same way, instead of reading it out.
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

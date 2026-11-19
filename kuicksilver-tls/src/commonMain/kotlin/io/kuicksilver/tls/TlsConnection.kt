@@ -14,7 +14,6 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
-import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -973,27 +972,19 @@ public class TlsConnection private constructor(
     }
 
     /**
-     * The application reads no more: [input] is cancelled with [cause] (a read waiting on it wakes with it), while the
-     * session goes on reading the transport and drops what it decrypts. The peer's `close_notify` (or the end of the
-     * transport) still reaches [shutdown]'s wait, and a session ticket is still taken, instead of the session ending its
-     * reads at once: closing under the peer's unread input would make the kernel reset the connection, which can erase our
-     * `close_notify` before the peer reads it. [close] ends the reading as before.
+     * The application reads no more: [input] is cancelled with [cause] (a read waiting on it wakes with it, and every later
+     * read fails), while the session goes on reading the transport and drops what it decrypts. The peer's `close_notify` (or
+     * the end of the transport) still reaches [shutdown]'s wait, and a session ticket is still taken, instead of the session
+     * ending its reads at once: closing under the peer's unread input would make the kernel reset the connection, which can
+     * erase our `close_notify` before the peer reads it.
+     *
+     * The owner must end the session after this, with [shutdown] or [close]: the reader pump keeps reading the transport,
+     * decrypting and dropping, until the peer's `close_notify`, the transport's end or [close], and nothing else stops it.
      */
     @InternalKuicksilverApi
     public fun cancelInput(cause: Throwable?) {
         droppingInput = true
         inputView.cancel(cause)
-    }
-
-    /**
-     * The application reads no more: what the peer still sends is decrypted and dropped, so that its `close_notify` (or the
-     * end of the transport) reaches [shutdown]'s wait instead of queuing behind input nobody will read, while the peer's
-     * writes behind it wait for room. Only once nothing reads [input] any more (it is read here).
-     */
-    @InternalKuicksilverApi
-    public fun discardInput() {
-        if (closed) return
-        scope.launch { runCatching { inputChannel.discard() } }
     }
 
     /**
