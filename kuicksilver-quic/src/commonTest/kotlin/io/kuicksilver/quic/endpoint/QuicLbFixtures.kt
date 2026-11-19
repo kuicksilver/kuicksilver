@@ -24,6 +24,7 @@ import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.testing.sentinel.LeakSentinel
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.LoadBalancerKey
 import io.kuicksilver.tls.QuicCrypto
@@ -58,8 +59,12 @@ internal object QuicLbFixtures {
             override fun secret(): ByteArray = ByteArray(16) { (it * 13 + 5).toByte() }
         }
 
-    /** One native key per hex string for the test process (never closed: configurations may outlive a test's endpoints). */
-    fun key(hexKey: String = KEY): LoadBalancerKey = keys.getOrPut(hexKey) { KslQuicCrypto.newLoadBalancerKey(hex(hexKey)) }
+    /**
+     * One native key per hex string for the test process (never closed: configurations may outlive a test's endpoints);
+     * the leak sentinel counts it as the process's, not as the test's that happened to need it first.
+     */
+    fun key(hexKey: String = KEY): LoadBalancerKey =
+        keys.getOrPut(hexKey) { LeakSentinel.shared { KslQuicCrypto.newLoadBalancerKey(hex(hexKey)) } }
 
     /** An 8-byte configuration: a 3-byte server ID and a 4-byte nonce, encrypted with [keyHex] unless [plaintext]. */
     fun config(

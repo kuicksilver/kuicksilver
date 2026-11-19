@@ -3497,6 +3497,12 @@ kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.sealOpenRou
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.serverPauseModeIsRejected
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStringMentionsOpenSsl359
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStringNamesTheKslAbi
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.aCloseAfterTheTestIsWaitedFor
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.anObjectOpenedBeforeTheTestIsNotItsLeak
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_aNativeKeyLeftOpenIsCounted
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_anAllowEntryToleratesOnlyItsKinds
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_anObjectLeftOpenIsNamedWithItsKindAndCount
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.theSentinelIsInstalled
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.boundsAreChecked
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.copyInAndOut
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.negative_arrayBoundsChecked
@@ -5025,6 +5031,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.IdleDrainTest.negati
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.IdleDrainTest.negative_closingTheEndpointDuringAnOpenDrainEndsTheHeldConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.IdleDrainTest.negative_onlyTheConnectionWhosePeerSpokeIsKept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.IdleDrainTest.negative_onlyUndecryptableDuplicateOrRandomDatagramsQueuedStillClose
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LeakSentinelEndpointTest.negative_anEndpointLeftOpenIsNamed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aDatagramForAnotherLoopBeforeStartupDoesNotKillTheGroup
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aForwardedDatagramNotYetProcessedHoldsTheDrainRound
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aForwardedDatagramTheOwnerCannotTakeCountsAsAQueueDrop
