@@ -1278,6 +1278,22 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         }
         c->ech_grease = value != 0;
         return KSL_OK;
+    case KSL_OPT_ECH_ALPN_PAD:
+        if (c->role != KSL_CLIENT || value < 0 || value > 4 + 2 + 0xffff) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: KSL_OPT_ECH_ALPN_PAD is a client's, 0 to 65541 octets");
+            return KSL_ERROR;
+        }
+#if KSL_HAS_ECH
+        if (SSL_CTX_ech_set_alpn_pad_target(c->ctx, (size_t)value) != 1) {
+            ERR_clear_error();
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: OpenSSL refused the ALPN padding target");
+            return KSL_ERROR;
+        }
+        return KSL_OK;
+#else
+        ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, "ksl: this build has no ECH (OpenSSL 4 bundled only)");
+        return KSL_ERROR;
+#endif
     case KSL_OPT_CERT_COMPRESSION:
         if (value != 0 && value != 1) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: certificate compression is 0 or 1");

@@ -45,7 +45,8 @@ extern "C" {
    14 and 18, after the 13 of KSL_GET_GROUP and the 15 to 17 of ECH);
    ksl_icmp_ptb_build, ksl_icmp_open, ksl_icmp_send and ksl_icmp_close (a CONNECT-UDP proxy's ICMP Packet Too Big, RFC 9298
    section 6.1; new functions, no KSL_OPT or KSL_GET number); Encrypted Client Hello (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE,
-   KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS, KSL_GET_VERIFY_NAME, ksl_ech_config_list_check,
+   KSL_OPT_ECH_ALPN_PAD (16), KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS, KSL_GET_VERIFY_NAME,
+   ksl_ech_config_list_check,
    ksl_ech_keys_new, ksl_ech_keys_free, ksl_ctx_set_ech_keys (15 to 17) and KSL_LIVE_ECH_KEYS (7; KSL_LIVE_COUNT is 8) */
 
 /* return codes */
@@ -127,6 +128,12 @@ extern "C" {
                                       checked and ignored, its retry_configs never reported (retry_configs that do not parse fail the
                                       handshake: decode_error, section 6.2.1). A session with a configuration
                                       (KSL_SET_ECH_CONFIG_LIST) offers that instead. Default 0. KSL_E_BAD_ARG on a server context */
+#define KSL_OPT_ECH_ALPN_PAD 16 /* client (ABI 7, additive): the size in octets, with its 4-octet header, of the longest ALPN
+                                       extension across the client's application profiles; the inner ClientHello of ECH (and a
+                                       GREASE payload's length) pads its ALPN extension up to it (RFC 9849 section 6.1.3), so the
+                                       profile does not show in the payload length. 0 (the default) pads none; 0 to 65541.
+                                       Sessions made afterwards take it (the ninth carried patch of ADR-0019). KSL_E_BAD_ARG on a
+                                       server context or out of range, KSL_E_NOT_SUPPORTED in a build without ECH */
 /* clang-format on */
 #define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */
 #define KSL_ALPN_POLICY_REQUIRED 1 /* a ClientHello without the ALPN extension: no_application_protocol (120) */

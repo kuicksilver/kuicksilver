@@ -547,6 +547,72 @@ class EchTest {
         EchServerKeys(listOf(good)).close()
     }
 
+    /**
+     * RFC 9849 section 6.1.3, ALPN: a client's inner ALPN extension is padded up to the longest ALPN extension across its
+     * application profiles: Kuicksilver's are `h3` (9 octets) and `h2` with `http/1.1` (18), so 18, or the configuration's
+     * own list when that is longer.
+     */
+    @Test fun alpnPaddingTargetIsTheLongestProfile() {
+        assertEquals(18, echAlpnPadTarget(kotlin.collections.listOf("h3")))
+        assertEquals(18, echAlpnPadTarget(kotlin.collections.listOf("h2", "http/1.1")))
+        assertEquals(18, echAlpnPadTarget(kotlin.collections.emptyList<String>()))
+        assertEquals(4 + 2 + 11 + 6 + 3 + 9, echAlpnPadTarget(kotlin.collections.listOf("hq-interop", "h3-29", "h2", "http/1.1")))
+    }
+
+    /** Two ALPN lists a client may offer give one ECH payload length for every server name: the padding is applied. */
+    @Test fun alpnListsDoNotShowInThePayloadLength() {
+        fun payload(
+            alpn: List<String>,
+            name: String,
+        ): Int {
+            val c =
+                KslQuicCrypto.newSession(
+                    Fixtures.client(name = name) {
+                        this.alpn = alpn
+                        echConfigList = listA
+                    },
+                )
+            try {
+                c.setTransportParameters(Fixtures.tp)
+                c.drive()
+                val hello = generateSequence { c.nextEvent() }.filterIsInstance<TlsEvent.CryptoData>().first().data
+                return echPayloadLength(hello)
+            } finally {
+                c.close()
+            }
+        }
+        for (d in 6 until 120) {
+            // labels of at most 40 octets (DNS allows 63), then ".test": d octets in all
+            val name = (0 until d - 5).joinToString("") { if (it % 41 == 40 && it < d - 6) "." else "a" } + ".test"
+            assertEquals(
+                payload(kotlin.collections.listOf("h3"), name),
+                payload(kotlin.collections.listOf("h3", "h3-29"), name),
+                "a $d-byte name",
+            )
+        }
+    }
+
+    /** The payload length of the outer encrypted_client_hello in a ClientHello handshake message, -1 when there is none. */
+    private fun echPayloadLength(m: ByteArray): Int {
+        fun u16(i: Int) = (m[i].toInt() and 0xff shl 8) or (m[i + 1].toInt() and 0xff)
+        var p = 4 + 2 + 32
+        p += 1 + (m[p].toInt() and 0xff)
+        p += 2 + u16(p)
+        p += 1 + (m[p].toInt() and 0xff)
+        val end = p + 2 + u16(p)
+        p += 2
+        while (p + 4 <= end) {
+            val type = u16(p)
+            val len = u16(p + 2)
+            if (type == 0xfe0d && m[p + 4].toInt() == 0) {
+                val enc = u16(p + 4 + 6)
+                return u16(p + 4 + 8 + enc)
+            }
+            p += 4 + len
+        }
+        return -1
+    }
+
     /** A rotation reaches the contexts already built from the configuration; the old key keeps decrypting while it is kept. */
     @Test fun rotation() {
         val keys = EchServerKeys(listOf(keyA))

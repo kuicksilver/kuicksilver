@@ -1912,6 +1912,52 @@ static void test_grease_length(void) {
     END();
 }
 
+/* RFC 9849 section 6.1.3: "Clients SHOULD pad this extension [ALPN] by rounding up to the total size of the longest ALPN
+   extension across all application profiles." KSL_OPT_ECH_ALPN_PAD (the ninth carried patch) is that size: with it, a client
+   offering h3 and one offering h2 and http/1.1 (18 bytes of ALPN extension, the longest) give one payload length for every
+   server name, real offers and GREASE alike. Without it some names show the difference (the control). */
+static void test_alpn_padding(void) {
+    SECTION("ech_inner_alpn_padding");
+    static const uint8_t h3[] = {2, 'h', '3'}, h2h1[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    ksl_ctx *a = ech_client(KSL_VERIFY_OPENSSL, 1), *b = ech_client(KSL_VERIFY_OPENSSL, 1);
+    ksl_ctx_set_alpn(a, h3, sizeof h3);
+    ksl_ctx_set_alpn(b, h2h1, sizeof h2h1);
+    int differ = 0;
+    for (int d = 6; d < 200 && !differ; d++) {
+        char name[256];
+        name_of(name, d);
+        differ = first_payload(a, &key_a, name, KSL_MODE_QUIC) != first_payload(b, &key_a, name, KSL_MODE_QUIC);
+    }
+    CHECK(differ, "control: without the target, h3 and h2 with http/1.1 give other payload lengths for some names");
+    CHECK(ksl_ctx_set_option(a, KSL_OPT_ECH_ALPN_PAD, 18) == KSL_OK &&
+              ksl_ctx_set_option(b, KSL_OPT_ECH_ALPN_PAD, 18) == KSL_OK,
+          "KSL_OPT_ECH_ALPN_PAD taken");
+    int same = 1, n = 0;
+    for (int d = 6; d < 200; d++) {
+        char name[256];
+        name_of(name, d);
+        size_t pa = first_payload(a, &key_a, name, KSL_MODE_QUIC), pb = first_payload(b, &key_a, name, KSL_MODE_QUIC),
+               ga = first_payload(a, NULL, name, KSL_MODE_QUIC), gb = first_payload(b, NULL, name, KSL_MODE_QUIC);
+        n++;
+        if (!pa || pa != pb || ga != pa || gb != pa) {
+            if (same)
+                printf("  %d-byte name: h3 %zu, h2+http/1.1 %zu, GREASE %zu and %zu\n", d, pa, pb, ga, gb);
+            same = 0;
+        }
+    }
+    CHECK(same && n > 190,
+          "with the target: one payload length for h3 and h2 with http/1.1, 194 name lengths, GREASE too");
+    ksl_ctx *sc = ksl_ctx_new(KSL_SERVER);
+    CHECK(ksl_ctx_set_option(a, KSL_OPT_ECH_ALPN_PAD, -1) == KSL_ERROR &&
+              ksl_ctx_set_option(a, KSL_OPT_ECH_ALPN_PAD, 65542) == KSL_ERROR &&
+              ksl_ctx_set_option(sc, KSL_OPT_ECH_ALPN_PAD, 18) == KSL_ERROR,
+          "negative_ech_alpn_pad_out_of_range_or_on_a_server");
+    ksl_ctx_free(sc);
+    ksl_ctx_free(a);
+    ksl_ctx_free(b);
+    END();
+}
+
 /* the first ksl_ctx_set_ech_keys on a fresh server context, from several threads at once, while others make sessions: the
    key lock exists from ksl_ctx_new (a lock made by the first setter raced the others and ksl_ech_ssl_init); run under
    ThreadSanitizer by KSL_TSAN=1 tools/c-test.sh */
@@ -2088,6 +2134,7 @@ void run_ech(void) {
     test_shared_config_id();
     test_wire_alerts();
     test_grease_length();
+    test_alpn_padding();
     test_review_guards();
     free(key_a.pem);
     free(key_b.pem);

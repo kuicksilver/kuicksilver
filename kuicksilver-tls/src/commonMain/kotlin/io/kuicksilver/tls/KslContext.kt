@@ -380,6 +380,8 @@ internal class KslContext private constructor(
             if (config.keyExchangeGroups != KeyExchangeGroups.Default) Ksl.ctxSetGroups(h, config.keyExchangeGroups.kslList(config.role))
             // RFC 9849 section 6.2.1: a client without a configuration for this connection sends GREASE ECH
             if (config.role == TlsRole.Client && config.echGrease) Ksl.ctxSetOption(h, KslConst.OPT_ECH_GREASE, 1)
+            // RFC 9849 section 6.1.3: the inner ALPN extension padded to the longest of the application profiles
+            if (config.role == TlsRole.Client && echInThisBuild) Ksl.ctxSetOption(h, KslConst.OPT_ECH_ALPN_PAD, echAlpnPadTarget(alpn))
             val chain =
                 if (snapshot != null) {
                     Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)

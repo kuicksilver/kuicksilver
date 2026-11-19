@@ -1187,8 +1187,8 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   that query and with it ECH (RFC 9848 §8: abandoning the request on a failed protected lookup, `Exchange(secure = true)`,
   is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
   client-facing server forwarding to a backend) is not implemented. On a rejection the client answers a CertificateRequest with an empty Certificate (§6.1.7, the eighth carried patch, upstream
-  issue https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
-  hook for it). Certificate validation under an accepted ECH stays offline on Windows, Apple and the JVM (§10.7: the JVM builds the path from
+  issue https://github.com/openssl/openssl/issues/33831). The inner ALPN extension is padded to the longest of Kuicksilver's application
+  profiles (§6.1.3, the ninth carried patch), so the profile does not show in the payload length. Certificate validation under an accepted ECH stays offline on Windows, Apple and the JVM (§10.7: the JVM builds the path from
   the presented certificates and validates it without revocation or AIA fetches), and a custom verifier is told the name is
   hidden.
 

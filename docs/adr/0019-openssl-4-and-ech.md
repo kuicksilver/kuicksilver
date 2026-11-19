@@ -62,11 +62,11 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   shared mode with key rotation and retry configurations. No split mode.
 - **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
   reported to OpenSSL as well.
-- **Eight carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
+- **Nine carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
   the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length;
-  2026-11-20: the client's flight on a rejection, section 6.1.7).
+  2026-11-20: the client's flight on a rejection, section 6.1.7, then the ALPN padding of section 6.1.3).
   Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and
-  nothing else. The build carries eight minimal patches, applied in this order:
+  nothing else. The build carries nine minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
      extension, which every QUIC client has). Upstream code: the `ssl/statem/extensions.c` hunk of OpenSSL commit
      openssl/openssl@981f976bb0 (pull request #33246, issue #33231), merged to master, openssl-4.1 and openssl-4.0 on 2026-11-13;
@@ -94,8 +94,12 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      a rejection the client answers a CertificateRequest with an empty Certificate and no CertificateVerify, section
      6.1.7, sends its Finished and then `ech_required` under the application keys, section 6.1.6; 4.1.0 sent the alert
      while the server's Finished was processed, before any of its flight, and with middlebox compatibility mode in a
-     plaintext record).
-  The rules for all eight:
+     plaintext record);
+  9. `openssl-4.1.0-ech-alpn-padding.patch` (Kuicksilver's own code: `SSL_CTX_ech_set_alpn_pad_target` and
+     `SSL_ech_set_alpn_pad_target` set the size of the longest ALPN extension across the client's profiles, and the
+     inner ALPN extension is padded up to it before the 32-octet rounding, a GREASE payload sized alike, section 6.1.3;
+     4.1.0 padded the server name only and had no API for anything else; upstream proposal drafted under #33844).
+  The rules for all nine:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
     covers part of the bug. The rest of patch 3 and patches 5 to 7 are drafted (2026-11-19) as one upstream report, to be

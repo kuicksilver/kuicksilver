@@ -1,0 +1,175 @@
+OpenSSL 4.1.0: no padding of the inner ALPN extension under ECH
+
+Kuicksilver's own code, the ninth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-reject-client-flight.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_9, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that offers it (an
+upstream proposal is drafted, 2026-11-20, under openssl/openssl#33844).
+
+The gap: RFC 9849 section 6.1.3 has a client pad the inner ClientHello for what varies between its connections:
+"Clients SHOULD pad this extension [ALPN] by rounding up to the total size of the longest ALPN extension across all
+application profiles." OpenSSL 4.1.0 pads only the server_name (ossl_ech_calc_padding) and has no API to pad anything
+else, so two application profiles of one client (h3; h2 and http/1.1) give EncodedClientHelloInner lengths 9 octets
+apart, visible in the payload length whenever that crosses a 32-octet step.
+
+The change: SSL_CTX_ech_set_alpn_pad_target and SSL_ech_set_alpn_pad_target set the size, with its 4-octet header, of
+the longest ALPN extension across the client's profiles (0, the default, pads none; above OSSL_ECH_MAX_ALPN_EXT_LEN
+refused); ossl_ech_alpn_padding is max(0, target - the inner ALPN extension's size), which ossl_ech_calc_padding adds to
+the server_name padding before the 32-octet rounding, and which a GREASE payload (the seventh patch's
+ech_grease_clear_len) counts as a real offer would. New public functions: static builds only here, no libssl.num entry.
+
+diff --git a/include/openssl/ech.h b/include/openssl/ech.h
+--- a/include/openssl/ech.h
++++ b/include/openssl/ech.h
+@@ -35,6 +35,8 @@
+ #define OSSL_ECH_MAX_MAXNAMELEN 255 /* ECHConfig max for max name length */
+ #define OSSL_ECH_MAX_PUBLICNAME 255 /* max ECHConfig public name length */
+ #define OSSL_ECH_MAX_ALPNLEN 255 /* max alpn length */
++/* the largest ALPN extension: its type and length, then a protocol list of up to 2^16 - 1 octets */
++#define OSSL_ECH_MAX_ALPN_EXT_LEN (4 + 2 + 0xffff)
+ #define OSSL_ECH_OUTERS_MAX 20 /* max extensions we compress via outer-exts */
+ #define OSSL_ECH_ALLEXTS_MAX 32 /* max total number of extension we allow */
+ 
+@@ -109,6 +111,13 @@
+ int SSL_ech_set1_outer_alpn_protos(SSL *s, const unsigned char *protos,
+     const size_t protos_len);
+ 
++/*
++ * RFC 9849, section 6.1.3: pad the inner ALPN extension up to target octets
++ * (with its 4-octet header): the size of the longest ALPN extension across
++ * the client's application profiles; 0 (the default) pads none. Returns 1 for
++ * success, 0 for a target above OSSL_ECH_MAX_ALPN_EXT_LEN.
++ */
++int SSL_ech_set_alpn_pad_target(SSL *s, size_t target);
+ int SSL_ech_get1_status(SSL *s, char **inner_sni, char **outer_sni);
+ int SSL_ech_set1_grease_suite(SSL *s, const char *suite);
+ int SSL_ech_set_grease_type(SSL *s, uint16_t type);
+@@ -124,6 +133,8 @@
+ int SSL_CTX_ech_set1_outer_alpn_protos(SSL_CTX *s, const unsigned char *protos,
+     const size_t protos_len);
+ void SSL_CTX_ech_set_callback(SSL_CTX *ctx, SSL_ech_cb_func f);
++/* as SSL_ech_set_alpn_pad_target(), for the connections made from ctx */
++int SSL_CTX_ech_set_alpn_pad_target(SSL_CTX *ctx, size_t target);
+ int SSL_set1_ech_config_list(SSL *ssl, const uint8_t *ecl, size_t ecl_len);
+ 
+ #ifdef __cplusplus
+--- a/ssl/ech/ech_internal.c
++++ b/ssl/ech/ech_internal.c
+@@ -206,6 +206,7 @@
+         && (s->ext.ech.es = ossl_echstore_dup(ctx->ext.ech.es)) == NULL)
+         goto err;
+     s->ext.ech.cb = ctx->ext.ech.cb;
++    s->ext.ech.alpn_pad_target = ctx->ext.ech.alpn_pad_target;
+     if (ctx->ext.ech.alpn_outer != NULL) {
+         s->ext.ech.alpn_outer = OPENSSL_memdup(ctx->ext.ech.alpn_outer,
+             ctx->ext.ech.alpn_outer_len);
+@@ -319,6 +320,7 @@
+         len += 4 + 1 + 2 * k; /* ech_outer_extensions */
+     len += 4 + 1; /* the inner encrypted_client_hello */
+     len += ossl_ech_grease_psk_len(s);
++    len += ossl_ech_alpn_padding(s); /* as a real offer pads its ALPN */
+     /*
+      * as ossl_ech_calc_padding() with a maximum_name_length of 0: a multiple
+      * of 32 octets, at least 128
+@@ -685,6 +687,20 @@
+  * a padded cleartext of 128 octets, the ciphertext will be 144
+  * octets.
+  */
++/*
++ * RFC 9849, section 6.1.3: "Clients SHOULD pad this extension [ALPN] by
++ * rounding up to the total size of the longest ALPN extension across all
++ * application profiles." The padding the inner ALPN extension needs to reach
++ * alpn_pad_target (SSL_ech_set_alpn_pad_target()); 0 without a target
++ */
++size_t ossl_ech_alpn_padding(const SSL_CONNECTION *s)
++{
++    size_t have = s->ext.alpn != NULL ? 4 + 2 + s->ext.alpn_len : 0;
++
++    return s->ext.ech.alpn_pad_target > have
++        ? s->ext.ech.alpn_pad_target - have : 0;
++}
++
+ size_t ossl_ech_calc_padding(SSL_CONNECTION *s, OSSL_ECHSTORE_ENTRY *ee,
+     size_t encoded_len)
+ {
+@@ -707,6 +723,8 @@
+             innersnipadding = (int)mnl + 9;
+         }
+     }
++    /* and the ALPN extension's, before the whole is rounded up */
++    innersnipadding += ossl_ech_alpn_padding(s);
+     /* padding is after the inner client hello has been encoded */
+     length_with_snipadding = innersnipadding + (int)encoded_len;
+     length_of_padding = 31 - ((length_with_snipadding - 1) % 32);
+--- a/ssl/ech/ech_local.h
++++ b/ssl/ech/ech_local.h
+@@ -169,6 +169,7 @@
+     OSSL_ECHSTORE *es; /* ECHConfigList details */
+     unsigned char *alpn_outer;
+     size_t alpn_outer_len;
++    size_t alpn_pad_target; /* inner ALPN extension padding target, 0: none */
+     SSL_ech_cb_func cb; /* callback function for when ECH "done" */
+ } OSSL_ECH_CTX;
+ 
+@@ -185,6 +186,12 @@
+     char *outer_hostname;
+     unsigned char *alpn_outer;
+     size_t alpn_outer_len;
++    /*
++     * RFC 9849 section 6.1.3: the size, in octets with its 4-octet header, of
++     * the longest ALPN extension across the client's application profiles;
++     * the inner ALPN extension is padded up to it. 0: no ALPN padding
++     */
++    size_t alpn_pad_target;
+     SSL_ech_cb_func cb; /* callback function for when ECH "done" */
+     /*
+      * If ECH fails, then we switch to verifying the cert for the
+@@ -383,6 +390,7 @@
+ int ossl_ech_intbuf_add(SSL_CONNECTION *s, const unsigned char *buf,
+     size_t blen, int hash_existing);
+ int ossl_ech_intbuf_fetch(SSL_CONNECTION *s, unsigned char **buf, size_t *blen);
++size_t ossl_ech_alpn_padding(const SSL_CONNECTION *s);
+ size_t ossl_ech_calc_padding(SSL_CONNECTION *s, OSSL_ECHSTORE_ENTRY *ee,
+     size_t encoded_len);
+ int ossl_ech_stash_keyshares(SSL_CONNECTION *s);
+--- a/ssl/ech/ech_ssl_apis.c
++++ b/ssl/ech/ech_ssl_apis.c
+@@ -164,6 +164,20 @@
+     return 1;
+ }
+ 
++int SSL_ech_set_alpn_pad_target(SSL *ssl, size_t target)
++{
++    SSL_CONNECTION *s = SSL_CONNECTION_FROM_SSL(ssl);
++
++    if (s == NULL)
++        return 0;
++    if (target > OSSL_ECH_MAX_ALPN_EXT_LEN) {
++        ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_INVALID_ARGUMENT);
++        return 0;
++    }
++    s->ext.ech.alpn_pad_target = target;
++    return 1;
++}
++
+ int SSL_ech_get1_status(SSL *ssl, char **inner_sni, char **outer_sni)
+ {
+     char *sinner = NULL;
+@@ -366,6 +380,18 @@
+  * contrasts with SSL_CTX_set1_alpn_protos() which (unusually for OpenSSL)
+  * returns 0 for success and 1 on error.
+  */
++int SSL_CTX_ech_set_alpn_pad_target(SSL_CTX *ctx, size_t target)
++{
++    if (ctx == NULL)
++        return 0;
++    if (target > OSSL_ECH_MAX_ALPN_EXT_LEN) {
++        ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_INVALID_ARGUMENT);
++        return 0;
++    }
++    ctx->ext.ech.alpn_pad_target = target;
++    return 1;
++}
++
+ int SSL_CTX_ech_set1_outer_alpn_protos(SSL_CTX *ctx,
+     const unsigned char *protos,
+     const size_t protos_len)

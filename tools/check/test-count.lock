@@ -5877,6 +5877,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.tofuAcc
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.weakReasonsPrintTheirName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.aFailedSetKeepsTheKeysItTook
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.aRejectionForAnOriginNamedLikeThePublicNameIsStillOne
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.alpnListsDoNotShowInThePayloadLength
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.alpnPaddingTargetIsTheLongestProfile
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.base64OfTheRecordParses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.closedKeysAreFreedAndRefuseNewContexts
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.customVerifierKnowsWhenTheNameIsHidden

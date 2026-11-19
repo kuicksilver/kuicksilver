@@ -88,6 +88,13 @@ public object KslConst {
      */
     public const val OPT_ECH_GREASE: Int = 15
 
+    /**
+     * Client context: the size, with its 4-octet header, of the longest ALPN extension across the client's application
+     * profiles; ECH's inner ALPN extension (and a GREASE payload's length) pads up to it (RFC 9849 section 6.1.3; ABI 7,
+     * additive). Default 0, none.
+     */
+    public const val OPT_ECH_ALPN_PAD: Int = 16
+
     /** 1 byte, `ECH_*`: the session's Encrypted Client Hello outcome, also after a failed handshake (ABI 7, additive). */
     public const val GET_ECH_STATUS: Int = 15
 

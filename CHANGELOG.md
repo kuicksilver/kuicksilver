@@ -1029,6 +1029,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     The HTTP/3 connection inside a CONNECT-UDP tunnel offers the origin's ECH, with its one retry through the tunnel.
   - `EchServerKeys` is `AutoCloseable`: `close()` frees its native set, which otherwise stayed for the life of the
     process.
+- The bundled OpenSSL carries a ninth ECH patch (`patch_9`, `openssl-4.1.0-ech-alpn-padding.patch`), with
+  `KSL_OPT_ECH_ALPN_PAD` (16, ABI 7, additive) in `ksl`. RFC 9849 section 6.1.3 has a client pad its inner ALPN
+  extension "to the total size of the longest ALPN extension across all application profiles"; OpenSSL 4.1.0 padded the
+  server name only. Now every client context pads it to the longest of Kuicksilver's profiles (`h2` with `http/1.1`,
+  18 octets) or to its own list when that is longer, and a GREASE payload is sized alike. A connection offering `h3`
+  and one offering `h2` and `http/1.1` give one ECH payload length for every server name.
 - TLS, Encrypted Client Hello, second review of 2026-11-20:
   - JVM, RFC 9849 section 10.7: under an accepted ECH the path is built from the presented certificates and checked with
     a PKIX `CertPathValidator`; no AIA fetch of a missing intermediate goes out any more where the process set

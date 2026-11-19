@@ -353,6 +353,23 @@ internal fun unusableEchMessage(hasEch: Boolean): String =
             "mandatory extension, or a public_name that is no DNS name; RFC 9849 sections 4, 4.2, 6.1.7)"
     }
 
+/**
+ * The size, with its 4-octet header, of the longest ALPN extension across a client's application profiles (RFC 9849
+ * section 6.1.3: "Clients SHOULD pad this extension by rounding up to the total size of the longest ALPN extension across
+ * all application profiles"): Kuicksilver's profiles are `h3` (9 octets) and `h2` with `http/1.1` (18), so 18, or [alpn]'s
+ * own extension when it is longer. The inner ALPN extension of ECH, and a GREASE payload's length, pad up to it.
+ */
+internal fun echAlpnPadTarget(alpn: List<String>): Int =
+    maxOf(
+        LONGEST_PROFILE_ALPN_EXTENSION,
+        4 + 2 + alpn.sumOf { 1 + it.encodeToByteArray().size },
+    )
+
+/** `h2` and `http/1.1`: extension type and length (4), list length (2), then 1 + 2 and 1 + 8. */
+private const val LONGEST_PROFILE_ALPN_EXTENSION = 18
+
+/** The ECH outcome of [ssl]. */
+
 /** The ECH outcome of [ssl]. */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun echStatusOf(ssl: Long): EchStatus = EchStatus.of(Ksl.sslGet(ssl, KslConst.GET_ECH_STATUS).firstOrNull()?.toInt() ?: 0)
