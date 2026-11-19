@@ -25,7 +25,7 @@ Gradle builds the Kotlin code; the native code is built by scripts that the Grad
 | `libksl.a` for each Kotlin/Native target | `tools/build-ksl-a.sh` | `:kuicksilver-native:buildKslA<Target>` |
 
 To publish a build into the local Maven repository, run `./gradlew --max-workers=2 publishToMavenLocal` (every target),
-or the JVM-only variant in the [README](../../README.md#install).
+or the JVM-only variant in [Install](../install.md#versions).
 
 ## Your compiler and flags
 
