@@ -218,10 +218,13 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
             }
             // in every space: a configured start above 1200 (initialUdpPayloadSize) sends the handshake at that size, and a path that
             // cannot carry it acknowledges nothing, so the handshake would never finish (RFC 9000 section 14.1 lets Initial datagrams
-            // exceed 1200 bytes only "if the sender believes that the network path and peer both support the size")
+            // exceed 1200 bytes only "if the sender believes that the network path and peer both support the size"). While the
+            // path has acknowledged nothing at all (no RTT sample) the start is wholly unconfirmed and one PTO is enough: with
+            // both ends misconfigured each side's fallback waits for the other's, and two PTOs each (about 3 s) outran the 10 s
+            // handshake timeout; a late acknowledgment of the large datagram restores the size
             path.let { p ->
                 p.pmtud?.let { m ->
-                    if (loss.ptoCount >= 2 &&
+                    if (loss.ptoCount >= (if (p.rtt.hasSample) 2 else 1) &&
                         m.current > 1200 &&
                         largePacketUnanswered(p)
                     ) {

@@ -226,10 +226,30 @@ class PmtudStartTest {
             assertTrue(p.confirmed(c), "the handshake completes: state ${c.state}, mtu ${c.stats.pathMtu}")
             assertEquals(1200, c.stats.pathMtu, "back to the base")
             assertEquals(1400, p.clientDatagramSizes.first(), "it did start at 1400: ${p.clientDatagramSizes.take(4)}")
-            // two PTOs in a row with the 1400-byte Initial unanswered: the probes of the second go at 1200 (about 2 s at the default
-            // initial RTT), and the handshake ends long before its 10 s timeout
+            // a PTO with the 1400-byte Initial unanswered and nothing acknowledged yet: the probes go at 1200 (about 1 s at the
+            // default initial RTT), and the handshake ends long before its 10 s timeout
             assertTrue(p.clientDatagramSizes.drop(1).all { it <= 1200 }, "${p.clientDatagramSizes.take(6)}")
             transfer(p, c)
+        }
+    }
+
+    @Test fun negative_bothEndsStartingAboveTheLinkStillHandshakeWithinTheTimeout() {
+        // each side's fallback waits for the other's datagrams: one PTO each while nothing was acknowledged keeps the whole well
+        // inside the default 10 s handshake timeout (two each did not, with 0-RTT data in flight)
+        val both = quic { initialUdpPayloadSize = 1400 }
+        val (p, c) = start(clientQuic = both, serverQuic = both, linkToServer = 1300, linkToClient = 1300)
+        p.use { _ ->
+            val t0 = p.now
+            assertTrue(p.runUntil(10.seconds) { c.state == ConnectionState.Confirmed }, "state ${c.state}")
+            assertTrue(p.now - t0 < 5.seconds, "handshake took ${p.now - t0}")
+            assertEquals(1200, c.stats.pathMtu)
+            assertEquals(
+                1200,
+                p.server
+                    .connections()
+                    .single()
+                    .stats.pathMtu,
+            )
         }
     }
 
@@ -305,6 +325,56 @@ class PmtudStartTest {
             assertTrue(p.runUntil(120.seconds) { c.stats.pathMtu == 1400 }, "back to the start: ${c.stats.pathMtu}")
             transfer(p, c)
             assertTrue(p.clientDatagramSizes.all { it <= 1400 }, "never above it: ${p.clientDatagramSizes.filter { it > 1400 }}")
+        }
+    }
+
+    /**
+     * Pmtud orders non-probe packets by the datagram they travelled in, not by packet number: an acknowledgment of an older datagram
+     * (here a Handshake-space packet whose number is larger than those of the 1-RTT packets lost after it) does not reset a black-hole
+     * verdict, and a datagram that coalesced three packets counts as one loss.
+     */
+    @Test fun negative_anAckInOneSpaceDoesNotResetAnotherSpacesBlackHoleVerdict() {
+        val (p, c) =
+            start(
+                clientQuic =
+                    quic {
+                        initialUdpPayloadSize = 1400
+                        pmtud = false
+                    },
+            )
+        p.use { _ ->
+            assertTrue(p.confirmed(c))
+            assertEquals(1400, c.stats.pathMtu)
+            val l = ConnectionLossListener(c)
+
+            fun packet(
+                pn: Long,
+                seq: Long,
+            ) = io.kuicksilver.quic.recovery.SentPacket().also {
+                it.pn = pn
+                it.size = 600
+                it.datagramSize = 1400
+                it.datagramSeq = seq
+                it.pathId = PathId.Initial.value
+            }
+            val base = 1_000_000L
+            // one lost datagram that coalesced three packets: one loss, no verdict
+            // packet numbers of their own spaces (3, 7, 11), one datagram
+            for (sp in io.kuicksilver.quic.recovery.SpaceId.entries) l.onLost(sp, packet(3L + 4 * sp.ordinal, base))
+            c.checkPmtuBlackHoles()
+            assertEquals(1400, c.stats.pathMtu, "one lost datagram is not three")
+            // two more lost 1-RTT datagrams (packet numbers 12 and 13), then the ACK of an older datagram's Handshake packet number 500
+            l.onLost(io.kuicksilver.quic.recovery.SpaceId.Application, packet(12, base + 1))
+            l.onLost(io.kuicksilver.quic.recovery.SpaceId.Application, packet(13, base + 2))
+            l.onAcked(io.kuicksilver.quic.recovery.SpaceId.Handshake, packet(500, base - 1))
+            c.checkPmtuBlackHoles()
+            assertEquals(1200, c.stats.pathMtu, "the older datagram's acknowledgment does not reset the verdict")
+            // and an acknowledgment of a datagram older than those the verdict rested on does not undo it
+            l.onAcked(io.kuicksilver.quic.recovery.SpaceId.Initial, packet(900, base - 2))
+            assertEquals(1200, c.stats.pathMtu)
+            // the first lost datagram acknowledged after all does
+            l.onAcked(io.kuicksilver.quic.recovery.SpaceId.Application, packet(11, base))
+            assertEquals(1400, c.stats.pathMtu, "an acknowledged datagram of 1400 bytes from the verdict's range undoes it")
         }
     }
 

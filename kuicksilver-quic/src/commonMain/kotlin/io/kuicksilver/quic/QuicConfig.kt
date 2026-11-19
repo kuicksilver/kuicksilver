@@ -107,9 +107,10 @@ public class QuicConfig private constructor(
      * The UDP payload size, in bytes, a connection's first path starts with, Initial padding included (RFC 9000 section 14: "Datagrams
      * containing Initial packets MAY exceed 1200 bytes if the sender believes that the network path and peer both support the size
      * that it chooses"). 1200..65527, 1200 by default; it takes effect only on a socket that sets DF, and is lowered to
-     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and, once known, the peer's `max_udp_payload_size`. The size is not trusted: DPLPMTUD's
-     * black-hole detection watches it from the first packet (two PTOs in a row with a packet above 1200 unanswered, during the
-     * handshake too, or three lost large packets) and drops the path to 1200 when it does not get through. With [pmtud] off it is
+     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and the peer's `max_udp_payload_size` (the one a 0-RTT ticket remembers until the
+     * peer's arrive). The size is not trusted: DPLPMTUD's black-hole detection watches it from the first datagram (a PTO while
+     * nothing was acknowledged, two in a row afterwards, with a datagram above 1200 unanswered, during the handshake too; or three
+     * lost large datagrams) and drops the path to 1200 when it does not get through. With [pmtud] off it is
      * also the most the path ever sends. A new path to another IP address starts at 1200 (its MTU is unknown).
      */
     @property:ExperimentalKuicksilverApi
@@ -157,7 +158,8 @@ public class QuicConfig private constructor(
     /**
      * Search for a larger path MTU with DPLPMTUD (RFC 8899) on sockets that set DF, from [initialUdpPayloadSize] up to
      * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and the peer's limit. Off, no path sends more than [initialUdpPayloadSize] (1200 by
-     * default); above 1200 its black-hole detection still runs, and after a fall back to 1200 probes go only up to that size again.
+     * default); above 1200 its black-hole detection still runs, and probes go from 1200 up to that size, never above it: after a
+     * fall back, and on a new path to another IP address, which starts at 1200.
      */
     public val pmtud: Boolean,
     /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.pmtudIcmpHints]. */

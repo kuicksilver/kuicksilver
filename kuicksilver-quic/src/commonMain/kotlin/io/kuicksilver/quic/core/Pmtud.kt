@@ -87,18 +87,25 @@ internal class Pmtud(
     private var pausedUntil: TimeMark = TimeMark.NEVER
     private var researchAt: TimeMark = TimeMark.NEVER
 
-    /** Lost packets above the base since the last reset, the lowest packet number among them, the highest acknowledged full-size packet number. */
+    /**
+     * Lost datagrams above the base since the last reset, the lowest datagram sequence number among them, the highest acknowledged
+     * full-size one. Non-probe packets are ordered by the connection-wide sequence number of the datagram they travelled in
+     * (`SentPacket.datagramSeq`), not by packet number: Initial, Handshake and 1-RTT packet numbers are separate spaces.
+     */
     private var bigLost = 0
-    private var firstBigLostPn = -1L
-    private var largestBigAckedPn = -1L
 
-    /** The search state before the last black-hole verdict (0: none to undo) and the packet number after which a full-size acknowledged packet disproves it. */
+    /** The datagrams [bigLost] counted (a datagram coalescing several lost packets counts once); only three are needed. */
+    private val lostSeqs = LongArray(3) { -1L }
+    private var firstBigLostSeq = -1L
+    private var largestBigAckedSeq = -1L
+
+    /** The search state before the last black-hole verdict (0: none to undo) and the datagram sequence number after which a full-size acknowledged packet disproves it. */
     private var undoCurrent = 0
     private var undoLow = 0
     private var undoHigh = 0
     private var undoSearchDone = false
     private var undoResearchAt: TimeMark = TimeMark.NEVER
-    private var undoAfterPn = -1L
+    private var undoAfterSeq = -1L
 
     /**
      * A validated PTB below the size in use dropped [current] to the base provisionally: the size before it (0: none) and the search
@@ -171,8 +178,7 @@ internal class Pmtud(
         for (i in 0 until SENT_PROBES) sentLost[i] = false
         lostProbes = 0
         undoCurrent = 0
-        bigLost = 0
-        firstBigLostPn = -1L
+        clearLosses()
         current = base
         low = base
         high = minOf(upperBound, ptbFrom)
@@ -456,17 +462,17 @@ internal class Pmtud(
     }
 
     /**
-     * A regular (non-probe) packet [pn] of [size] bytes was acknowledged: a full-size one from the first lost one on (that one
+     * A regular (non-probe) packet that travelled in datagram [seq] of [size] bytes was acknowledged: a full-size one from the first lost one on (that one
      * included: its loss was spurious) proves the path carries the MTU. One larger than [current], sent before a black-hole verdict
      * and no earlier than the first packet that verdict rested on, proves the verdict wrong (RFC 8899 section 4.1: an acknowledged packet confirms its size): the search state from before it
      * comes back, without a pause. Returns true when [current] changed so.
      */
     fun onPacketAcked(
         size: Int,
-        pn: Long,
+        seq: Long,
     ): Boolean {
         if (size < current) return false
-        val undone = size > current && undoCurrent > 0 && pn > undoAfterPn
+        val undone = size > current && undoCurrent > 0 && seq > undoAfterSeq
         if (undone) {
             if (size >= undoCurrent) {
                 current = undoCurrent
@@ -487,31 +493,36 @@ internal class Pmtud(
             pausedUntil = TimeMark.NEVER
             undoCurrent = 0
         }
-        if (pn > largestBigAckedPn) largestBigAckedPn = pn
-        if (bigLost > 0 && pn >= firstBigLostPn) {
-            bigLost = 0
-            firstBigLostPn = -1L
-        }
+        if (seq > largestBigAckedSeq) largestBigAckedSeq = seq
+        if (bigLost > 0 && seq >= firstBigLostSeq) clearLosses()
         return undone
     }
 
+    private fun clearLosses() {
+        bigLost = 0
+        firstBigLostSeq = -1L
+        lostSeqs.fill(-1L)
+    }
+
     /**
-     * A regular packet [pn] of [size] bytes was lost; counted unless a later full-size packet already arrived. A packet larger than
+     * A regular packet that travelled in datagram [seq] of [size] bytes was lost (once per datagram); counted unless a later full-size packet already arrived. A packet larger than
      * [current] was sent before a drop and says nothing about the size in use.
      */
     fun onPacketLost(
         size: Int,
-        pn: Long,
+        seq: Long,
     ) {
-        if (size <= base || size > current || pn < largestBigAckedPn) return
-        if (bigLost == 0 || pn < firstBigLostPn) firstBigLostPn = pn
+        if (size <= base || size > current || seq < largestBigAckedSeq) return
+        for (i in 0 until minOf(bigLost, lostSeqs.size)) if (lostSeqs[i] == seq) return // another packet of a datagram already counted
+        if (bigLost == 0 || seq < firstBigLostSeq) firstBigLostSeq = seq
+        if (bigLost < lostSeqs.size) lostSeqs[bigLost] = seq
         bigLost++
     }
 
     /** After an ACK or a loss timer was processed: true (and back to the base) when three large packets were lost with none acknowledged after them, a black hole (RFC 8899 section 4.3). */
     fun takeBlackHole(now: TimeMark): Boolean {
         if (bigLost < 3) return false
-        fallBack(now, firstBigLostPn - 1) // the first lost packet itself, acknowledged after all, disproves it too
+        fallBack(now, firstBigLostSeq - 1) // the first lost datagram itself, acknowledged after all, disproves it too
         return true
     }
 
@@ -520,11 +531,11 @@ internal class Pmtud(
      * nothing comes back for loss detection to work with. A full-size packet newer than every one acknowledged so far that is
      * acknowledged after all undoes it (a peer that only stalled).
      */
-    fun onBlackHole(now: TimeMark) = fallBack(now, largestBigAckedPn)
+    fun onBlackHole(now: TimeMark) = fallBack(now, largestBigAckedSeq)
 
     private fun fallBack(
         now: TimeMark,
-        disprovedAfterPn: Long,
+        disprovedAfterSeq: Long,
     ) {
         // probes declared lost before the verdict: a late acknowledgment of one is about the path before it (as onPacketAcked takes a
         // late full-size packet only after the packets the verdict rested on), so it raises nothing ([takeLostProbeIn])
@@ -538,10 +549,9 @@ internal class Pmtud(
             undoHigh = high
             undoSearchDone = searchDone
             undoResearchAt = researchAt
-            undoAfterPn = disprovedAfterPn
+            undoAfterSeq = disprovedAfterSeq
         }
-        bigLost = 0
-        firstBigLostPn = -1L
+        clearLosses()
         confirming = false
         current = base
         low = base

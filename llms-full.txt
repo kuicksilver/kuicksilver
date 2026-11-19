@@ -530,7 +530,7 @@ On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING p
 towards min(`maxUdpPayloadSize`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size`) (1452 by default; `QuicEndpoint` refuses a value above
 its 1500-byte datagram slots at `bind`/`connect`, the sans-IO core takes up to 65527), twenty bytes at a time, at most three tries per
 size; probes count in the congestion window but their loss is not a congestion signal. Three consecutive lost large
-packets, or two PTOs in a row while a packet above 1200 is unanswered (during the handshake too), mean the path shrank: the connection drops back to 1200, tells
+datagrams, or two PTOs in a row while a datagram above 1200 is unanswered (one PTO while the path has acknowledged nothing yet; during the handshake too), mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
 dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling. The portable socket sets DF where the JDK has the
@@ -574,10 +574,19 @@ ICMP message. Inside WireGuard (interface MTU 1420) a UDP payload of at most 139
   datagrams it will send"). Unlike `maxUdpPayloadSize` it is not advertised, so the peer's datagrams to us are not limited by it.
 
 The configured size is a guess, not a fact, so a wrong one cannot break a connection for good: DPLPMTUD's black-hole detection
-watches it from the first datagram. A client whose 1400-byte Initials vanish on a 1300-byte path falls back to 1200 at its
-second PTO, about 2 s into the handshake at the default `initialRtt`, and the handshake completes; the same holds for a
-server's first flight. Should the 1400-byte packet be acknowledged after all (a slow first answer), the size comes back. A
-path that stops carrying the size later falls back the same way. With `pmtud` on, the search goes on upwards from the start;
+watches it from the first datagram, judging the datagram's size, so a datagram that coalesces several smaller packets (an
+Initial with a 0-RTT packet, a resumed server's Initial and Handshake) counts as large too. A client whose 1400-byte Initials
+vanish on a 1300-byte path falls back to 1200 at its first PTO (while nothing has been acknowledged, one PTO is enough), about
+1 s into the handshake at the default `initialRtt`, and the handshake completes; the same holds for a server's first flight,
+so even two misconfigured ends finish in about 2–3 s. Should the 1400-byte datagram be acknowledged after all (a slow first
+answer), the size comes back. On a path whose RTT is above about 1 s (satellite, a congested mobile link) the first answer
+may come after that PTO: the fallback is then spurious, and when the acknowledgment of the large datagram is lost too, the
+size stays at 1200 until the minute's pause ends and the search (or, with `pmtud = false`, the probe of the start) restores it.
+A path that stops carrying the size later falls back after two PTOs or three lost large datagrams. A 0-RTT flight stays within the
+`max_udp_payload_size` the ticket remembers (RFC 9000 section 7.4.1). The kernel's EMSGSIZE for a regular datagram above its
+interface MTU (a start above a tunnel's MTU on the sending host) does not shortcut this: such a datagram counts as lost and the
+PTO rule falls back, because on some systems a forged Packet Too Big that the kernel cached can cause the same error, and only
+the probe in flight is settled by it. With `pmtud` on, the search goes on upwards from the start;
 with `pmtud = false` the start is also the ceiling, and after a fall back probes only go up to it again. A path to another IP
 address (a migration) starts at 1200, since its MTU is unknown; a NAT rebinding keeps the size and its black-hole detection.
 

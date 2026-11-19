@@ -33,14 +33,15 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The largest datagram a path may send (RFC 8899 MAX_PLPMTU, section 4.4: "the minimum of the local MTU and EMTU_R", which "MAY be
- * reduced by an application"): our `max_udp_payload_size`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size` once known
- * (RFC 9000 section 18.2: "an additional constraint on datagram size in the same way as the path MTU"), and with `pmtud` off the
+ * reduced by an application"): our `max_udp_payload_size`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size` once known,
+ * or the one a 0-RTT ticket remembers until then (RFC 9000 sections 7.4.1, 18.2: "an additional constraint on datagram size in the same way as the path MTU"), and with `pmtud` off the
  * configured start, which the path then never exceeds.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun ConnectionCore.pmtudUpperBound(): Int {
     var b = minOf(config.maxUdpPayloadSize, config.maxSendUdpPayloadSize).toLong()
-    peerTp?.let { b = minOf(b, it.maxUdpPayloadSize) }
+    // RFC 9000 section 7.4.1: before the server's parameters arrive, 0-RTT uses the remembered max_udp_payload_size
+    (peerTp ?: remembered)?.let { b = minOf(b, it.maxUdpPayloadSize) }
     if (!config.pmtud) b = minOf(b, config.initialUdpPayloadSize.toLong())
     return b.toInt()
 }
@@ -58,7 +59,7 @@ internal val ConnectionCore.runsPmtud: Boolean get() = config.pmtud || config.in
 internal fun ConnectionCore.configuredStartSize(): Int = maxOf(1200, minOf(config.initialUdpPayloadSize, pmtudUpperBound()))
 
 /**
- * The peer's transport parameters arrived (RFC 9000 section 14.3): every path's search stays at or below its `max_udp_payload_size`,
+ * The peer's transport parameters arrived, or a 0-RTT ticket's remembered ones were taken (RFC 9000 sections 7.4.1, 14.3): every path's search stays at or below its `max_udp_payload_size`,
  * and a path already sending more (a configured start above it) drops to it.
  */
 internal fun ConnectionCore.applyPeerMaxUdpPayloadSize() {
@@ -177,7 +178,11 @@ internal fun ConnectionCore.largePacketUnanswered(p: Path): Boolean {
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal]) continue
         for (s in loss.space(space).sent) {
-            if (s.ackEliciting && s.pathId == p.id.value && s.size > 1200 && s.frames.flags and SentFrames.PMTU_PROBE == 0) return true
+            if (s.ackEliciting && s.pathId == p.id.value && s.datagramSize > 1200 &&
+                s.frames.flags and SentFrames.PMTU_PROBE == 0
+            ) {
+                return true
+            }
         }
     }
     return false
