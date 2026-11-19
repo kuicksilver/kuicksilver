@@ -90,7 +90,10 @@ internal class ConnectionRuntime(
     private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
-    /** Server: handed to the accept queue (at 0-RTT acceptance or at handshake completion). Loop dispatcher only. */
+    /**
+     * Server: decided for the accept queue (at 0-RTT acceptance or at handshake completion): handed to it, or refused with
+     * CONNECTION_REFUSED because it was full. Loop dispatcher only.
+     */
     internal var handedOff = false
 
     @Volatile private var earlyAccepted: Boolean? = null

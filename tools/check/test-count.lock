@@ -5026,6 +5026,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aDatag
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aForwardedDatagramNotYetProcessedHoldsTheDrainRound
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.aForwardedDatagramTheOwnerCannotTakeCountsAsAQueueDrop
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.burstAboveTheSharedAcceptQueueIsRefusedGroupWide
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.burstWithLateReadingClientsCountsEveryRefusal
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.burstWithinTheSharedAcceptQueueIsAcceptedWhole
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwardedBurstDoesNotMonopoliseTheLoop
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwardedPreferredDatagramIsDroppedOnceThePreferredAddressIsDown
