@@ -489,8 +489,27 @@ internal class ServerRequestImpl(
         if (answered431) throw Http3Exception.FieldSectionTooLarge(st.id, session.settings.maxFieldSectionSize)
     }
 
+    /** Set when the request ended with its connection ([connectionEnded]): an answer then fails with the connection's error. */
+    @Volatile private var endedWithConnection = false
+
+    /**
+     * The connection is gone and the request was still registered (its handler never answered, or its end was lost with
+     * the session's coroutines): it ends here. Session dispatcher only.
+     */
+    fun connectionEnded() {
+        endedWithConnection = true
+        applicationDone()
+        done()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // closed is complete once the request ended with the connection
+    private fun checkConnectionNotEnded() {
+        if (endedWithConnection) throw session.closed.getCompleted()
+    }
+
     /** Session dispatcher only: the final response can still be sent. */
     private fun checkResponseOpen() {
+        checkConnectionNotEnded()
         checkNotAnswered431()
         check(!responseStarted) { "response already started" }
         check(!finished) { "request is finished" }
@@ -777,6 +796,7 @@ internal class ServerRequestImpl(
         priority: StreamPriority?,
     ): Http3ResponseWriter {
         require(status in 200..599) { "final status must be 200..599" }
+        checkConnectionNotEnded() // a hint, as below
         if (responseStarted) { // a hint; the claim below is on the dispatcher
             checkNotAnswered431()
             throw IllegalStateException("response already started")

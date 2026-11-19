@@ -10,10 +10,12 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
+import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.awaitReceivedAllForTest
@@ -545,6 +547,48 @@ class ConnectionEndTest {
                 runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 awaitNothingRegistered(s)
                 tunnel.join()
+            }
+        }
+
+    /**
+     * The handler never answers (it failed before respond, or its engine cancelled it): once the connection ended and the
+     * session's coroutines are gone, the request ends anyway, and an answer tried after that fails with the connection's
+     * error, not with a request that is merely finished. Nothing ended such a request before: it stayed registered.
+     */
+    @Test fun requestNeverAnsweredEndsWithTheConnection() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val response = async { runCatching { p.client.request(get()) } }
+                val req = withTimeout(5.seconds) { p.server.acceptRequest() }
+                val s = p.server.session
+                p.client.close()
+                withTimeout(5.seconds) { p.server.closed.await() }
+                awaitCoroutinesCancelled(s)
+                awaitNothingRegistered(s)
+                val late = assertFailsWith<Throwable> { req.respond(200) }
+                assertTrue(late is Http3Exception, "an answer after the connection ended fails with the connection's error: $late")
+                response.join()
+            }
+        }
+
+    /** A WebTransport session the server accepted ends with the connection: no session, request or datagram channel is kept. */
+    @Test fun webTransportSessionLeavesNothingWhenTheConnectionEnds() =
+        h3Test {
+            val wt =
+                http3Settings {
+                    enableConnectProtocol = true
+                    webTransport = true
+                }
+            H3Pair.open(clientSettings = wt, serverSettings = wt).useScoped { p ->
+                val server = async { p.server.acceptRequest().acceptWebTransport() }
+                p.client.webTransport(http3Request("CONNECT", "server.test", "/wt"))
+                withTimeout(5.seconds) { server.await() }
+                val s = p.server.session
+                assertTrue(registered(s) != null, "the session is registered while the connection lives")
+                p.client.close()
+                withTimeout(5.seconds) { p.server.closed.await() }
+                awaitCoroutinesCancelled(s)
+                awaitNothingRegistered(s)
             }
         }
 
