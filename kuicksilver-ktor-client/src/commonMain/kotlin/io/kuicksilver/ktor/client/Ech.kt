@@ -28,6 +28,11 @@ public class EchClientConfig {
      * and in a build without ECH, with IllegalArgumentException when it is created (each with its own message): a list
      * given here never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` without a usable
      * ECHConfig is different: the connection sends GREASE then, as RFC 9849 section 6.1 allows.
+     *
+     * The engine runs its `tls` block when it is created: to read the TLS versions, and once per entry here, whose client
+     * configuration it builds for the check (and again for every connection, as always), so keep the block free of side
+     * effects. A `TlsException.Config` from that build becomes the entry's IllegalArgumentException (its message names the
+     * host); any other exception the block throws reaches the caller of the engine's creation unchanged.
      */
     public var configLists: Map<String, EchConfigList> = emptyMap()
 

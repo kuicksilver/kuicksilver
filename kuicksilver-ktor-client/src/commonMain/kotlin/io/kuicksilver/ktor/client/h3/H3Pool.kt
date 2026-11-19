@@ -313,6 +313,9 @@ internal class H3Pool(
      */
     private val tickets = io.kuicksilver.tls.SessionCache()
 
+    /** The number of session tickets the pool holds (tests: a 0-RTT test waits for its ticket before it drops the connection). */
+    internal suspend fun ticketsForTest(): Int = tickets.size()
+
     /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =

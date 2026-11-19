@@ -1543,7 +1543,10 @@ val client =
   the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
-  given for a host never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` with nothing usable
+  given for a host never turns into GREASE with the host's name in the clear. The engine runs the `tls` block when it is
+  created, to read the TLS versions and once per `configLists` entry for that check (and again for every connection, as
+  always), so keep the block free of side effects; a `TlsException.Config` from it becomes the entry's
+  `IllegalArgumentException`, and any other exception the block throws fails the engine's creation unchanged. An HTTPS record's `ech` with nothing usable
   is different: that connection sends GREASE, as RFC 9849 section 6.1 allows ("If no compatible configuration is found,
   then the client SHOULD proceed as described in Section 6.2"); a record whose `mandatory` names `ech` is skipped then,
   since it must not be reached without ECH (RFC 9848 section 5).
