@@ -1679,8 +1679,12 @@ val client =
   earlier (a rejection is no first contact). Such a connection only triggers the retry, which is held to the pins. No client
   certificate is sent on a rejected connection.
 - **Proxies.** Through an HTTP CONNECT or SOCKS5 proxy the TLS session inside the tunnel is the origin's, with
-  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2). The hop to the
-  proxy is plain TCP, so it carries no ClientHello of its own; the proxy learns the origin's name from the CONNECT line.
+  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2); the same holds
+  for the HTTP/3 connection inside a CONNECT-UDP tunnel, whose retry after a rejection goes through the same tunnel. The
+  proxy learns the origin's name from the CONNECT line or the CONNECT-UDP target. The hop to an `http://` proxy is plain
+  TCP; the TLS (or QUIC) hop to an `https://` or CONNECT-UDP proxy has a ClientHello of its own, which never offers the
+  origin's configuration nor one of the `tls` block: it sends GREASE as `ech.grease` says, and a `proxyTls` block may
+  set the proxy's own. A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
   the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without

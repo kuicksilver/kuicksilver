@@ -1554,7 +1554,8 @@ internal class H1Pool(
                 .markNow(),
     ): PooledConnection {
         if (!secure) return connectOnce(data, url, false, proxy, key, dns, h2Ok, connectStarted, null)
-        // the origin's ECH (RFC 9849), also inside a proxy's tunnel; the proxy hop itself is plain TCP, so it gets none.
+        // the origin's ECH (RFC 9849), also inside a proxy's tunnel; the TLS hop to an https proxy never offers it
+        // (proxyTlsConfigFor), and a rejection there is the proxy's (echRejectionIn stops at a ProxyTlsException).
         // A rejection is retried once on a new connection with the server's retry configurations, or without ECH when it
         // sent none (section 6.1.6), within the same connect timeout
         val route = dns.echRoute(url.host) { config.ech.configLists[it] }

@@ -152,8 +152,9 @@ public class EchKey private constructor(
  * A server's Encrypted Client Hello keys (RFC 9849 section 7.1, shared mode), for [TlsConfig.Builder.echKeys]. The keys are
  * parsed into native memory when given and stay there; at least one is [EchKey.inRetryConfigs], and 1 to 16 are kept at once.
  * [rotate] replaces the set: handshakes that start afterwards decrypt with the new one, also under contexts already built
- * from a configuration that holds this object, and handshakes in progress keep the set they started with. The last set stays
- * in native memory for the life of the process.
+ * from a configuration that holds this object, and handshakes in progress keep the set they started with. [close] frees
+ * the current set (contexts already built keep their own reference to it until they are freed); without it the last set
+ * stays in native memory for the life of the process.
  *
  * The keys of one set need distinct config_ids (RFC 9849 section 4.1): OpenSSL 4.1 tries only the first key of a
  * config_id and does not go on to the next one (section 7.1 has it go on), so a client of the other key would be rejected.
@@ -167,7 +168,9 @@ public class EchKey private constructor(
 @OptIn(ExperimentalAtomicApi::class)
 public class EchServerKeys(
     keys: List<EchKey>,
-) {
+) : AutoCloseable {
+    // the current set; after close a set with no native handle (0) and the last version, so that contexts already built
+    // see no newer set to take
     private val current = AtomicReference(Native(parse(keys), 1))
 
     /**
@@ -178,6 +181,10 @@ public class EchServerKeys(
         val handle = parse(keys)
         while (true) {
             val old = current.load()
+            if (old.handle == 0L) {
+                Ksl.echKeysFree(handle)
+                throw TlsException.Config("ECH keys: rotate after close")
+            }
             val next = Native(handle, old.version + 1)
             beforeSwapForTest?.invoke()
             if (current.compareAndSet(old, next)) {
@@ -186,6 +193,25 @@ public class EchServerKeys(
             }
         }
     }
+
+    /**
+     * Frees the current set, now unless [applyTo] is giving it to a context at this moment (then right after); contexts
+     * already built keep theirs. Afterwards a context can no longer be made from a configuration that holds these keys
+     * ([TlsException.Config]), and [rotate] throws. Calling it again does nothing.
+     */
+    override fun close() {
+        while (true) {
+            val old = current.load()
+            if (old.handle == 0L) return
+            if (current.compareAndSet(old, Native(0L, old.version))) {
+                if (old.release()) freedForTest?.invoke(old.version)
+                return
+            }
+        }
+    }
+
+    /** Test hook: a set of that version was freed by [close]. */
+    internal var freedForTest: ((Int) -> Unit)? = null
 
     /** Test hook: runs in [rotate] between reading the current set and replacing it. */
     internal var beforeSwapForTest: (() -> Unit)? = null
@@ -200,6 +226,7 @@ public class EchServerKeys(
     internal fun applyTo(ctx: Long): Int {
         while (true) {
             val n = current.load()
+            if (n.handle == 0L) throw TlsException.Config("ECH keys were closed (EchServerKeys.close)")
             if (!n.tryAcquire()) continue // rotated and freed between the load and the acquire: take the newer one
             try {
                 applyHookForTest?.invoke(true, n.version)
@@ -228,8 +255,11 @@ public class EchServerKeys(
             }
         }
 
-        fun release() {
-            if (refs.addAndFetch(-1) == 0) Ksl.echKeysFree(handle)
+        /** True when this dropped the last reference (the set is freed then). */
+        fun release(): Boolean {
+            if (refs.addAndFetch(-1) != 0) return false
+            if (handle != 0L) Ksl.echKeysFree(handle)
+            return true
         }
     }
 

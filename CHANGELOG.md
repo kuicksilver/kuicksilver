@@ -1004,6 +1004,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS, Encrypted Client Hello: a server key set whose keys share a config_id is refused (`TlsException.Config` from
   `EchServerKeys`). OpenSSL tries only the first key of a config_id, so a client of the other would have been rejected.
   Make one of the keys again.
+- TLS, Encrypted Client Hello, review of 2026-11-20:
+  - Retry configurations whose ECHConfigs are all of the supported version but none usable (an unknown KEM, say) were
+    reported as a rejection without retry configurations, which the Ktor client took for "securely disabled" and
+    retried with the name in the clear. RFC 9849 section 6.1.6 allows that only when no entry has a supported version:
+    the handshake now fails instead (`ksl`: `KSL_ECH_OFFERED`).
+  - `ksl` refuses ECH on a client session that verifies nothing (`KSL_VERIFY_NONE`), which reported unauthenticated
+    rejections and retry configurations; an empty ECHConfigList no longer parses (section 4); the verify name of an ECH
+    session cannot change once the handshake started; the ECH private key's bytes `ksl` decodes to read the config_id
+    are wiped.
+  - QUIC: the verifier off the connection's loop read the verify name from the native session, which the loop may
+    have freed by then (a handshake timeout, a close); the name is now taken on the loop when the handshake pauses.
+  - Ktor client: the TLS hop to an `https://` proxy offered the `tls` block's ECH configuration and sent GREASE
+    regardless of `ech.grease`, and a rejection on that hop was taken for the origin's (its retry configurations
+    offered to the origin). The proxy hop now offers none, GREASE as configured, and its rejection is a proxy failure.
+    The HTTP/3 connection inside a CONNECT-UDP tunnel offers the origin's ECH, with its one retry through the tunnel.
+  - `EchServerKeys` is `AutoCloseable`: `close()` frees its native set, which otherwise stayed for the life of the
+    process.
 - TLS, Encrypted Client Hello (`ksl`). Each item is checked where OpenSSL 4.1 does not:
   - An ECHConfigList whose 0xfe0d ECHConfig is malformed, for example by a trailing byte or an extension type given
     twice, does not parse (RFC 9849 sections 4, 4.2).

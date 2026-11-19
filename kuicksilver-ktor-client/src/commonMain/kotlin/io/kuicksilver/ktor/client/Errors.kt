@@ -80,14 +80,19 @@ internal fun proxyTrustOf(trust: TrustConfig): TrustConfig =
 internal fun KuicksilverEngineConfig.proxyTlsConfigFor(host: String): TlsConfig =
     tlsConfig(TlsRole.Client) {
         val own = this@proxyTlsConfigFor.proxyTls
+        // ECH (RFC 9849) on the proxy hop: GREASE as configured, never the origin's configuration; a proxyTls block may
+        // give the proxy's own
         if (own == null) {
             trust = this@proxyTlsConfigFor.trust
             tls()
             trust = proxyTrustOf(trust)
             identity = null
+            echConfigList = null
+            echGrease = this@proxyTlsConfigFor.ech.grease
         } else {
             trust = proxyTrustOf(this@proxyTlsConfigFor.trust)
             identity = null
+            echGrease = this@proxyTlsConfigFor.ech.grease
             own()
         }
         // HTTP/1.1 to the proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023)

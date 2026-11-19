@@ -209,6 +209,43 @@ class EchTest {
     }
 
     /**
+     * The verifier runs off the connection's loop, which may free the session meanwhile (a handshake timeout, a close):
+     * verifyPeer takes the name the pause was for from the loop, never from the native session, so it checks the
+     * public_name of a rejection even when the session is gone by then (before, a freed session gave the origin's name,
+     * and a session being freed a native read of freed memory).
+     */
+    @Test fun quicVerifyPeerUsesTheNameOfThePauseAfterTheSessionIsClosed() {
+        val seen = ArrayList<String?>()
+        val client =
+            Fixtures.client(
+                trust =
+                    TrustConfig.Custom { chain, host, _ ->
+                        seen += host
+                        VerifyResult.Accepted(chain)
+                    },
+            ) { echConfigList = listA }
+        val c = KslQuicCrypto.newSession(client)
+        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        c.setTransportParameters(Fixtures.tp)
+        s.setTransportParameters(Fixtures.tp)
+        val p = Pump(c, s)
+        var paused: DriveResult.WantVerify? = null
+        try {
+            p.run(onVerify = { want ->
+                paused = want
+                throw PausedForTest()
+            })
+        } catch (_: PausedForTest) {
+        }
+        val want = assertNotNull(paused, "the client paused for its verifier")
+        p.close() // what the loop does when the connection ends while the verifier runs
+        runBlocking { c.verifyPeer(want.chain) }
+        assertEquals(listOf<String?>(EchTestKeys.PUBLIC_NAME), seen, "the verifier was asked for the public_name")
+    }
+
+    private class PausedForTest : RuntimeException()
+
+    /**
      * RFC 9849 section 10.7: the platform verifier fetches nothing over the network (OCSP, CRL, AIA) for a name ECH hid. It
      * is asked offline exactly when ECH was accepted; for a rejection (the public_name, visible anyway), GREASE and no ECH
      * it may go online as before.
@@ -374,6 +411,28 @@ class EchTest {
             assertEquals(EchStatus.None, off.c.echStatus)
         } finally {
             off.close()
+        }
+    }
+
+    /**
+     * close() frees the current set at once (a set no one closes stays for the life of the process); a context built before
+     * keeps its own reference, a configuration built afterwards cannot make a context from it, and rotate is refused.
+     */
+    @Test fun closedKeysAreFreedAndRefuseNewContexts() {
+        val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
+        val lease = KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true)
+        try {
+            val freed = ArrayList<Int>()
+            keys.freedForTest = { freed += it }
+            keys.close()
+            keys.close()
+            assertEquals(kotlin.collections.listOf(1), freed, "the set is freed once, at close")
+            assertEquals(1, lease.ctx.echAppliedVersion, "the context built before keeps its set")
+            val e = assertFailsWith<TlsException.Config> { KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true) }
+            assertTrue("closed" in e.message!!, e.message)
+            assertFailsWith<TlsException.Config> { keys.rotate(listOf(EchKey(EchTestKeys.B))) }
+        } finally {
+            lease.close()
         }
     }
 

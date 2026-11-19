@@ -1883,7 +1883,9 @@ A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ec
 writes (the private key and the `ECHCONFIG` block whose base64 goes into the HTTPS record), at least one of them marked for
 `retry_configs`. Given as a `ByteArray` or `CharArray`, the PEM is zeroed, and the key's own copy too once it was read into
 native memory (such a key is used once); a `String` cannot be wiped. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
-previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). The keys of one set
+previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). `EchServerKeys` is
+`AutoCloseable`: `close()` frees the native set (contexts already built keep theirs), after which no new context is made
+from it and `rotate` throws; an `EchServerKeys` never closed keeps its last set for the life of the process. The keys of one set
 need distinct config_ids: a set (or a `rotate`) whose keys share one is refused with `TlsException.Config` ("two ECH keys
 share a config_id"), because OpenSSL tries only the first key of a config_id and a client of the other would be
 rejected. Two keys made apart share one in 1 case of 256; make the new key again with `openssl ech` (before publishing it). A client whose ECH is
@@ -4270,8 +4272,12 @@ val client =
   earlier (a rejection is no first contact). Such a connection only triggers the retry, which is held to the pins. No client
   certificate is sent on a rejected connection.
 - **Proxies.** Through an HTTP CONNECT or SOCKS5 proxy the TLS session inside the tunnel is the origin's, with
-  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2). The hop to the
-  proxy is plain TCP, so it carries no ClientHello of its own; the proxy learns the origin's name from the CONNECT line.
+  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2); the same holds
+  for the HTTP/3 connection inside a CONNECT-UDP tunnel, whose retry after a rejection goes through the same tunnel. The
+  proxy learns the origin's name from the CONNECT line or the CONNECT-UDP target. The hop to an `http://` proxy is plain
+  TCP; the TLS (or QUIC) hop to an `https://` or CONNECT-UDP proxy has a ClientHello of its own, which never offers the
+  origin's configuration nor one of the `tls` block: it sends GREASE as `ech.grease` says, and a `proxyTls` block may
+  set the proxy's own. A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
   the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without

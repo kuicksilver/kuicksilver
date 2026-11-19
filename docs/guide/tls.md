@@ -585,7 +585,9 @@ A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ec
 writes (the private key and the `ECHCONFIG` block whose base64 goes into the HTTPS record), at least one of them marked for
 `retry_configs`. Given as a `ByteArray` or `CharArray`, the PEM is zeroed, and the key's own copy too once it was read into
 native memory (such a key is used once); a `String` cannot be wiped. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
-previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). The keys of one set
+previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). `EchServerKeys` is
+`AutoCloseable`: `close()` frees the native set (contexts already built keep theirs), after which no new context is made
+from it and `rotate` throws; an `EchServerKeys` never closed keeps its last set for the life of the process. The keys of one set
 need distinct config_ids: a set (or a `rotate`) whose keys share one is refused with `TlsException.Config` ("two ECH keys
 share a config_id"), because OpenSSL tries only the first key of a config_id and a client of the other would be
 rejected. Two keys made apart share one in 1 case of 256; make the new key again with `openssl ech` (before publishing it). A client whose ECH is

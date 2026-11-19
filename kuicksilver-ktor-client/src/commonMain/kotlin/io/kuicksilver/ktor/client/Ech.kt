@@ -110,13 +110,17 @@ internal class EchRoutesOfEndpoints {
     }
 }
 
-/** The ECH rejection in [e]'s causes (a QUIC connection closes with it as the cause, `CRYPTO_ERROR` 0x179), or null. */
+/**
+ * The ECH rejection in [e]'s causes (a QUIC connection closes with it as the cause, `CRYPTO_ERROR` 0x179), or null. One
+ * under a [ProxyTlsException] is the proxy hop's, never the origin's: it is not looked for there.
+ */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun echRejectionIn(e: Throwable?): TlsException.EchRejected? {
     var c = e
     var depth = 0
     while (c != null && depth++ < 16) {
         if (c is TlsException.EchRejected) return c
+        if (c is ProxyTlsException) return null
         c = c.cause
     }
     return null

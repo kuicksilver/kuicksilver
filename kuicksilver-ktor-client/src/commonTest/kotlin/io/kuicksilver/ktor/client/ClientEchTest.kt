@@ -515,6 +515,34 @@ class ClientEchTest {
         assertNull(disabled.list)
     }
 
+    /**
+     * The hop to an `https://` proxy has its own ClientHello: it never offers a configuration of the `tls` block (the
+     * guide: the ECH values of that block are not used), and it sends GREASE as [EchClientConfig.grease] says.
+     */
+    @Test fun negative_proxyHopOffersNoEchConfiguration() {
+        for (g in kotlin.collections.listOf(true, false)) {
+            val config =
+                KuicksilverEngineConfig().apply {
+                    tls = {
+                        versions = TlsVersions.Tls13
+                        echConfigList = listA
+                    }
+                    ech { grease = g }
+                }
+            val built = config.proxyTlsConfigFor("proxy.internal")
+            assertNull(built.echConfigList, "the tls block's ECH configuration went to the proxy")
+            assertEquals(g, built.echGrease, "GREASE on the proxy hop follows ech.grease")
+        }
+    }
+
+    /** A rejection on the proxy hop is the proxy's: it never makes the origin's connection retry with its configurations. */
+    @Test fun negative_aProxyHopRejectionIsNotTheOrigins() {
+        val proxy = ProxyTlsException("TLS to the proxy failed", TlsException.EchRejected(listOf(EchTestKeys.B)))
+        assertNull(echRejectionIn(proxy))
+        assertNull(echRejectionIn(RuntimeException("wrapped", proxy)))
+        assertNotNull(echRejectionIn(RuntimeException("wrapped", TlsException.EchRejected(null))))
+    }
+
     // ---- wire helpers ----
 
     /** A ClientHello's server_name (host_name) and extension types, read from its first TLS record. */

@@ -16,6 +16,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.concurrent.Volatile
 
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
@@ -233,6 +234,10 @@ internal class KslQuicTlsSession(
         }
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
+
+    // the name the last verification pause is for, read on the loop (the public_name after an ECH rejection): verifyPeer runs
+    // off the loop, which may free the native session meanwhile, so it reads nothing native
+    @Volatile private var pausedName: HostName? = null
     private var alpn: String? = null
     private var group: String? = null
     private var ech: EchStatus = EchStatus.None
@@ -504,6 +509,7 @@ internal class KslQuicTlsSession(
 
             KslConst.WANT_VERIFY -> {
                 presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
+                if (ctx.config.role == TlsRole.Client) pausedName = verifyNameOf(s(), reference, echOffered)
                 DriveResult.WantVerify(presented)
             }
 
@@ -577,7 +583,7 @@ internal class KslQuicTlsSession(
 
     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
     override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult {
-        val name = if (ssl != 0L) verifyNameOf(s(), reference, echOffered) else reference
+        val name = pausedName ?: reference
         return verification.verify(chain, name, echPublicName = name != reference, hiddenName = echOffered && name == reference)
     }
 
