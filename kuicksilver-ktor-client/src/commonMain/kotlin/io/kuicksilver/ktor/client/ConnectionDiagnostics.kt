@@ -187,9 +187,10 @@ internal const val MAX_CONNECT_FAILURES = 16
  * engine's, is printed under it.
  *
  * A request timeout of Ktor's `HttpTimeout` (`HttpRequestTimeoutException`) reaches the engine as the cancellation of the
- * call: the engine attaches the diagnostics to that exception, which is the one Ktor throws. With coroutine stack-trace
- * recovery on (a debug build: assertions enabled) Ktor may throw a copy of it without them. A cancellation of the call by
- * the application carries none. In both cases [KuicksilverEventListener.callFailed] has them in the request's attributes.
+ * call: the engine attaches the diagnostics to that exception, which is the one Ktor throws. With coroutines' stack-trace
+ * recovery on (a debug build: assertions enabled) the exception thrown can be a copy whose cause is the original; the
+ * engine attaches them to that original as well, and this looks through the causes. A cancellation of the call by the
+ * application carries none; [KuicksilverEventListener.callFailed] has them in the request's attributes.
  */
 @ExperimentalKuicksilverApi
 public val Throwable.kuicksilverDiagnostics: ProtocolDiagnostics?

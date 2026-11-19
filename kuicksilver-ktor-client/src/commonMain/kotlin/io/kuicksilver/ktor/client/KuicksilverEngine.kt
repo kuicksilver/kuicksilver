@@ -360,6 +360,16 @@ internal class KuicksilverEngine(
                 null -> d.protocol
             }
         attachDiagnostics(carrier, d)
+        // coroutines' stack-trace recovery (debug builds) hands the engine a copy whose cause is the original exception of
+        // the same type, and copies that original again on the way to the application, dropping the first copy: the
+        // original carries them too
+        var original: Throwable = carrier
+        while (true) {
+            val c = original.cause ?: break
+            if (c::class != original::class || c === original) break
+            original = c
+        }
+        if (original !== carrier) attachDiagnostics(original, d)
     }
 
     /**
