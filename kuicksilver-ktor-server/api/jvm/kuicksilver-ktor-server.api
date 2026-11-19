@@ -17,6 +17,15 @@ public final class io/kuicksilver/ktor/server/Http3Advertising : java/lang/Enum 
 	public static fun values ()[Lio/kuicksilver/ktor/server/Http3Advertising;
 }
 
+public final class io/kuicksilver/ktor/server/Http3Status {
+	public fun <init> (IZLio/kuicksilver/quic/IpFamily;Ljava/lang/Throwable;)V
+	public final fun getNotServedFamily ()Lio/kuicksilver/quic/IpFamily;
+	public final fun getPort ()I
+	public final fun getReason ()Ljava/lang/Throwable;
+	public final fun getServed ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class io/kuicksilver/ktor/server/Kuicksilver : io/ktor/server/engine/ApplicationEngineFactory {
 	public static final field INSTANCE Lio/kuicksilver/ktor/server/Kuicksilver;
 	public synthetic fun configuration (Lkotlin/jvm/functions/Function1;)Lio/ktor/server/engine/ApplicationEngine$Configuration;
@@ -30,6 +39,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/
 	public final fun getConfiguration ()Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;
 	public final fun getHttp3Advertising ()Lio/kuicksilver/ktor/server/Http3Advertising;
 	public final fun getHttp3Stats ()Ljava/util/List;
+	public final fun getHttp3Status ()Ljava/util/List;
 	public final fun setHttp3Advertising (Lio/kuicksilver/ktor/server/Http3Advertising;)V
 	public fun start (Z)Lio/ktor/server/engine/ApplicationEngine;
 	public fun startSuspend (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;

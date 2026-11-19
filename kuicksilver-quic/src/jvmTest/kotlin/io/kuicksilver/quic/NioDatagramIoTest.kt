@@ -290,14 +290,17 @@ class NioDatagramIoTest {
                     assertFailsWith<QuicException.DontFragmentUnavailable> {
                         DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
                     }
-                assertEquals(0, e.family)
+                assertEquals(null, e.family)
                 assertTrue("Don't Fragment" in e.message!!, e.message)
             } finally {
                 NioDatagramIo.dfForTest = null
             }
         }
 
-    /** A dual-stack socket whose IPv4 half has no DF refuses IPv4 destinations and still carries IPv6. */
+    /**
+     * A dual-stack socket whose IPv4 half has no DF skips the slots to IPv4 destinations (reported to the endpoint loop, which
+     * fails their path) and still carries the rest of the batch to IPv6.
+     */
     @Test fun negative_aDualStackSocketWithoutDfOnItsIpv4HalfRefusesIpv4Sends() =
         runBlocking {
             NioDatagramIo.dfForTest = { inet -> if (inet) 0 to false else (DF_INET6 or DF_V6) to false }
@@ -311,17 +314,24 @@ class NioDatagramIoTest {
             }
             try {
                 assertEquals(4, (a as NioDatagramIo).noDf)
-                val v4 = batchOf(ByteArray(100), to = InetSocketAddress("127.0.0.1", b.localAddress.port))
-                val e = assertFailsWith<QuicException.DontFragmentUnavailable> { a.send(v4) }
-                assertEquals(4, e.family)
-                val mapped = batchOf(ByteArray(100), to = InetSocketAddress("::ffff:127.0.0.1", b.localAddress.port))
-                assertFailsWith<QuicException.DontFragmentUnavailable> { a.send(mapped) }
-                val v6 = batchOf(ByteArray(100), to = b.localAddress)
-                assertEquals(1, a.send(v6), "IPv6 still works")
+                assertEquals(IpFamily.V4, a.noDfFamily)
+                val v4 = InetSocketAddress("127.0.0.1", b.localAddress.port)
+                val mapped = InetSocketAddress("::ffff:127.0.0.1", b.localAddress.port)
+                // IPv4, IPv6, IPv4-mapped in one batch: the IPv4 slots are skipped, the IPv6 one in between still goes
+                val out = PacketBatch(3)
+                for ((i, to) in listOf(v4, b.localAddress, mapped).withIndex()) {
+                    out.buffer(i).copyFrom(ByteArray(100 + i), 0, 0, 100 + i)
+                    out.setLength(i, 100 + i)
+                    out.setAddress(i, to)
+                }
+                assertEquals(3, a.send(out), "the batch is done: the IPv4 slots are skipped, not left for a retry")
+                assertEquals(listOf(v4, mapped), a.takeDfRefusals())
+                assertEquals(emptyList(), a.takeDfRefusals(), "taken once")
                 val inb = PacketBatch(1)
                 withTimeout(5.seconds) { while (b.receive(inb) == 0) continue }
-                assertEquals(100, inb.length(0))
+                assertEquals(101, inb.length(0), "the IPv6 datagram arrived")
                 inb.close()
+                out.close()
             } finally {
                 a.close()
                 b.close()
@@ -334,7 +344,18 @@ class NioDatagramIoTest {
             val v4 = InetSocketAddress("127.0.0.1", 0)
             NioDatagramIo.dfForTest = { inet -> if (inet) -1 to true else -1 to true } // no ksl, the JDK's option takes
             try {
-                DatagramIo.open(v4, IoPreference.Portable).use { assertEquals(NioDatagramIo.DF_ALL, (it as NioDatagramIo).noDf) }
+                DatagramIo.open(v4, IoPreference.Portable).use {
+                    if ((System.getProperty("os.name") ?: "").lowercase().startsWith("mac")) {
+                        // Apple: the JDK's option covers both halves of the dual-stack channel, which stays
+                        assertEquals(null, (it as NioDatagramIo).noDfFamily)
+                        return@use
+                    }
+                    // AF_INET: DF on all it can send; IPv6 is refused as without DF (it cannot reach IPv6 at all)
+                    assertEquals(IpFamily.V6, (it as NioDatagramIo).noDfFamily)
+                    val six = batchOf(ByteArray(10), to = InetSocketAddress("::1", 9))
+                    assertEquals(1, it.send(six))
+                    assertEquals(listOf(InetSocketAddress("::1", 9)), it.takeDfRefusals())
+                }
             } finally {
                 NioDatagramIo.dfForTest = null
             }

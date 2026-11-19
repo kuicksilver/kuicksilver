@@ -2580,13 +2580,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 ### Security
 
 - No Don't Fragment, no QUIC (RFC 9000 section 14). A UDP socket that cannot set DF on any of its traffic is not used:
-  `DatagramIo.open` and `QuicEndpoint.bind` throw the new `QuicException.DontFragmentUnavailable` (the JVM without `ksl`
-  below JDK 19, Android or a system refusing both DF modes, the Kotlin/Native portable `ktor-network` socket, which used
-  to send without DF; an accelerated socket without DF is not used either). On a dual-stack socket whose IPv4 or IPv6 half
-  has no DF, sends to that family throw it and the connection ends with `ConnectionLost.NoViablePath`, which now carries
-  a cause. The Ktor client sends such calls over TCP at once, with the new `FallbackReason.QuicUnavailable`; a server
-  endpoint does not start, and the Ktor server serves HTTP/1.1 only ("HTTP/3 is not served on port ..."). There is no
-  opt-out.
+  `DatagramIo.open` and `QuicEndpoint.bind` throw the new `QuicException.DontFragmentUnavailable` (its `family`, the new
+  `IpFamily`, null for the whole socket: the JVM without `ksl` below JDK 19, Android or a system refusing both DF modes, the
+  Kotlin/Native portable `ktor-network` socket, which used to send without DF; an accelerated socket without DF is not
+  used either, while one whose system refuses probe mode now gets DO mode, `KslUdpSocket.DF_DO`). On a socket with no DF
+  for one address family (a dual-stack socket's IPv4 or IPv6 half, IPv6 on an AF_INET socket), datagrams to that family
+  are not sent: that path closes, or on the active path the connection ends with a CONNECTION_CLOSE of NO_VIABLE_PATH
+  caused by the refusal; a server drops client Initials from that family before any state, and
+  `QuicEndpoint.dontFragmentUnavailable` names it. `ConnectionLost.NoViablePath` can now carry a cause. The Ktor client
+  sends such calls over TCP at once, with the new `FallbackReason.QuicUnavailable`; a server endpoint does not start; the
+  Ktor server serves HTTP/1.1 and HTTP/2 only ("HTTP/3 is not served on port ..."), or HTTP/3 for one family without
+  Alt-Svc for the other, and reports it in the new `KuicksilverApplicationEngine.http3Status`. There is no opt-out.
 
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING

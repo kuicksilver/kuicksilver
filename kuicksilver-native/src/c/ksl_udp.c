@@ -182,6 +182,27 @@ static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, 
     return NULL;
 }
 
+#if !defined(__APPLE__)
+#ifdef KSL_TEST
+static int
+    refuse_probe; /* tests: the system refuses probe mode (a seccomp filter, gVisor), as ksl_udp_refuse_probe_for_test sets */
+void ksl_udp_refuse_probe_for_test(int on) {
+    refuse_probe = on;
+}
+#else
+#define refuse_probe 0
+#endif
+/* DF on one half of fd ([family] 4: IP_MTU_DISCOVER, on AF_INET6 the v4-mapped half; 6: IPV6_MTU_DISCOVER): probe mode where the
+   system takes it (1), else DO mode (2), else 0 */
+static int set_df_mode(int fd, int family) {
+    int probe = family == 6 ? IPV6_PMTUDISC_PROBE : IP_PMTUDISC_PROBE,
+        d = family == 6 ? IPV6_PMTUDISC_DO : IP_PMTUDISC_DO;
+    int level = family == 6 ? IPPROTO_IPV6 : IPPROTO_IP, opt = family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER;
+    if (!refuse_probe && setsockopt(fd, level, opt, &probe, sizeof probe) == 0)
+        return 1;
+    return setsockopt(fd, level, opt, &d, sizeof d) == 0 ? 2 : 0;
+}
+#endif
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
     if (!addr || (addr[0] != 4 && addr[0] != 6)) {
         if (err)
@@ -259,20 +280,26 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
         }
     }
     if (flags &
-        KSL_UDP_DF) { /* DF set; never DO mode: the kernel's path MTU cache must not drive sizes (an attacker's ICMP would shrink it: quic-go CVE-2024-53259) */
-        int ok = 1;
+        KSL_UDP_DF) { /* DF set; probe mode where the system takes it: the kernel's path MTU cache must not drive sizes (an attacker's ICMP
+                         would shrink it: quic-go CVE-2024-53259); DO mode on a half that refuses it (a seccomp filter, gVisor): DF all the same,
+                         reported as KSL_UDP_DF_DO */
+        int ok = 1, in_do = 0;
 #ifdef __APPLE__ /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL).
                       It does cache a path MTU from an ICMPv6 Packet Too Big (clamped to >= 1280): a larger datagram then fails with EMSGSIZE,
                       a lost slot, and QUIC's 1248-byte IPv6 floor (1200 + headers) still fits, so a forged PTB cannot stop sending */
         ok = v6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0
                 : setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0;
+        in_do = 1; /* the DF bit alone works as DO mode */
 #else
-        int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE;
-        if (v4)
-            ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) ==
-                           0; /* on AF_INET6: the v4-mapped half */
+        if (v4) { /* on AF_INET6: the v4-mapped half */
+            int m = set_df_mode(u->fd, 4);
+            ok = ok && m > 0;
+            in_do |= m == 2;
+        }
         if (v6) {
-            ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0;
+            int m = set_df_mode(u->fd, 6);
+            ok = ok && m > 0;
+            in_do |= m == 2;
             if (ok)
                 setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
         }
@@ -288,7 +315,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
         }
 #endif
         if (ok)
-            u->granted |= KSL_UDP_DF;
+            u->granted |= KSL_UDP_DF | (in_do ? KSL_UDP_DF_DO : 0);
     }
     /* the destination of each datagram, so a reply leaves from the address it arrived on (RFC 9000 section 9): only a wildcard bind
        needs it, as quic-go sys_conn_oob.go (newConn: IsUnspecified). AF_INET: IP_PKTINFO (IP_RECVPKTINFO, the same option, on Darwin: quic-go
@@ -578,19 +605,14 @@ int ksl_udp_fd_df_probe(int64_t fd64) {
                    : KSL_FD_DF_INET6;
     return setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0 ? KSL_FD_DF_V4_DO : 0;
 #else
-    int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE, d4 = IP_PMTUDISC_DO, d6 = IPV6_PMTUDISC_DO, one = 1,
-        granted = 0;
+    int one = 1, granted = 0;
     /* on AF_INET6: the v4-mapped half, which IPV6_MTU_DISCOVER does not cover; DO where probe mode is refused (DF always) */
-    if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) == 0)
-        granted |= KSL_FD_DF_V4;
-    else if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &d4, sizeof d4) == 0)
-        granted |= KSL_FD_DF_V4_DO;
+    int m4 = set_df_mode(fd, 4);
+    granted |= m4 == 1 ? KSL_FD_DF_V4 : m4 == 2 ? KSL_FD_DF_V4_DO : 0;
     if (family == AF_INET6) {
         granted |= KSL_FD_DF_INET6;
-        if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0)
-            granted |= KSL_FD_DF_V6;
-        else if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &d6, sizeof d6) == 0)
-            granted |= KSL_FD_DF_V6_DO;
+        int m6 = set_df_mode(fd, 6);
+        granted |= m6 == 1 ? KSL_FD_DF_V6 : m6 == 2 ? KSL_FD_DF_V6_DO : 0;
         setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
     }
     return granted;

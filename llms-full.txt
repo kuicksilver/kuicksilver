@@ -6402,10 +6402,11 @@ datagram per call.
 
 QUIC is used only on a UDP socket that sets the Don't Fragment bit (RFC 9000 section 14). Where it cannot,
 `DatagramIo.open` and `QuicEndpoint.bind` throw `QuicException.DontFragmentUnavailable` ("QUIC not used: the UDP socket
-cannot set Don't Fragment (RFC 9000 section 14) <on any traffic>: <why>"), a Ktor server serves HTTP/1.1 only, and the Ktor
-client sends the call over TCP at once (`fallback = QuicUnavailable`). Where only one half of a dual-stack socket lacks
-it, sends to that family fail the same way ("… for IPv4 destinations: …") and the connection ends with
-`ConnectionLost.NoViablePath` caused by it.
+cannot set Don't Fragment (RFC 9000 section 14) <on any traffic>: <why>"), a Ktor server serves HTTP/1.1 and HTTP/2 only
+(`KuicksilverApplicationEngine.http3Status` says why), and the Ktor client sends the call over TCP at once
+(`fallback = QuicUnavailable`). Where only one address family lacks it, nothing is sent to that family: the connection
+ends with `TransportClosed` (NO_VIABLE_PATH) caused by the error, a server drops that family's Initials and a Ktor server
+sends no `Alt-Svc` to its clients (`http3Status` names `notServedFamily`; `QuicEndpoint.dontFragmentUnavailable`).
 
 - The JVM without the `ksl` native library below JDK 19 (no `IP_DONTFRAGMENT`): load `ksl`
   ([native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)) or use JDK 19 or later. QUIC with

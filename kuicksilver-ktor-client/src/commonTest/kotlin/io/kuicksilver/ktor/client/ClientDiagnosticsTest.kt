@@ -274,7 +274,7 @@ class ClientDiagnosticsTest {
                         hardDelay = Duration.INFINITE
                         endpoint =
                             io.kuicksilver.quic.quicEndpointConfig {
-                                io = { throw QuicException.DontFragmentUnavailable(0, "test: no DF on this socket") }
+                                io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF on this socket") }
                             }
                     }
                 }).use { c ->

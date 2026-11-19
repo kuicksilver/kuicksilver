@@ -246,6 +246,8 @@ final class io.kuicksilver.http3/Http3Connection : kotlin/AutoCloseable { // io.
 }
 
 final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.kuicksilver.http3/Http3Endpoint|null[0]
+    final val dontFragmentUnavailable // io.kuicksilver.http3/Http3Endpoint.dontFragmentUnavailable|{}dontFragmentUnavailable[0]
+        final fun <get-dontFragmentUnavailable>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.http3/Http3Endpoint.dontFragmentUnavailable.<get-dontFragmentUnavailable>|<get-dontFragmentUnavailable>(){}[0]
     final val localAddress // io.kuicksilver.http3/Http3Endpoint.localAddress|{}localAddress[0]
         final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.http3/Http3Endpoint.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
     final val stats // io.kuicksilver.http3/Http3Endpoint.stats|{}stats[0]

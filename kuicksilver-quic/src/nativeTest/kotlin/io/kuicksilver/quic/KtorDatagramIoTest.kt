@@ -33,7 +33,7 @@ class KtorDatagramIoTest {
                 assertFailsWith<QuicException.DontFragmentUnavailable> {
                     DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
                 }
-            assertEquals(0, e.family)
+            assertEquals(null, e.family)
         }
 
     @Test fun loopbackClientSendReceive() =

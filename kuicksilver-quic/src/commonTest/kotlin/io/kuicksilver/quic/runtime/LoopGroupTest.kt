@@ -109,6 +109,13 @@ class LoopGroupTest {
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
 
+    /** No accelerated socket for a group (none here, or one the system gave no DF and that is not used): the error names DF. */
+    @Test fun loopsAboveOneWithoutTheAcceleratedSocketNamesDontFragment() =
+        runBlocking {
+            val e = assertFailsWith<UnsupportedOperationException> { LoopGroup.bindWith(serverAddr, config) { null } }
+            assertTrue("Don't Fragment" in e.message!!, e.message)
+        }
+
     /**
      * Without the SO_REUSEPORT grant (Darwin, Windows, a seccomp filter) no second socket is bound on the port: the first one is
      * shared by the loops in process, and the group serves.

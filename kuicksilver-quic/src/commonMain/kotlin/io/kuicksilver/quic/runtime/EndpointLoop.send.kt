@@ -9,6 +9,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DfFamilyRestricted
 import io.kuicksilver.quic.NonSuspendingSend
 import io.kuicksilver.quic.PATH_MTU_FLOOR
 import io.kuicksilver.quic.PacketBatch
@@ -20,6 +21,7 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.onEmsgsize
+import io.kuicksilver.quic.ipFamilyOf
 import io.kuicksilver.quic.runtime.EndpointLoop.Companion.FLUSH_ROUNDS
 import io.kuicksilver.quic.sameIpAs
 import kotlinx.coroutines.CancellationException
@@ -121,6 +123,15 @@ private inline fun EndpointLoop.sendOrLoseWith(
                         }
                     }
                 }
+                // slots the socket skipped for want of DF towards their family (no QUIC without DF): their path fails
+                if (target is DfFamilyRestricted) {
+                    for (to in target.takeDfRefusals()) {
+                        val family = ipFamilyOf(to)
+                        val e =
+                            QuicException.DontFragmentUnavailable(family, "this socket has no DF for ${family?.label ?: to}")
+                        rt?.onDontFragmentUnavailable(e, target, to)
+                    }
+                }
                 if (sent < batch.count && !full) fullThisFlush.add(target)
                 observer.datagramsSent += sent
                 batch.count - sent
@@ -131,7 +142,7 @@ private inline fun EndpointLoop.sendOrLoseWith(
             } catch (e: QuicException.DontFragmentUnavailable) {
                 // no DF for this destination's address family: nothing goes out without it, the connection has no viable path
                 sendFailures++
-                rt?.onDontFragmentUnavailable(e)
+                rt?.onDontFragmentUnavailable(e, target, null)
                 batch.count
             } catch (e: PathMtuRefusedException) {
                 sendFailures++

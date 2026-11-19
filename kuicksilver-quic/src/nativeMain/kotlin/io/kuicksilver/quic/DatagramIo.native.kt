@@ -13,7 +13,7 @@ import io.ktor.network.sockets.InetSocketAddress
  */
 internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo =
     throw QuicException.DontFragmentUnavailable(
-        0,
+        null,
         "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
     )
 

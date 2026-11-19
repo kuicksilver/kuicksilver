@@ -398,7 +398,9 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
             u->df_probe = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         }
         if (ok == 0)
-            u->granted |= KSL_UDP_DF; /* DF alone where PROBE is refused: what msquic runs with */
+            u->granted |=
+                KSL_UDP_DF |
+                (u->df_probe ? 0 : KSL_UDP_DF_DO); /* DF alone where PROBE is refused: what msquic runs with */
     }
     if (flags & KSL_UDP_GSO) {
         DWORD v = 0;

@@ -65,6 +65,21 @@ abstract class io.kuicksilver.ktor.server/KuicksilverServerEventListener { // io
     open fun tlsHandshakeFailed(io.ktor.network.sockets/InetSocketAddress?, kotlin/Throwable) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.tlsHandshakeFailed|tlsHandshakeFailed(io.ktor.network.sockets.InetSocketAddress?;kotlin.Throwable){}[0]
 }
 
+final class io.kuicksilver.ktor.server/Http3Status { // io.kuicksilver.ktor.server/Http3Status|null[0]
+    constructor <init>(kotlin/Int, kotlin/Boolean, io.kuicksilver.quic/IpFamily?, kotlin/Throwable?) // io.kuicksilver.ktor.server/Http3Status.<init>|<init>(kotlin.Int;kotlin.Boolean;io.kuicksilver.quic.IpFamily?;kotlin.Throwable?){}[0]
+
+    final val notServedFamily // io.kuicksilver.ktor.server/Http3Status.notServedFamily|{}notServedFamily[0]
+        final fun <get-notServedFamily>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.ktor.server/Http3Status.notServedFamily.<get-notServedFamily>|<get-notServedFamily>(){}[0]
+    final val port // io.kuicksilver.ktor.server/Http3Status.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/Http3Status.port.<get-port>|<get-port>(){}[0]
+    final val reason // io.kuicksilver.ktor.server/Http3Status.reason|{}reason[0]
+        final fun <get-reason>(): kotlin/Throwable? // io.kuicksilver.ktor.server/Http3Status.reason.<get-reason>|<get-reason>(){}[0]
+    final val served // io.kuicksilver.ktor.server/Http3Status.served|{}served[0]
+        final fun <get-served>(): kotlin/Boolean // io.kuicksilver.ktor.server/Http3Status.served.<get-served>|<get-served>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/Http3Status.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.server.engine/BaseApplicationEngine { // io.kuicksilver.ktor.server/KuicksilverApplicationEngine|null[0]
     constructor <init>(io.ktor.server.application/ApplicationEnvironment, io.ktor.events/Events, kotlin/Boolean, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Function0<io.ktor.server.application/Application>) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.<init>|<init>(io.ktor.server.application.ApplicationEnvironment;io.ktor.events.Events;kotlin.Boolean;io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration;kotlin.Function0<io.ktor.server.application.Application>){}[0]
 
@@ -72,6 +87,8 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final fun <get-configuration>(): io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.configuration.<get-configuration>|<get-configuration>(){}[0]
     final val http3Stats // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Stats|{}http3Stats[0]
         final fun <get-http3Stats>(): kotlin.collections/List<io.kuicksilver.quic/EndpointStats> // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Stats.<get-http3Stats>|<get-http3Stats>(){}[0]
+    final val http3Status // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Status|{}http3Status[0]
+        final fun <get-http3Status>(): kotlin.collections/List<io.kuicksilver.ktor.server/Http3Status> // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Status.<get-http3Status>|<get-http3Status>(){}[0]
 
     final var http3Advertising // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Advertising|{}http3Advertising[0]
         final fun <get-http3Advertising>(): io.kuicksilver.ktor.server/Http3Advertising // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.http3Advertising.<get-http3Advertising>|<get-http3Advertising>(){}[0]

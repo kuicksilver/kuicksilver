@@ -445,7 +445,14 @@ int ksl_key_ecb16(
 #define KSL_UDP_ECN 1
 #define KSL_UDP_GSO 2
 #define KSL_UDP_GRO 4
-#define KSL_UDP_DF 8 /* IP_PMTUDISC_PROBE + IPV6_DONTFRAG, never _DO (quic-go CVE-2024-53259) */
+#define KSL_UDP_DF                                                                                                     \
+    8 /* DF on every half: IP_PMTUDISC_PROBE + IPV6_DONTFRAG where the system takes probe mode (quic-go CVE-2024-53259), else DO */
+/* clang-format off */
+#define KSL_UDP_DF_DO 64 /* granted only, never asked: a half of the socket refused probe mode and has DF in DO mode (Linux IP_PMTUDISC_DO /
+                                        IPV6_PMTUDISC_DO, Windows IP_DONTFRAGMENT / IPV6_DONTFRAG alone, Apple's IP_DONTFRAG / IPV6_DONTFRAG, which
+                                        have no modes): a forged ICMP message can lower the cached path MTU below 1200 and make the system refuse
+                                        sends (ksl_udp_emsgsize counts them; the caller fails the path). Additive in ABI 7 */
+/* clang-format on */
 #define KSL_UDP_REUSEPORT 16
 /* clang-format off */
 #define KSL_UDP_PKTINFO 32 /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;

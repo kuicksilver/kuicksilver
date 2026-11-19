@@ -14,12 +14,14 @@ import io.kuicksilver.quic.NonSuspendingSend
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathMtuRefusedException
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -27,6 +29,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -137,23 +140,75 @@ class PathMtuRefusedTest {
             }
         }
 
-    /** No DF for the peer's address family (one half of a dual-stack socket): nothing is sent, the connection has no viable path. */
+    /**
+     * No DF for the peer's address family (one half of a dual-stack socket): nothing is sent there, and the connection ends with
+     * a CONNECTION_CLOSE of NO_VIABLE_PATH caused by the refusal (it goes out wherever the socket has DF).
+     */
     @Test fun negative_noDontFragmentForThePeerEndsTheConnection() =
         runBlocking<Unit> {
             ApiPair.open().use { p ->
                 withTimeout(30.seconds) {
                     val (c, _) = p.connect()
-                    val noDf = QuicException.DontFragmentUnavailable(4, "test: no DF on the IPv4 half")
+                    val noDf = QuicException.DontFragmentUnavailable(io.kuicksilver.quic.IpFamily.V4, "test: no DF on the IPv4 half")
                     p.clientIo.sendFailure = noDf
                     val st = c.openBidi()
                     runCatching {
                         st.output.writeFully(byteArrayOf(1), 0, 1)
                         st.output.flush()
                     }
-                    val closed = assertIs<QuicException.ConnectionLost.NoViablePath>(c.closed.await())
+                    val closed = assertIs<QuicException.ConnectionLost.TransportClosed>(c.closed.await())
+                    assertEquals(TransportError.NO_VIABLE_PATH, closed.code)
                     assertEquals(noDf, closed.cause)
                 }
             }
+        }
+
+    /** No DF towards a probed path's family: that path closes, the connection goes on on its active path. */
+    @Test fun negative_noDontFragmentOnAProbedPathClosesThatPathOnly() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, s) = p.connect()
+                    val other = p.net.open(InetSocketAddress("10.0.0.3", 3003))
+                    other.sendFailure = QuicException.DontFragmentUnavailable(io.kuicksilver.quic.IpFamily.V4, "test")
+                    val path = c.addPath(other)
+                    assertFalse(path.probe())
+                    assertEquals(PathState.Closed, path.state.value)
+                    assertFalse(c.closed.isCompleted)
+                    ping(c, s)
+                }
+            }
+        }
+
+    /**
+     * A server whose socket has no DF for IPv4 drops IPv4 client Initials before any state: no connection, no Version
+     * Negotiation or Retry; the client sees nothing (and times out).
+     */
+    @Test fun negative_aServerDropsInitialsFromAFamilyWithoutDf() =
+        runBlocking<Unit> {
+            ApiPair
+                .open(serverConfigure = {
+                    val inner = io!!
+                    io = { a -> NoDfV4Io(inner(a)) }
+                })
+                .use { p ->
+                    withTimeout(30.seconds) {
+                        assertFails {
+                            p.client.connect(
+                                p.server.localAddress,
+                                QuicClientConfig
+                                    .Builder(CoreFixtures.client())
+                                    .apply { quic = quicConfig { handshakeTimeout = 1.seconds } }
+                                    .build(),
+                            )
+                        }
+                        val st = p.server.stats
+                        assertEquals(0, st.connectionsCreated, "no state for the Initial")
+                        assertEquals(0, st.versionNegotiations)
+                        assertEquals(0, st.retriesSent)
+                        assertTrue(st.datagramsDroppedStateless > 0, "the Initials were dropped: $st")
+                    }
+                }
         }
 
     /** No DF, no QUIC: a server endpoint whose socket cannot set DF does not start. */
@@ -167,7 +222,7 @@ class PathMtuRefusedTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                io = { throw QuicException.DontFragmentUnavailable(0, "test: no DF") }
+                                io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF") }
                             }.build(),
                     ).close()
             }
@@ -318,4 +373,14 @@ private class EmsgsizeIo(
         takes++
         return pending.also { pending = 0 }
     }
+}
+
+/** A socket that has no DF for IPv4 ([DfFamilyRestricted]), as a dual-stack NIO socket without it on its IPv4 half. */
+private class NoDfV4Io(
+    private val inner: DatagramIo,
+) : DatagramIo by inner,
+    io.kuicksilver.quic.DfFamilyRestricted {
+    override val noDfFamily: io.kuicksilver.quic.IpFamily? = io.kuicksilver.quic.IpFamily.V4
+
+    override fun takeDfRefusals(): List<InetSocketAddress> = emptyList()
 }

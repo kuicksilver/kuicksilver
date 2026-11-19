@@ -2951,6 +2951,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.s
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.upgradeIs501AndReportedSo
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.h3DisabledWhenQuicServerUnsupported
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.h3DisabledWithoutDontFragment
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.noAltSvcForTheFamilyWithoutDontFragment
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.peerFamilyCountsMappedAsIpv4
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3FloodTest.abandonedRequestsCancelTheirHandlersAndFreeTheirStreams
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3FloodTest.connectionLossCancelsTheHandler
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3FloodTest.negative_h3RapidResetDoesNotRunHandlersUnbounded
@@ -3726,8 +3728,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negat
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalOnAProbedPathClosesThatPathOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalOnTheServersSocketEndsThatConnectionOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusedStatelessSendDoesNotEndTheNextConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aServerDropsInitialsFromAFamilyWithoutDf
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aServerWithoutDontFragmentDoesNotStart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_noDontFragmentForThePeerEndsTheConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_noDontFragmentOnAProbedPathClosesThatPathOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.acceptStreamInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.clientOfAFailedConnectionIsResetAndItsFlushMayFail
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.closedCompletesWithApplicationClosedLocal
@@ -5055,6 +5059,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwar
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwardedPreferredDatagramIsDroppedOnceThePreferredAddressIsDown
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.initialWhileTheSharedAcceptQueueIsFullIsRefusedStatelessly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.loopsAboveOneWithoutReusePortGrantShareOneSocket
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.loopsAboveOneWithoutTheAcceleratedSocketNamesDontFragment
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.movedConnectionOnAnotherLoopsPreferredSocketIsForwardedAsPreferred
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.oneFailedLoopClosesTheWholeGroup
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.preferredFailureOnOneLoopClosesConnectionsMovedThereOnTheOtherLoop

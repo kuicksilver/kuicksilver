@@ -139,8 +139,8 @@ public sealed class QuicException(
         }
 
         /**
-         * The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2), or the path cannot
-         * carry QUIC: [cause] is then [DontFragmentUnavailable] (the socket cannot set DF for the peer's address family).
+         * The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2); [cause], when set,
+         * says why the path could not carry QUIC (a custom `DatagramIo` may report one).
          */
         public class NoViablePath(
             cause: Throwable? = null,
@@ -270,18 +270,19 @@ public sealed class QuicException(
      * layer. In IPv4, the Don't Fragment (DF) bit MUST be set if possible"), so QUIC is not used on it: [DatagramIo.open] and
      * [QuicEndpoint.bind] throw it where no traffic of the socket could get DF (the JVM without the `ksl` native library
      * below JDK 19, which has no `IP_DONTFRAGMENT`; Android or a system refusing both DF modes; the Kotlin/Native portable
-     * socket), and a send to the one address family of a dual-stack socket that has no DF throws it (its connection ends
-     * with [ConnectionLost.NoViablePath] caused by it). The HTTP/3 client of kuicksilver-ktor-client falls back to TCP.
+     * socket). Where only one address family has no DF ([QuicEndpoint.dontFragmentUnavailable]), nothing is sent to it: the
+     * path closes, or on the active path the connection ends with [ConnectionLost.TransportClosed] (NO_VIABLE_PATH) caused by
+     * it, and a server drops that family's Initials. The HTTP/3 client of kuicksilver-ktor-client falls back to TCP.
      *
-     * @property family 4 or 6: the address family without DF; 0: the whole socket.
+     * @property family the address family without DF; null: the whole socket.
      * @property detail why DF cannot be set.
      */
     public class DontFragmentUnavailable(
-        public val family: Int,
+        public val family: IpFamily?,
         public val detail: String,
     ) : QuicException(
             "QUIC not used: the UDP socket cannot set Don't Fragment (RFC 9000 section 14) " +
-                "${if (family == 0) "on any traffic" else "for IPv$family destinations"}: $detail",
+                "${if (family == null) "on any traffic" else "for ${family.label} destinations"}: $detail",
         ) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail)
@@ -292,4 +293,13 @@ public sealed class QuicException(
         /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): EndpointClosing = EndpointClosing()
     }
+}
+
+/** An IP address family, as [QuicException.DontFragmentUnavailable] names it. */
+public enum class IpFamily(
+    /** "IPv4" or "IPv6". */
+    public val label: String,
+) {
+    V4("IPv4"),
+    V6("IPv6"),
 }

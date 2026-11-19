@@ -260,6 +260,10 @@ internal class LoopGroup private constructor(
         /** A preferred-address twin bound without the grant the main socket had (kernel mode needs it on every port). */
         internal const val NO_REUSEPORT = "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"
 
+        /** No accelerated socket for a group: none here, or the system gave it no Don't Fragment (no DF, no QUIC). */
+        internal const val NO_ACCELERATED =
+            "loops > 1 needs the accelerated transport, which is unavailable here or got no Don't Fragment (RFC 9000 section 14)"
+
         suspend fun bind(
             local: InetSocketAddress,
             config: QuicEndpointConfig,
@@ -288,7 +292,7 @@ internal class LoopGroup private constructor(
         ): QuicEndpoint {
             require(config.loops > 1 && config.server != null)
             EndpointLoop.checkPayloadSize(config.server.quic)
-            val first = open(local) ?: throw UnsupportedOperationException("loops > 1 needs the accelerated transport")
+            val first = open(local) ?: throw UnsupportedOperationException(NO_ACCELERATED)
             if (!first.reusePort) {
                 return bindDispatched(config, first.io) { at ->
                     open(at)?.io ?: throw UnsupportedOperationException("accelerated transport unavailable for the preferred address $at")

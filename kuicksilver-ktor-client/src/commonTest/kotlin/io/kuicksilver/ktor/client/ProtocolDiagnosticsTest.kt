@@ -122,7 +122,7 @@ class ProtocolDiagnosticsTest {
 
     /** No DF, no QUIC: the socket's refusal, or a connection it ended (no viable path caused by it), is QuicUnavailable. */
     @Test fun noDontFragmentIsQuicUnavailable() {
-        val noDf = QuicException.DontFragmentUnavailable(4, "test")
+        val noDf = QuicException.DontFragmentUnavailable(io.kuicksilver.quic.IpFamily.V4, "test")
         assertEquals(FallbackReason.QuicUnavailable, classifyH3Failure(noDf))
         assertEquals(FallbackReason.QuicUnavailable, classifyH3Failure(QuicException.ConnectionLost.NoViablePath(noDf)))
         assertEquals(FallbackReason.QuicUnavailable, classifyH3Failure(H3NotSent(noDf)))

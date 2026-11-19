@@ -25,7 +25,8 @@ internal class NioDatagramIo private constructor(
     private val channel: DatagramChannel,
     private val selector: Selector,
 ) : DatagramIo,
-    QueuedReceive {
+    QueuedReceive,
+    DfFamilyRestricted {
     override val localAddress: InetSocketAddress =
         (channel.localAddress as java.net.InetSocketAddress).let {
             InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
@@ -72,6 +73,24 @@ internal class NioDatagramIo private constructor(
     /** The address family whose sends go without DF and are refused (4 or 6), [DF_ALL] none ([noDfFamily]). */
     internal var noDf: Int = DF_ALL
         private set
+
+    override val noDfFamily: IpFamily?
+        get() =
+            when (noDf) {
+                4 -> IpFamily.V4
+                6 -> IpFamily.V6
+                else -> null
+            }
+
+    /** Destinations a send refused for want of DF ([sendFrom]), taken by the endpoint loop after each batch. */
+    private val dfRefused = ArrayList<InetSocketAddress>(2)
+
+    override fun takeDfRefusals(): List<InetSocketAddress> {
+        if (dfRefused.isEmpty()) return emptyList()
+        val out = dfRefused.toList()
+        dfRefused.clear()
+        return out
+    }
 
     /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of the socket while it is open, -1 when unreadable (test hook). */
     internal fun dfModeForTest(family: Int): Int = dfModeOf(channel, family)
@@ -179,7 +198,10 @@ internal class NioDatagramIo private constructor(
 
     override fun trySend(batch: PacketBatch): Int = sendFrom(batch, 0)
 
-    /** Sends the slots of [batch] from [from] in order until the socket refuses one; returns the index of the first slot not sent. */
+    /**
+     * Sends the slots of [batch] from [from] in order until the socket refuses one (a full buffer); returns the index of the first
+     * slot not sent. A slot to an address family without DF is skipped and reported ([takeDfRefusals]).
+     */
     private fun sendFrom(
         batch: PacketBatch,
         from: Int,
@@ -190,7 +212,12 @@ internal class NioDatagramIo private constructor(
             val view = batch.buffer(i).asByteBuffer()
             view.limit(batch.length(i))
             val to = javaOf(a)
-            if (noDf != DF_ALL) refuseWithoutDf(noDf, to)
+            // no DF towards that family: this slot is not sent (no QUIC without DF) and the endpoint loop learns where it went;
+            // the rest of the batch goes on
+            if (noDf != DF_ALL && refusesWithoutDf(noDf, to)) {
+                dfRefused += a
+                continue
+            }
             val n =
                 sendRefusalAware(batch.length(i), a, emsgsizeText) {
                     view.position(0)
@@ -230,21 +257,21 @@ internal class NioDatagramIo private constructor(
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
         /**
-         * Throws [QuicException.DontFragmentUnavailable] when [to] is of the address family [noDf] whose traffic goes without DF
-         * on this dual-stack socket (an IPv4-mapped literal counts as IPv4: java.net makes it an `Inet4Address`).
+         * Whether [to] is of the address family [noDf] whose traffic this socket cannot give DF (the other half of a dual-stack
+         * socket has it), or IPv6 on an AF_INET socket ([noDf] 6). An IPv4-mapped literal counts as IPv4: java.net makes it an
+         * `Inet4Address`.
          */
-        internal fun refuseWithoutDf(
+        internal fun refusesWithoutDf(
             noDf: Int,
             to: java.net.InetSocketAddress,
-        ) {
-            val family = if (to.address is java.net.Inet4Address) 4 else 6
-            if (family == noDf) {
-                throw QuicException.DontFragmentUnavailable(
-                    noDf,
-                    "this dual-stack socket has no DF on its IPv$noDf half (no ksl, or the system refused both DF modes there)",
-                )
-            }
-        }
+        ): Boolean = (if (to.address is java.net.Inet4Address) 4 else 6) == noDf
+
+        /** The error for a send [refusesWithoutDf] refused, as the endpoint loop reports it. */
+        internal fun dfRefusal(family: IpFamily): QuicException.DontFragmentUnavailable =
+            QuicException.DontFragmentUnavailable(
+                family,
+                "this socket has no DF for ${family.label} (no ksl, the system refused both DF modes on that half, or an AF_INET socket)",
+            )
 
         /** [localizedEmsgsizeText], read once. */
         private val emsgsizeText: String? by lazy { localizedEmsgsizeText() }
@@ -454,7 +481,7 @@ internal class NioDatagramIo private constructor(
             val missing = noDfFamily(c.bits, c.jdk, c.inet, apple)
             if (missing == DF_NONE) {
                 c.ch.close()
-                throw QuicException.DontFragmentUnavailable(0, dfUnavailableDetail(c.bits, dontFragmentOption() != null))
+                throw QuicException.DontFragmentUnavailable(null, dfUnavailableDetail(c.bits, dontFragmentOption() != null))
             }
             if ((c.bits > 0 || (c.bits == 0 && linuxKernel)) && !probeComplete(c.bits) && probeMissingLogged.compareAndSet(false, true)) {
                 printWarning(
@@ -462,7 +489,8 @@ internal class NioDatagramIo private constructor(
                         "forged ICMP message can end its connections (RFC 9000 section 14.2.1)",
                 )
             }
-            return Triple(c.ch, c.bits, missing)
+            // an AF_INET channel (an IPv4 bind that took DF only there) cannot reach IPv6 at all: refused as without DF
+            return Triple(c.ch, c.bits, if (c.inet && missing == DF_ALL) 6 else missing)
         }
 
         /**

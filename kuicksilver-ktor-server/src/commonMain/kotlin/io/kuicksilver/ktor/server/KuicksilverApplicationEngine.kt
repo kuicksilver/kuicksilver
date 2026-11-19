@@ -548,6 +548,19 @@ public class KuicksilverApplicationEngine(
     public val http3Stats: List<io.kuicksilver.quic.EndpointStats>
         get() = startedH3Endpoints.map { it.stats }
 
+    /**
+     * Per TLS connector, in the order the connectors started: whether it serves HTTP/3 and why not ([Http3Status]), for
+     * example its UDP socket cannot set Don't Fragment (`QuicException.DontFragmentUnavailable`, no QUIC without DF: RFC 9000
+     * section 14), or only for one address family. Empty before the start completes. Safe from any thread.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public val http3Status: List<Http3Status>
+        get() = h3StatusList
+
+    /** [http3Status] as the start records it (a new list per change). */
+    @Volatile
+    internal var h3StatusList: List<Http3Status> = emptyList()
+
     /** [h3Endpoints] as published once the start completed (empty before): what [http3Stats] reads from other threads. */
     @Volatile
     private var startedH3Endpoints: List<Http3Endpoint> = emptyList()
@@ -930,6 +943,9 @@ public class KuicksilverApplicationEngine(
 
     /** TCP ports whose UDP twin serves HTTP/3: only those advertise it with Alt-Svc. Written at startup before TCP accepting begins, read-only after. */
     internal val h3Ports = HashSet<Int>()
+
+    /** TCP ports whose HTTP/3 is not served for one address family (no DF for it): its connections advertise no Alt-Svc. */
+    internal val h3NoDfFamily = HashMap<Int, io.kuicksilver.quic.IpFamily>()
     internal val h3Endpoints = ArrayList<Http3Endpoint>()
 
     /** The HTTP/3 listeners and the supervisors of the TCP connection handlers, for [KuicksilverServerProbe]; written at startup. */

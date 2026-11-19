@@ -341,14 +341,33 @@ internal class ConnectionRuntime(
     }
 
     /**
-     * A send of this connection was refused because the socket has no DF for the destination's address family (a dual-stack
-     * socket whose other half has it): no QUIC without DF (RFC 9000 section 14), so the connection ends at once with
-     * [QuicException.ConnectionLost.NoViablePath] caused by [e]; nothing of it is sent. Loop dispatcher only.
+     * A datagram of this connection on [target] to [to] (null: not known) was not sent because the socket has no DF for that
+     * address family ([e]; the other half of a dual-stack socket has it): no QUIC without DF (RFC 9000 section 14). As
+     * [onPathMtuRefused]: a path other than the active one is closed; on the active one the connection ends with a
+     * CONNECTION_CLOSE of NO_VIABLE_PATH caused by [e] (which can only go out where the socket has DF; towards that family it
+     * is refused like the rest). A destination none of this connection's paths on that socket has is not its own. Loop
+     * dispatcher only.
      */
-    internal fun onDontFragmentUnavailable(e: QuicException.DontFragmentUnavailable) {
-        if (finished) return
+    internal fun onDontFragmentUnavailable(
+        e: QuicException.DontFragmentUnavailable,
+        target: DatagramIo,
+        to: InetSocketAddress?,
+    ) {
+        if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining) return
+        val p =
+            pathList.firstOrNull {
+                (it.io ?: loop.io) === target && (to == null || it.remote.sameIpAs(to)) && it.stateFlow.value != PathState.Closed
+            }
+        if (p == null && to != null) return
+        if (p != null && p.id != core.path.id) {
+            loop.observer.logger.emit(LogLevel.Warn) { "${e.message}; closing the path to ${p.remote}" }
+            closePath(p)
+            loop.core.markDirty(core)
+            return
+        }
         loop.observer.logger.emit(LogLevel.Warn) { "${e.message}; closing the connection: no viable path" }
-        core.silentClose(QuicException.ConnectionLost.NoViablePath(e))
+        core.fail(TransportError.NO_VIABLE_PATH, 0, "no Don't Fragment for this address family", e)
+        loop.core.markDirty(core)
         drainEvents()
     }
 

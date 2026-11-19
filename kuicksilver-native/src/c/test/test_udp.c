@@ -1611,9 +1611,41 @@ void run_udp(void) {
             CHECK(
                 ksl_udp_df_mode_for_test(fd) == 1,
                 "IP_DONTFRAG set (Darwin has no PMTUDISC modes; its ICMPv6 PMTU cache is clamped to >= 1280, above QUIC's 1248-byte floor)");
+            CHECK(caps_of(a, NULL) & KSL_UDP_DF_DO, "Darwin's DF bit is DO-like: reported as KSL_UDP_DF_DO");
         }
 #else
             CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO");
+            CHECK(!(caps_of(a, NULL) & KSL_UDP_DF_DO), "probe mode: no KSL_UDP_DF_DO");
+        }
+        /* udp_df_do_fallback: where the system refuses probe mode (a seccomp filter, gVisor; simulated) DF is DO mode on that half,
+           still granted as KSL_UDP_DF and reported as KSL_UDP_DF_DO, with the error queue on; ksl_udp_fd_df_probe reports V4_DO / V6_DO */
+        {
+            ksl_udp_refuse_probe_for_test(1);
+            uint8_t ld[KSL_UDP_ADDR_LEN];
+            ksl_udp *d = open_lo(KSL_UDP_DF, ld);
+            CHECK(d != NULL, "a DF socket without probe mode");
+            if (d) {
+                uint32_t g = caps_of(d, NULL);
+                CHECK((g & KSL_UDP_DF) && (g & KSL_UDP_DF_DO), "DF granted, in DO mode");
+                uint8_t fd8[4];
+                size_t n = 0;
+                CHECK(ksl_udp_get(d, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd");
+                int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
+                CHECK(ksl_udp_df_mode_for_test(fd) == 2 /* IP_PMTUDISC_DO */, "IP_MTU_DISCOVER reads DO");
+                CHECK(ksl_udp_recverr_for_test(d), "the error queue is on, as in probe mode");
+                ksl_udp_close(d);
+            }
+            int s4 = socket(AF_INET, SOCK_DGRAM, 0), s6 = socket(AF_INET6, SOCK_DGRAM, 0);
+            CHECK(ksl_udp_fd_df_probe(s4) == KSL_FD_DF_V4_DO && ksl_udp_fd_df_mode(s4, 4) == 2,
+                  "fd: AF_INET in DO mode");
+            if (s6 >= 0)
+                CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_INET6 | KSL_FD_DF_V4_DO | KSL_FD_DF_V6_DO) &&
+                          ksl_udp_fd_df_mode(s6, 6) == 2,
+                      "fd: AF_INET6, both halves in DO mode");
+            if (s6 >= 0)
+                close(s6);
+            close(s4);
+            ksl_udp_refuse_probe_for_test(0);
         }
 #endif
         /* udp_fd_df_probe: on a socket ksl did not open (the JVM's portable one), left in DO as the JDK's IP_DONTFRAGMENT sets it:
