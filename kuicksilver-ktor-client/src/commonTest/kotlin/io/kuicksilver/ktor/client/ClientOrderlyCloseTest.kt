@@ -181,8 +181,9 @@ class ClientOrderlyCloseTest {
         }
 
     /**
-     * The server sends [head] and then more body than every buffer on the way holds, and waits for the client's close_notify
-     * before its own; [call] makes the request and leaves the response. The client's orderly close (its bound stretched to
+     * The server sends [head] and then more body than every buffer on the way holds, then its close_notify (its write side
+     * ends), and keeps the connection until the client's close is over (the fixture closes the raw socket as the handler
+     * returns, which would cut the server's own drain short); [call] makes the request and leaves the response. The client's orderly close (its bound stretched to
      * 30 s) must end well within it, the server must see close_notify, and its writes must all go through: the client read
      * and dropped them until the server's close_notify, rather than closing under them (which resets the connection).
      */
@@ -202,10 +203,10 @@ class ClientOrderlyCloseTest {
                     output.writeStringUtf8(head)
                     val chunk = ByteArray(64 * 1024)
                     repeat(size / chunk.size) { output.writeFully(chunk) }
-                    output.flush()
+                    output.flushAndClose() // then the server's close_notify
                 }.isSuccess,
             )
-            withTimeoutOrNull(60.seconds) { clean.await() } // then the server's close_notify
+            withTimeoutOrNull(60.seconds) { took.await() }
         }) { port ->
             testClient().use { c ->
                 engine(c).h1.orderlyCloseTimeoutForTest = 30.seconds
