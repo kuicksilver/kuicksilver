@@ -929,10 +929,12 @@ static void test_reject_client_certificate(void) {
                section 6.1.7: "the client MUST respond with an empty Certificate message", then (section 6.1.6) completes
                the handshake and aborts with ech_required: the server reads an empty Certificate, no CertificateVerify,
                the Finished, then alert 121 (QUIC: the CONNECTION_CLOSE carries it, so the server reads no alert) */
-            int ok = rejected ? (r.alert_c == 121 && r.status_c == KSL_ECH_REJECTED && !r.server_got_cert &&
-                                 !r.client_resumable && empty_cert_then_finished(r.server_flight, m == 1))
-                              : (ACCEPTED(r) && r.server_got_cert && strchr(r.server_flight, 'Z') &&
-                                 strchr(r.server_flight, 'V') && strchr(r.server_flight, 'F'));
+            int ok = rejected
+                         ? (r.alert_c == 121 && r.status_c == KSL_ECH_REJECTED && !r.server_got_cert &&
+                            !r.client_resumable && empty_cert_then_finished(r.server_flight, m == 1))
+                         : (ACCEPTED(r) && r.server_got_cert &&
+                            (strchr(r.server_flight, 'Z') || strchr(r.server_flight, 'C')) && /* compressed or not */
+                            strchr(r.server_flight, 'V') && strchr(r.server_flight, 'F'));
             CHECK(ok, rejected ? (m == 0 ? "negative_ech_rejected_no_client_certificate over QUIC" : "... over TCP")
                                : (m == 0 ? "accepted: the server holds the client certificate (QUIC)" : "... (TCP)"));
             if (!ok) {
@@ -1495,6 +1497,12 @@ static void test_outcomes(void) {
             name_of(pn, 230);
             pn[0] = (char)('b' + i);
             big[i] = make_echkey(pn);
+            for (int j = 0; j < i; j++) /* distinct config_ids, or the set is refused (sections 4.1, 7.1) */
+                if (big[j].list[6] == big[i].list[6]) {
+                    free(big[i].pem);
+                    big[i] = make_echkey(pn);
+                    j = -1;
+                }
             blob one = keyset(1, &big[i], 1);
             kbig.buf = realloc(kbig.buf, kbig.len + one.len);
             memcpy(kbig.buf + kbig.len, one.buf, one.len);
