@@ -23,14 +23,21 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.ktor.client.h1.TcpProgress
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -734,18 +741,24 @@ class ClientConnectionDiagnosticsTest {
                     coroutineScope {
                         // the body is read on only after the other call failed (and its diagnostics went wherever they went)
                         val aFailed = CompletableDeferred<Unit>()
+                        val bodyRead = CompletableDeferred<Unit>() // the other call read the first bytes of its body
                         val body =
                             async {
                                 c.prepareGet("https://127.0.0.1:$port/stream").execute { r ->
                                     val ch = r.bodyAsChannel()
                                     val b = ByteArray(4096)
                                     var got = 0
-                                    while (got < 1024) got += ch.readAvailable(b, 0, b.size).coerceAtLeast(0)
+                                    while (got < 1024) {
+                                        val n = ch.readAvailable(b, 0, b.size)
+                                        check(n >= 0) { "the body ended after $got bytes: ${ch.closedCause}" }
+                                        got += n
+                                    }
+                                    bodyRead.complete(Unit)
                                     aFailed.await()
                                     runCatching { while (ch.readAvailable(b, 0, b.size) >= 0) continue }.exceptionOrNull() ?: ch.closedCause
                                 }
                             }
-                        withTimeout(10.seconds) { streaming.await() }
+                        withTimeout(10.seconds) { bodyRead.await() }
                         val waiting = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
                         withTimeout(10.seconds) { held.await() }
                         (c.engine as KuicksilverEngine)
@@ -791,6 +804,9 @@ class ClientConnectionDiagnosticsTest {
         for (x in shared) {
             val a = ProtocolDiagnostics().also { it.transport = Transport.Quic }
             val b = ProtocolDiagnostics().also { it.transport = Transport.Quic }
+            // the pools record the connection's own end by identity when a call fails on it
+            a.connectionWide(x)
+            b.connectionWide(x)
             val ta = settleFailure(a, x)
             val tb = settleFailure(b, x)
             assertTrue(ta !== x && tb !== x && ta !== tb, "each call throws its own copy")
@@ -803,7 +819,8 @@ class ClientConnectionDiagnosticsTest {
         }
         val own = kotlinx.io.IOException("this call's own")
         val d = ProtocolDiagnostics()
-        assertSame(own, settleFailure(d, own))
+        d.connectionWide(IllegalStateException("another instance"))
+        assertSame(own, settleFailure(d, own), "only the recorded instances are copied, whatever the type")
         assertSame(d, own.kuicksilverDiagnostics)
     }
 
@@ -850,6 +867,192 @@ class ClientConnectionDiagnosticsTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The peer closes the HTTP/3 connection with H3_REQUEST_REJECTED (a RequestNotProcessed, which no type list of
+     * connection errors named) while another call reads its body on it: the waiting call, out of repeats, throws its own
+     * copy with its diagnostics; the body's failure, the connection's one instance, carries none.
+     */
+    @Test fun aRequestRejectedCloseCarriesNoOtherCallsDiagnostics() =
+        h3Test {
+            coroutineScope {
+                val onThird = CompletableDeferred<Unit>()
+                val streaming = CompletableDeferred<Unit>()
+                val closeNow = CompletableDeferred<Unit>()
+                val tls =
+                    tlsConfig(TlsRole.Server) {
+                        alpn = listOf(Http3Endpoint.H3)
+                        identity = ClientFixtures.identity()
+                    }
+                val ep =
+                    Http3Endpoint.bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                server =
+                                    QuicServerConfig
+                                        .Builder(tls)
+                                        .build()
+                            }.build(),
+                    )
+                val server =
+                    launch {
+                        var n = 0
+                        while (true) {
+                            val conn = ep.accept()
+                            val index = ++n
+                            launch {
+                                runCatching {
+                                    while (true) {
+                                        val r = conn.acceptRequest()
+                                        launch {
+                                            runCatching {
+                                                if (r.path == "/stream") {
+                                                    val w = r.respond(200, Http3Headers(emptyList()))
+                                                    w.output.writeFully(ByteArray(1024))
+                                                    w.output.flush()
+                                                    streaming.complete(Unit)
+                                                    awaitCancellation()
+                                                } else if (index < 3) {
+                                                    conn.quic.close(0x10B, "rejected") // H3_REQUEST_REJECTED: the call repeats
+                                                } else {
+                                                    onThird.complete(Unit)
+                                                    closeNow.await()
+                                                    conn.quic.close(0x10B, "rejected")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                val port = ep.localAddress.port
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val waiting = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
+                        withTimeout(20.seconds) { onThird.await() } // its third connection, the last repeat
+                        val aFailed = CompletableDeferred<Unit>()
+                        val bodyRead = CompletableDeferred<Unit>() // the other call read the first bytes of its body
+                        val body =
+                            async {
+                                c.prepareGet("https://127.0.0.1:$port/stream").execute { r ->
+                                    val ch = r.bodyAsChannel()
+                                    val b = ByteArray(4096)
+                                    var got = 0
+                                    while (got < 1024) {
+                                        val n = ch.readAvailable(b, 0, b.size)
+                                        check(n >= 0) { "the body ended after $got bytes: ${ch.closedCause}" }
+                                        got += n
+                                    }
+                                    bodyRead.complete(Unit)
+                                    aFailed.await()
+                                    runCatching { while (ch.readAvailable(b, 0, b.size) >= 0) continue }.exceptionOrNull() ?: ch.closedCause
+                                }
+                            }
+                        withTimeout(10.seconds) { bodyRead.await() }
+                        closeNow.complete(Unit)
+                        val aErr = assertNotNull(withTimeout(10.seconds) { waiting.await() })
+                        val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
+                        assertEquals(3, dA.attempts)
+                        aFailed.complete(Unit)
+                        val bErr = assertNotNull(withTimeout(10.seconds) { body.await() })
+                        assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
+                    }
+                } finally {
+                    server.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * An HTTP/2 connection that drops under two calls: the one waiting for its response throws its own copy of the
+     * connection's close, with its diagnostics; the one reading its body gets the connection's one instance, without them.
+     */
+    @Test fun anHttp2ConnectionDropCarriesOnlyTheFailingCallsDiagnostics() =
+        clientTest {
+            val streaming = CompletableDeferred<Unit>()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
+                fun frame(
+                    type: Int,
+                    flags: Int,
+                    stream: Int,
+                    payload: ByteArray = ByteArray(0),
+                ): ByteArray =
+                    byteArrayOf(
+                        (payload.size shr 16).toByte(),
+                        (payload.size shr 8).toByte(),
+                        payload.size.toByte(),
+                        type.toByte(),
+                        flags.toByte(),
+                        (stream ushr 24).toByte(),
+                        (stream shr 16).toByte(),
+                        (stream shr 8).toByte(),
+                        stream.toByte(),
+                    ) + payload
+                input.readByteArray(24) // the preface
+                output.writeFully(frame(4, 0, 0))
+                output.flush()
+                var requests = 0
+                while (true) {
+                    val head = input.readByteArray(9)
+                    val len = ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or (head[2].toInt() and 0xff)
+                    val type = head[3].toInt() and 0xff
+                    val flags = head[4].toInt() and 0xff
+                    val stream =
+                        ((head[5].toInt() and 0x7f) shl 24) or ((head[6].toInt() and 0xff) shl 16) or
+                            ((head[7].toInt() and 0xff) shl 8) or (head[8].toInt() and 0xff)
+                    input.readByteArray(len)
+                    if (type == 4 && flags and 1 == 0) {
+                        output.writeFully(frame(4, 1, 0))
+                        output.flush()
+                    }
+                    if (type == 1 && ++requests == 1) {
+                        // the first: a response that keeps streaming
+                        output.writeFully(frame(1, 0x4, stream, byteArrayOf(0x88.toByte())))
+                        output.writeFully(frame(0, 0, stream, ByteArray(1024)))
+                        output.flush()
+                        streaming.complete(Unit)
+                    } else if (type == 1) {
+                        return@tlsWithSilentUdp // the second: the connection drops (the handler's end closes it)
+                    }
+                }
+            }) { port ->
+                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                    coroutineScope {
+                        val aFailed = CompletableDeferred<Unit>()
+                        val bodyRead = CompletableDeferred<Unit>() // the other call read the first bytes of its body
+                        val body =
+                            async {
+                                c.prepareGet("https://127.0.0.1:$port/stream").execute { r ->
+                                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                                    val ch = r.bodyAsChannel()
+                                    val b = ByteArray(4096)
+                                    var got = 0
+                                    while (got < 1024) {
+                                        val n = ch.readAvailable(b, 0, b.size)
+                                        check(n >= 0) { "the body ended after $got bytes: ${ch.closedCause}" }
+                                        got += n
+                                    }
+                                    bodyRead.complete(Unit)
+                                    aFailed.await()
+                                    runCatching { while (ch.readAvailable(b, 0, b.size) >= 0) continue }.exceptionOrNull() ?: ch.closedCause
+                                }
+                            }
+                        withTimeout(10.seconds) { bodyRead.await() }
+                        val aErr = assertNotNull(runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull())
+                        val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
+                        assertEquals(Transport.Tcp, dA.transport)
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, dA.connection?.protocol)
+                        aFailed.complete(Unit)
+                        val bErr = assertNotNull(withTimeout(10.seconds) { body.await() })
+                        assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
+                    }
+                }
             }
         }
 

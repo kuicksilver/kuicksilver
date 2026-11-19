@@ -885,8 +885,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: a failed call's `ProtocolDiagnostics` stay in the request's attributes until `callFailed` returned (they
   were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`: a
   one-line message without URL, host, address or connection ID, and on the JVM and Android no stack of its own); code
-  that reads `suppressedExceptions` of a failed call sees it after the HTTP/3 failure. A copy coroutines make of a `QuicException` (the stack of the receiving side) keeps the
-  original's suppressed exceptions.
+  that reads `suppressedExceptions` of a failed call sees it after the HTTP/3 failure. A copy coroutines make of a
+  `QuicException` or an `Http3Exception` (the stack of the receiving side) keeps the original's suppressed exceptions.
+- Ktor client: a call that fails in the engine on a connection-wide failure — the one instance every call on the
+  connection gets: a QUIC connection's end (what `onClosed` and `QuicConnection.closed` hold), the HTTP/3 session's close
+  (an `Http3Exception`, `RequestNotProcessed` for H3_REQUEST_REJECTED included), an HTTP/2 connection's
+  `Http2Exception.ConnectionClosed` (a GOAWAY with an error, a dropped connection), a shared setup's failure — now throws
+  its own copy of it (same type, fields and cause) carrying its diagnostics, and `callFailed` gets that copy, no longer
+  the shared instance; the instance itself carries no call's diagnostics.
 
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ

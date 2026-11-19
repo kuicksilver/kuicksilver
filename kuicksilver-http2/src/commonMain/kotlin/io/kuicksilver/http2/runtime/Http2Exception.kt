@@ -44,7 +44,18 @@ public sealed class Http2Exception(
         override val notProcessed: Boolean,
         message: String,
         cause: Throwable? = null,
-    ) : Http2Exception(message, cause)
+    ) : Http2Exception(message, cause) {
+        /**
+         * For the library's own client engine: a copy of this connection-wide failure (every stream of the connection gets
+         * the one instance) for one call to carry what belongs to it alone, with the same fields, cause and suppressed
+         * exceptions.
+         */
+        @io.kuicksilver.annotations.InternalKuicksilverApi
+        public fun copyForCall(): ConnectionClosed =
+            ConnectionClosed(code, byPeer, notProcessed, message ?: "", cause).also { c ->
+                for (s in suppressedExceptions) c.addSuppressed(s)
+            }
+    }
 
     /**
      * The response was malformed (RFC 9113 section 8.1.1: an invalid or missing pseudo-header field, a connection-specific

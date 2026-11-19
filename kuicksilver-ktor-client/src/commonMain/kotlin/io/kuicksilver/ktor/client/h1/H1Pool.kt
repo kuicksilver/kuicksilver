@@ -1089,7 +1089,11 @@ internal class H1Pool(
                             e.cause,
                         )
                     }
-                    if (++h2Repeats > 2) throw e.cause
+                    if (++h2Repeats > 2) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        diagnostics?.connectionWide(h2c.client.closeCause)
+                        throw e.cause
+                    }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     diagnostics?.let { it.attempts++ }
                     attempt++
@@ -1122,6 +1126,11 @@ internal class H1Pool(
                     attempt++
                     events.emit("retry") { retry(data, attempt, e.cause) }
                     continue
+                } catch (e: Throwable) {
+                    // the connection's end (one instance for every stream of it) is never this call's to carry
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    if (e !is CancellationException) diagnostics?.connectionWide(h2c.client.closeCause)
+                    throw e
                 }
             }
             val conn = obtained.connection!!

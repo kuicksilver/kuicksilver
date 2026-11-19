@@ -2298,7 +2298,7 @@ with its `HttpRequestTimeoutException`, the exception Ktor then throws, and that
 application cancels carries none; `callFailed` has the request's own diagnostics then. A connection's failure reaches
 every request on the connection, and the connection listener, as one instance: the engine never puts a call's
 diagnostics on that instance. A call that fails with it in the engine throws its own copy (same type, fields and cause)
-carrying its diagnostics; a call that meets it later, reading its response body, gets the instance itself, which carries
+carrying its diagnostics, and `callFailed` gets that copy; a call that meets it later, reading its response body, gets the instance itself, which carries
 none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
 
 ### Graceful stop

@@ -64,16 +64,49 @@ public class ProtocolDiagnostics internal constructor() {
      * The connection behind the call ([QuicConnectionSnapshot] or [TcpConnectionSnapshot]), on the [transport] the call
      * ended on: the one that served the response, or the one the failure came from when a connection was in hand (a TCP
      * connection whose TLS handshake failed included); null for a failure before any connection (every address refused, a
-     * QUIC handshake that never completed: see [connectFailures]). An HTTP/3 call's is replaced once its response ended.
+     * QUIC handshake that never completed: see [connectFailures]).
+     *
+     * During an HTTP/3 call, from its response head until the call ends, each read takes a new snapshot of the live
+     * connection, so two reads return two objects (`d.connection !== d.connection`) with the values of their moment; when
+     * the call ends one last snapshot is taken and every read returns it from then on.
      */
     public var connection: ConnectionSnapshot?
-        // during an HTTP/3 call, from its response head to its end, each read takes a snapshot of the live connection;
-        // the one taken at the end stays (and no handle to the connection is kept after it)
-        get() = liveQuic?.let { l -> runCatching { quicSnapshot(l.conn, l.reused, l.startChanges) }.getOrNull() } ?: settled
+        // during an HTTP/3 call, from its response head to its end, each read takes a new snapshot of the live connection
+        // (so two reads are two objects); the one taken at the end stays (and no handle to the connection is kept after it)
+        get() {
+            val l = liveQuic ?: return settled
+            return runCatching { quicSnapshot(l.conn, l.reused, l.startChanges) }.getOrNull()?.also { lastLive = it } ?: lastLive ?: settled
+        }
         internal set(value) {
             settled = value
             liveQuic = null
         }
+
+    /** The last snapshot a read during the call made: kept when the one at the call's end cannot be made. */
+    @kotlin.concurrent.Volatile
+    internal var lastLive: ConnectionSnapshot? = null
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val connectionWide = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
+
+    /**
+     * [failures] are the connection's own end, one instance for every call on it (the HTTP/3 session's `closed` value, the
+     * QUIC connection's close reason, the HTTP/2 connection's close cause, a shared setup's failure): this call never puts
+     * its diagnostics on them, only on its own copy. Called by the pools when a call fails on a connection.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun connectionWide(vararg failures: Throwable?) {
+        val add = failures.filterNotNull()
+        if (add.isEmpty()) return
+        while (true) {
+            val now = connectionWide.load()
+            if (connectionWide.compareAndSet(now, now + add)) return
+        }
+    }
+
+    /** Whether [t] is one of the instances [connectionWide] recorded (by identity). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun isConnectionWide(t: Throwable): Boolean = connectionWide.load().any { it === t }
 
     @kotlin.concurrent.Volatile
     private var settled: ConnectionSnapshot? = null

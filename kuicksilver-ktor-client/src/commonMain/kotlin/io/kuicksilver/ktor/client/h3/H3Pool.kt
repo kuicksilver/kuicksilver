@@ -1589,6 +1589,9 @@ internal class H3Pool(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
+                    // a setup's failure reaches every call that waited for that setup as one instance
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.connectionWide(e)
                     throw H3NotSent(e)
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too
@@ -1652,14 +1655,15 @@ internal class H3Pool(
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 fun ended() {
                     entry.release(clock())
-                    // a completion handler must not throw; a fallback or a 421's TCP repeat has replaced the live one already
+                    // a completion handler must not throw; a fallback or a 421's TCP repeat has replaced the live one already;
+                    // a final snapshot that cannot be made leaves the last one a read made
                     val live = diagnostics?.liveQuic
                     if (diagnostics != null && live != null && live.conn === conn.quic) {
                         diagnostics.connection =
                             runCatching {
                                 io.kuicksilver.ktor.client
                                     .quicSnapshot(conn.quic, reused, startChanges)
-                            }.getOrNull()
+                            }.getOrNull() ?: diagnostics.lastLive
                     }
                 }
                 val job = callContext[Job]
@@ -1672,8 +1676,15 @@ internal class H3Pool(
             } catch (e: Throwable) {
                 entry.release(clock())
                 // the connection the call failed on (a fallback over TCP replaces it)
-                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 if (diagnostics != null && e !is CancellationException) {
+                    // the connection's own end, which every call on it gets as one instance (by identity, whatever its type)
+                    diagnostics.connectionWide(
+                        conn.closed.takeIf { it.isCompleted }?.getCompleted(),
+                        conn.quic.closed
+                            .takeIf { it.isCompleted }
+                            ?.getCompleted(),
+                    )
                     diagnostics.connection =
                         io.kuicksilver.ktor.client
                             .quicSnapshot(conn.quic, reused, startChanges)

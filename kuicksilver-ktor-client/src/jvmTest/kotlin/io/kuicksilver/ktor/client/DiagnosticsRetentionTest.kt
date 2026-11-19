@@ -54,7 +54,10 @@ class DiagnosticsRetentionTest {
             val held = ArrayList<Any>() // what the application keeps: a response's diagnostics, a failure
             try {
                 testClient(Http3DiscoveryMode.H3Only, engine = { http3 { connectionListener = listener } }).use { c ->
-                    held += assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection)
+                    // the whole diagnostics of a response (a handle kept past the call's end would show) and its snapshot
+                    val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
+                    held += d
+                    held += assertIs<QuicConnectionSnapshot>(d.connection)
                     coroutineScope {
                         val failing = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
                         withTimeout(10.seconds) { reached.await() }

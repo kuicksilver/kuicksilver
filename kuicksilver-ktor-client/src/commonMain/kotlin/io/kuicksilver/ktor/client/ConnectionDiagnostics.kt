@@ -44,9 +44,10 @@ public sealed class ConnectionSnapshot {
 }
 
 /**
- * The HTTP/3 connection of a call: taken when its response head arrived (or, for a call that failed on it, at the
- * failure) and again when its response ended, the body read or abandoned. The second replaces the first in
- * [ProtocolDiagnostics.connection], so a call read after its body finished shows the connection as it was then.
+ * The HTTP/3 connection of a call. From the response head until the call ends, [ProtocolDiagnostics.connection] takes a
+ * new one from the live connection at each read; when the call ends (its body read or abandoned) one last snapshot is
+ * taken and kept, so a call read after its body finished shows the connection as it was then. A call that failed on the
+ * connection keeps the one taken at the failure.
  *
  * Plain data only: it names the connection ([connectionId]) but holds no handle to it, so neither a response nor a failed
  * call's exception that carries the diagnostics keeps the connection (its buffers, its endpoint) in memory. For the live
@@ -199,11 +200,11 @@ internal const val MAX_CONNECT_FAILURES = 16
  * [ProtocolDiagnostics.h3Failure] what HTTP/3's failure was when TCP came after it, [ProtocolDiagnostics.connectFailures]
  * which setups failed and where. Null for an exception no Kuicksilver engine call threw and for a cancellation.
  *
- * A connection's failure (a QUIC connection's end, an HTTP/3 or HTTP/2 connection error) is one instance for every request
- * on the connection and for the connection listener: the engine never puts a call's diagnostics on it. A call that fails
- * with it in the engine throws its own copy (same type, fields and cause) that carries them; the instance itself, which a
- * call reading its response body or `onClosed` gets, carries none. An HTTP/2 connection's close cannot be copied: such a
- * call throws the instance, without them. [KuicksilverEventListener.callFailed] has the request's own diagnostics always.
+ * A connection's failure (a QUIC connection's end, an HTTP/3 or HTTP/2 connection error, a shared setup's failure) is one
+ * instance for every request on the connection and for the connection listener: the engine never puts a call's
+ * diagnostics on it. A call that fails with it in the engine throws its own copy (same type, fields and cause) that carries
+ * them, and `callFailed` gets that copy; the instance itself, which a call reading its response body, `onClosed` and
+ * `QuicConnection.closed` get, carries none. [KuicksilverEventListener.callFailed] has the request's own diagnostics always.
  *
  * The engine attaches it as a suppressed exception (`FailureDiagnostics`) whose message is one line: the transport that
  * failed, HTTP/3's failure by its type and reason, the stages of the setups that failed, the attempts — never a URL, a
@@ -278,8 +279,8 @@ internal expect fun <T> withCarrierLock(
 
 /**
  * A snapshot of the HTTP/3 connection [conn] for a call that took it when its [ConnectionInfo.pathChanges] was
- * [startChanges]: one statistics read and one object, made when the response head arrived, the call failed on it or the
- * response ended, never per packet.
+ * [startChanges]: one statistics read and one object, made at a read of [ProtocolDiagnostics.connection] during the call,
+ * when the call failed on it, or when it ended; never per packet.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun quicSnapshot(
@@ -305,18 +306,6 @@ internal fun quicSnapshot(
 /** [this] as a socket address, the IP as a literal (no name lookup). */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal fun io.kuicksilver.ktor.network.TcpAddress.toInet(): InetSocketAddress = InetSocketAddress(hostText, port)
-
-/**
- * Whether [t] is a whole connection's failure, one instance for every stream on it and for the connection listener: a
- * QUIC connection's end, an HTTP/3 connection error (a protocol error without a stream, QPACK, SETTINGS), an HTTP/2
- * connection's close. A call's diagnostics never go onto such an instance, only onto a copy of the call's own.
- */
-internal fun isConnectionScoped(t: Throwable): Boolean =
-    t is io.kuicksilver.quic.QuicException.ConnectionLost ||
-        (t is io.kuicksilver.http3.Http3Exception.Protocol && t.streamId == null) ||
-        t is io.kuicksilver.http3.Http3Exception.Qpack ||
-        t is io.kuicksilver.http3.Http3Exception.Settings ||
-        t is io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed
 
 /**
  * Settles [d] for a call that failed with [e] and returns what the call throws: [e] carrying [d]
@@ -351,9 +340,30 @@ internal fun settleFailure(
             Transport.Tcp -> d.connection?.protocol ?: HttpProtocolVersion.HTTP_1_1
             null -> d.protocol
         }
-    if (isConnectionScoped(carrier)) {
+    if (d.isConnectionWide(carrier)) {
         // never on the shared instance: another call reading its body, or an onClosed listener, would see this call's
-        val own = if (carrier === e) (e as? kotlinx.coroutines.CopyableThrowable<*>)?.createCopy() else null
+        val own =
+            when {
+                carrier !== e -> {
+                    null
+                }
+
+                e is io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed -> {
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    e.copyForCall()
+                }
+
+                // a shared setup's connect timeout (Ktor's type, which coroutines cannot copy): the same message and cause
+                e is io.ktor.client.network.sockets.ConnectTimeoutException -> {
+                    io.ktor.client.network.sockets.ConnectTimeoutException(e.message ?: "Connect timeout has expired", e.cause).also { c ->
+                        withCarrierLock(e) { e.suppressedExceptions.toList() }.forEach(c::addSuppressed)
+                    }
+                }
+
+                else -> {
+                    (e as? kotlinx.coroutines.CopyableThrowable<*>)?.createCopy()
+                }
+            }
         if (own == null) return e
         attachDiagnostics(own, d)
         return own
@@ -368,6 +378,6 @@ internal fun settleFailure(
         if (c::class != original::class || c === original) break
         original = c
     }
-    if (original !== carrier && !isConnectionScoped(original)) attachDiagnostics(original, d)
+    if (original !== carrier && !d.isConnectionWide(original)) attachDiagnostics(original, d)
     return e
 }
