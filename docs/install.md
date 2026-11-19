@@ -35,7 +35,7 @@ your own compiler and flags.
 
 Each block pins every Kuicksilver module with the bill of materials (`kuicksilver-bom`) and every Ktor module with
 Ktor's (Kuicksilver needs Ktor 3.6.x, [below](#supported-ktor-versions)). A module brings the modules it is built on;
-the native library (OpenSSL 3.5 and `ksl`) comes with `kuicksilver-native`, nothing needs to be installed on the
+the native library (OpenSSL, version pinned in `gradle/openssl.toml`, and `ksl`) comes with `kuicksilver-native`, nothing needs to be installed on the
 system. The imports of every snippet are at the top of each guide (for example
 [Ktor engines: Imports](guide/ktor.md#imports)).
 
@@ -119,7 +119,7 @@ An app with no Kotlin of its own uses the Swift package
 
 | Artifact (`io.kuicksilver:`) | What it is | Guide |
 |---|---|---|
-| `kuicksilver-native` | the `ksl` C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings, the native loader | [architecture](architecture.md) |
+| `kuicksilver-native` | the `ksl` C shim with OpenSSL inside (version pinned in `gradle/openssl.toml`), its JNI and cinterop bindings, the native loader | [architecture](architecture.md) |
 | `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](guide/tls.md) |
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](guide/quic.md) |

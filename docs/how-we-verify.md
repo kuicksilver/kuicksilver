@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # How we verify
 
-Kuicksilver has no production users yet, so you cannot judge it by its track record. This page shows what is checked
+Kuicksilver has no production users we know of, so you cannot judge it by its track record. This page shows what is checked
 instead, where the checks live in the repository and what they found, so that you can decide whether to trust it, and
 check the claims yourself. Each section names the files and scripts; the stage-by-stage process for contributors, with
 every rule and every known blind spot of the checks, is in [process.md](process.md).
@@ -14,7 +14,7 @@ every rule and every known blind spot of the checks, is in [process.md](process.
 |---|---|---|---|
 | [RFC conformance tables](#rfc-conformance-tables) | one row per requirement, with the tests that pin it | [rfc-compliance.md](spec/rfc-compliance.md), [spec/rfc/](spec/rfc/) | every change; format and test names checked by scripts |
 | [Interop](#interop) | six QUIC stacks, h2spec, other HTTP engines, browsers | [interop.md](spec/interop.md), `tools/interop/` | release gate (QUIC Interop Runner); weekly in CI |
-| [Fuzzing](#fuzzing) | 34 targets: every parser and two connection state machines | `tools/fuzz/` | weekly in CI; the corpus in every gate |
+| [Fuzzing](#fuzzing) | 34 targets: every parser and the QUIC, HTTP/3 and HTTP/2 connection state machines | `tools/fuzz/` | weekly in CI; the corpus in every gate |
 | [Planted bugs](#planted-bugs-instead-of-mutation-testing) | the fuzz reproducers and HTTP/1.1 and HTTP/3 targets still catch the bugs they found | `tools/fuzz/plants/`, `tools/fuzz/reproducers.txt` | weekly in CI, by hand |
 | [The release gate](#the-release-gate) | every module on every target, sanitizers, emulator, Windows VM, Docker Linux | `tools/ci/local-matrix.sh` | every integration, every release |
 | [Hosted CI](#hosted-ci) | the same steps on GitHub's runners, CodeQL, Scorecard | `.github/workflows/` | every push and pull request to `main` and `release/**` |
@@ -79,7 +79,7 @@ protocol header; and a libFuzzer harness of the C parsing code in `ksl` (`tools/
   artifacts of a public repository are public. Locally, `tools/fuzz/campaign.sh` runs resumable slices.
 - **Corpus.** The grown corpora are minimized into `tools/fuzz/corpus/` (26 targets, 11,878 inputs at this commit), and
   the release gate replays them, with each target's regression inputs, as tests.
-- **Findings.** A crash becomes a committed input, a unit test and a fix. 20 of them are recorded in
+- **Findings.** A crash becomes a committed input, a unit test and a fix. 20 inputs, for 17 bugs, are recorded in
   `tools/fuzz/reproducers.txt`.
 
 - TODO(measure): fuzzing hours per target for 0.3.0: `tools/fuzz/campaign.sh status` after the campaign, read by
@@ -90,8 +90,9 @@ protocol header; and a libFuzzer harness of the C parsing code in `ksl` (`tools/
 
 No general mutation-testing tool (one that mutates the code at random and counts the tests that notice) runs on
 Kuicksilver. What runs instead is targeted: every recorded fuzz reproducer has a plant, a small patch that puts its bug
-back (`tools/fuzz/plants/`), and `tools/fuzz/reproducers-verify.sh` applies each plant in turn: the reproducer must fail
-again with its recorded failure and its guard test must fail too. `tools/fuzz/planted-check.sh` and
+back (`tools/fuzz/plants/`), and `tools/fuzz/reproducers-verify.sh` applies each plant in turn: a live reproducer must fail
+again with its recorded failure and its guard test, where it names one, must fail too; for the dead entries, whose
+input no longer reaches the bug, the input must still pass and the guard test must fail. `tools/fuzz/planted-check.sh` and
 `tools/fuzz/h3-planted-check.sh` plant known HTTP/1.1 and HTTP/3 bugs and require the fuzz targets to catch them. Every
 security check also has a `negative_*` test that fails when the check is removed ([threat model](#threat-model)). This
 is mutation testing of the security checks only ([threat-model.md, section 8](spec/threat-model.md#assurance-case)).
@@ -115,7 +116,7 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 |---|---|
 | JVM on macOS | every module's tests, the engine interop bench, the samples, the coverage report |
 | JVM on Linux x64 and arm64 | every module's suite in Docker against the manylinux `libksl.so`; the system-OpenSSL mode |
-| JVM on Windows | every module's suite in the Windows 11 VM against the mingw-w64 dll |
+| JVM on Windows (release run) | every module's suite in the Windows 11 VM against the mingw-w64 dll |
 | Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the device tests on the emulator, connection migration against a server on the host |
 | macOS and iOS | `macosArm64` tests, every module's `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled |
 | Linux (Kotlin/Native) | the `linuxX64` and `linuxArm64` test executables of every module in Docker, glibc floors, h2spec, the deployment guide's commands with `curl --http3-only` |
@@ -124,7 +125,7 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 | Simulation | 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU) |
 | Documentation, build integrity | the repository checks, dependency verification, ABI dumps, the API reference with warnings as errors |
 | Reproducibility | OpenSSL, `libksl` and the JNI library built twice from two paths and compared |
-| Interop (release) | both interop images against the six QUIC peers, required cells green |
+| Interop (release run) | both interop images against the six QUIC peers, required cells green |
 
 The list of what each step does is in [process.md, stage 5](process.md#5-integration-and-the-local-gate).
 
@@ -138,7 +139,10 @@ API 24 and 35 emulators; JDK 17 and 25; the jar with all five JNI libraries; a s
 and, weekly, the QUIC Interop Runner. The other workflows: [`codeql.yml`](../.github/workflows/codeql.yml) (CodeQL over
 the C shim and the Kotlin JVM code), [`scorecard.yml`](../.github/workflows/scorecard.yml) (OpenSSF Scorecard),
 [`fuzz.yml`](../.github/workflows/fuzz.yml) (above), [`gradle-wrapper.yml`](../.github/workflows/gradle-wrapper.yml),
-and [`perf.yml`](../.github/workflows/perf.yml) (throughput floors, by hand). Hosted CI is read, not enforced: no
+[`perf.yml`](../.github/workflows/perf.yml) (throughput floors, by hand),
+[`interop-image.yml`](../.github/workflows/interop-image.yml) (publishes a release's interop images, by hand),
+[`pages.yml`](../.github/workflows/pages.yml) (the documentation site) and
+[`release.yml`](../.github/workflows/release.yml) (a hosted release, not used). Hosted CI is read, not enforced: no
 branch rule requires it to be green ([process.md, stage 6](process.md#6-hosted-ci)).
 
 ## Soak
@@ -150,7 +154,7 @@ to its idle baseline, and unexpected failures stay under 0.5 %.
 
 | Run | Result | Source |
 |---|---|---|
-| JVM, 2 h, 8 clients | PASS: 186,186 iterations, 0 unexpected; 43 of 43 metrics flat | [reliability.md](reliability.md#soak), gate of 2026-11-06 |
+| JVM, 2 h, 8 clients | PASS: 186,186 iterations, 0 unexpected; 43 of 43 metrics flat | [reliability.md](reliability.md#soak), read by the gate of 2026-11-06 (run date not recorded) |
 | Kotlin/Native `linux-arm64`, 2 h, 8 clients | PASS: 201,095 iterations, 0 unexpected; 40 of 40 metrics flat | same |
 | 0.2.1 release: Kotlin/Native 24 h, JVM 37 h | passed | [process.md, stage 7](process.md#7-before-a-release-soak-fuzzing-benchmarks) |
 
@@ -216,10 +220,18 @@ Central (2026-10-22). [verifying.md](verifying.md) shows how to check a release 
 
 - **Independent review.** One maintainer reviews every change ([GOVERNANCE.md](../GOVERNANCE.md)); nobody else has
   reviewed the code.
-- **Production traffic.** No deployment has run it yet.
+- **Production traffic.** No deployment we know of has run it yet.
 - **A physical iPhone.** iOS is tested on the simulator only ([ios.md, Device checklist](guide/ios.md#device-checklist)).
 - **Build provenance** is SLSA Build Level 1: the same person and machine build, describe and sign.
 - **Not reproducible yet:** the Linux and Windows JNI libraries, the `mingwX64` archives and the Kotlin outputs
   ([verifying.md](verifying.md#not-reproducible-yet-and-why)). A rebuild on a second, independent machine has not been
   recorded.
 - **Hosted CI is not required** to be green before a change lands; the local gate is.
+- **JVM on Intel Macs.** The `osx-x86_64` JNI library is built and its exports checked, but no test runs on it.
+- **Kotlin/Native on Windows.** The `mingwX64` test executables are only linked by the gate; they run in hosted CI,
+  which a release does not require.
+- **A physical Android phone.** Device tests run on emulators only.
+- **Safari.** WebTransport with Safari has not been run.
+- **The 0.3.0 code** has not yet been through the QUIC Interop Runner, a 24–72 h soak, the benchmarks or a measured
+  fuzz campaign: the figures above are from 0.2.0 and 0.2.1 or from early-November gates (see the TODOs).
+- **No mutation score** ([Planted bugs](#planted-bugs-instead-of-mutation-testing)).

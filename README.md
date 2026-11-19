@@ -28,7 +28,7 @@ SPDX-License-Identifier: Apache-2.0
 Kuicksilver is one QUIC, HTTP/3 and TLS 1.3 implementation in Kotlin for the JVM, Android, iOS, macOS, Linux and
 Windows, with drop-in Ktor client and server engines.
 
-> **Status: 0.x, experimental, no production users yet.** The API can change between any two 0.x releases
+> **Status: 0.x, experimental, no production users we know of. Do not use it in production yet.** The API can change between any two 0.x releases
 > ([stability](docs/stability.md)). 0.2.0 and 0.2.1 are withdrawn; this README describes 0.3.0,
 > the release in preparation. Until 0.3.0 is on Maven Central, build it from `main` and use `0.3.0-SNAPSHOT`
 > ([Install](docs/install.md#versions)). Try it, and tell us what breaks.
@@ -41,8 +41,8 @@ implementation(platform("io.ktor:ktor-bom:3.6.1"))
 implementation("io.kuicksilver:kuicksilver-ktor-client")   // or kuicksilver-ktor-server, kuicksilver-http3, kuicksilver-quic
 ```
 
-Nothing to install on the system: OpenSSL 3.5 is built into the library. Android, iOS, Swift-only and Kotlin/Native
-setups, and the module list: [docs/install.md](docs/install.md).
+Nothing to install on the system: OpenSSL is built into the library (version pinned in `gradle/openssl.toml`); on Linux,
+Kotlin/Native programs use glibc's libresolv and zlib. Android, iOS, Swift-only and Kotlin/Native setups, and the module list: [docs/install.md](docs/install.md).
 
 ## Swap the Ktor engine
 
@@ -64,7 +64,7 @@ server](docs/guide/deployment.md).
 
 | Platform | Targets | Ktor client and server, HTTP/3, QUIC, TLS | How it is tested |
 |---|---|---|---|
-| JVM 17+ | Linux x86_64 and aarch64 (glibc 2.17+), macOS arm64 and x86_64, Windows x86_64 | yes | every module's suite on macOS, on Linux (Docker) and on Windows (a Windows 11 VM and GitHub's runners) |
+| JVM 17+ | Linux x86_64 and aarch64 (glibc 2.17+), macOS arm64 and x86_64, Windows x86_64 | yes | every module's suite on macOS arm64 (the x86_64 library is built, not run), on Linux x64 and arm64 (Docker) and on Windows (a Windows 11 VM and GitHub's runners) |
 | Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | device tests on emulators (API 24 and 35); not on a physical phone in the gate |
 | iOS | `iosArm64`, `iosSimulatorArm64` (iOS 15+) | yes | every module's suite on the simulator; **not yet run on a physical device** |
 | macOS | `macosArm64` (macOS 12+) | yes | every module's suite on the host |
@@ -85,8 +85,8 @@ JS and Wasm are not targets. Accelerated UDP, several loops per port and other l
 ## Security model in one line
 
 Host names are always verified and pins are checked on top of the validated chain, never instead of it; 0-RTT is off
-unless both sides opt in, and then guarded against replay (ADR-0015); packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked 3.5 LTS release
-built by this repository. The full model is in [docs/spec/threat-model.md](docs/spec/threat-model.md), and
+unless both sides opt in, and then guarded against replay (ADR-0015); packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked release
+(version in `gradle/openssl.toml`) built by this repository. The full model is in [docs/spec/threat-model.md](docs/spec/threat-model.md), and
 vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md).
 
 Supply chain: every artifact on Maven Central is signed with the release key (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`),
@@ -119,6 +119,6 @@ It is unrelated to `fuzz/ksl.cc` in ngtcp2, which is a data structure of that pr
 
 ## License
 
-Kuicksilver is licensed under the [Apache License 2.0](LICENSE). Its binaries statically link OpenSSL 3.5, which is
-also Apache-2.0 licensed; see [NOTICE](NOTICE) and [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt).
+Kuicksilver is licensed under the [Apache License 2.0](LICENSE). Its binaries statically link OpenSSL (version pinned in
+`gradle/openssl.toml`), which is also Apache-2.0 licensed; see [NOTICE](NOTICE) and [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt).
 Parts of the Ktor engines and their tests are adapted from Ktor 3.6.0 (Apache-2.0), with per-file attribution.
