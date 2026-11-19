@@ -12,6 +12,7 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -80,11 +81,12 @@ class SocketAbortTest {
                     coroutineScope {
                         // the peer: connects (and handshakes) and never reads
                         val peerTcp = CompletableDeferred<Socket>()
+                        val peerTls = CompletableDeferred<Socket>()
                         val peer =
                             launch {
                                 val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                                 peerTcp.complete(tcp)
-                                if (tls) tcp.tls(clientConfig())
+                                if (tls) peerTls.complete(tcp.tls(clientConfig()))
                             }
                         val raw = server.accept()
                         val sock: Socket = if (tls) raw.tlsServer(serverConfig()) else raw
@@ -100,7 +102,11 @@ class SocketAbortTest {
                             withTimeoutOrNull(1.seconds) { raw.socketContext.join() },
                             "the aborted socket is still open after 1 s",
                         )
-                        peer.cancel()
+                        peer.cancelAndJoin()
+                        // the peer's side goes too: its TLS session and its socket
+                        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                        if (peerTls.isCompleted) peerTls.getCompleted().close()
+                        reader.close()
                         server.close()
                         coroutineContext.cancelChildren()
                     }

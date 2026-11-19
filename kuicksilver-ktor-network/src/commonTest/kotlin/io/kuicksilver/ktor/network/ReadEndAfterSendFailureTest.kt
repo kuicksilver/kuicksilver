@@ -121,6 +121,11 @@ class ReadEndAfterSendFailureTest {
                     val (read, failure) = input.readToEnd()
                     sock.close()
                     server.close()
+                    // both sockets are released before their selector goes (a socket still closing then is never released)
+                    withTimeoutOrNull(5.seconds) {
+                        sock.socketContext.join()
+                        accepted.socketContext.join()
+                    }
                     assertEquals("hello", read, "the plaintext received before the failure")
                     assertNotNull(failure, "a failed TLS session read as an orderly end")
                 }

@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.network
 import io.ktor.network.selector.Selectable
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
@@ -120,7 +121,16 @@ class TcpWriterTest {
         val selector: SelectorManager,
         val port: Int,
         val accepted: CompletableDeferred<Socket>,
-    )
+        private val server: ServerSocket,
+    ) {
+        /** The listener, the accepted socket (if any) and the selector go. */
+        fun close() {
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            if (accepted.isCompleted) accepted.getCompleted().close()
+            server.close()
+            selector.close()
+        }
+    }
 
     private suspend fun neverReadingPeer(
         scope: CoroutineScope,
@@ -134,7 +144,7 @@ class TcpWriterTest {
             accepted.complete(s)
             onAccept(s)
         }
-        return NeverReadingPeer(selector, (server.localAddress as InetSocketAddress).port, accepted)
+        return NeverReadingPeer(selector, (server.localAddress as InetSocketAddress).port, accepted, server)
     }
 
     @Test fun negative_writerWaitsWithoutSpinningWhileThePeerDoesNotRead(): Unit =
@@ -160,7 +170,7 @@ class TcpWriterTest {
                 c.close()
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -190,7 +200,7 @@ class TcpWriterTest {
                 assertTrue(!(c as KslNioSocket).isOpen, "and closes its descriptor")
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -222,7 +232,7 @@ class TcpWriterTest {
                 assertTrue(!(c as KslNioSocket).isOpen, "and closes its descriptor")
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -260,7 +270,7 @@ class TcpWriterTest {
                 assertTrue(withTimeoutOrNull(20.seconds) { c.socketContext.join() } != null, "and the socket is released")
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -282,7 +292,7 @@ class TcpWriterTest {
                 assertFailsWith<IOException> { c.attachForWriting(ByteChannel()) }
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -344,7 +354,8 @@ class TcpWriterTest {
         runBlocking {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val release = CompletableDeferred<Unit>()
-            val peer = neverReadingPeer(scope) { s -> s.tlsServer(serverConfig()).also { release.await() } }
+            val peerTls = CompletableDeferred<Socket>()
+            val peer = neverReadingPeer(scope) { s -> peerTls.complete(s.tlsServer(serverConfig())).also { release.await() } }
             try {
                 val raw = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
                 val c = withTimeout(20.seconds) { raw.tls(clientConfig()) }
@@ -366,7 +377,9 @@ class TcpWriterTest {
             } finally {
                 release.complete(Unit)
                 scope.cancel()
-                peer.selector.close()
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                if (peerTls.isCompleted) peerTls.getCompleted().close() // the peer's TLS session
+                peer.close()
             }
         }
 
@@ -398,9 +411,10 @@ class TcpWriterTest {
                     )
                 assertTrue(outcome.isFailure || outcome.getOrNull() == -1, "the reader read ${outcome.getOrNull()} bytes")
                 assertTrue(!c.isOpen, "and the descriptor is closed")
+                c.close() // the socket itself: its context completes only once it is closed
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 
@@ -484,7 +498,7 @@ class TcpWriterTest {
                 c.abort()
             } finally {
                 scope.cancel()
-                peer.selector.close()
+                peer.close()
             }
         }
 }
