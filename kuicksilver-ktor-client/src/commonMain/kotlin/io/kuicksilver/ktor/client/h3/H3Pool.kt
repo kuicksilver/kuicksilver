@@ -1199,7 +1199,7 @@ internal class H3Pool(
         if (connect) {
             // set inside the timeout: a handshake that completes as the timeout fires is closed, never orphaned
             var made: Http3Connection? = null
-            val failures = ArrayList<Throwable>()
+            val failures = SetupFailures()
             // the connections the race's attempts made, with the literal each went to: the winner's is kept on the entry
             val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Destination>>())
             try {
@@ -1277,13 +1277,7 @@ internal class H3Pool(
             } catch (
                 x: SetupTimedOut,
             ) {
-                val timeout = ConnectTimeoutException(data, x).withAttempts(failures)
-                // through a CONNECT-UDP proxy, a proxy that failed TLS on one address is the failure to report, not the
-                // timeout another address of the race ran into (the timeout is kept, suppressed)
-                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                val proxyTls =
-                    if (t.udpProxy == null) null else failures.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
-                d.completeExceptionally(proxyTls?.also { it.addSuppressed(timeout) } ?: timeout)
+                d.completeExceptionally(setupTimeout(t, data, x, failures))
                 forget(t, e)
             } catch (
                 x: CancellationException,
@@ -1335,6 +1329,8 @@ internal class H3Pool(
                     throw proxyTlsFailure(p, e) ?: e
                 }
             }
+        // from here on the CONNECT (and its proxy-authorization) may go out: a timeout is no longer the proxy's TLS failure
+        (failures as? SetupFailures)?.proxyReached = true
         var inner: Http3Endpoint? = null
         try {
             val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
@@ -1395,6 +1391,43 @@ internal class H3Pool(
             "TLS with the CONNECT-UDP proxy $p failed: ${tls.message ?: tls::class.simpleName}",
             tls,
         )
+    }
+
+    /**
+     * The failure of a setup that ran into the connect timeout ([x]): a [ConnectTimeoutException] with every attempt's
+     * failure suppressed in it, except through a CONNECT-UDP proxy none of whose addresses has been reached yet
+     * ([SetupFailures.proxyReached] false) after one of them failed TLS: that [io.kuicksilver.ktor.client.ProxyTlsException]
+     * is the failure (nothing of the request went out), with the other attempts' failures and the timeout (without them,
+     * so that no exception is suppressed in itself) suppressed in it. Once a proxy connection exists the CONNECT may have
+     * gone out, and a timeout of the tunnel or of the origin's handshake is the timeout.
+     */
+    private fun setupTimeout(
+        t: H3Target,
+        data: HttpRequestData,
+        x: SetupTimedOut,
+        failures: SetupFailures,
+    ): Throwable {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val proxyTls =
+            failures
+                .takeIf { t.udpProxy != null && !it.proxyReached }
+                ?.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
+                ?: return ConnectTimeoutException(data, x).withAttempts(failures)
+        for (f in failures.distinct()) if (f !== proxyTls) proxyTls.addSuppressed(f)
+        proxyTls.addSuppressed(ConnectTimeoutException(data, x))
+        return proxyTls
+    }
+
+    /**
+     * The failures of a setup's attempts, as they come; [proxyReached] is set once the race to a CONNECT-UDP proxy has
+     * a connection ([connectThroughUdpProxy]): from then on the request may have gone out ([setupTimeout]). A list by
+     * delegation: Kotlin/Native's ArrayList is final.
+     */
+    private class SetupFailures(
+        failures: MutableList<Throwable> = ArrayList(),
+    ) : MutableList<Throwable> by failures {
+        @kotlin.concurrent.Volatile
+        var proxyReached: Boolean = false
     }
 
     /**

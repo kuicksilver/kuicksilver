@@ -2727,7 +2727,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   as the TCP hop to an `https://` proxy does (ADR-0023): the proxy's host as SNI and reference identifier, `proxyTls` or
   by default the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxyTls` sets one,
   ALPN `h3`; a failed handshake with the proxy is `ProxyTlsException`, also when a later address of the proxy only timed
-  out. Its connections leave from endpoints of their own whose session cache is the proxies' (they resume no session, a
+  out before any address completed its handshake. Its connections leave from endpoints of their own whose session cache is the proxies' (they resume no session, a
   full handshake each time). The origin's connection inside the tunnel keeps the
   origin's client certificate, trust and pins (threat model 3.29). 0.2.x is not affected: CONNECT-UDP is new in this
   release.

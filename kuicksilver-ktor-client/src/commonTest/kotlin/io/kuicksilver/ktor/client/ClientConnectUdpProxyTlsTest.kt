@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.network.sockets.InetSocketAddress
@@ -30,8 +31,8 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.SpkiSha256
-import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
@@ -52,7 +53,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
-import kotlin.time.TimeSource
 
 /**
  * The TLS of the QUIC connection to a CONNECT-UDP proxy (RFC 9298) is the proxy's, as for the TCP hop to an `https://`
@@ -190,7 +190,14 @@ class ClientConnectUdpProxyTlsTest {
                 }).use { c ->
                     assertEquals("origin", c.get("https://127.0.0.1:$originPort/").bodyAsText())
                 }
-                assertEquals(listOf("client.test"), seen.atProxy().single().firstOrNull()?.dnsNames)
+                assertEquals(
+                    listOf("client.test"),
+                    seen
+                        .atProxy()
+                        .single()
+                        .firstOrNull()
+                        ?.dnsNames,
+                )
                 assertEquals(listOf(emptyList()), seen.atOrigin(), "the proxy's client certificate went to the origin")
             }
         }
@@ -313,7 +320,12 @@ class ClientConnectUdpProxyTlsTest {
                     assertEquals("proxy as an origin", c.get("https://proxy.internal:$proxyPort/").bodyAsText())
                     val second = h3.connectionsForTest().single()
                     assertEquals(true, second.quic.earlyDataAccepted, "the control: the direct connection's own ticket resumes")
-                    val toProxy = chosen.load().filter { it.first == proxyPort }.map { it.second }.distinct()
+                    val toProxy =
+                        chosen
+                            .load()
+                            .filter { it.first == proxyPort }
+                            .map { it.second }
+                            .distinct()
                     assertEquals(2, toProxy.size, "the proxy hop left from a direct connections' endpoint: $toProxy")
                 }
             }
@@ -343,7 +355,10 @@ class ClientConnectUdpProxyTlsTest {
             block()
         }
 
-    /** The request through [proxyPort] fails with [ProxyTlsException] well before the 30-second connect timeout. */
+    /**
+     * The request through [proxyPort] fails with [ProxyTlsException] from the race to the proxy's single address, not
+     * from the 30-second connect timeout (whose path would carry a [ConnectTimeoutException] suppressed in it).
+     */
     private suspend fun assertProxyTlsFailure(proxyPort: Int): ProxyTlsException {
         lateinit var e: ProxyTlsException
         testClient(Http3DiscoveryMode.H3Only, engine = {
@@ -352,12 +367,122 @@ class ClientConnectUdpProxyTlsTest {
             connectUdpProxy = udpProxy(proxyPort)
             connectTimeout = 30.seconds
         }).use { c ->
-            val started = TimeSource.Monotonic.markNow()
             e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:1/").bodyAsText() }
-            assertTrue(started.elapsedNow() < 20.seconds, "failed only after ${started.elapsedNow()}: $e")
+            assertTrue(e.suppressedExceptions.none { it is ConnectTimeoutException }, "failed at the connect timeout: $e")
         }
         return e
     }
+
+    /** Answers ::1 and 127.0.0.1 for `proxy.internal`: ::1 comes first (RFC 6724 precedence), 127.0.0.1 after it failed. */
+    private object TwoProxyAddresses : Dns {
+        override suspend fun lookup(host: String): List<IpAddress> =
+            if (host == "proxy.internal") listOf(IpAddress.parse("::1"), IpAddress.parse("127.0.0.1")) else emptyList()
+    }
+
+    /**
+     * A QUIC server on `[::1]:`[port] whose ALPN shares nothing with `h3` (its handshakes fail in TLS), counting the
+     * ClientHellos in [hellos]; null when that port is taken on ::1 (the caller skips).
+     */
+    private suspend fun badTlsOnIpv6(
+        port: Int,
+        hellos: AtomicReference<Int>,
+    ): QuicEndpoint? {
+        val tls =
+            proxyServerTls {
+                alpn = listOf("hq-interop")
+                sniSelector = {
+                    hellos.update { it + 1 }
+                    null
+                }
+            }
+        return runCatching {
+            QuicEndpoint.bind(
+                InetSocketAddress("::1", port),
+                QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * The proxy's name has two addresses: ::1 answers and fails TLS, 127.0.0.1 then stays silent (a socket that never
+     * answers) or has nothing bound. The request fails with the proxy's [ProxyTlsException], not with the timeout the
+     * other address ran into (kept as a suppressed [ConnectTimeoutException] when it came to that) nor a refusal; and no
+     * exception is suppressed in itself.
+     */
+    @Test fun negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout() =
+        h3Test {
+            for (silent in listOf(true, false)) {
+                val hellos = AtomicReference(0)
+                val listening = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+                val port = listening.localAddress.port
+                if (!silent) listening.close()
+                val bad = badTlsOnIpv6(port, hellos)
+                if (bad == null) {
+                    listening.close()
+                    println("negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout skipped: [::1]:$port taken")
+                    return@h3Test
+                }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, engine = {
+                        dns = TwoProxyAddresses
+                        connectUdpProxy = udpProxy(port)
+                        connectTimeout = 1.seconds
+                    }).use { c ->
+                        val e = assertFailsWith<ProxyTlsException>("silent = $silent") { c.get("https://127.0.0.1:1/").bodyAsText() }
+                        assertIs<TlsException>(e.cause, "$e")
+                        val seen = HashSet<Throwable>()
+
+                        fun walk(t: Throwable) {
+                            assertTrue(seen.add(t), "an exception suppressed in itself: $t")
+                            t.suppressedExceptions.forEach(::walk)
+                        }
+                        walk(e)
+                    }
+                    assertTrue(hellos.load() > 0, "the ::1 proxy got no ClientHello (silent = $silent)")
+                } finally {
+                    bad.closeAndJoin()
+                    if (silent) listening.close()
+                }
+            }
+        }
+
+    /**
+     * Address ::1 of the proxy fails TLS and 127.0.0.1 wins the race; then the tunnel's CONNECT goes out and the origin's
+     * handshake through it (to a target that never answers) runs into the connect timeout. That is a
+     * [ConnectTimeoutException], not the losing address's [ProxyTlsException]: the CONNECT and its credentials did go to
+     * the proxy, which a `ProxyTlsException` says never happened.
+     */
+    @Test fun negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure() =
+        h3Test {
+            val proxy = loopbackProxy()
+            val silentTarget = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+            val (proxyServer, proxyPort) =
+                testServer(configure = { connectUdp = true }, tls = {
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
+                }) { routing { route("/") { connectUdp(proxy) } } }
+            val hellos = AtomicReference(0)
+            val bad = badTlsOnIpv6(proxyPort, hellos)
+            try {
+                if (bad == null) {
+                    println("negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure skipped: [::1]:$proxyPort taken")
+                    return@h3Test
+                }
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    dns = TwoProxyAddresses
+                    connectUdpProxy = udpProxy(proxyPort)
+                    connectTimeout = 3.seconds
+                }).use { c ->
+                    val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:${silentTarget.localAddress.port}/").bodyAsText() }
+                    assertIs<ConnectTimeoutException>(e, "$e")
+                }
+                assertTrue(hellos.load() > 0, "the ::1 proxy got no ClientHello")
+                assertEquals(1, proxy.stats.tunnelsOpened, "the tunnel's CONNECT did not reach the proxy")
+            } finally {
+                bad?.closeAndJoin()
+                proxyServer.stop(100, 500)
+                silentTarget.close()
+            }
+        }
 
     /**
      * A proxy whose ALPN shares nothing with `h3` ends the handshake (RFC 7301 section 3.2, RFC 9001 section 8.1:
