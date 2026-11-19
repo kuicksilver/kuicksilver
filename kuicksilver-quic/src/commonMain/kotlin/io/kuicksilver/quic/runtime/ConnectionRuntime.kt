@@ -604,7 +604,9 @@ internal class ConnectionRuntime(
                     // the loop); a store that fails fails the connection, as over TCP
                     val session = core.handshake.session
                     if (!serverSide && session.trustCommitPending) {
-                        loop.scope.launch(Dispatchers.Default) { commitTrustThenComplete(session) }
+                        // the core is Connected, so its handshake timer is off: the commit gets what is left of it
+                        val left = core.timers.handshakeDeadline?.let { it - loop.now() } ?: core.config.handshakeTimeout
+                        loop.scope.launch(Dispatchers.Default) { commitTrustThenComplete(session, left) }
                     } else {
                         completeHandshake()
                     }
@@ -753,11 +755,21 @@ internal class ConnectionRuntime(
         }
     }
 
-    /** Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]), then completes the handshake, or fails the connection with the store's error. */
-    private suspend fun commitTrustThenComplete(session: io.kuicksilver.tls.QuicTlsSession) {
+    /**
+     * Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]) within [left] of the handshake timeout, then completes the
+     * handshake; fails the connection with the store's error, or with a [TimeoutKind.Handshake] timeout when the store did not
+     * answer in time (its call is cancelled).
+     */
+    private suspend fun commitTrustThenComplete(
+        session: io.kuicksilver.tls.QuicTlsSession,
+        left: kotlin.time.Duration,
+    ) {
+        var timedOut = false
         val failure =
             try {
-                session.commitTrust()
+                if (kotlinx.coroutines.withTimeoutOrNull(left.coerceAtLeast(kotlin.time.Duration.ZERO)) { session.commitTrust() } == null) {
+                    timedOut = true
+                }
                 null
             } catch (t: Throwable) {
                 if (t is CancellationException) kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -769,11 +781,22 @@ internal class ConnectionRuntime(
             ) {
                 return@withContext
             }
-            if (failure == null) {
-                completeHandshake()
-            } else {
-                core.failInternal(failure)
-                loop.flush(core)
+            when {
+                timedOut -> {
+                    core.silentClose(
+                        QuicException.ConnectionLost.Timeout(io.kuicksilver.quic.TimeoutKind.Handshake, core.config.handshakeTimeout),
+                    )
+                    loop.flush(core)
+                }
+
+                failure != null -> {
+                    core.failInternal(failure)
+                    loop.flush(core)
+                }
+
+                else -> {
+                    completeHandshake()
+                }
             }
         }
     }
