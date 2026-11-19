@@ -53,6 +53,7 @@ import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -788,7 +789,11 @@ class ClientH1Test {
                         while (true) {
                             val s = listener.accept()
                             val i = index++
-                            launch { s.use { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) } }
+                            // ATOMIC: a socket accepted as the test stops its server is closed too (a plain launch never starts then)
+                            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                            launch(start = CoroutineStart.ATOMIC) {
+                                s.use { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) }
+                            }
                         }
                     }
                 block((listener.localAddress as InetSocketAddress).port)
