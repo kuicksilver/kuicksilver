@@ -189,6 +189,11 @@ internal class DatagramDemux(
     /** The leak sentinel's records of the registered flows, by stream (never made in production). */
     private var leakIds: HashMap<Long, Long>? = null
 
+    /** The connection is gone: every registered channel closes (session dispatcher only). */
+    fun unregisterAll() {
+        for (id in streams.keys.toList()) unregister(id)
+    }
+
     /** Streams with a registered datagram channel (test hook; session dispatcher only). */
     val registeredCount: Int get() = streams.size
 

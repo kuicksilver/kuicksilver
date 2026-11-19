@@ -1280,6 +1280,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: the datagram channel of an extended CONNECT tunnel (CONNECT-UDP, WebTransport) stayed registered, and
+  open, when the connection ended: its removal was launched into the connection's scope, which the connection's end
+  cancels before it ran. Every channel still registered now closes once the connection's coroutines are gone, so a reader
+  of the tunnel's datagrams sees the end (`ConnectionEndTest.clientTunnelDatagramChannelEndsWithTheConnection`; found by
+  the leak sentinel).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

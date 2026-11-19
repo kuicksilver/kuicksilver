@@ -553,6 +553,30 @@ class ConnectionEndTest {
         }
 
     /**
+     * The client's side of a tunnel: its datagram channel goes when the tunnel's receive side ended, in a coroutine of the
+     * session's scope, which the connection's end cancelled before it ran. Once the connection ended and the session's
+     * coroutines are gone, the client keeps no datagram channel (an application reading datagrams is not left waiting on one
+     * nothing will ever close).
+     */
+    @Test fun clientTunnelDatagramChannelEndsWithTheConnection() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val tunnel = async { p.client.connect(connectReq(), "echo") }
+                withTimeout(5.seconds) { p.server.acceptRequest() }.acceptConnect()
+                withTimeout(5.seconds) { tunnel.await() }
+                val c = p.client.session
+                assertTrue(withContext(c.dispatcher) { c.datagrams.registeredCount } > 0, "the client's tunnel has a datagram channel")
+                p.server.close()
+                withTimeout(5.seconds) { p.client.closed.await() }
+                awaitCoroutinesCancelled(c)
+                withTimeoutOrNull(20.seconds) {
+                    while (withContext(c.dispatcher) { c.datagrams.registeredCount } > 0) kotlinx.coroutines.yield()
+                }
+                    ?: fail("the client still keeps ${withContext(c.dispatcher) { c.datagrams.registeredCount }} datagram channel(s)")
+            }
+        }
+
+    /**
      * The handler never answers (it failed before respond, or its engine cancelled it): once the connection ended and the
      * session's coroutines are gone, the request ends anyway, and an answer tried after that fails with the connection's
      * error, not with a request that is merely finished. Nothing ended such a request before: it stayed registered.

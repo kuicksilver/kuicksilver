@@ -200,6 +200,10 @@ internal fun H3Session.onTransportClosed(e: QuicException.ConnectionLost) {
     // still run (it runs in the application's or the engine's scope, not the session's): it can no longer answer, and
     // done() leaves the request's body and trailers alone, so what of the body had arrived stays readable
     if (isServer) job.invokeOnCompletion { afterEnd.launch { endServerRequestsLeft() } }
+    // a client tunnel's datagram channel goes when its receive side ends, in a coroutine of the session's scope that the
+    // connection's end may cancel before it ran: every channel still registered then closes once the session's coroutines
+    // are gone, so a reader of its datagrams sees the end instead of waiting on a channel nothing would close
+    job.invokeOnCompletion { afterEnd.launch { datagrams.unregisterAll() } }
     val draining = drainers.exchange(emptyList()).filter { it.job.isActive }
     if (draining.isEmpty()) {
         job.cancel()
