@@ -16,7 +16,17 @@ CC="${CC:-clang}"; san="${SAN--fsanitize=address,undefined -fno-sanitize-recover
 libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl" ); defs="-DKSL_TEST_TCP -DKSL_TEST"; exe=ksl_test
 if [ "${KSL_TSAN:-0}" = 1 ]; then san="-fsanitize=thread"; exe=ksl_test_tsan; export TSAN_OPTIONS="halt_on_error=1 exitcode=66 ${TSAN_OPTIONS:-}"; fi
 if [ "$target" = mingw-x64 ]; then
-  kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"; llvm=$( (ls -d "$kdeps"/llvm-*-essentials-* 2>/dev/null || true) | sort -V | tail -1); sysroot=$(ls -d "$kdeps"/msys2-mingw-w64-x86_64-* | head -1)
+  # the LLVM and mingw sysroot this build's Kotlin/Native uses (the konan.properties of its compiler bundle), not the newest
+  # under ~/.konan, which may be another Kotlin version's; a machine without them is provisioned (tools/ci/konan-bootstrap.sh)
+  konan="${KONAN_DATA_DIR:-$HOME/.konan}"; kdeps="${KONAN_DEPS:-$konan/dependencies}"
+  kv=$(sed -n 's/^kotlin = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+  case "$(uname -s)-$(uname -m)" in Darwin-arm64) kh=macos-aarch64 kt=macos_arm64 ;; Darwin-x86_64) kh=macos-x86_64 kt=macos_x64 ;; *) kh=linux-x86_64 kt=linux_x64 ;; esac
+  props="$konan/kotlin-native-prebuilt-$kh-$kv/konan/konan.properties"
+  prop() { sed -n "s/^$1 *= *//p" "$props" | head -1; }
+  konan_tools() { local home; home=$(prop "llvmHome\\.$kt"); llvm="$kdeps/$(prop "${home#\$}")"; sysroot="$kdeps/$(prop 'toolchainDependency\.mingw_x64')"; }
+  [ -f "$props" ] && konan_tools
+  if [ ! -f "$props" ] || [ ! -x "$llvm/bin/clang" ] || [ ! -d "$sysroot" ]; then bash tools/ci/konan-bootstrap.sh mingw_x64 >&2; konan_tools; fi
+  if [ ! -x "$llvm/bin/clang" ] || [ ! -d "$sysroot" ]; then echo "no Kotlin/Native $kv LLVM or mingw sysroot in $kdeps" >&2; exit 2; fi
   CC="$llvm/bin/clang --target=x86_64-w64-windows-gnu --sysroot=$sysroot -fuse-ld=lld -D_WIN32_WINNT=0x0A00"; san=""; libs="-lws2_32 -lcrypt32 -lbcrypt -ldnsapi"; defs="-DKSL_TEST"; exe=ksl_test.exe
 fi
 $CC -std=c11 -O1 -g $san -Wall -Wextra -Werror -Wno-misleading-indentation ${2:-} $defs -I"$O/include" -Ikuicksilver-native/src/c \
