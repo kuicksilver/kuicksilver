@@ -218,6 +218,7 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     open fun pendingCryptoBytes(io.kuicksilver.tls/EncryptionLevel): kotlin/Int // io.kuicksilver.tls/QuicTlsSession.pendingCryptoBytes|pendingCryptoBytes(io.kuicksilver.tls.EncryptionLevel){}[0]
     open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
     open fun resumeSni(io.kuicksilver.tls/SniSelection) // io.kuicksilver.tls/QuicTlsSession.resumeSni|resumeSni(io.kuicksilver.tls.SniSelection){}[0]
+    open suspend fun commitTrust() // io.kuicksilver.tls/QuicTlsSession.commitTrust|commitTrust(){}[0]
     open suspend fun selectSni(io.kuicksilver.tls/ClientHelloInfo): io.kuicksilver.tls/SniSelection // io.kuicksilver.tls/QuicTlsSession.selectSni|selectSni(io.kuicksilver.tls.ClientHelloInfo){}[0]
 }
 

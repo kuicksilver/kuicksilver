@@ -282,6 +282,7 @@ public class TlsConnection private constructor(
         } ?: throw handshakeTimedOut(config)
         handshakeCompletedForTest?.invoke(this)
         afterHandshake()
+        verification.commitTrust() // a Tofu first contact is remembered only now: CertificateVerify, Finished and the checks above passed
         pumpsStarted = true
         readerJob = scope.launch { readerPump() }
         writerJob = scope.launch { writerPump() }

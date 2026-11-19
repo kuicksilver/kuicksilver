@@ -600,6 +600,11 @@ internal class ConnectionRuntime(
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     ownCertificates = core.localCertificates
                     group = core.keyExchangeGroup
+                    // a Tofu first contact is remembered only now (the store may suspend: off the loop; its failure is the store's)
+                    if (!serverSide) {
+                        val session = core.handshake.session
+                        loop.scope.launch(Dispatchers.Default) { runCatching { session.commitTrust() } }
+                    }
                     handshake.complete(Unit)
                     try {
                         loop.observer.handshakeCompleted(this)

@@ -64,6 +64,7 @@ internal fun weakHandshake(
 
                     TlsEvent.HandshakeDone -> {
                         clientDone = true
+                        kotlinx.coroutines.runBlocking { c.commitTrust() } // as the connection runtime does on completion
                     }
 
                     else -> {}

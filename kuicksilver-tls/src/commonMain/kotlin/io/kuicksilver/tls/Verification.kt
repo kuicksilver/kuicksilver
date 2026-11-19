@@ -177,6 +177,25 @@ internal class Verification(
         return pinCheck(validated)
     }
 
+    /**
+     * The key a `Tofu` first contact is to remember, held until the handshake completed ([commitTrust]): the store is never
+     * written for a peer that has not proved it holds the key (CertificateVerify) and the handshake (Finished).
+     */
+    private var pendingTofu: PendingTofu? = null
+
+    private class PendingTofu(
+        val store: TofuStore,
+        val name: String,
+        val pin: SpkiSha256,
+    )
+
+    /** The handshake completed: stores what [verify] decided to remember (a `Tofu` first contact), once. */
+    suspend fun commitTrust() {
+        val p = pendingTofu ?: return
+        pendingTofu = null
+        p.store.put(p.name, p.pin)
+    }
+
     /** Pin check against a chain the verifier (or `ksl`) built; also used after an AnchoredCa handshake. */
     fun pinCheck(validated: List<Certificate>): VerifyResult {
         val pinned = trust as? TrustConfig.Pinned ?: return VerifyResult.Accepted(validated)
@@ -210,7 +229,7 @@ internal class Verification(
         val known = store.get(reference.value)
         return when {
             known == null -> {
-                store.put(reference.value, leaf)
+                pendingTofu = PendingTofu(store, reference.value, leaf) // stored once the handshake completed (commitTrust)
                 VerifyResult.Accepted(presented)
             }
 

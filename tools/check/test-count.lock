@@ -5923,6 +5923,10 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_sniOver
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_unrecognizedSniFatal
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.noSniUsesDefaultIdentity
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.sniSelectorOverridesIdentity
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.negative_quicFirstContactThatFailsAfterTheCertificatePinsNothing
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.negative_tcpFirstContactThatFailsAfterTheCertificatePinsNothing
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.quicFirstContactPinsOnceTheHandshakeCompleted
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TofuCommitTest.tcpFirstContactPinsOnceTheHandshakeCompleted
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.anchoredCaNeedsRoots
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.expectedNameNeedsName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TrustConfigTest.expectedNameOverPinnedIsConfigError

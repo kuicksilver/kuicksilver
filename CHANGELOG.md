@@ -2585,7 +2585,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   no chain and the shared matcher refused a certificate for another name, but the key was stored for the host before
   that check: a server presenting another name's certificate on first contact (a default virtual host, or someone on
   the path) left its key pinned for the host, and the host's own key failed with `PinMismatch` from then on. The name
-  is now checked before the store is touched (`VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse`).
+  is now checked before the store is touched (`VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse`). The
+  store was also written when the chain was verified, before the server's CertificateVerify and Finished: a first contact
+  that failed after its certificate still pinned the presented key. It is now written only once the handshake completed,
+  over TCP and QUIC (`TofuCommitTest`); a QUIC session reports completion through the new `QuicTlsSession.commitTrust`,
+  which the connection runtime calls (a transport that drives the session itself calls it after `HandshakeDone`).
 - QUIC client, compatible version negotiation (RFC 9369 section 4.1, RFC 9368): until it had Handshake keys the client
   switched its Initial keys to the version of every server Initial of another configured version, before the packet was
   authenticated, so one that did not decrypt left the switch in place (RFC 9000 section 12.2: such a packet is discarded),

@@ -566,6 +566,10 @@ internal class KslQuicTlsSession(
 
     override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult = verification.verify(chain, reference)
 
+    override suspend fun commitTrust() {
+        if (done && failure == null) verification.commitTrust()
+    }
+
     /**
      * Reads only immutable state ([ctx]'s configuration and kind) and builds a context of its own, so it runs off the loop while
      * the loop keeps providing CRYPTO data to this session. The override's context is of the session's kind: tickets and 0-RTT

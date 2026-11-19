@@ -41,6 +41,7 @@ class VerificationNegativeTest {
         p.s.setTransportParameters(Fixtures.tp)
         try {
             val (rc, _) = p.run { want -> runBlocking { p.c.verifyPeer(want.chain) } }
+            if (p.cs.done) runBlocking { p.c.commitTrust() } // as the connection runtime does on completion
             return Outcome(p.cs.done, rc as? DriveResult.Failed, p.ss.done)
         } finally {
             p.close()

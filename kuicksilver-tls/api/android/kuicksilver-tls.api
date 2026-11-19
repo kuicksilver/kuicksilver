@@ -298,6 +298,7 @@ public final class io/kuicksilver/tls/QuicSessionTicket : java/lang/AutoCloseabl
 }
 
 public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/AutoCloseable {
+	public fun commitTrust (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun drive ()Lio/kuicksilver/tls/DriveResult;
 	public fun enableEarlyData ([BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
@@ -320,6 +321,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 }
 
 public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
+	public static fun commitTrust (Lio/kuicksilver/tls/QuicTlsSession;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
 	public static fun getKeyExchangeGroup (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/String;
