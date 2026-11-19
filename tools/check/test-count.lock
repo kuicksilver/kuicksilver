@@ -5986,6 +5986,8 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.openOrNullReport
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.openSendReceive
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.probeFailureMeansUnsupported
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.supportedOnLinuxMacosAndWindows
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.OfflineTrustJvmTest.offlineKeepsTheAnchors
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.OfflineTrustJvmTest.offlineMakesNoRevocationRequest
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PlatformBuiltPathJvmTest.negative_customRefusesTheWeakCrossCertificate
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PlatformBuiltPathJvmTest.negative_jdkRefusalOfAWeakChainIsBadCertificate
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PlatformBuiltPathJvmTest.negative_platformChecksItsAnchorsKey
