@@ -52,9 +52,14 @@ class GoAwayWaitingRequestTest {
     }
 
     @AfterTest fun tearDown() {
-        H3Session.dispatcherForTest = null
-        net.client.closeNow(0, "")
-        scope.cancel()
+        try {
+            net.client.closeNow(0, "")
+            // the sessions end on this test's dispatcher, which only runs when the test drives it
+            settle()
+        } finally {
+            H3Session.dispatcherForTest = null
+            scope.cancel()
+        }
     }
 
     private fun settle() {

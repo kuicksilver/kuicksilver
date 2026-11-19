@@ -221,7 +221,7 @@ class ClientWebSocketCloseOrderTest {
                                 conn.output.writeStringUtf8(switchingProtocols(conn.input.readWebSocketKey()))
                                 conn.output.flush()
                                 serve(conn)
-                            }
+                            }.invokeOnCompletion { socket.close() } // with its connection and everything it started
                         }
                     }
                 try {

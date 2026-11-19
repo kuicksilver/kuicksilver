@@ -85,6 +85,8 @@ internal class RawH2Client private constructor(
     private val output: ByteWriteChannel,
     /** The ALPN protocol the handshake agreed on. */
     val alpn: String?,
+    /** The TLS session run on the socket's channels directly (with a PROXY header); a [TlsSocket] closes its own. */
+    private val session: TlsConnection? = null,
 ) : AutoCloseable {
     /** The server's first SETTINGS (its preface), once [readFrame] saw it. */
     var serverSettings: Map<Int, Long>? = null
@@ -181,7 +183,11 @@ internal class RawH2Client private constructor(
         }
 
     override fun close() {
+        session?.close()
         socket.close()
+        // the socket's close goes on after this call (a TLS socket's close_notify and FIN); its selector goes once it is done,
+        // or a socket still closing is never released
+        kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(5.seconds) { socket.socketContext.join() } }
         selector.close()
     }
 
@@ -208,7 +214,7 @@ internal class RawH2Client private constructor(
                     val w = tcp.openWriteChannel(autoFlush = false)
                     w.writeFully(proxyPrefix)
                     val session = TlsConnection.client(r, w, ServerFixtures.clientTls(alpn = alpn), tcp.coroutineContext)
-                    return RawH2Client(selector, tcp, session.input, session.output, session.negotiatedAlpn)
+                    return RawH2Client(selector, tcp, session.input, session.output, session.negotiatedAlpn, session)
                 }
                 val t: TlsSocket = tcp.tls(ServerFixtures.clientTls(alpn = alpn))
                 return RawH2Client(selector, t, t.openReadChannel(), t.openWriteChannel(), t.negotiatedAlpn)
