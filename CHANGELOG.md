@@ -2365,8 +2365,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   "Upon exiting loss recovery (RTO recovery or Fast Recovery)"). Before, it was never restored, except by a spurious-loss
   undo.
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
-  bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
-  be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
+  bit is set, as RFC 9000 section 14 requires ("MUST be set if possible"). On Linux and Android it is probe mode
+  (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl` on the JVM and
+  `android.system.Os` on Android, so a forged ICMP Fragmentation Needed can neither make the kernel refuse sends nor
+  fragment them (quic-go CVE-2024-53259; section 14.2.1); the JDK's `IP_DONTFRAGMENT` is `IP_PMTUDISC_DO` there and is not
+  used (Linux without `ksl` keeps the kernel's default mode). Apple: the JDK's option (JDK 19 and later); Windows: probe
+  mode through `ksl` where the system takes it, else the JDK's option. Datagrams there stay within 1200 bytes, so PMTUD
+  stays off.
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).

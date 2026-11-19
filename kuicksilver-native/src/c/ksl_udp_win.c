@@ -1173,6 +1173,36 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     return (uint64_t)InterlockedCompareExchange64(&u->emsgsize, 0, 0);
 }
 
+/* as the KSL_UDP_DF branch of ksl_udp_open: DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the JDK's) */
+int ksl_udp_fd_df_probe(int64_t fd) {
+    SOCKET s = (SOCKET)(UINT_PTR)fd;
+    struct sockaddr_storage ss;
+    int l = (int)sizeof ss, yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
+    memset(&ss, 0, sizeof ss);
+    if (fd < 0 || getsockname(s, (struct sockaddr *)&ss, &l) != 0 ||
+        (ss.ss_family != AF_INET && ss.ss_family != AF_INET6))
+        return KSL_ERROR;
+    setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes); /* on AF_INET6: the v4-mapped half */
+    if (setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
+        granted |= KSL_FD_DF_V4;
+    if (ss.ss_family == AF_INET6) {
+        setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes);
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
+            granted |= KSL_FD_DF_V6;
+    }
+    return granted;
+}
+int ksl_udp_fd_df_mode(int64_t fd, int family) {
+    DWORD v = 0;
+    int l = (int)sizeof v;
+    if (fd < 0 || (family != 4 && family != 6))
+        return -1;
+    if (getsockopt((SOCKET)(UINT_PTR)fd, family == 6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                   family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER, (char *)&v, &l) != 0)
+        return -1;
+    return (int)v;
+}
+
 #ifdef KSL_TEST
 void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                                uint32_t mtu) {

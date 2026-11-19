@@ -557,6 +557,49 @@ void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint
     pthread_mutex_unlock(&u->ptb_mu);
 }
 
+static int fd_family(int fd) {
+    struct sockaddr_storage ss;
+    socklen_t l = sizeof ss;
+    memset(&ss, 0, sizeof ss);
+    if (getsockname(fd, (struct sockaddr *)&ss, &l) != 0)
+        return -1;
+    return ss.ss_family == AF_INET || ss.ss_family == AF_INET6 ? ss.ss_family : -1;
+}
+int ksl_udp_fd_df_probe(int64_t fd64) {
+    int fd = (int)fd64, family = fd64 < 0 || fd64 > INT32_MAX ? -1 : fd_family(fd);
+    if (family < 0)
+        return KSL_ERROR;
+#ifdef __APPLE__ /* Darwin has only the DF bit (ksl_udp_open): no probe mode to set */
+    return 0;
+#else
+    int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE, one = 1, granted = 0;
+    /* on AF_INET6: the v4-mapped half, which IPV6_MTU_DISCOVER does not cover */
+    if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) == 0)
+        granted |= KSL_FD_DF_V4;
+    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0) {
+        granted |= KSL_FD_DF_V6;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
+    }
+    return granted;
+#endif
+}
+int ksl_udp_fd_df_mode(int64_t fd64, int family) {
+#ifdef __APPLE__
+    (void)fd64;
+    (void)family;
+    return -1;
+#else
+    int v = -1;
+    socklen_t l = sizeof v;
+    if (fd64 < 0 || fd64 > INT32_MAX || (family != 4 && family != 6))
+        return -1;
+    if (getsockopt((int)fd64, family == 6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                   family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER, &v, &l) != 0)
+        return -1;
+    return v;
+#endif
+}
+
 #ifdef KSL_TEST
 void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                                uint32_t mtu) {
@@ -687,6 +730,15 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     if (last_size)
         *last_size = 0;
     return 0;
+}
+int ksl_udp_fd_df_probe(int64_t fd) {
+    (void)fd;
+    return 0;
+}
+int ksl_udp_fd_df_mode(int64_t fd, int family) {
+    (void)fd;
+    (void)family;
+    return -1;
 }
 #ifdef KSL_TEST
 void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],

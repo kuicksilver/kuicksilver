@@ -117,19 +117,56 @@ class NioDatagramIoTest {
         }
 
     /**
-     * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". The portable socket sets it where the
-     * JDK can (`jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT`, JDK 19 and later); its datagrams stay within 1200 bytes, so
-     * PMTUD stays off (`df` capability false).
+     * RFC 9000 section 14 ("UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST be
+     * set if possible") and section 14.2.1 (an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased below
+     * QUIC's smallest allowed maximum datagram size"): on Linux the portable socket is in probe mode (`IP_PMTUDISC_PROBE`, and
+     * `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and never in the JDK's `IP_DONTFRAGMENT`, which is
+     * `IP_PMTUDISC_DO` there. Elsewhere without probe mode (Apple) the JDK's option is set where the JDK has it (19 and later).
+     * Its datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false). The forged-ICMP attack itself is
+     * `test_udp.c` `udp_fd_df_probe_forged_ptb` (a raw socket in a user and network namespace of its own).
      */
     @Test fun nioSetsDontFragmentWherePossible() =
         runBlocking {
-            val (a, _) = pair()
+            val (a, b) = pair()
             try {
-                val df = (a as io.kuicksilver.quic.NioDatagramIo).dontFragmentForTest()
-                if (Runtime.version().feature() >= 19) assertEquals(true, df) else assertEquals(null, df)
+                a as NioDatagramIo
+                val os = (System.getProperty("os.name") ?: "").lowercase()
+                val granted = a.dfProbeGranted
+                when {
+                    os.startsWith("linux") -> {
+                        assertTrue(
+                            io.kuicksilver.native.KslLoader
+                                .isAvailable(),
+                            "the Linux test needs ksl",
+                        )
+                        assertTrue(granted and 1 != 0, "probe mode on the IPv4 side: $granted")
+                        assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE, not DO")
+                        if (granted and 2 != 0) assertEquals(3, a.dfModeForTest(6), "IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE")
+                        assertEquals(if (Runtime.version().feature() >= 19) false else null, a.dontFragmentForTest())
+                    }
+
+                    os.startsWith("mac") -> {
+                        assertEquals(0, granted, "Darwin has no probe mode")
+                        assertEquals(if (Runtime.version().feature() >= 19) true else null, a.dontFragmentForTest())
+                    }
+
+                    // Windows: probe mode where the system takes it, else the JDK's option (its behaviour is being checked)
+                    granted != 0 -> {
+                        assertEquals(3, a.dfModeForTest(4))
+                    }
+                }
                 assertFalse(a.capabilities.value.df)
+                // a 1200-byte datagram still goes out and arrives whole
+                val out = batchOf(ByteArray(1200) { 9 }, to = b.localAddress)
+                assertEquals(1, a.send(out))
+                val inb = PacketBatch(1)
+                withTimeout(5.seconds) { while (b.receive(inb) == 0) continue }
+                assertEquals(1200, inb.length(0))
+                out.close()
+                inb.close()
             } finally {
                 a.close()
+                b.close()
             }
         }
 

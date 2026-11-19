@@ -415,6 +415,18 @@ internal object KslNative {
         lastSize: IntArray,
     ): Long
 
+    /** The int fdVal of a JDK channel (sun.nio.ch.DatagramChannelImpl), -1 when it has none */
+    @JvmStatic external fun udpChannelFd(channel: Any): Int
+
+    /** ksl_udp_fd_df_probe: the KSL_FD_DF_* bits granted, 0 none, KSL_ERROR (-1) for no IP socket */
+    @JvmStatic external fun udpFdDfProbe(fd: Long): Int
+
+    /** ksl_udp_fd_df_mode: IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (6), -1 unreadable */
+    @JvmStatic external fun udpFdDfMode(
+        fd: Long,
+        family: Int,
+    ): Int
+
     /** ksl_live_objects into [out]; returns KSL_LIVE_COUNT */
     @JvmStatic external fun liveObjects(out: LongArray): Int
 

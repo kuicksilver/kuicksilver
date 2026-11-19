@@ -818,6 +818,30 @@ static jboolean j_udp_take_ptb(JNIEnv *e, jclass c, jlong h, jbyteArray quote, j
     (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
     return JNI_TRUE;
 }
+/* the descriptor of a JDK socket channel (sun.nio.ch.DatagramChannelImpl's int fdVal; on Windows the SOCKET), read through JNI,
+   which no module boundary stops; -1 when the object has no such field (another runtime) */
+static jint j_udp_channel_fd(JNIEnv *e, jclass c, jobject channel) {
+    (void)c;
+    if (!channel)
+        return -1;
+    jclass k = (*e)->GetObjectClass(e, channel);
+    jfieldID f = k ? (*e)->GetFieldID(e, k, "fdVal", "I") : NULL;
+    if (!f) {
+        (*e)->ExceptionClear(e); /* NoSuchFieldError */
+        return -1;
+    }
+    return (*e)->GetIntField(e, channel, f);
+}
+static jint j_udp_fd_df_probe(JNIEnv *e, jclass c, jlong fd) {
+    (void)e;
+    (void)c;
+    return ksl_udp_fd_df_probe((int64_t)fd);
+}
+static jint j_udp_fd_df_mode(JNIEnv *e, jclass c, jlong fd, jint family) {
+    (void)e;
+    (void)c;
+    return ksl_udp_fd_df_mode((int64_t)fd, family);
+}
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     (void)c;
     uint32_t l = 0;
@@ -1017,6 +1041,9 @@ static const JNINativeMethod methods[] = {
     {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
+    {"udpChannelFd", "(Ljava/lang/Object;)I", (void *)j_udp_channel_fd},
+    {"udpFdDfProbe", "(J)I", (void *)j_udp_fd_df_probe},
+    {"udpFdDfMode", "(JI)I", (void *)j_udp_fd_df_mode},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
     {"resolve", "(" S_STR "I)[B", (void *)j_resolve},

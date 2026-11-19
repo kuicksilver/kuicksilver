@@ -64,6 +64,13 @@ internal class NioDatagramIo private constructor(
                 it in channel.supportedOptions()
             }?.let { channel.getOption(it) }
 
+    /** What [open] set: the `KslFdSocket.DF_*` bits of probe mode, 0 when none (test hook). */
+    internal var dfProbeGranted: Int = 0
+        private set
+
+    /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of the socket, -1 when it cannot be read (test hook). */
+    internal fun dfModeForTest(family: Int): Int = dfModeOf(channel, family)
+
     private var lastJava: java.net.InetSocketAddress? = null
     private var lastKtor: InetSocketAddress? = null
     private var sendJava: java.net.InetSocketAddress? = null
@@ -210,18 +217,35 @@ internal class NioDatagramIo private constructor(
 
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
+        /** Linux and Android (the JDK's `os.name`), where the JDK's `IP_DONTFRAGMENT` is `IP_PMTUDISC_DO`. */
+        private val linuxKernel: Boolean = (System.getProperty("os.name") ?: "").lowercase().startsWith("linux")
+
         /**
-         * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". Where the runtime has the option
-         * it is set (both families); this socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
-         * false). A platform that refuses it keeps the socket as it was.
+         * RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST
+         * be set if possible"; section 14.2.1: an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased
+         * below QUIC's smallest allowed maximum datagram size". Probe mode (`IP_PMTUDISC_PROBE` / `IPV6_PMTUDISC_PROBE`) does
+         * both: DF on every datagram, no local fragmentation, and no path MTU cache an ICMP message could lower to refuse
+         * sends. The JDK cannot set it, so [dfProbe] does (through `ksl` on the JVM, `android.system.Os` on Android); it
+         * returns the bits granted. Without it:
+         * - Linux keeps the kernel's default `IP_PMTUDISC_WANT`: DF on every datagram within the path MTU the kernel knows,
+         *   but one forged ICMP Fragmentation Needed makes it fragment larger ones locally without DF (the one remaining
+         *   deviation from section 14). The JDK's option is not used there: it is `IP_PMTUDISC_DO`, in which that ICMP message
+         *   makes the kernel refuse every larger send for ten minutes (quic-go CVE-2024-53259), against section 14.2.1.
+         * - Elsewhere (Apple: IP_DONTFRAG, which has no modes; Windows until its behaviour is checked) the JDK's
+         *   `IP_DONTFRAGMENT` where the runtime has it (JDK 19 and later).
+         * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it
+         * could run here later. A platform that refuses an option keeps the socket as it was.
          */
-        private fun setDontFragment(ch: DatagramChannel) {
-            val opt = dontFragmentOption() ?: return
+        private fun setDontFragment(ch: DatagramChannel): Int {
+            val granted = dfProbe(ch)
+            if (granted != 0 || linuxKernel) return granted
+            val opt = dontFragmentOption() ?: return 0
             try {
                 if (opt in ch.supportedOptions()) ch.setOption(opt, true)
             } catch (_: java.io.IOException) {
             } catch (_: UnsupportedOperationException) {
             }
+            return 0
         }
 
         /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
@@ -234,10 +258,11 @@ internal class NioDatagramIo private constructor(
         ): NioDatagramIo {
             val ch = DatagramChannel.open()
             val selector: Selector
+            val probe: Int
             try {
                 ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
                 ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
-                setDontFragment(ch)
+                probe = setDontFragment(ch)
                 configure(ch)
                 ch.bind(local.toJavaAddress())
                 ch.configureBlocking(false)
@@ -247,7 +272,10 @@ internal class NioDatagramIo private constructor(
                 throw e
             }
             ch.register(selector, SelectionKey.OP_READ)
-            return NioDatagramIo(ch, selector).also { it.enableEcn() }
+            return NioDatagramIo(ch, selector).also {
+                it.dfProbeGranted = probe
+                it.enableEcn()
+            }
         }
     }
 }

@@ -29,6 +29,8 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <netinet/ip_icmp.h>
+#include <linux/if_packet.h> /* AF_PACKET: the frames a probe-mode socket puts on lo */
+#include <net/ethernet.h>    /* ETH_P_ALL */
 #endif
 
 static void v4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) {
@@ -590,6 +592,204 @@ static int ptb_child(void) {
         return 14; /* the socket still receives */
     ksl_udp_close(a);
     ksl_udp_close(b);
+    return 0;
+}
+/* An ICMP "fragmentation needed" claiming [mtu], quoting a 1228-byte datagram 127.0.0.1:[sport] -> [dst]:[dport] (dst in network
+   order), sent to 127.0.0.1 through a raw socket. 0 when sent */
+static int inject_frag_needed(uint16_t sport, uint32_t dst, uint16_t dport, uint16_t mtu) {
+    int raw = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (raw < 0)
+        return -1;
+    uint8_t pkt[8 + 20 + 8];
+    memset(pkt, 0, sizeof pkt);
+    pkt[0] = 3;
+    pkt[1] = 4;
+    pkt[6] = (uint8_t)(mtu >> 8);
+    pkt[7] = (uint8_t)mtu;
+    uint8_t *ip = pkt + 8;
+    ip[0] = 0x45;
+    ip[2] = (20 + 8 + 1200) >> 8;
+    ip[3] = (uint8_t)(20 + 8 + 1200);
+    ip[6] = 0x40;
+    ip[8] = 64;
+    ip[9] = IPPROTO_UDP;
+    ip[12] = 127;
+    ip[15] = 1;
+    memcpy(ip + 16, &dst, 4);
+    uint16_t ic = csum16(ip, 20);
+    ip[10] = (uint8_t)(ic >> 8);
+    ip[11] = (uint8_t)ic;
+    uint8_t *uh = ip + 20;
+    uh[0] = (uint8_t)(sport >> 8);
+    uh[1] = (uint8_t)sport;
+    uh[2] = (uint8_t)(dport >> 8);
+    uh[3] = (uint8_t)dport;
+    uh[4] = (8 + 1200) >> 8;
+    uh[5] = (uint8_t)(8 + 1200);
+    uint16_t c = csum16(pkt, sizeof pkt);
+    pkt[2] = (uint8_t)(c >> 8);
+    pkt[3] = (uint8_t)c;
+    struct sockaddr_in to;
+    memset(&to, 0, sizeof to);
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ssize_t w = sendto(raw, pkt, sizeof pkt, 0, (struct sockaddr *)&to, sizeof to);
+    close(raw);
+    return w == (ssize_t)sizeof pkt ? 0 : -1;
+}
+/* the outgoing IPv4 packets to [dst] that [cap] (AF_PACKET on lo) saw within [ms]: their count, how many had DF, how many were
+   fragments (MF or an offset) */
+static int frames_to(int cap, uint32_t dst, int ms, int *df, int *frag) {
+    int n = 0;
+    *df = *frag = 0;
+    for (int waited = 0; waited < ms; waited += 10) {
+        uint8_t f[2048];
+        struct sockaddr_ll ll;
+        socklen_t ll_len = sizeof ll;
+        ssize_t r;
+        while ((r = recvfrom(cap, f, sizeof f, MSG_DONTWAIT, (struct sockaddr *)&ll, &ll_len)) > 0) {
+            ll_len = sizeof ll;
+            if (ll.sll_pkttype != PACKET_OUTGOING || r < 14 + 20)
+                continue;
+            const uint8_t *ip = f + 14;
+            if ((ip[0] >> 4) != 4 || ip[9] != IPPROTO_UDP || memcmp(ip + 16, &dst, 4) != 0)
+                continue;
+            n++;
+            uint16_t fo = (uint16_t)(ip[6] << 8 | ip[7]);
+            if (fo & 0x4000)
+                (*df)++;
+            if (fo & 0x3fff)
+                (*frag)++;
+        }
+        struct timespec ts = {0, 10000000};
+        nanosleep(&ts, NULL);
+    }
+    return n;
+}
+/* a 1200-byte datagram from [s] to [to] arrives at [r] whole: 1, else 0 */
+static int send_arrives(int s, const struct sockaddr *to, socklen_t tl, int r) {
+    uint8_t d[1200], in[2048];
+    memset(d, 0x5a, sizeof d);
+    if (sendto(s, d, sizeof d, 0, to, tl) != (ssize_t)sizeof d)
+        return 0;
+    for (int i = 0; i < 100; i++) {
+        ssize_t got = recv(r, in, sizeof in, MSG_DONTWAIT);
+        if (got >= 0)
+            return got == (ssize_t)sizeof d;
+        struct timespec ts = {0, 10000000};
+        nanosleep(&ts, NULL);
+    }
+    return 0;
+}
+/* ksl_udp_fd_df_probe against the attack it exists for (quic-go CVE-2024-53259; RFC 9000 sections 14 and 14.2.1), in a fresh user
+   and network namespace: a forged ICMP "fragmentation needed" claiming 1000 bytes for a random 127.x.y.z destination lowers the
+   kernel's cached path MTU there. Positive control: a socket in IP_PMTUDISC_DO (the JDK's IP_DONTFRAGMENT) then gets EMSGSIZE for
+   1200 bytes (polled, so the attack is known to have landed), and one in the default IP_PMTUDISC_WANT sends it in fragments. A
+   socket the JDK left in DO, AF_INET and dual-stack AF_INET6 (v4-mapped destination), after ksl_udp_fd_df_probe: probe mode read
+   back, the 1200 bytes arrive, and on lo they are one packet with DF set, no fragment. Exit 0 pass, 77 skip, else the failed step */
+static int fd_probe_child(void) {
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNET) != 0)
+        return 77;
+    if (lo_set(1, 0) != 0)
+        return 77;
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    uint32_t rnd = (uint32_t)now.tv_nsec ^ ((uint32_t)getpid() << 16);
+    uint8_t dq[4] = {127, (uint8_t)(1 + rnd % 254), (uint8_t)(rnd >> 8), (uint8_t)(1 + (rnd >> 16) % 254)};
+    uint32_t dst;
+    memcpy(&dst, dq, 4);
+    struct sockaddr_in rd, vd;
+    memset(&rd, 0, sizeof rd);
+    rd.sin_family = AF_INET;
+    rd.sin_addr.s_addr = dst;
+    int r = socket(AF_INET, SOCK_DGRAM, 0), v = socket(AF_INET, SOCK_DGRAM, 0);
+    socklen_t l = sizeof rd;
+    if (r < 0 || v < 0 || bind(r, (struct sockaddr *)&rd, sizeof rd) != 0 ||
+        getsockname(r, (struct sockaddr *)&rd, &l) != 0)
+        return 2;
+    memset(&vd, 0, sizeof vd);
+    vd.sin_family = AF_INET;
+    vd.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    l = sizeof vd;
+    if (bind(v, (struct sockaddr *)&vd, sizeof vd) != 0 || getsockname(v, (struct sockaddr *)&vd, &l) != 0)
+        return 3;
+    /* the victim's flow is what the message quotes: the kernel matches it to that socket and caches the MTU for the destination */
+    if (inject_frag_needed(ntohs(vd.sin_port), dst, ntohs(rd.sin_port), 1000) != 0)
+        return 4;
+    int c = socket(AF_INET, SOCK_DGRAM, 0), dmode = IP_PMTUDISC_DO;
+    if (c < 0 || setsockopt(c, IPPROTO_IP, IP_MTU_DISCOVER, &dmode, sizeof dmode) != 0)
+        return 5;
+    uint8_t d[1200], in[2048];
+    memset(d, 0x5a, sizeof d);
+    int landed = 0;
+    for (int i = 0; i < 200 && !landed; i++) {
+        if (sendto(c, d, sizeof d, 0, (struct sockaddr *)&rd, sizeof rd) < 0)
+            landed = errno == EMSGSIZE;
+        else {
+            struct timespec ts = {0, 10000000};
+            nanosleep(&ts, NULL);
+        }
+    }
+    if (!landed)
+        return 6; /* the positive control: DO never met the forged MTU */
+    while (recv(r, in, sizeof in, MSG_DONTWAIT) >= 0) {
+    } /* what DO sent before the message landed */
+    int cap = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    struct sockaddr_ll lo;
+    memset(&lo, 0, sizeof lo);
+    lo.sll_family = AF_PACKET;
+    lo.sll_protocol = htons(ETH_P_ALL);
+    lo.sll_ifindex = (int)if_nametoindex("lo");
+    if (cap < 0 || bind(cap, (struct sockaddr *)&lo, sizeof lo) != 0)
+        return 7;
+    int df, frag, n;
+    /* the default mode, for contrast: the forged MTU makes it fragment (what probe mode prevents) */
+    int w = socket(AF_INET, SOCK_DGRAM, 0);
+    if (w < 0 || !send_arrives(w, (struct sockaddr *)&rd, sizeof rd, r))
+        return 8;
+    n = frames_to(cap, dst, 100, &df, &frag);
+    if (n < 2 || frag != n)
+        return 9;
+    /* AF_INET, left in DO by the JDK */
+    int a = socket(AF_INET, SOCK_DGRAM, 0);
+    if (a < 0 || setsockopt(a, IPPROTO_IP, IP_MTU_DISCOVER, &dmode, sizeof dmode) != 0)
+        return 10;
+    if (ksl_udp_fd_df_probe(a) != KSL_FD_DF_V4 || ksl_udp_fd_df_mode(a, 4) != IP_PMTUDISC_PROBE)
+        return 11;
+    if (!send_arrives(a, (struct sockaddr *)&rd, sizeof rd, r))
+        return 12;
+    n = frames_to(cap, dst, 100, &df, &frag);
+    if (n != 1 || df != 1 || frag != 0)
+        return 13;
+    /* AF_INET6 dual-stack, IPV6_MTU_DISCOVER = DO as the JDK sets it there, to the v4-mapped destination */
+    int b = socket(AF_INET6, SOCK_DGRAM, 0), off = 0, d6 = IPV6_PMTUDISC_DO;
+    if (b < 0)
+        return 0; /* no IPv6 in this kernel: the AF_INET case stands */
+    if (setsockopt(b, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off) != 0 ||
+        setsockopt(b, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &d6, sizeof d6) != 0)
+        return 14;
+    if (ksl_udp_fd_df_probe(b) != (KSL_FD_DF_V4 | KSL_FD_DF_V6) || ksl_udp_fd_df_mode(b, 4) != IP_PMTUDISC_PROBE ||
+        ksl_udp_fd_df_mode(b, 6) != IPV6_PMTUDISC_PROBE)
+        return 15;
+    struct sockaddr_in6 m;
+    memset(&m, 0, sizeof m);
+    m.sin6_family = AF_INET6;
+    m.sin6_port = rd.sin_port;
+    m.sin6_addr.s6_addr[10] = 0xff;
+    m.sin6_addr.s6_addr[11] = 0xff;
+    memcpy(&m.sin6_addr.s6_addr[12], &dst, 4);
+    if (!send_arrives(b, (struct sockaddr *)&m, sizeof m, r))
+        return 16;
+    n = frames_to(cap, dst, 100, &df, &frag);
+    if (n != 1 || df != 1 || frag != 0)
+        return 17;
+    close(b);
+    close(a);
+    close(w);
+    close(cap);
+    close(c);
+    close(v);
+    close(r);
     return 0;
 }
 #endif
@@ -1416,6 +1616,30 @@ void run_udp(void) {
             CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO");
         }
 #endif
+        /* udp_fd_df_probe: on a socket ksl did not open (the JVM's portable one), left in DO as the JDK's IP_DONTFRAGMENT sets it:
+           probe mode replaces it (Linux; both halves of a dual-stack socket); Apple has no probe mode (0); no socket: KSL_ERROR */
+        {
+            int s4 = socket(AF_INET, SOCK_DGRAM, 0), s6 = socket(AF_INET6, SOCK_DGRAM, 0);
+            CHECK(s4 >= 0, "an AF_INET socket");
+            CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR, "no descriptor: KSL_ERROR");
+#ifdef __APPLE__
+            CHECK(ksl_udp_fd_df_probe(s4) == 0 && ksl_udp_fd_df_mode(s4, 4) == -1, "Darwin: no probe mode");
+#else
+            int dmode = IP_PMTUDISC_DO;
+            CHECK(setsockopt(s4, IPPROTO_IP, IP_MTU_DISCOVER, &dmode, sizeof dmode) == 0 &&
+                      ksl_udp_fd_df_mode(s4, 4) == 2,
+                  "DO first, as the JDK leaves it");
+            CHECK(ksl_udp_fd_df_probe(s4) == KSL_FD_DF_V4 && ksl_udp_fd_df_mode(s4, 4) == 3, "AF_INET: probe mode");
+            if (s6 >= 0) {
+                CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_V4 | KSL_FD_DF_V6), "AF_INET6: both halves");
+                CHECK(ksl_udp_fd_df_mode(s6, 4) == 3 && ksl_udp_fd_df_mode(s6, 6) == 3,
+                      "AF_INET6: probe mode read back");
+            }
+#endif
+            if (s6 >= 0)
+                close(s6);
+            close(s4);
+        }
         /* udp_truncated_datagram_dropped: a 1400-byte datagram into a 1000-byte slot is dropped, not truncated. A 100-byte marker
            follows it from the same socket, and the receive goes on until the marker: every datagram handed out before it must be the
            marker itself. A receive that only waited for a timeout passed when the big one had not arrived yet (a loaded host delivers
@@ -2384,6 +2608,24 @@ void run_udp(void) {
             }
             if (code != 0 && code != 77)
                 printf("    ptb child failed at step %d\n", code);
+        }
+        /* udp_fd_df_probe_forged_ptb: ksl_udp_fd_df_probe on a socket ksl did not open, against a forged Packet Too Big */
+        {
+            pid_t pid = fork();
+            if (pid == 0)
+                _exit(fd_probe_child());
+            int st = 0;
+            waitpid(pid, &st, 0);
+            int code = WIFEXITED(st) ? WEXITSTATUS(st) : 100;
+            if (code == 77)
+                printf("udp_fd_df_probe_forged_ptb: SKIP (no unprivileged user namespace)\n");
+            else {
+                CHECK(code == 0, "udp_fd_df_probe_forged_ptb (child exit = failed step)");
+                if (code == 0)
+                    printf("udp_fd_df_probe_forged_ptb: OK\n");
+                else
+                    printf("    fd probe child failed at step %d\n", code);
+            }
         }
 #endif
 #ifdef __linux__

@@ -35,7 +35,8 @@ extern "C" {
    later 0.3.0 additions go under 7; additive under 7: ksl_ctx_verify_chain_path (the path a re-verification built, for pins
    checked against it); ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
-   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
+   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_fd_df_probe and
+   ksl_udp_fd_df_mode (DF in probe mode on a socket ksl did not open: the JVM's portable one); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
@@ -504,6 +505,18 @@ int ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_le
 uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
 /* datagrams ksl_udp_send lost to EMSGSIZE (larger than the path MTU the kernel knows, with DF), every platform; *last_size: the
             length of the latest one */
+/* --- A UDP socket ksl did not open (additive under ABI 7): DF in probe mode on the caller's descriptor (the JVM's portable socket) --- */
+#define KSL_FD_DF_V4 1 /* granted: IP_MTU_DISCOVER = IP_PMTUDISC_PROBE (on an AF_INET6 socket: its v4-mapped half) */
+#define KSL_FD_DF_V6 2 /* granted: IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE (+ IPV6_DONTFRAG) on an AF_INET6 socket */
+int ksl_udp_fd_df_probe(int64_t fd);
+/* sets on fd (a POSIX descriptor; a SOCKET on Windows) what KSL_UDP_DF sets on ksl_udp_open's sockets: DF in probe mode, so the
+            kernel neither fragments a datagram nor sizes it from a path MTU an ICMP message could forge (quic-go CVE-2024-53259),
+            replacing a mode set before (the JDK's IP_DONTFRAGMENT is IP_PMTUDISC_DO). Returns the KSL_FD_DF_* bits granted: both
+            for an AF_INET6 socket, V4 for an AF_INET one; 0 where the system has no probe mode (Apple, older Windows) or refused
+            it; KSL_ERROR when fd is no IPv4 or IPv6 socket. Linux, Android and Windows */
+int ksl_udp_fd_df_mode(int64_t fd, int family);
+/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE, 2 = DO, 1 = WANT); -1 when it cannot be read or on
+            Apple (no PMTUDISC modes). For tests and diagnostics */
 /* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
    send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
    granted flags (GSO, ECN, DF, PKTINFO) and the local address as they stand: create clones before the socket sends, or from its
