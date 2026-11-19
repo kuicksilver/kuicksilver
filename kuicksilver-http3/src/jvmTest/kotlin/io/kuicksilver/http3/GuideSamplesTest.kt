@@ -11,6 +11,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.PacketTooBigSender
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import kotlinx.coroutines.CompletableDeferred
@@ -193,7 +194,10 @@ class GuideSamplesTest {
                                     resolver = { listOf(byteArrayOf(192.toByte(), 0, 2, 20)) },
                                     socketFactory = { net.open(InetSocketAddress("10.0.0.2", ++port)) },
                                 ),
-                            )
+                            ).also {
+                                // tests send no ICMP: as root the real probe would let a Packet Too Big go to TEST-NET addresses
+                                it.impl.probeForTest = { PacketTooBigSender.Probe(false, "tests send no ICMP") }
+                            }
                         while (true) {
                             // guide:http3:connect-udp (proxy)
                             val request = connection.acceptRequest()
