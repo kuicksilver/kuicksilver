@@ -631,6 +631,41 @@ class ConnectionEndTest {
             }
         }
 
+    /**
+     * A handler cancelled inside finish as the FIN is handed over (the stream's flushAndClose suspends), with the request
+     * body still unread: the response is abandoned and never counted as complete. The finally around the FIN marked it
+     * complete first, so respondedInFull was set and the client stopped with H3_NO_ERROR before the abandon's reset.
+     */
+    @Test fun finishCancelledAtTheFinIsNotCountedComplete() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val s = p.server.session
+                val atFin = CompletableDeferred<Unit>()
+                s.beforeResponseFinForTest = {
+                    atFin.complete(Unit)
+                    awaitCancellation()
+                }
+                val body = ByteChannel() // left open: the request's body is never read to its end
+                val response = async { p.client.request(http3Request("POST", "server.test", "/") { this.body = body }) }
+                val req = withTimeout(5.seconds) { p.server.acceptRequest() } as ServerRequestImpl
+                val handler =
+                    launch {
+                        val w = req.respond(200)
+                        w.output.writeFully("partial".encodeToByteArray())
+                        w.finish()
+                    }
+                withTimeoutOrNull(20.seconds) { atFin.await() } ?: fail("finish did not reach the FIN")
+                handler.cancel()
+                handler.join()
+                assertFalse(req.respondedInFull, "a response whose finish was cancelled before its FIN is not complete")
+                val r = withTimeout(5.seconds) { response.await() }
+                val read = withTimeoutOrNull(20.seconds) { runCatching { r.body.readAllBytes() } }
+                assertTrue(read != null && read.isFailure, "the abandoned response reads as failed: $read")
+                awaitNothingRegistered(s)
+                body.close()
+            }
+        }
+
     /** Likewise for a request body: the connection ends while the application still writes it, and its writes fail. */
     @Test fun requestBodyWriteAfterTheConnectionEndedFails() =
         h3Test {

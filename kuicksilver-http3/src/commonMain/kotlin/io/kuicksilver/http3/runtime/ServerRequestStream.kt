@@ -1054,7 +1054,9 @@ internal class ResponseWriterImpl(
     /**
      * [finish]'s caller was cancelled before the FIN went out: the response is abandoned after partial processing, "it
      * SHOULD abort its response stream with the error code H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1), and the
-     * exchange ends. Runs to its end whatever the caller's state.
+     * exchange ends. Runs to its end whatever the caller's state. On a server tunnel this aborts both directions (reset and
+     * STOP_SENDING), as an abrupt end of a tunnel does (RFC 9114 section 4.4), unlike the client's tunnel writer, which has
+     * no request here and resets only its send half.
      */
     private suspend fun abandonCancelledFinish(e: CancellationException) {
         withContext(NonCancellable + session.dispatcher) {
@@ -1093,20 +1095,25 @@ internal class ResponseWriterImpl(
                     throw refused
                 }
             }
+            // a caller cancelled before the FIN went out is abandoned ([abandonCancelledFinish]): its response is never marked
+            // complete first, so neither respondedInFull nor a STOP_SENDING with H3_NO_ERROR comes ahead of the reset
+            var cancelled = false
             try {
                 if (trailers != null) {
                     session.writeHeadersFrame(st, trailers.fields, trailers.neverIndexNames())
                 }
+                session.beforeResponseFinForTest?.invoke(st)
                 st.output.flushAndClose()
                 onFinSent()
             } catch (
                 e: CancellationException,
             ) {
+                cancelled = true
                 throw e
             } catch (e: Throwable) {
                 throw session.map(e)
             } finally {
-                request?.responseComplete()
+                if (!cancelled) request?.responseComplete()
             }
         }
     }
