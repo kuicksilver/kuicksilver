@@ -6,11 +6,14 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.MemoryDatagramIo
+import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NonSuspendingSend
+import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathMtuRefusedException
 import io.kuicksilver.quic.PathState
@@ -228,6 +231,48 @@ class PathMtuRefusedTest {
             }
         }
 
+    /** A slot skipped for want of DF is not counted as sent; it is counted as skipped, and its connection does not go on. */
+    @Test fun negative_aSkippedSlotIsNotCountedAsSent() =
+        runBlocking<Unit> {
+            val net = MemoryNetwork()
+            val serverIo = net.open(InetSocketAddress("10.0.0.2", 2222))
+            val server =
+                QuicEndpoint.bind(
+                    serverIo.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                            io = { serverIo }
+                        }.build(),
+                )
+            val clientIo = NoDfV4Io(net.open(InetSocketAddress("10.0.0.1", 1111)))
+            val client =
+                QuicEndpoint.bind(
+                    InetSocketAddress("10.0.0.1", 1111),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = NullCryptoProvider
+                            io = { clientIo }
+                        }.build(),
+                )
+            try {
+                withTimeout(30.seconds) {
+                    val e = assertFails { client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
+                    assertTrue(e is QuicException.ConnectionLost, "the connection has no viable path: $e")
+                    val st = client.stats
+                    assertEquals(0, st.datagramsSent, "nothing went out")
+                    assertTrue(st.datagramsSkippedNoDf >= 1, "the Initial was skipped: $st")
+                    assertEquals(0, server.stats.datagramsReceived)
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
     /** A refusal for a destination none of the connection's paths has is not this connection's: it goes on. */
     @Test fun aRefusalForAnotherDestinationIsIgnored() =
         runBlocking<Unit> {
@@ -375,12 +420,39 @@ private class EmsgsizeIo(
     }
 }
 
-/** A socket that has no DF for IPv4 ([DfFamilyRestricted]), as a dual-stack NIO socket without it on its IPv4 half. */
+/**
+ * A socket that has no DF for IPv4 ([DfFamilyRestricted]), as a dual-stack NIO socket without it on its IPv4 half: a slot to an
+ * IPv4 destination is skipped (not sent) and reported.
+ */
 private class NoDfV4Io(
     private val inner: DatagramIo,
 ) : DatagramIo by inner,
     io.kuicksilver.quic.DfFamilyRestricted {
     override val noDfFamily: io.kuicksilver.quic.IpFamily? = io.kuicksilver.quic.IpFamily.V4
+    private val refused = ArrayList<InetSocketAddress>()
 
-    override fun takeDfRefusals(): List<InetSocketAddress> = emptyList()
+    override fun takeDfRefusals(): List<InetSocketAddress> = refused.toList().also { refused.clear() }
+
+    override suspend fun send(batch: PacketBatch): Int = trySend(batch)
+
+    override fun trySend(batch: PacketBatch): Int {
+        val keep = PacketBatch(batch.count)
+        try {
+            for (i in 0 until batch.count) {
+                val to = batch.address(i) ?: continue
+                if (io.kuicksilver.quic.ipFamilyOf(to) == noDfFamily) {
+                    refused += to
+                    continue
+                }
+                val j = keep.count
+                keep.buffer(j).copyFrom(batch.buffer(i).toByteArray(batch.length(i)), 0, 0, batch.length(i))
+                keep.setLength(j, batch.length(i))
+                keep.setAddress(j, to)
+            }
+            if (keep.count > 0) inner.trySend(keep)
+        } finally {
+            keep.close()
+        }
+        return batch.count
+    }
 }

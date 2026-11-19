@@ -548,6 +548,9 @@ void run_udp_win(void) {
         int mode = ksl_udp_df_mode_for_test(fd);
         printf("udp(win): PMTU probe mode %s (IP_MTU_DISCOVER reads %d)\n",
                ksl_udp_df_probe_for_test(a) ? "taken" : "refused by this Windows", mode);
+        /* KSL_UDP_DF_DO exactly when a half refused PROBE (on AF_INET6: either half) */
+        CHECK(((wcaps(a, NULL) & KSL_UDP_DF_DO) != 0) == !ksl_udp_df_probe_for_test(a),
+              "KSL_UDP_DF_DO granted exactly when probe mode is missing on a half");
         if (ksl_udp_df_probe_for_test(a))
             CHECK(mode == 3, "IP_MTU_DISCOVER taken: it reads back PROBE (3), never DO");
         else

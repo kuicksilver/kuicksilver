@@ -3730,6 +3730,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negat
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusedStatelessSendDoesNotEndTheNextConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aServerDropsInitialsFromAFamilyWithoutDf
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aServerWithoutDontFragmentDoesNotStart
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aSkippedSlotIsNotCountedAsSent
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_noDontFragmentForThePeerEndsTheConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_noDontFragmentOnAProbedPathClosesThatPathOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.acceptStreamInOrder
@@ -4701,6 +4702,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessCloseKeysT
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.aStatelessResetEndsTheTraceAfterTheDrainingPeriod
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.ackOnlyPacketsGrowWithoutGoingInFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_aResetToThePreferredAddressIsRecognised
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_noStatelessResetToAFamilyWithoutDf
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_quicLbDecryptionsAreRateLimited
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_quicLbNoResetForOtherServerId
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_quicLbNoResetForUnknownConfigId
@@ -5058,6 +5060,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.burstW
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwardedBurstDoesNotMonopoliseTheLoop
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.forwardedPreferredDatagramIsDroppedOnceThePreferredAddressIsDown
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.initialWhileTheSharedAcceptQueueIsFullIsRefusedStatelessly
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.loopsAboveOneForwardTheFamilyWithoutDf
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.loopsAboveOneWithoutReusePortGrantShareOneSocket
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.loopsAboveOneWithoutTheAcceleratedSocketNamesDontFragment
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.movedConnectionOnAnotherLoopsPreferredSocketIsForwardedAsPreferred

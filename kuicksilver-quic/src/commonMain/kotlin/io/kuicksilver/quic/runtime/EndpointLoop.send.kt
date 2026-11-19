@@ -123,9 +123,12 @@ private inline fun EndpointLoop.sendOrLoseWith(
                         }
                     }
                 }
-                // slots the socket skipped for want of DF towards their family (no QUIC without DF): their path fails
+                // slots the socket skipped for want of DF towards their family (no QUIC without DF): not sent, and their path
+                // fails (it closes, or the connection ends, so their packets leave loss and congestion state with it)
+                var skipped = 0
                 if (target is DfFamilyRestricted) {
                     for (to in target.takeDfRefusals()) {
+                        skipped++
                         val family = ipFamilyOf(to)
                         val e =
                             QuicException.DontFragmentUnavailable(family, "this socket has no DF for ${family?.label ?: to}")
@@ -133,7 +136,8 @@ private inline fun EndpointLoop.sendOrLoseWith(
                     }
                 }
                 if (sent < batch.count && !full) fullThisFlush.add(target)
-                observer.datagramsSent += sent
+                observer.datagramsSent += (sent - skipped).coerceAtLeast(0)
+                observer.datagramsSkippedNoDf += skipped
                 batch.count - sent
             } catch (e: CancellationException) {
                 ctx.ensureActive() // else a DatagramIo's own failure: a lost batch

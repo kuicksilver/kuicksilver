@@ -387,20 +387,22 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     if (flags &
         KSL_UDP_DF) { /* DF on, and where the system has it PROBE: no path MTU cache drives the sizes (quic-go CVE-2024-53259) */
-        int probe = IP_PMTUDISC_PROBE, ok;
+        /* per half: DF (IP_DONTFRAGMENT / IPV6_DONTFRAG) must take; PROBE where the system takes it, else that half is in DO mode */
+        int probe = IP_PMTUDISC_PROBE, df, p4, p6 = 1;
         if (u->family == AF_INET) {
-            ok = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes);
-            u->df_probe = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            df = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) == 0;
+            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         } else {
-            ok = setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes);
-            setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes);
-            setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe);
-            u->df_probe = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            int df6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
+            int df4 = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
+                      0; /* the v4-mapped half */
+            df = df6 && df4;
+            p6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         }
-        if (ok == 0)
-            u->granted |=
-                KSL_UDP_DF |
-                (u->df_probe ? 0 : KSL_UDP_DF_DO); /* DF alone where PROBE is refused: what msquic runs with */
+        u->df_probe = p4 && p6;
+        if (df) /* DF alone where PROBE is refused on a half: what msquic runs with, reported as DO */
+            u->granted |= KSL_UDP_DF | (u->df_probe ? 0 : KSL_UDP_DF_DO);
     }
     if (flags & KSL_UDP_GSO) {
         DWORD v = 0;

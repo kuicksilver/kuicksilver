@@ -6406,7 +6406,7 @@ cannot set Don't Fragment (RFC 9000 section 14) <on any traffic>: <why>"), a Kto
 (`KuicksilverApplicationEngine.http3Status` says why), and the Ktor client sends the call over TCP at once
 (`fallback = QuicUnavailable`). Where only one address family lacks it, nothing is sent to that family: the connection
 ends with `TransportClosed` (NO_VIABLE_PATH) caused by the error, a server drops that family's Initials and a Ktor server
-sends no `Alt-Svc` to its clients (`http3Status` names `notServedFamily`; `QuicEndpoint.dontFragmentUnavailable`).
+sends no `Alt-Svc` to its clients (`http3Status` names `notServedFamily`; `QuicEndpoint.noDontFragmentFamily`).
 
 - The JVM without the `ksl` native library below JDK 19 (no `IP_DONTFRAGMENT`): load `ksl`
   ([native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)) or use JDK 19 or later. QUIC with

@@ -109,6 +109,47 @@ class LoopGroupTest {
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
 
+    /**
+     * A caller's socket with no DF for IPv4 under loops > 1: the dispatcher's wrappers forward [io.kuicksilver.quic.DfFamilyRestricted],
+     * so each loop drops IPv4 Initials before any state, as a single loop does.
+     */
+    @Test fun loopsAboveOneForwardTheFamilyWithoutDf() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                loops = 2
+                                io = { at -> NoDfV4(net.open(at)) }
+                            }.build(),
+                    )
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    assertEquals(io.kuicksilver.quic.IpFamily.V4, server.noDontFragmentFamily)
+                    kotlin.test.assertFails {
+                        client.connect(
+                            serverAddr,
+                            QuicClientConfig
+                                .Builder(CoreFixtures.client())
+                                .apply { quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 1.seconds } }
+                                .build(),
+                        )
+                    }
+                    assertEquals(0, server.stats.connectionsCreated, "no state for an IPv4 Initial")
+                    assertTrue(server.stats.datagramsDroppedStateless > 0)
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
+
     /** No accelerated socket for a group (none here, or one the system gave no DF and that is not used): the error names DF. */
     @Test fun loopsAboveOneWithoutTheAcceleratedSocketNamesDontFragment() =
         runBlocking {
@@ -1092,4 +1133,14 @@ class LoopGroupTest {
         input.readFully(ByteArray(1))
         return input
     }
+}
+
+/** A caller's socket without DF for IPv4 ([io.kuicksilver.quic.DfFamilyRestricted]); it sends nothing anyway in these tests. */
+private class NoDfV4(
+    private val inner: DatagramIo,
+) : DatagramIo by inner,
+    io.kuicksilver.quic.DfFamilyRestricted {
+    override val noDfFamily: io.kuicksilver.quic.IpFamily? = io.kuicksilver.quic.IpFamily.V4
+
+    override fun takeDfRefusals(): List<InetSocketAddress> = emptyList()
 }

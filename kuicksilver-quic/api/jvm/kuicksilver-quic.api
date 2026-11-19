@@ -482,7 +482,7 @@ public final class io/kuicksilver/quic/EndpointCore {
 }
 
 public final class io/kuicksilver/quic/EndpointStats {
-	public synthetic fun <init> (JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getAdmissionContractViolations ()J
 	public final fun getConnectionsAccepted ()J
 	public final fun getConnectionsActive ()J
@@ -498,6 +498,7 @@ public final class io/kuicksilver/quic/EndpointStats {
 	public final fun getDatagramsDroppedUndecryptable ()J
 	public final fun getDatagramsReceived ()J
 	public final fun getDatagramsSent ()J
+	public final fun getDatagramsSkippedNoDf ()J
 	public final fun getHandshakesCompleted ()J
 	public final fun getHandshakesFailedOther ()J
 	public final fun getHandshakesFailedTimeout ()J
@@ -1005,8 +1006,8 @@ public abstract interface class io/kuicksilver/quic/QuicEndpoint : java/lang/Aut
 	public abstract fun closeAndJoin (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun connect (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public fun getDontFragmentUnavailable ()Lio/kuicksilver/quic/IpFamily;
 	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun getNoDontFragmentFamily ()Lio/kuicksilver/quic/IpFamily;
 	public abstract fun getStats ()Lio/kuicksilver/quic/EndpointStats;
 	public fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -1020,7 +1021,7 @@ public final class io/kuicksilver/quic/QuicEndpoint$Companion {
 
 public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
 	public static fun connectEarly (Lio/kuicksilver/quic/QuicEndpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static fun getDontFragmentUnavailable (Lio/kuicksilver/quic/QuicEndpoint;)Lio/kuicksilver/quic/IpFamily;
+	public static fun getNoDontFragmentFamily (Lio/kuicksilver/quic/QuicEndpoint;)Lio/kuicksilver/quic/IpFamily;
 	public static fun shutdown-rnQQ1Ag (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun updateLoadBalancer (Lio/kuicksilver/quic/QuicEndpoint;Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

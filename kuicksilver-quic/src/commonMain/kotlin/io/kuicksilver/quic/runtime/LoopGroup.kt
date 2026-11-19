@@ -64,6 +64,10 @@ internal class LoopGroup private constructor(
     private val next = AtomicInt(0)
     override val localAddress: InetSocketAddress get() = loops[0].localAddress
 
+    /** The shared socket's family without DF, as every loop's inbox forwards it ([io.kuicksilver.quic.DfFamilyRestricted]). */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = loops[0].noDontFragmentFamily
+
     override suspend fun connect(
         remote: InetSocketAddress,
         config: QuicClientConfig,
