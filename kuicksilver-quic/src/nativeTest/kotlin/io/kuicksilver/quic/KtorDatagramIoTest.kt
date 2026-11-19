@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -75,36 +76,60 @@ class KtorDatagramIoTest {
      * waits for the loop. The binds start on the test's own thread while the threads are held; a bind that returns there
      * at once (the previous code: 40 refused binds left 78 descriptors open at that point) is counted before the threads
      * are let go, one that waits is counted once they were and it returned.
+     *
+     * The count starts once a first round has held the same threads: Kotlin/Native's dispatchers start a thread when a task
+     * finds none free and keep it, so the first round starts every thread the measured one uses. On Windows the count is
+     * the process's handles (`GetProcessHandleCount`), threads and their events among them; counted from before the first
+     * hold, the threads it started read as leaks whenever no earlier test had grown `Dispatchers.IO` to its 64 threads
+     * (run 44453449060: "40 refused binds left 281 descriptors open", the same on main 8f76f749f, 279; the descriptors of
+     * Linux and macOS count no thread).
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
             val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
-            val go = CompletableDeferred<Unit>()
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured round holds
                 val before = openDescriptors()
-                // more tasks than either dispatcher has threads, each holding its thread until the binds were made
-                val holding =
-                    List(512) { i ->
-                        launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { runBlocking { go.await() } }
-                    }
-                val binds =
-                    async(start = CoroutineStart.UNDISPATCHED) {
-                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
-                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
-                    }
-                val leakedWhileHeld = if (binds.isCompleted) openDescriptors() - before else null
-                go.complete(Unit)
-                binds.await()
-                holding.joinAll()
+                var leakedWhileHeld: Int? = null
+                refusedBindsWhileThreadsAreHeld(taken) { leakedWhileHeld = openDescriptors() - before }
                 val leaked = leakedWhileHeld ?: (openDescriptors() - before)
                 assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
             } finally {
-                go.complete(Unit)
                 held.close()
             }
         }
+
+    /**
+     * Makes 40 refused binds of [taken] while more tasks than `Dispatchers.Default` and `Dispatchers.IO` have threads hold
+     * every one of them, and returns once the binds and the holders ended. [whileHeld] runs while the threads are still held,
+     * and only if the binds already returned by then.
+     */
+    private suspend fun refusedBindsWhileThreadsAreHeld(
+        taken: InetSocketAddress,
+        whileHeld: () -> Unit,
+    ) = coroutineScope {
+        val go = CompletableDeferred<Unit>()
+        try {
+            // more tasks than either dispatcher has threads, each holding its thread until the binds were made
+            val holding =
+                List(512) { i ->
+                    launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { runBlocking { go.await() } }
+                }
+            val binds =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                    repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                }
+            if (binds.isCompleted) whileHeld()
+            go.complete(Unit)
+            binds.await()
+            holding.joinAll()
+        } finally {
+            go.complete(Unit)
+        }
+    }
 
     /**
      * The portable socket does not use ktor-network for a specific IPv6 address (Ktor issue KTOR-10017, security, under
