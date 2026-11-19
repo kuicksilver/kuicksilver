@@ -33,7 +33,9 @@ public enum class H2cMode {
      * they arrive and none is consumed: the first one that differs from the preface hands the connection to HTTP/1.1 at
      * once (a request shorter than the preface is never held back), and the wait for them is part of the first request
      * head's deadline (`requestHeaderTimeoutSeconds`), as on HTTP/1.1. Go's `golang.org/x/net/http2/h2c` handler and Netty's
-     * `CleartextHttp2ServerUpgradeHandler` serve both on one port too.
+     * `CleartextHttp2ServerUpgradeHandler` serve both on one port too. When the server stops during the wait, a whole
+     * preface already received is HTTP/2 (GOAWAY, then the close); a connection with only part of it is closed at once
+     * without an answer, so the stop waits for no slow client.
      */
     WithHttp11,
 

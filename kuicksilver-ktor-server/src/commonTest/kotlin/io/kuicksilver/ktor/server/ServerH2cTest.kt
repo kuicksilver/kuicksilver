@@ -226,9 +226,11 @@ class ServerH2cTest {
         }
 
     /**
-     * A stopping server reads no further request: a connection still sending the preface on [H2cMode.WithHttp11] goes to
-     * HTTP/1.1, which closes it as idle at once, and one on [H2cMode.Only] gets GOAWAY and the close, instead of holding
-     * the stop for the request-head deadline (60 s here).
+     * A stopping server reads no further request: a connection still sending the preface (16 of its 24 octets here) on
+     * [H2cMode.WithHttp11] goes to HTTP/1.1, which starts after the stop and so closes it at once without an answer (no
+     * 505 to `PRI * HTTP/2.0`: the octets are never read as a request), and one on [H2cMode.Only] gets GOAWAY and the
+     * close, instead of holding the stop for the request-head deadline (60 s here). A whole preface that came with the
+     * stop is HTTP/2 on both (H2PrefaceDrainRaceTest).
      */
     @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
         serverTest {

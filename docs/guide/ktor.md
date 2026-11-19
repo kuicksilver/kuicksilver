@@ -472,7 +472,10 @@ SM
   do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
   hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
   of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
-  stops is closed then, as a slow HTTP/1.1 head is. `Only` (a gRPC port) skips the check: a client that sends anything
+  stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a whole preface already
+  received is HTTP/2 (GOAWAY, then the close, RFC 9113 section 6.8), and a connection with only part of it is closed at
+  once without an answer: the stop waits for no slow client, and the client may retry elsewhere since nothing was
+  processed. `Only` (a gRPC port) skips the check: a client that sends anything
   else, an HTTP/1.1 request included, gets the connection error of an invalid preface (GOAWAY with PROTOCOL_ERROR, then
   the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
 - **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers
