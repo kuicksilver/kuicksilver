@@ -10,6 +10,7 @@ import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,11 @@ import kotlin.time.Duration.Companion.seconds
  * last connection is gone, never while a connection uses it.
  */
 class SharedServerContextTest {
+    /** Session caches of this test's own handshakes, closed after it (their native sessions). */
+    private val caches = TestCaches()
+
+    @AfterTest fun closeCaches() = caches.close()
+
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private fun identityA() = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
@@ -142,7 +148,7 @@ class SharedServerContextTest {
                 }
             val conns =
                 List(4) {
-                    val (c, s) = connect(TcpFixtures.client(), server, clientCache = SessionCache())
+                    val (c, s) = connect(TcpFixtures.client(), server, clientCache = caches.new())
                     withTimeout(20.seconds) { c.await() to s.await() }
                 }
             val ctx = conns[0].second.contextForTest

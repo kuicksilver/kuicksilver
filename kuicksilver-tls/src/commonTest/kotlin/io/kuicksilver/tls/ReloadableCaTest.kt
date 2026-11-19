@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -41,6 +42,11 @@ import kotlin.time.Duration.Companion.seconds
  * valid for a shorter period"), so a client whose CA was dropped cannot resume its way back in.
  */
 class ReloadableCaTest {
+    /** Session caches of this test's own handshakes, closed after it (their native sessions). */
+    private val caches = TestCaches()
+
+    @AfterTest fun closeCaches() = caches.close()
+
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val testCa = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
@@ -63,7 +69,7 @@ class ReloadableCaTest {
     private suspend fun open(
         client: TlsConfig,
         server: TlsConfig,
-        cache: SessionCache = SessionCache(),
+        cache: SessionCache = caches.new(),
     ): Pair<TlsConnection, TlsConnection> {
         val (cd, sd) = connect(client, server, clientCache = cache)
         return withTimeout(20.seconds) { cd.await() to sd.await() }
@@ -73,7 +79,7 @@ class ReloadableCaTest {
     private suspend fun refused(
         client: TlsConfig,
         server: TlsConfig,
-        cache: SessionCache = SessionCache(),
+        cache: SessionCache = caches.new(),
     ): VerifyReason {
         val (cd, sd) = connect(client, server, clientCache = cache)
         val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { sd.await() } }
@@ -145,7 +151,7 @@ class ReloadableCaTest {
                             pair.clientOut,
                             clientA(),
                             EmptyCoroutineContext,
-                            SessionCache(),
+                            caches.new(),
                         )
                     }
                 }
@@ -205,7 +211,7 @@ class ReloadableCaTest {
         forwarders: CoroutineScope,
         client: TlsConfig,
         server: TlsConfig,
-        cache: SessionCache = SessionCache(),
+        cache: SessionCache = caches.new(),
         between: () -> Unit,
     ): Pair<Result<TlsConnection>, Result<TlsConnection>> {
         val pair = GatedPair(forwarders)
@@ -260,7 +266,7 @@ class ReloadableCaTest {
             assertFalse(sameBundle(TrustConfig.AnchoredCa(listOf(a, b)), TrustConfig.AnchoredCa(listOf(a))), "control")
             val r = TrustConfig.reloadable(TrustConfig.AnchoredCa(listOf(a, b)))
             val server = server(r)
-            val cache = SessionCache()
+            val cache = caches.new()
             val (c0, s0) = open(clientA(), server, cache)
             exchange(c0, s0)
             val ctx = s0.contextForTest
@@ -351,7 +357,7 @@ class ReloadableCaTest {
         withForwarders { fwd ->
             val r = TrustConfig.reloadable(rootX)
             val server = server(r)
-            val cache = SessionCache()
+            val cache = caches.new()
             val (c0, s0) = gated(fwd, crossClient(), server, cache) {}
             exchange(c0.getOrThrow(), s0.getOrThrow()) // the tickets arrive before the data
             c0.getOrThrow().close()
@@ -452,7 +458,7 @@ class ReloadableCaTest {
             val server = server(r)
             val client =
                 TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(ReissuedCaCerts.client), ReissuedCaCerts.clientKey.copyOf()) }
-            val cache = SessionCache()
+            val cache = caches.new()
             val (c0, s0) = open(client, server, cache)
             exchange(c0, s0)
             c0.close()
@@ -505,7 +511,7 @@ class ReloadableCaTest {
         runBlocking {
             val r = TrustConfig.reloadable(testCa)
             val server = server(r)
-            val cache = SessionCache()
+            val cache = caches.new()
             val (c0, s0) = open(clientA(), server, cache)
             exchange(c0, s0) // the server's tickets travel before its data
             c0.close()

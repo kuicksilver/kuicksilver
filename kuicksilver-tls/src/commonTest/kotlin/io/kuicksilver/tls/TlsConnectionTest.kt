@@ -105,6 +105,33 @@ internal fun connect(
     return c to s
 }
 
+/**
+ * The side of a handshake a test expects to fail on the other side: closed if it was made (a TLS 1.3 client finishes before
+ * the server refuses its certificate), so its native session goes; whatever it ended with is ignored.
+ */
+internal suspend fun Deferred<TlsConnection>.closeIfMade() {
+    runCatching { withTimeout(10.seconds) { await() } }.getOrNull()?.close()
+}
+
+/**
+ * The session caches a test makes for its own handshakes: [close] (in `@AfterTest`) closes them, which releases their native
+ * sessions and every ticket that arrives later. Any thread may make one.
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class TestCaches {
+    private val made = kotlin.concurrent.atomics.AtomicReference<List<SessionCache>>(emptyList())
+
+    fun new(): SessionCache {
+        val c = SessionCache()
+        while (true) {
+            val l = made.load()
+            if (made.compareAndSet(l, l + c)) return c
+        }
+    }
+
+    fun close() = runBlocking { for (c in made.exchange(emptyList())) c.close() }
+}
+
 internal object TcpFixtures {
     fun client(block: TlsConfig.Builder.() -> Unit = {}): TlsConfig =
         tlsConfig(TlsRole.Client) {
@@ -1026,7 +1053,7 @@ class TlsServerTest {
                 c.close()
                 s.close()
             }
-            val (_, sd) =
+            val (cd, sd) =
                 connect(
                     TcpFixtures.client {
                         identity =
@@ -1035,6 +1062,7 @@ class TlsServerTest {
                     server,
                 )
             assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
+            cd.closeIfMade()
         }
 
     @Test fun clientAuthRequiredAnchoredCaAndPinned(): Unit =
@@ -1055,7 +1083,7 @@ class TlsServerTest {
                 ok.first.close()
                 ok.second.close()
             }
-            val (_, bad) =
+            val (badClient, bad) =
                 connect(
                     TcpFixtures.client {
                         identity =
@@ -1068,8 +1096,9 @@ class TlsServerTest {
                     },
                 )
             assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { bad.await() } }
+            badClient.closeIfMade()
             val pinned = TrustConfig.Pinned(setOf(Certificate(TestCerts.proxy).spkiSha256), base = ca)
-            val (_, pinBad) =
+            val (pinBadClient, pinBad) =
                 connect(
                     TcpFixtures.client {
                         identity =
@@ -1082,6 +1111,7 @@ class TlsServerTest {
                     },
                 )
             val e = assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { pinBad.await() } }
+            pinBadClient.closeIfMade()
             assertIs<VerifyReason.PinMismatch>(e.reason)
         }
 
@@ -1435,7 +1465,7 @@ class SessionResumptionTest {
             val (cd, sd) = connect(client, server)
             val e = assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { cd.await() } }
             assertIs<VerifyReason.PinMismatch>(e.reason)
-            runCatching { withTimeout(5.seconds) { sd.await() } }
+            sd.closeIfMade()
         }
     }
 

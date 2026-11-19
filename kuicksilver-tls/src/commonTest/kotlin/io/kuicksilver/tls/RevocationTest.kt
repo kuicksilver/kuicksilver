@@ -10,6 +10,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,11 @@ import kotlin.time.Duration.Companion.seconds
  * come from `tools/certs/gen-revocation-certs.sh`.
  */
 class RevocationTest {
+    /** Session caches of this test's own handshakes, closed after it (their native sessions). */
+    private val caches = TestCaches()
+
+    @AfterTest fun closeCaches() = caches.close()
+
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val root = Certificate(RevocationCerts.rvRoot)
@@ -359,7 +365,7 @@ class RevocationTest {
     private suspend fun tcp(
         client: TlsConfig,
         server: TlsConfig,
-        cache: SessionCache = SessionCache(),
+        cache: SessionCache = caches.new(),
     ): Pair<TlsConnection, TlsConnection> {
         val (cd, sd) = connect(client, server, clientCache = cache)
         return withTimeout(20.seconds) { cd.await() to sd.await() }
@@ -414,7 +420,7 @@ class RevocationTest {
                             OcspStapling(RevocationCerts.ocspRevoked),
                             v12,
                         ),
-                        clientCache = SessionCache(),
+                        clientCache = caches.new(),
                     )
                 val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { cd.await() } }
                 assertEquals(VerifyReason.Revoked, e.reason, "TLS ${if (v12) "1.2" else "1.3"}")
@@ -424,7 +430,7 @@ class RevocationTest {
 
     @Test fun negative_tcpRequiredStapleMissing(): Unit =
         runBlocking {
-            val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), tcpServer(), clientCache = SessionCache())
+            val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), tcpServer(), clientCache = caches.new())
             val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { cd.await() } }
             assertEquals(VerifyReason.UnknownRevocationStatus, e.reason)
             runCatching { withTimeout(20.seconds) { sd.await() }.close() }
@@ -432,7 +438,7 @@ class RevocationTest {
 
     /** TCP: the outcome of a RequireStapled client against [server]; null when it passed, else the reason. */
     private suspend fun requiredStapleOutcome(server: TlsConfig): VerifyReason? {
-        val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), server, clientCache = SessionCache())
+        val (cd, sd) = connect(tcpClient(RevocationPolicy.RequireStapled), server, clientCache = caches.new())
         return try {
             val c = withTimeout(20.seconds) { cd.await() }
             c.close()
@@ -621,7 +627,7 @@ class RevocationTest {
             c1.close()
             s1.close()
             r.reload(withCrl)
-            val (cd, sd) = connect(revokedClient, server, clientCache = SessionCache())
+            val (cd, sd) = connect(revokedClient, server, clientCache = caches.new())
             val e = assertFailsWith<TlsException.Verify> { withTimeout(20.seconds) { sd.await() } }
             assertEquals(VerifyReason.Revoked, e.reason)
             runCatching { withTimeout(20.seconds) { cd.await() }.close() }
