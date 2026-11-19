@@ -7,6 +7,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.availableForRead
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
@@ -66,6 +67,57 @@ class TlsSocketCloseTest {
                         withTimeoutOrNull(20.seconds) { sock.rawSocket.socketContext.join() },
                         "the close still waits behind the response the application never read",
                     )
+                    response.await()
+                    withTimeoutOrNull(10.seconds) { accepted.socketContext.join() }
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * A read channel opened once the close has begun, and never read, does not bring back the wait behind input nobody
+     * reads: no second reader takes the session's input, which the close reads and drops, and the channel ends at once
+     * with nothing in it. Before, a relay started then took the input from the close's drop and held it behind the unread
+     * channel, and the close waited for the peer's `close_notify` until its bound.
+     */
+    @Test fun negative_aReadChannelOpenedAfterCloseGetsNothing(): Unit =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                withTimeout(60.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = async { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(clientConfig()) }
+                    val accepted = server.accept().tlsServer(serverConfig())
+                    val sock = client.await()
+                    sock.closeTimeout = 50.seconds // the bound of the old wait, far beyond the assertion's
+                    sock.close()
+                    val late = sock.openReadChannel() // never read until the close is over
+                    val response =
+                        async {
+                            runCatching {
+                                val out = accepted.openWriteChannel(autoFlush = true)
+                                out.writeFully(ByteArray(16 shl 20)) // more than both ends' buffers
+                                out.flushAndClose()
+                            }
+                            accepted.close()
+                        }
+                    assertNotNull(
+                        withTimeoutOrNull(20.seconds) { sock.rawSocket.socketContext.join() },
+                        "the close waits behind a read channel opened after it",
+                    )
+                    var got = 0L
+                    val buf = ByteArray(64 * 1024)
+                    runCatching {
+                        while (true) {
+                            val n = late.readAvailable(buf, 0, buf.size)
+                            if (n < 0) break
+                            got += n
+                        }
+                    }
+                    assertEquals(0L, got, "a read channel opened after the close got the peer's bytes")
                     response.await()
                     withTimeoutOrNull(10.seconds) { accepted.socketContext.join() }
                     server.close()

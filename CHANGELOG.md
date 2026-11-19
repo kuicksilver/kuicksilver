@@ -1406,14 +1406,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the application had stopped reading (the relay waited for room in the application's channel) or, for an abort, kept its
   write channel open without writing (the pump waited for its next bytes). The descriptor was closed; the coroutines
   stayed, one set per such connection. A close and an abort now end both pumps
-  (`TlsSocketReleaseTest`; found by the leak sentinel). A behaviour change: once `close()` has closed the session and
-  the raw socket, the application's read channel gets nothing more; a read still waiting on it ends with a cancellation,
-  and plaintext the session had not handed to that channel yet is dropped (read what you need before you close).
+  (`TlsSocketReleaseTest`; found by the leak sentinel). A behaviour change: the application's read channel stops at
+  `close()` (see the next entry), not once the close is over; a read still waiting on it ends with a cancellation, and
+  plaintext the session had not handed to that channel yet is dropped (read what you need before you close).
 - TLS over TCP: a closing socket waited for the peer's close_notify behind input the application would never read: the
   session waited for room in the read channel, the peer's writes waited behind it, and a client's close ran to its 3 s
   bound (a client that closed without reading the rest of a response). From `close()` on, what the peer still sends is
   read and dropped, so its close_notify ends the wait as soon as it comes. Closing only the write channel (a half-close)
-  still delivers the rest (`TlsSocketCloseTest`; found by the leak sentinel's slow-close report).
+  still delivers the rest. A read channel opened once `close()` has begun fails at once and starts no second reader,
+  which took the input from the close's drop and brought the wait back (`TlsSocketCloseTest`; found by the leak
+  sentinel's slow-close report).
 - Ktor client, HTTP/1.1 over TLS: the orderly close of a connection whose response nobody would read any more waited
   behind it in the same way. A response refused after its head (an invalid `Content-Length`) while the server went on
   sending held its close_notify wait to the 1 s bound; a response the application abandoned went the other way, its
