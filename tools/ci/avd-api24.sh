@@ -40,9 +40,11 @@ create() {
   # CI (build.yml, android job): a 4 GiB data partition for API 24, whose image's default made test APK installs stall
   local cfg="$avd_home/$avd.avd/config.ini"
   [ -f "$cfg" ] || die "no $cfg after avdmanager"
-  sed -i.bak '/^disk\.dataPartition\.size=/d' "$cfg" && rm -f "$cfg.bak"
-  echo "disk.dataPartition.size=4096M" >> "$cfg"
-  echo "AVD $avd created ($image, data partition 4096M)"
+  # avdmanager without a device profile gives the arm64 image a 32 MiB app heap, far below CI's x86_64 AVD: the HTTP/2
+  # flood and frame tests then die of OutOfMemoryError. 256 MiB is a phone of that era's default heap.
+  sed -i.bak -e '/^disk\.dataPartition\.size *=/d' -e '/^vm\.heapSize *=/d' -e '/^hw\.ramSize *=/d' "$cfg" && rm -f "$cfg.bak"
+  printf 'disk.dataPartition.size=4096M\nvm.heapSize=256M\nhw.ramSize=2048M\n' >> "$cfg"
+  echo "AVD $avd created ($image, data partition 4096M, heap 256M)"
 }
 
 status() {
@@ -66,9 +68,11 @@ run() {
     fi
     mkdir -p "$root/build/ci"
     echo "== starting $avd on $serial (headless; output in build/ci/emulator-api24.log)"
+    # the arm64 API 24 image limits an app to a 48 MiB heap (dalvik.vm.heapgrowthlimit), well under CI's x86_64 AVD, and
+    # the HTTP/2 flood and frame tests fail there with OutOfMemoryError; -prop raises the limit for this boot only
     # a cold boot without saving a snapshot: every run starts from the same device state, as CI's fresh AVD does
     "$emulator" -avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \
-      > "$root/build/ci/emulator-api24.log" 2>&1 &
+      -prop "dalvik.vm.heapgrowthlimit=${KSL_AVD_API24_HEAP_LIMIT:-128m}" > "$root/build/ci/emulator-api24.log" 2>&1 &
     pid=$!; started=1
     # only the emulator started here is shut down, on every exit: by its console, then by its process id
     # shellcheck disable=SC2064   # pid and serial are fixed now
