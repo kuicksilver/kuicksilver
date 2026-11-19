@@ -1799,7 +1799,7 @@ repeats the checks on the new descriptor. A FIFO at the path is refused without 
 `O_NONBLOCK`; the JVM checks the path before it opens it), so a planted FIFO cannot stall `keylogFile` or the endpoint loop.
 
 ```kotlin
-val path = "/tmp/kuicksilver-keys.txt"
+val path = "debug/kuicksilver-keys.txt"   // a directory only you can write
 // guide:tls:keylog
 val debugClient = tlsConfig(TlsRole.Client) {
     serverName = "server.test"
