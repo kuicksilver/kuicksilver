@@ -90,9 +90,10 @@ public class ProtocolDiagnostics internal constructor() {
     private val connectionWide = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
 
     /**
-     * [failures] are the connection's own end, one instance for every call on it (the HTTP/3 session's `closed` value, the
-     * QUIC connection's close reason, the HTTP/2 connection's close cause, a shared setup's failure): this call never puts
-     * its diagnostics on them, only on its own copy. Called by the pools when a call fails on a connection.
+     * [failures] are the connection's own end, one instance for every call on it and for what reads the connection outside
+     * the engine (a response body, `onClosed`, `QuicConnection.closed`): the HTTP/3 session's `closed` value, the QUIC
+     * connection's close reason, the HTTP/2 connection's close cause. This call never puts its diagnostics on them, only
+     * on its own copy. Called by the pools when a call fails on a connection.
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal fun connectionWide(vararg failures: Throwable?) {
@@ -107,6 +108,26 @@ public class ProtocolDiagnostics internal constructor() {
     /** Whether [t] is one of the instances [connectionWide] recorded (by identity). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal fun isConnectionWide(t: Throwable): Boolean = connectionWide.load().any { it === t }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val setupShared = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
+
+    /**
+     * [failure] is a connection setup's failure, which every call that waited for that setup gets as one instance, and only
+     * engine calls see: copied for this call where it can be, else carried with the shared-marking rule of
+     * [attachDiagnostics] (a second call failing with it marks it, and then it names neither).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun setupShared(failure: Throwable) {
+        while (true) {
+            val now = setupShared.load()
+            if (setupShared.compareAndSet(now, now + failure)) return
+        }
+    }
+
+    /** Whether [t] is one of the instances [setupShared] recorded (by identity). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun isSetupShared(t: Throwable): Boolean = setupShared.load().any { it === t }
 
     @kotlin.concurrent.Volatile
     private var settled: ConnectionSnapshot? = null

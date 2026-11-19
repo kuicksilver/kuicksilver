@@ -1589,9 +1589,9 @@ internal class H3Pool(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    // a setup's failure reaches every call that waited for that setup as one instance
+                    // a setup's failure reaches every call that waited for that setup as one instance (engine calls only)
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.connectionWide(e)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.setupShared(e)
                     throw H3NotSent(e)
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too

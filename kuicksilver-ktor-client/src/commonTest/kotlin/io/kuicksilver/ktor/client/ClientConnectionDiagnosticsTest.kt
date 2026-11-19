@@ -818,6 +818,24 @@ class ClientConnectionDiagnosticsTest {
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             assertNull((x as kotlinx.coroutines.CopyableThrowable<*>).createCopy()?.kuicksilverDiagnostics, "a later copy of it")
         }
+        // a setup's failure (engine calls only): copied where it can be, else carried, marked shared by a second call
+        val timeout =
+            io.ktor.client.network.sockets
+                .ConnectTimeoutException("connect timeout", null)
+        val sa = ProtocolDiagnostics().also { it.setupShared(timeout) }
+        val sb = ProtocolDiagnostics().also { it.setupShared(timeout) }
+        val ca = settleFailure(sa, timeout)
+        val cb = settleFailure(sb, timeout)
+        assertTrue(ca !== timeout && cb !== timeout && ca !== cb)
+        assertSame(sa, ca.kuicksilverDiagnostics)
+        assertSame(sb, cb.kuicksilverDiagnostics)
+        val lookup = kotlinx.io.IOException("no such host")
+        val la = ProtocolDiagnostics().also { it.setupShared(lookup) }
+        assertSame(lookup, settleFailure(la, lookup), "no copy: the instance itself")
+        assertSame(la, lookup.kuicksilverDiagnostics, "one call: its own")
+        val lb = ProtocolDiagnostics().also { it.setupShared(lookup) }
+        settleFailure(lb, lookup)
+        assertNull(lookup.kuicksilverDiagnostics, "two calls: neither")
         val own = kotlinx.io.IOException("this call's own")
         val d = ProtocolDiagnostics()
         d.connectionWide(IllegalStateException("another instance"))
@@ -1088,6 +1106,21 @@ class ClientConnectionDiagnosticsTest {
             assertTrue(thrown !== x, "the call threw the shared instance $x")
         }
     }
+
+    /**
+     * H3Only to a name the resolver cannot answer: the setup's failure (a fresh IOException, which coroutines cannot copy)
+     * still carries the call's diagnostics, over QUIC.
+     */
+    @Test fun negative_anH3OnlySetupFailureThatCannotBeCopiedCarriesTheDiagnostics() =
+        clientTest {
+            testClient(Http3DiscoveryMode.H3Only, engine = {
+                dns = Dns { throw kotlinx.io.IOException("no such host") }
+            }).use { c ->
+                val e = assertFailsWith<Throwable> { c.get("https://never.test/") }
+                val d = assertNotNull(e.kuicksilverDiagnostics, "the call's diagnostics: $e")
+                assertEquals(Transport.Quic, d.transport)
+            }
+        }
 
     /** One exception that ends two calls (a connection's failure, shared) names neither; a cancellation carries nothing. */
     @Test fun negative_aSharedOrCancellingExceptionCarriesNoDiagnostics() {
