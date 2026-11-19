@@ -346,8 +346,14 @@ private suspend fun H3Session.exchange(
             // a server that answered without the rest of the request may stop it before our FIN left (with H3_NO_ERROR, or
             // abruptly with another code): the upload ends, and the response, when one comes, still counts (RFC 9114 section
             // 4.1: clients MUST NOT discard complete responses because their request was terminated abruptly)
-            val stop = stoppedByPeer(e) ?: throw e
-            if (sender == null) r.body?.cancel(stop) // the application writing the request body is released
+            val stop = stoppedByPeer(e)
+            // the application writing the request body is released: only the sender (or its cancellation) ends the body
+            // otherwise, and a request that fails here (the connection ended while its HEADERS were flushed) has none. The
+            // transport reason itself: ktor-io drops a cancel cause that is a ClosedWriteChannelException (its copy is null).
+            // Not for a rejection of 0-RTT: request() sends the request again, body included, and nothing of it was read yet
+            val q = H3Session.transportCause(e)
+            if (sender == null && q !is QuicException.StreamError.EarlyDataRejected) r.body?.cancel(stop ?: q ?: e)
+            if (stop == null) throw e
         }
         val frames =
             RequestFrames(
