@@ -91,14 +91,16 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0, 7 in 0.3.0** (ABI 5 kept
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
-additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
+additive, `ksl_icmp_ptb_build`, `ksl_icmp_open`, `ksl_icmp_send` and `ksl_icmp_close` for a CONNECT-UDP proxy's ICMP Packet Too
+Big (RFC 9298 section 6.1, through a raw socket where the process may open one), `ksl_udp_take_unreachable` for a proxy's notice of an ICMP unreachable (section 3.1), `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
 several sender threads on one socket, `ksl_dns_query` for one record type from the system resolver, `ksl_resolve`,
 `ksl_addr_info` and `ksl_nat64_synthesize` for Happy Eyeballs (one address family per lookup, the state of a local
 address, the platform's NAT64 synthesis), `ksl_chain_level` with
 `KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, `ksl_ctx_verify_chain_path`
 for the path a chain re-verification built, `ksl_ctx_set_crls`, `ksl_ocsp_check`, `KSL_OPT_REVOCATION`,
 `KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation, `KSL_OPT_ALPN_POLICY` for a TLS-over-TCP
-server's ALPN requirements, and `ksl_ctx_set_groups` with `KSL_GET_GROUP` for the key-exchange groups). It is bumped on
+server's ALPN requirements, `ksl_ctx_set_groups` with `KSL_GET_GROUP` for the key-exchange groups, and
+`KSL_OPT_CERT_COMPRESSION` and `KSL_GET_CERT_COMPRESSION` for TLS certificate compression). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
@@ -156,7 +158,9 @@ operating system.
 
 - **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is not supported yet (it is built and tested in CI only, below). The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
-  build verifies both before compiling (`tools/openssl/fetch.sh`).
+  build verifies both before compiling (`tools/openssl/fetch.sh`). Its libcrypto contains zlib and brotli for TLS
+  certificate compression, pinned in `gradle/compression-libs.toml` and verified the same way (brotli, which signs no
+  release, by its SHA-256, the tag and tree checked against the repository when the pin changes; [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
   `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
   (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). No artifact is built with 4.x. The CI job
   `openssl-next` (weekly, or `only=openssl-next` by hand; never required, never a source of release artifacts) builds the
@@ -215,9 +219,26 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 
 The hosted CI (`.github/workflows/build.yml`, on pushes and pull requests to `main` and `release/**`) runs the same
 steps on GitHub's runners, except the QUIC Interop Runner, which it runs weekly. The
-release gate is `tools/ci/local-matrix.sh`, which runs on a maintainer's machine, and releases are made from there with `tools/release/local-release.sh` ([release.md](release.md)). Platform limits that are part of the contract (one endpoint loop per port outside Linux and
-Android, no GSO/GRO on Darwin, the Windows exclusive bind) are in the [README](../README.md#platforms) and the
-[QUIC guide](guide/quic.md#binding-an-endpoint-and-connecting).
+release gate is `tools/ci/local-matrix.sh`, which runs on a maintainer's machine, and releases are made from there with `tools/release/local-release.sh` ([release.md](release.md)). Platform limits that are part of the contract (how several loops share a port
+outside Linux and Android, no GSO/GRO on Darwin, the Windows exclusive bind) are in [Limits per platform](#limits-per-platform)
+below and the [QUIC guide](guide/quic.md#binding-an-endpoint-and-connecting).
+
+### Limits per platform
+
+QUIC client and server, HTTP/3, the Ktor client and server engines and TLS over TCP (`TlsConnection`, `Socket.tls()`)
+work on every target above. What differs:
+
+| Platform | Targets | Limits |
+|---|---|---|
+| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | Linux: glibc 2.17 or newer (the native library is built in manylinux2014; it needs `libresolv.so.2`, part of glibc, since 0.3.0); musl (Alpine) is not supported. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` works on every platform: a socket per loop with `SO_REUSEPORT` on Linux, one socket shared by the loops in process on macOS and Windows ([Several loops on one port](guide/quic.md#several-loops-on-one-port)). The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels), which the release gate uses (`tools/ci/local-matrix.sh --with-windows`); the hosted CI's `windows-jvm` job runs them on GitHub's Windows runners. |
+| Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
+| Kotlin/Native Linux | `linuxX64`, `linuxArm64` | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64); the system zlib (`libz.so.1`) and `libresolv.so.2` (part of glibc), since 0.3.0. |
+| Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops > 1` shares one socket in process (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
+| Kotlin/Native Windows | `mingwX64` | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops > 1` shares one socket in process (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); the hosted CI's `windows` job runs the test executables on GitHub's Windows runners, and the release gate runs locally (`tools/ci/local-matrix.sh`). |
+
+Not in 0.2.x: HTTP/2 (ADR-0009, by decision; in 0.3.0 the client speaks it and the server serves it opt-in, ADR-0017),
+HTTP/3 server push (not planned), WebTransport (0.3.0, experimental), multipath (later, see the
+[roadmap](roadmap.md)), OpenSSL 4.x. 0-RTT is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## What is experimental
 

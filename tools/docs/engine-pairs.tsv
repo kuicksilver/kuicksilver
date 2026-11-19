@@ -1,0 +1,32 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The engine interop pairs of kuicksilver-engine-interop (docs/spec/interop.md, "Engine interop") for the verification
+# pages (tools/docs/verify.py): test class, test-name regex ('*' for every test), client, server, wire. Tab-separated;
+# the first row that matches a test case wins. tools/docs/verify.py check-pairs fails on a test class with no row.
+ClientToNettyH1Test	*	Kuicksilver	Ktor Netty	h1/TLS
+ClientToNettyH2Test	*	Kuicksilver	Ktor Netty	h2
+ClientToNettyH3Test	*	Kuicksilver	Ktor Netty	h3
+ClientToCioH1Test	*	Kuicksilver	Ktor CIO	h1/clear
+CioToServerH1Test	*	Ktor CIO	Kuicksilver	h1/clear
+CioToServerTlsTest	*	Ktor CIO	Kuicksilver	TLS 1.2 refused
+OkHttpToServerH1Test	*	Ktor OkHttp	Kuicksilver	h1/TLS
+OkHttpToServerH2Test	*	Ktor OkHttp	Kuicksilver	h2
+JavaToServerH1Test	*	Ktor Java	Kuicksilver	h1/TLS
+JavaToServerH2Test	*	Ktor Java	Kuicksilver	h2
+ClientToNettyWebSocketTest	*	Kuicksilver	Ktor Netty	wss
+ClientToCioWebSocketTest	*	Kuicksilver	Ktor CIO	ws
+CioToServerWebSocketTest	*	Ktor CIO	Kuicksilver	ws
+OkHttpToServerWebSocketTest	*	Ktor OkHttp	Kuicksilver	wss
+JavaToServerWebSocketTest	*	Ktor Java	Kuicksilver	wss
+ClientToPlainNettyTest	H1$	Kuicksilver	Netty	h1/TLS
+ClientToPlainNettyTest	*	Kuicksilver	Netty	h2
+NettyH3ClientToServerTest	*	Netty HTTP/3	Kuicksilver	h3
+RawClientsToServerTest	^okHttpWebSocket	OkHttp	Kuicksilver	wss
+RawClientsToServerTest	^okHttp	OkHttp	Kuicksilver	h2
+RawClientsToServerTest	^jdkWebSocket	JDK HttpClient	Kuicksilver	wss
+RawClientsToServerTest	^jdk	JDK HttpClient	Kuicksilver	h2
+H2cInteropTest	^okHttpPriorKnowledge	OkHttp	Kuicksilver	h2c
+H2cInteropTest	^ktorOkHttpEngine	Ktor OkHttp	Kuicksilver	h2c
+H2cInteropTest	^jdkHttpClient	JDK HttpClient	Kuicksilver	h1/clear (Upgrade: h2c not taken)
+H2cInteropTest	^ourClientToPlainNetty	Kuicksilver	Netty	h2c
+H2cInteropTest	^ourClientToKtorNetty	Kuicksilver	Ktor Netty	h2c

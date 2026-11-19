@@ -14,6 +14,7 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.awaitAbandoned
 import io.kuicksilver.http3.handlerEnded
 import io.kuicksilver.http3.holdStreamUntilHandled
+import io.kuicksilver.http3.resetIfUnanswered
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
@@ -84,7 +85,10 @@ internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnect
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
     val s = h3SettingsWithin(configuration.http3Settings, configuration.requestHeaderTimeoutSeconds.seconds)
-    val connect = (configuration.webSocketsOverHttp3 || configuration.webTransport) && !s.enableConnectProtocol
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val connect =
+        (configuration.webSocketsOverHttp3 || configuration.webTransport || configuration.connectUdp) && !s.enableConnectProtocol
     val wt = configuration.webTransport && !s.webTransport
     if (!connect && !wt) return s
     return s
@@ -176,6 +180,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             break
                         }
                     afterH3AcceptForTest?.invoke()
+                    h3ConnectionForTest?.invoke(conn)
                     listener.add(conn)
                     // after add(): a stop or a switch to Drain that began meanwhile either saw this connection in live() or is seen
                     // here (RFC 9114 5.2)
@@ -224,6 +229,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                             launch {
                                                 // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                                 try {
+                                                    beforeH3HandlerForTest?.invoke()
                                                     handleHttp3(req, local, peer, authorityCheck)
                                                 } catch (e: CancellationException) {
                                                     throw e
@@ -244,6 +250,12 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                             handler.join()
                                         } finally {
                                             watch.cancel()
+                                            // a request whose handler never got to answer or reset it (cancelled by the watch
+                                            // before its work began) still ends: STOP_SENDING and a reset, H3_REQUEST_CANCELLED
+                                            // (RFC 9114 section 4.1.1); left open, it kept its receive half and held the GOAWAY
+                                            // idle close for the connection's life
+                                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                            req.resetIfUnanswered(Http3ErrorCode.REQUEST_CANCELLED)
                                             @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
                                             req.handlerEnded()
                                         }
@@ -287,14 +299,21 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     authorityCheck: AuthorityCheck,
 ) {
     // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
-    // WebTransport) and WebTransport go through Ktor's pipeline; other protocols are not served here and get 501 (section 3).
+    // WebTransport), WebTransport and, with connectUdp, CONNECT-UDP (RFC 9298) go through Ktor's pipeline; other protocols
+    // are not served here and get 501 (section 3).
     // Upgrade tokens match in any case (RFC 9110 section 7.8)
     val webSocket =
         configuration.webSocketsOverHttp3 && req.method == "CONNECT" && req.protocol.equals(WebSocketOverH3.PROTOCOL, ignoreCase = true)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val webTransport = configuration.webTransport && req.isWebTransport
-    if (req.method == "CONNECT" && !webSocket && !webTransport) {
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val connectUdp =
+        configuration.connectUdp &&
+            io.kuicksilver.http3.ConnectUdp
+                .isConnectUdp(req)
+    if (req.method == "CONNECT" && !webSocket && !webTransport && !connectUdp) {
         runCatching { req.respond(501).finish() }
         return
     }
@@ -328,6 +347,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 beforeH3UpgradeForTest,
                 h3AltSvc,
                 configuration.webSocketMaxMessageSize,
+                connectUdp,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         // RFC 9110 section 10.1.1: `Expect: 100-continue` with content to follow gets an immediate 100 (Continue) as the call

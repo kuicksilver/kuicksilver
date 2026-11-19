@@ -224,6 +224,18 @@ internal class RawH2Client private constructor(
             }
         }
 
+        /** Connects to 127.0.0.1:[port] over cleartext TCP, for h2c with prior knowledge (RFC 9113 section 3.3). */
+        suspend fun connectPlain(port: Int): RawH2Client {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                return RawH2Client(selector, tcp, tcp.openReadChannel(), tcp.openWriteChannel(), null)
+            } catch (e: Throwable) {
+                selector.close()
+                throw e
+            }
+        }
+
         fun frame(
             type: Int,
             flags: Int,

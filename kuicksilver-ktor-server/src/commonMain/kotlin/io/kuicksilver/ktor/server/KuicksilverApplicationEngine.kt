@@ -16,7 +16,9 @@ import io.ktor.server.engine.BaseApplicationEngine
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
+import io.ktor.utils.io.ByteReadChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h1.installH1CallHandling
@@ -217,6 +219,13 @@ public class KuicksilverApplicationEngine(
         internal var deploymentProxyProtocol: ProxyProtocolConfig? = null
 
         /**
+         * Set by `EngineMain` (`kuicksilver.h2c`): cleartext HTTP/2 on the plain deployment port (a Ktor `connector`), as
+         * [KuicksilverPlainConnector.Builder.h2c] does for a plain connector of ours.
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal var h2cDeploymentPort: H2cMode = H2cMode.Off
+
+        /**
          * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
          * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
          * (RFC 7838 sections 3 and 4).
@@ -229,8 +238,9 @@ public class KuicksilverApplicationEngine(
         /**
          * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
          * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
-         * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
-         * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3, and over TLS 1.2 on a connector that allows it
+         * `http/1.1` unless this is set. Plain connectors are not affected: they serve HTTP/2 only with their own opt-in,
+         * h2c ([KuicksilverPlainConnector.Builder.h2c]); without it a client's `PRI *` preface is answered `505 HTTP Version
+         * Not Supported`, as before. Over TLS 1.3, and over TLS 1.2 on a connector that allows it
          * (`versions = TlsVersions.Tls12And13`; RFC 9113 section 9.2).
          * WebSockets come over HTTP/2 too (RFC 8441), unless [webSocketsOverHttp2] is turned off.
          */
@@ -404,6 +414,14 @@ public class KuicksilverApplicationEngine(
         public var webTransport: Boolean = false
 
         /**
+         * Serve CONNECT-UDP (RFC 9298) over HTTP/3 to `connectUdp(proxy)` routes: turns on `enableConnectProtocol`; false by
+         * default. Only HTTP/3 carries it (ADR-0024). The proxy's target filter, limits and template are the `UdpProxy`'s the
+         * route is given; there is no configuration-file key, since a filter or a resolver is code.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var connectUdp: Boolean = false
+
+        /**
          * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
          * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
          * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A
@@ -452,6 +470,29 @@ public class KuicksilverApplicationEngine(
         internal var h2PrefaceForTest: (suspend () -> Unit)? = null
 
         /**
+         * Test hook: runs inside the wait for the client preface that races the stop, before the preface is awaited (a
+         * test that never returns from it leaves the stop as the only side that can win).
+         */
+        internal var h2PrefaceAwaitForTest: (suspend () -> Unit)? = null
+
+        /**
+         * Test hook: runs inside an h2c connector's check for the client preface ([H2cMode.WithHttp11]) that races the
+         * stop, with the connection's input and the listener's draining job, before the check looks at it (a test that
+         * never returns from it leaves the stop as the only side that can win).
+         */
+        internal var h2cPrefaceCheckForTest: (suspend (ByteReadChannel, Job) -> Unit)? = null
+
+        /**
+         * Test hook: runs before an HTTP/2 connection's wait for the client preface races the stop, with the connection and
+         * the listener's draining job (a test holds it here until the core took a request and the stop began).
+         */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        internal var h2BeforePrefaceRaceForTest: (
+            suspend (io.kuicksilver.http2.runtime.H2ServerConnection, kotlinx.coroutines.Job) -> Unit
+        )? =
+            null
+
+        /**
          * Tests run each HTTP/2 request stream's release at the end of its handling through this, with the handler's
          * cancellation in flight (null for none); null releases it.
          */
@@ -475,7 +516,8 @@ public class KuicksilverApplicationEngine(
 
         /**
          * Adds a plain HTTP/1.1 connector, as Ktor's `connector { }`, with the option of marking its clients trusted gateways
-         * ([KuicksilverPlainConnector.Builder.trustedGateway]).
+         * ([KuicksilverPlainConnector.Builder.trustedGateway]) and of serving HTTP/2 over cleartext TCP
+         * ([KuicksilverPlainConnector.Builder.h2c]).
          */
         @ExperimentalKuicksilverApi
         public fun plainConnector(block: KuicksilverPlainConnector.Builder.() -> Unit = {}) {
@@ -657,6 +699,9 @@ public class KuicksilverApplicationEngine(
         gateway: Boolean = false,
         /** `EngineMain`'s `kuicksilver.proxyProtocol.*` for the plain deployment port. */
         deploymentProxy: ProxyProtocolConfig? = null,
+        /** `EngineMain`'s `kuicksilver.h2c` for the plain deployment port (a Ktor connector, not a plain one of ours). */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        deploymentH2c: H2cMode = H2cMode.Off,
     ) {
         /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
         @OptIn(ExperimentalKuicksilverApi::class)
@@ -666,6 +711,10 @@ public class KuicksilverApplicationEngine(
         @OptIn(ExperimentalKuicksilverApi::class)
         val proxyProtocol: ProxyProtocolConfig? =
             tls?.proxyProtocol ?: (config as? KuicksilverPlainConnector)?.proxyProtocol ?: deploymentProxy
+
+        /** Cleartext HTTP/2 on this connector (RFC 9113 section 3.3); always [H2cMode.Off] on a TLS one. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val h2c: H2cMode = if (tls != null) H2cMode.Off else (config as? KuicksilverPlainConnector)?.h2c ?: deploymentH2c
     }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
@@ -675,6 +724,15 @@ public class KuicksilverApplicationEngine(
             }
 
             c.type == ConnectorType.HTTP -> {
+                // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS"; a plain connector
+                // the identity turns into a TLS one cannot keep its h2c, and dropping it silently would hide the mistake
+                @OptIn(ExperimentalKuicksilverApi::class)
+                val h2c = (c as? KuicksilverPlainConnector)?.h2c ?: configuration.h2cDeploymentPort
+                @OptIn(ExperimentalKuicksilverApi::class)
+                require(configuration.identity == null || h2c == H2cMode.Off) {
+                    "h2c ($h2c) needs a plain connector, but $c serves TLS with the configuration's identity: drop the identity " +
+                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (http2 = true)"
+                }
                 configuration.identity?.let { id ->
                     KuicksilverTlsConnector
                         .Builder(id)
@@ -698,7 +756,13 @@ public class KuicksilverApplicationEngine(
                         }.build()
                         .let { Listener(it, it) }
                 }
-                    ?: Listener(c, null, configuration.tlsTrustedGateway, configuration.deploymentProxyProtocol)
+                    ?: Listener(
+                        c,
+                        null,
+                        configuration.tlsTrustedGateway,
+                        deploymentProxy = configuration.deploymentProxyProtocol,
+                        deploymentH2c = configuration.h2cDeploymentPort,
+                    )
             }
 
             else -> {
@@ -943,6 +1007,12 @@ public class KuicksilverApplicationEngine(
 
     /** Test hook: runs in the HTTP/3 accept loop after each accepted connection, before it is served. */
     internal var afterH3AcceptForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: sees each accepted HTTP/3 connection, after [afterH3AcceptForTest] and before it is served. */
+    internal var h3ConnectionForTest: ((Http3Connection) -> Unit)? = null
+
+    /** Test hook: runs in each HTTP/3 request's handler coroutine before the request is handled; a suspension here holds it. */
+    internal var beforeH3HandlerForTest: (suspend () -> Unit)? = null
 
     /** Test hook: runs when an HTTP/3 connection accepts no more requests, while the requests it accepted may still run. */
     internal var afterH3RequestsAcceptedForTest: (() -> Unit)? = null

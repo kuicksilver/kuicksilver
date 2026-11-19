@@ -47,6 +47,7 @@ struct ksl_ctx {
     int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
     int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
     int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int cert_compression; /* KSL_OPT_CERT_COMPRESSION: RFC 8879 offered and accepted (brotli, zlib); a server's chain compressed at freeze */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
     uint8_t ocsp_hash[32];
@@ -146,6 +147,7 @@ struct ksl_ssl {
     uint64_t record_limit;  /* records the current keys may protect (RFC 9846 5.5), per AEAD; 0 = not yet known */
     uint32_t
         renegotiations; /* TCP, TLS 1.2: renegotiations the peer attempted on the established session (ksl_msg_cb) */
+    uint16_t peer_cert_comp; /* the algorithm of the peer's CompressedCertificate (RFC 8879), 0 for none (ksl_msg_cb) */
     /* keylog lines */
     char *keylog;
     size_t keylog_len, keylog_cap;
@@ -209,6 +211,7 @@ int ksl_client_hello_sni(SSL *ssl, const unsigned char **name,
                          size_t *len); /* during the ClientHello: its host_name, if any */
 /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed 2^48-1" */
 #define KSL_MAX_KEY_UPDATES ((UINT64_C(1) << 48) - 1)
+int ksl_cert_compressors(void); /* ksl_ctx.c: bit 0 zlib, bit 1 brotli compress here (KSL_GET_CERT_COMPRESSORS) */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
                 void *arg); /* a TCP client's handshake messages (ksl_ssl.c) */
 
@@ -230,6 +233,10 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
    group a ClientHello key_share extension has a share for (-1 none, -2 malformed); the server's choice by o's order (ksl_client_hello_cb) */
 int ksl_group_id_of_name(const char *name);
 int ksl_key_share_choice(const ksl_ctx *o, const uint8_t *p, size_t len);
+/* Appends a, b and name to buf (cap bytes, *out of them used, *out < cap) for a group list: 0 when they do not fit, and nothing
+   appended. A truncated snprintf returns the length it would have written, so its result is checked before it moves *out:
+   unchecked, the next call's size (cap - *out) would wrap and write past the buffer. */
+int ksl_append_group(char *buf, size_t cap, size_t *out, const char *a, const char *b, const char *name);
 int ksl_prefer_server_groups(const ksl_ctx *o, SSL *ssl, int choice);
 
 /* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */

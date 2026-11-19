@@ -43,9 +43,13 @@ check_layout() {
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/LICENSE \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/NOTICE \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/licenses/LICENSE.openssl.txt \
+      Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/licenses/LICENSE.zlib.txt \
+      Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/licenses/LICENSE.brotli.txt \
       Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/LICENSE \
       Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/NOTICE \
       Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/licenses/LICENSE.openssl.txt \
+      Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/licenses/LICENSE.zlib.txt \
+      Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/licenses/LICENSE.brotli.txt \
       Kuicksilver.xcframework/ios-arm64/Kuicksilver.framework/Info.plist \
       Kuicksilver.xcframework/ios-arm64/dSYMs/Kuicksilver.framework.dSYM/Contents/Info.plist \
       Kuicksilver.xcframework/ios-arm64-simulator/Kuicksilver.framework/Kuicksilver \

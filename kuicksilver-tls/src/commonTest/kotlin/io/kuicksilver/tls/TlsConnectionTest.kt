@@ -38,6 +38,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -152,9 +153,21 @@ internal object TcpFixtures {
 }
 
 class TlsConnectionTest {
+    /**
+     * The client cache of [both]: this test's own. A connection's reader stores the server's tickets after the handshake, and
+     * a test that closed its client right away (close does not wait for the reader) may leave a ticket on its way to
+     * [SessionCache.Default] after the next test's [load] cleared it; that ticket made the next full handshake a resumption,
+     * which reports the earlier server's chain (a 61-certificate one, echoOneMegabyteTls13 on macosArm64, 2026-11-19).
+     */
+    private val cache = SessionCache()
+
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
         runBlocking { SessionCache.Default.clear() }
+    }
+
+    @AfterTest fun closeCache() {
+        runBlocking { cache.close() }
     }
 
     /**
@@ -171,6 +184,7 @@ class TlsConnectionTest {
                     TcpFixtures.client {
                         identity =
                             TlsIdentity.fromDer(listOf(TestCerts.client) + List(copies) { TestCerts.testCa }, TestCerts.clientKey.copyOf())
+                        certificateCompression = false // the repeated certificates compress to almost nothing (RFC 8879)
                     }
                 val server =
                     TcpFixtures.server {
@@ -178,7 +192,7 @@ class TlsConnectionTest {
                         trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
                     }
                 val (cd, sd) = connect(client, server)
-                withTimeout(20.seconds) { cd.await() }.close()
+                withTimeout(20.seconds) { cd.await().closeAndAwaitPumps() } // its tickets land within this test
                 val s = withTimeout(20.seconds) { sd.await() }
                 assertEquals(Certificate(TestCerts.client), s.peerCertificates[0])
                 s.close()
@@ -192,9 +206,10 @@ class TlsConnectionTest {
                     TcpFixtures.server {
                         identity =
                             TlsIdentity.fromDer(listOf(TestCerts.server) + List(copies) { TestCerts.testCa }, TestCerts.serverKey.copyOf())
+                        certificateCompression = false // the repeated certificates compress to almost nothing (RFC 8879)
                     }
                 val (cd, sd) = connect(TcpFixtures.client(), server)
-                withTimeout(20.seconds) { cd.await() }.close()
+                withTimeout(20.seconds) { cd.await().closeAndAwaitPumps() } // its tickets land within this test
                 withTimeout(20.seconds) { sd.await() }.close()
             }
         }
@@ -205,8 +220,43 @@ class TlsConnectionTest {
         pair: ChannelPair = ChannelPair(),
     ): Pair<TlsConnection, TlsConnection> =
         runBlocking {
-            val pair2 = connect(client, server, pair)
+            val pair2 = connect(client, server, pair, cache)
             withTimeout(20.seconds) { pair2.first.await() to pair2.second.await() }
+        }
+
+    /**
+     * A ticket another server issued under the same cache key, stored in [SessionCache.Default] after this test began (a late
+     * ticket of an earlier test), does not turn [both]'s handshake into a resumption: the client reports the chain its own
+     * server presented, one certificate, and not the cached 61.
+     */
+    @Test fun aLateTicketInTheDefaultCacheLeavesBothAFullHandshake(): Unit =
+        runBlocking {
+            val longChain =
+                TcpFixtures.server {
+                    identity = TlsIdentity.fromDer(listOf(TestCerts.server) + List(60) { TestCerts.testCa }, TestCerts.serverKey.copyOf())
+                }
+            val client = TcpFixtures.client()
+            val (cd, sd) = connect(client, longChain)
+            val first = withTimeout(20.seconds) { cd.await() }
+            val longServer = withTimeout(20.seconds) { sd.await() }
+            assertEquals(61, first.peerCertificates.size)
+            // the server's tickets precede its first byte, and the reader caches a ticket before it hands on what followed it
+            longServer.output.writeFully(byteArrayOf(1), 0, 1)
+            longServer.output.flush()
+            withTimeout(10.seconds) { first.input.readExactly(1) }
+            val key = SessionCache.key(client.serverName, "server.test", client.trust, client.identity)
+            assertTrue(SessionCache.Default.peek(key), "the long chain's ticket is in the default cache")
+            first.closeAndAwaitPumps()
+            longServer.close()
+            val (c, s) = both()
+            try {
+                assertEquals(false, c.sessionReused, "a full handshake")
+                assertEquals(1, c.peerCertificates.size)
+            } finally {
+                c.close()
+                s.close()
+                SessionCache.Default.clear()
+            }
         }
 
     @Test fun echoOneMegabyteTls13(): Unit =

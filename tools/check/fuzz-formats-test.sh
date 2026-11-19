@@ -18,6 +18,8 @@
 # that is no commit is skipped with a message.
 # Usage: fuzz-formats-test.sh
 set -uo pipefail
+# the hosted lint job exports its base for the real check (build.yml): every control below names its own base, or none
+unset KSL_FUZZ_FORMATS_BASE
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0

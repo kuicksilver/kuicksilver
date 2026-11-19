@@ -81,7 +81,16 @@ from us, so we commit to the following.
   ([`tools/openssl/configure-flags.txt`](tools/openssl/configure-flags.txt)) compiles out everything the stack does
   not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
   logging, and more), which removes a large part of OpenSSL's attack surface.
-- **Watching upstream.** The maintainers follow the openssl-announce list, which pre-announces security releases.
+- **zlib and brotli inside OpenSSL.** OpenSSL's libcrypto contains zlib and brotli, for TLS certificate compression
+  (RFC 8879; [ADR-0025](docs/adr/0025-zlib-and-brotli-in-libcrypto.md)). Their releases are pinned in
+  [`gradle/compression-libs.toml`](gradle/compression-libs.toml) and verified before compiling (`tools/openssl/fetch.sh`):
+  zlib by its tarball's SHA-256 and the signature of its release key (`tools/openssl/zlib-release-key.asc`); brotli,
+  which signs no release, by its tarball's SHA-256 (the tag's commit in the tarball is a consistency check only; when the pin
+  changes, `tools/openssl/brotli-pin-check.sh` checks the tag and the tarball's tree against the repository). An advisory for zlib or brotli is
+  handled like an OpenSSL advisory below; both decompress what a peer sends during the handshake (a compressed
+  certificate chain), bounded by the size limit of the certificate chain.
+- **Watching upstream.** The maintainers follow the openssl-announce list, which pre-announces security releases, and
+  the release and security advisory feeds of zlib (zlib.net, madler/zlib) and brotli (google/brotli).
 - **When OpenSSL publishes a security advisory**, we check it against our configuration (the compiled-out features
   above) and against how Kuicksilver calls OpenSSL, and decide whether the issue is reachable through Kuicksilver. For
   every issue that is, we make a patch release of the supported line with the fixed OpenSSL (OpenSSL publishes the
@@ -119,7 +128,8 @@ from us, so we commit to the following.
   `enable-fips`, and `no-module`); see [docs/stability.md, OpenSSL](docs/stability.md#openssl). A build against a system
   OpenSSL that has a FIPS provider does not make Kuicksilver FIPS-validated either.
 - **SBOM and provenance.** Each release from 0.2.1 attaches to its GitHub release a CycloneDX SBOM of every publication
-  (with OpenSSL as a component: version, tarball SHA-256, CPE, configure flags) and a signed build provenance statement;
+  (with OpenSSL as a component: version, tarball SHA-256, CPE, configure flags; and zlib and brotli inside it) and a
+  signed build provenance statement;
   see [docs/release.md, Supply chain](docs/release.md#supply-chain-sbom-and-provenance).
 - **Verifying a release.** [docs/verifying.md](docs/verifying.md) shows how to check the signatures (release key
   `22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`), the SBOM and provenance, and how to rebuild the native libraries that are

@@ -103,16 +103,16 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the four sample builds,
    `tools/check/consumer-smoke.sh`), normally set when the
-   line was started, and for a final version the README ("X.Y.Z is on Maven Central", the BOM version of its Install
-   blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
+   line was started, and for a final version the README ("X.Y.Z is on Maven Central", the BOM version of its "Add it"
+   block), `docs/install.md` (the BOM version of its blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework
    URL) name the version itself (a prerelease such as
    0.3.0-rc1 leaves the status line at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks).
    While a
-   minor version is in preparation on `main`, the README's Install blocks already name it and its status line and
-   "Versions" paragraph say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
-   Maven Central" and drops the build-it-yourself note, and `docs/guide/ios.md` is bumped in the same commit as the
-   README (its dependency line and xcframework URL). The script refuses the release while the status line still names
-   the previous version, and while the README still says "release in preparation" or "Until X.Y.Z is on Maven Central". For a final version of
+   minor version is in preparation on `main`, the README's "Add it" block and `docs/install.md` already name it, and the
+   README's status line and the "Versions" section of `docs/install.md` say it is not published yet; the release commit of that version turns them into "X.Y.Z is on
+   Maven Central" and drops the build-it-yourself note (in the README and in `docs/install.md`), and `docs/guide/ios.md`
+   (its dependency line and xcframework URL) and `docs/install.md` are bumped in the same commit as the README. The script refuses the release while the status line still names
+   the previous version, and while the README or `docs/install.md` still says "release in preparation" or "Until X.Y.Z is on Maven Central". For a final version of
    the newest line, the supported-versions table of `SECURITY.md` names it too ("0.2.1 today"; the script does not check
    this). The same commit carries the regenerated reliability page [reliability.md](reliability.md): its numbers are
    never typed by hand. Generate it before the commit, from the artifacts that exist then: the gate record of the last
@@ -138,7 +138,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    exists (locally or on origin: a release fetches origin first, a dry run uses what was fetched last), a branch behind
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
    Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
-   run does not ask), a tree whose version fallbacks or (final versions) README and iOS
+   run does not ask), a tree whose version fallbacks or (final versions) README, `docs/install.md` and iOS
    guide coordinates do not name the version (step 2), a Swift package that cannot be prepared (release mode: the
    repository does not clone, already has the tag `<version>`, or its rendered `Package.swift` does not read back in
    `swift package dump-package`; `tools/release/swift-package.sh prepare`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
@@ -153,9 +153,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `mingw-x64` emulated on Apple Silicon), `macos-arm64`, `macos-x64`, `ios-arm64`, `ios-sim-arm64`, the three Android
      ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` and the absence of the FIPS provider
      (`tools/check/openssl-no-fips.sh`) checked for each. Each build writes
-     `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
+     `provenance.txt` (the tarball's SHA-256 and those of the zlib and brotli built into libcrypto, the configure line,
+     the archives' SHA-256), which
      `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
-     its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
+     its negative controls; `tools/openssl/fetch-test.sh` those of the zlib and brotli verification). `mingw-x64` is the
+     `openssl-mingw-x64` the workflow downloads.
    - `Kuicksilver.xcframework.zip` for SwiftPM from those builds (`tools/release/xcframework.sh <version>`: the
      `samples/ios/kuicksilver-swift` umbrella, its layout, `CFBundleShortVersionString`, the checksum, which `swift
      package compute-checksum` must agree with) into `build/release/`, signed and a provenance subject like the SBOM
@@ -212,7 +214,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    commit identity stays as it is; the script prints the command), push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
-   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
+   `Kuicksilver.xcframework.zip` and their `.asc`. Attach as well the source tarballs the release build verified, from
+   `build/openssl-work/src`: `openssl-<v>.tar.gz` and its `.asc`, `zlib-<v>.tar.gz` and its `.asc`, `brotli-<v>.tar.gz`
+   (GitHub's archive of brotli's tag is not promised to stay the same byte for byte, so the pinned SHA-256 may not match a
+   later download; these copies are what `tools/verify/verify-release.sh --offline <dir>` takes in `<dir>/openssl/`).
+   SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
    Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. **Then, once the GitHub release is
    published** (before that the zip's URL does not resolve), the Swift package, in a terminal with the release key,
    exactly as the script printed (step 5 of its last lines):
@@ -246,10 +252,39 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    guide and the API reference of the tag (`tools/docs/site.sh <version>`), adds them to the `gh-pages` branch under
    `/<version>/` (earlier versions stay), points `/latest/` at the newest final release and deploys the branch to
    <https://kuicksilver.github.io/kuicksilver/> with `actions/deploy-pages` (Pages enabled once: [step 7](#once-accounts-keys-dns) above).
-   Check the version's pages once the run is green; *Actions → pages → Run workflow* with the version rebuilds one. Runs
-   update `gh-pages` one at a time and a later run can cancel one still waiting: re-run a cancelled `pages` run. Each
+   Check the version's pages once the run is green; *Actions → pages → Run workflow* with the version rebuilds one. A
+   release update of `gh-pages` waits for another release update (a later one can replace one still waiting: re-run a
+   cancelled `pages` run); one that races a development-snapshot update is redone on the new `gh-pages`, and each
+   deployment publishes `gh-pages` as it is when it starts. Each
    version adds about 30 MB (0.3.0-SNAPSHOT: 29 MB) and `/latest/` is a copy of one (stored once in git); GitHub Pages allows a
    1 GB site, so past about 30 versions the oldest ones are removed from `gh-pages` by hand.
+   The same run builds the version's "How we verify" pages (`/<version>/verify/`, in Russian under `ru/verify/` and in
+   Simplified Chinese under `zh/verify/`; `tools/docs/verify.py`) from the newest successful `build.yml` run of the
+   tag's commit and its `verify-*` artifacts, which are kept 30 days: publish the GitHub release within 30 days of that
+   run, or re-run `build.yml` on the commit first, else the pages say "no data". A run or record of another commit fails
+   the `verify` job and with it the publication. A later rebuild of the version after the artifacts expired keeps its
+   published verification data (`tools/docs/verify.py keep`); with none to keep, the pages say "no data" and the run
+   warns, while the guide and the API reference are published as usual.
+   The same workflow keeps `/dev/`, the development snapshot of `main`'s tip: after every successful `build.yml` run of
+   a push to `main` it publishes that run's guide and API reference (built by its `apple` job as the documentation gate,
+   with a "development snapshot of <sha>, not a release" banner and links at the commit) and the verification pages
+   from the same run; by hand, *Run workflow* with `ref` (a tag or a full commit SHA on `main`, whose push run is at most
+   7 days old) publishes that commit instead. An automatic update goes out only while its commit is still `main`'s tip
+   and the published snapshot is not newer (`tools/docs/dev-guard.sh`, right before the push), so a slow run never rolls
+   `/dev/` back; every snapshot page is `noindex`, so search engines show the release pages. The landing page lists `dev` beside the releases; `/latest/` is never a
+   snapshot. Only `/dev/` is kept, not one directory per snapshot: each would add about 30 MB to `gh-pages`.
+   After the first publication (0.3.0), once <https://kuicksilver.github.io/kuicksilver/latest/verify/index.html> loads,
+   add the site link and three badges to the README's badge block, in a commit of their own (they would be broken
+   images before):
+
+   ```html
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/platforms.html"><img alt="Tests of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/tests.svg"></a>
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/platforms.html"><img alt="Platforms of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/platforms.svg"></a>
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/interop.html"><img alt="Engine interop of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/engine-interop.svg"></a>
+   ```
+
+   and below it: `<a href="https://kuicksilver.github.io/kuicksilver/">Documentation site</a> · <a
+   href="https://kuicksilver.github.io/kuicksilver/latest/verify/index.html">How we verify</a>`.
 
 ## Releasing from a maintenance branch
 
@@ -385,7 +420,8 @@ the provenance.
 - the root publication of each module (`kuicksilver-quic`, ...) aggregating its platform publications, and the BOM
   listing the seven modules;
 - what Gradle cannot see: the `ksl` C shim (its ABI version, the commit) and **OpenSSL** (version, tarball SHA-256,
-  download URL, CPE `cpe:2.3:a:openssl:openssl:<version>`, the configure flags, `fips-provider: not built`), statically
+  download URL, CPE `cpe:2.3:a:openssl:openssl:<version>`, the configure flags, `fips-provider: not built`) with **zlib**
+  and **brotli** inside it (version, tarball SHA-256, download URL, CPE, license; from `gradle/compression-libs.toml`), statically
   linked, under every publication that embeds `kuicksilver-native` or depends on it. Values come from
   `gradle/openssl.toml`, `tools/openssl/configure-flags.txt` and `ksl.h`; the timestamp is the commit's, so the same commit
   gives the same documents.

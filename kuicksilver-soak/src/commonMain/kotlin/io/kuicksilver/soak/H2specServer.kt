@@ -18,9 +18,10 @@ import kotlinx.coroutines.runBlocking
  * Ktor engine with HTTP/2 on one TLS connector (the test PKI's server identity), HTTP/3 off, default `Http2Settings`.
  * Every request, whatever its method and path, reads its content to the end and gets a 200 with a short text body: h2spec
  * needs a response with DATA (section 6.9.1 with a window of 1 octet) and a handler that keeps its stream open while the
- * client grants no window (section 5.1.2). Arguments: `[host] [port] [trusted-gateway]` (default 127.0.0.1, 0 and the
- * misdirected-request check on); the bound port is printed as `h2spec-server listening on <port>` once the server accepts
- * connections. Runs until the process is killed.
+ * client grants no window (section 5.1.2). Arguments: `[host] [port] [trusted-gateway] [h2c]` (default 127.0.0.1, 0, the
+ * misdirected-request check on, TLS); `h2c` serves HTTP/2 over cleartext TCP with prior knowledge instead (a plain connector
+ * with `H2cMode.Only`, RFC 9113 section 3.3; h2spec without `-t`), with the same settings and handler. The bound port is
+ * printed as `h2spec-server listening on <port>` once the server accepts connections. Runs until the process is killed.
  *
  * h2spec sends the host it connects to as `:authority`. The test identity names 127.0.0.1: a server that h2spec reaches
  * as 127.0.0.1 (on a Linux host, and in the linux-x64 container, on a Mac too) keeps the check on. A server on a macOS
@@ -31,20 +32,27 @@ import kotlinx.coroutines.runBlocking
 public fun h2specServerMain(args: Array<String>) {
     val host = args.getOrNull(0) ?: "127.0.0.1"
     val port = args.getOrNull(1)?.toInt() ?: 0
-    require(args.size <= 3) { "unknown arguments: ${args.drop(3)}" }
-    val gateway =
-        when (val a = args.getOrNull(2)) {
-            null -> false
-            "trusted-gateway" -> true
-            else -> throw IllegalArgumentException("unknown argument: $a")
-        }
+    val flags = args.drop(2)
+    flags.firstOrNull { it != "trusted-gateway" && it != "h2c" }?.let { throw IllegalArgumentException("unknown argument: $it") }
+    val gateway = "trusted-gateway" in flags
+    val h2c = "h2c" in flags
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(SoakPki.identity()) {
-                    this.host = host
-                    this.port = port
-                    trustedGateway = gateway
+                if (h2c) {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    plainConnector {
+                        this.host = host
+                        this.port = port
+                        trustedGateway = gateway
+                        this.h2c = io.kuicksilver.ktor.server.H2cMode.Only
+                    }
+                } else {
+                    tlsConnector(SoakPki.identity()) {
+                        this.host = host
+                        this.port = port
+                        trustedGateway = gateway
+                    }
                 }
                 http2 = true
                 http3 = false

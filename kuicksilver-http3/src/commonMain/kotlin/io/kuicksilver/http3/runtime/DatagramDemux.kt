@@ -20,6 +20,7 @@ import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.CapsuleRules
+import io.kuicksilver.http3.message.DatagramFilter
 import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.DatagramPolicy
@@ -360,7 +361,14 @@ internal class Http3StreamImpl(
     internal fun datagramsUnsupported(): DatagramSendResult.Unsupported? = session.datagrams.unsupported()
 
     @ExperimentalKuicksilverApi
-    override fun useCapsuleProtocol(config: CapsuleConfig): CapsuleStream {
+    override fun useCapsuleProtocol(config: CapsuleConfig): CapsuleStream = useCapsuleProtocol(config, null)
+
+    /** [useCapsuleProtocol] with HTTP datagrams judged by their Context ID ([DatagramFilter]; RFC 9298 sections 4 and 5). */
+    @ExperimentalKuicksilverApi
+    internal fun useCapsuleProtocol(
+        config: CapsuleConfig,
+        datagramFilter: DatagramFilter?,
+    ): CapsuleStreamImpl {
         // RFC 9297 section 3.2: no upgrade token that uses capsules, so no capsules either (and no DATAGRAM capsules, the
         // HTTP datagrams section 2 forbids on a request without datagram semantics)
         check(datagramsAllowed) {
@@ -376,7 +384,7 @@ internal class Http3StreamImpl(
             stopSending(Http3ErrorCode.MESSAGE_ERROR)
             throw Http3Exception.MessageError(streamId, reason)
         }
-        return CapsuleStreamImpl(this, config).also { it.start() }
+        return CapsuleStreamImpl(this, config, datagramFilter).also { it.start() }
     }
 
     override val streamId: Long get() = st.id

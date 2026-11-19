@@ -23,10 +23,14 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 
-/** A failure confined to one stream (RFC 9114 section 8): abort it with [code] and give the application [error]. */
+/**
+ * A failure confined to one stream (RFC 9114 section 8): abort it with [code] and give the application [error].
+ * [byPeer]: what the peer sent caused it (a malformed message), not our own clock (a field section past its deadline).
+ */
 internal class StreamFailure(
     val code: Long,
     val error: Throwable,
+    val byPeer: Boolean = true,
 ) : Exception(error)
 
 internal const val CHUNK = 16_384
@@ -122,6 +126,8 @@ internal suspend fun H3Session.pumpBody(
     tunnel: () -> Boolean = { false },
     /** Whether our response on [st] was already complete: an H3_NO_ERROR reset then costs nothing ([H3Session.countClientReset]). */
     responseComplete: () -> Boolean = { false },
+    /** Server: the request handed to the application, abandoned (and counted) at most once ([H3Session.countClientStop]). */
+    abandoned: ServerRequestImpl? = null,
     onStreamFailure: suspend (StreamFailure) -> Unit,
 ) {
     val buf = ByteArray(CHUNK)
@@ -221,6 +227,11 @@ internal suspend fun H3Session.pumpBody(
         onStreamFailure(e)
         out.cancel(e.error)
         trailers.completeExceptionally(e.error)
+        // server: a request handed to the application that the client made us reset (content-length broken, trailers too
+        // large) is a glitch, as a malformed head is (RFC 9114 section 10.5; MadeYouReset, CVE-2025-8671); trailers past
+        // their deadline are not (our clock cancelled them; a lossy link delays them too). Last: an empty budget ends the
+        // connection
+        if (abandoned != null && e.byPeer) glitch("a malformed request (${e.code})")
     } catch (
         e: IncompleteFrame,
     ) {
@@ -251,7 +262,7 @@ internal suspend fun H3Session.pumpBody(
         val mapped = map(st.input.closedCause ?: if (noMoreInserts()) connectionError() else e)
         out.cancel(mapped)
         trailers.completeExceptionally(mapped)
-        countClientReset(st.input.closedCause, responseComplete()) // last: an empty budget ends the connection
+        countClientReset(st.input.closedCause, responseComplete(), abandoned) // last: an empty budget ends the connection
     } catch (e: Throwable) {
         // the consumer cancelled the body (its own reason), or the transport failed (a reset, a lost connection)
         val mapped = map(e)
@@ -265,7 +276,7 @@ internal suspend fun H3Session.pumpBody(
         trailers.completeExceptionally(mapped)
         // trailers may still have been on the way: the peer's encoder must not wait for their acknowledgment (RFC 9204 section 2.2.2.2)
         runCatching { cancelSections(st) }
-        countClientReset(e, responseComplete()) // last: an empty budget ends the connection
+        countClientReset(e, responseComplete(), abandoned) // last: an empty budget ends the connection
     }
 }
 

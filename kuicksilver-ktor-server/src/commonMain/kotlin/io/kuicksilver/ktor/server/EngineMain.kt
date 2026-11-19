@@ -34,7 +34,9 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
  * proxy, is a trusted gateway: no `421 Misdirected Request`),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
- * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
+ * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.h2c` (`off`, the default,
+ * `withHttp11` or `only`: HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port, [H2cMode]; only without
+ * the `kuicksilver.tls.*` identity files), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
  * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
@@ -59,7 +61,8 @@ public object EngineMain {
      * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
      * `kuicksilver.tls.keyExchangeGroups` is not a list `KeyExchangeGroups` takes (an unknown name, a duplicate, an empty list)
      * or is set without the identity files,
-     * `kuicksilver.tls.ocspStapling` is set without the identity files, a boolean key is not
+     * `kuicksilver.tls.ocspStapling` is set without the identity files, `kuicksilver.h2c` is not `off`, `withHttp11` or
+     * `only`, or is not `off` with the identity files (h2c needs the cleartext port), a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, or a
      * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`. Throws
@@ -150,6 +153,13 @@ public object EngineMain {
                 @OptIn(ExperimentalKuicksilverApi::class)
                 http2 = it
             }
+        parseH2c(config.propertyOrNull("kuicksilver.h2c")?.getString())?.let {
+            @OptIn(ExperimentalKuicksilverApi::class)
+            require(it == H2cMode.Off || chain == null) {
+                "kuicksilver.h2c needs the cleartext deployment port: it cannot go with kuicksilver.tls.certificateChain and privateKey"
+            }
+            h2cDeploymentPort = it
+        }
         config
             .propertyOrNull("kuicksilver.webSocketsOverHttp2")
             ?.getString()
@@ -314,6 +324,17 @@ public object EngineMain {
             KeyExchangeGroups(names.map { it.trim() })
         } catch (e: TlsException.Config) {
             throw IllegalArgumentException("kuicksilver.tls.keyExchangeGroups: ${e.message}", e)
+        }
+
+    /** `kuicksilver.h2c`: `off`, `withHttp11` or `only` (case ignored), null when absent. */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    internal fun parseH2c(value: String?): H2cMode? =
+        when (value?.trim()?.lowercase()) {
+            null -> null
+            "off" -> H2cMode.Off
+            "withhttp11" -> H2cMode.WithHttp11
+            "only" -> H2cMode.Only
+            else -> throw IllegalArgumentException("kuicksilver.h2c: \"$value\" is not off, withHttp11 or only")
         }
 
     /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */

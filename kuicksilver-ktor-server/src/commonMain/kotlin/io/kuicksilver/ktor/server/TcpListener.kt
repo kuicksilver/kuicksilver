@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.server.h1.H1Address
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.NEW_CONNECTION_FIRST_BYTE
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
@@ -216,8 +217,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
         tcpLimitsForProbe += limits
         val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
         l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2, environment.log) }
-        // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
+        // RFC 9113 section 3.2: `h2` over TLS only where it was offered; section 3.3: h2c on a plain connector only with its opt-in
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val h2c = if (tlsConfig == null) l.h2c else H2cMode.Off
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
@@ -375,8 +379,13 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             // dropped by the timeout: its TLS session is aborted, not leaked. The deadline counts
                                             // from accept, a PROXY protocol header included
                                             val within = (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)
+                                            val afterHeader = input // the PROXY protocol header's input, if any
                                             withTimeoutOrRelease(within, { it.abort() }) {
-                                                if (input != null) client.tlsServer(tlsConfig, input) else client.tlsServer(tlsConfig)
+                                                if (afterHeader != null) {
+                                                    client.tlsServer(tlsConfig, afterHeader)
+                                                } else {
+                                                    client.tlsServer(tlsConfig)
+                                                }
                                             }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
@@ -433,6 +442,59 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         draining,
                                     )
                                 }
+                                // RFC 9113 section 3.3: HTTP/2 with prior knowledge on a plain connector that serves it. The
+                                // input is opened here, once (or is the one a PROXY protocol header was read from), so the
+                                // HTTP/1.1 parser gets the octets the preface check looked at (it consumes none)
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                if (h2c != H2cMode.Off) {
+                                    val isH2 =
+                                        try {
+                                            // h2c is on plain connectors only: an input here is never one TLS took
+                                            val i = input ?: sock.openDeliveringReadChannel()
+                                            input = i
+                                            // section 3.4: the preface, within the first request head's deadline; a client
+                                            // still sending it then goes to HTTP/1.1, whose own deadline has passed too; when
+                                            // the server stops, one that sent nothing goes there too and is closed as idle,
+                                            // one that started is waited for as a head that started
+                                            h2c == H2cMode.Only ||
+                                                withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
+                                                    i.startsWithH2PrefaceUnless(
+                                                        draining,
+                                                        accepted + NEW_CONNECTION_FIRST_BYTE,
+                                                        configuration.h2cPrefaceCheckForTest,
+                                                    )
+                                                } == true
+                                        } catch (e: Throwable) {
+                                            if (e is CancellationException) {
+                                                sock.abort()
+                                            } else {
+                                                closeWithin(
+                                                    sock,
+                                                    { sock.abort() },
+                                                    sendTimeout,
+                                                )
+                                            }
+                                            if (e is CancellationException) throw e
+                                            return@launchOrElse
+                                        }
+                                    if (isH2) {
+                                        return@launchOrElse serveH2(
+                                            sock,
+                                            remote,
+                                            proxy,
+                                            peer,
+                                            authorityCheck,
+                                            altSvc,
+                                            (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
+                                            timeout,
+                                            headerTimeout,
+                                            sendTimeout,
+                                            draining,
+                                            input = input,
+                                            scheme = scheme,
+                                        )
+                                    }
+                                }
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 var connection: H1Connection? = null
                                 try {
@@ -451,6 +513,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         draining = draining,
                                         sendTimeout = sendTimeout,
+                                        newConnectionUntil = accepted + NEW_CONNECTION_FIRST_BYTE,
                                     ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc, proxy) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close

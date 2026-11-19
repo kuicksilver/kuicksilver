@@ -1,3 +1,8 @@
+public final class io/kuicksilver/ktor/server/ConnectUdpRoutingKt {
+	public static final fun connectUdp (Lio/ktor/server/routing/Route;Lio/kuicksilver/http3/UdpProxy;)Lio/ktor/server/routing/Route;
+	public static synthetic fun connectUdp$default (Lio/ktor/server/routing/Route;Lio/kuicksilver/http3/UdpProxy;ILjava/lang/Object;)Lio/ktor/server/routing/Route;
+}
+
 public final class io/kuicksilver/ktor/server/EarlyDataKt {
 	public static final fun getReceivedEarly (Lio/ktor/server/request/ApplicationRequest;)Z
 }
@@ -6,6 +11,15 @@ public final class io/kuicksilver/ktor/server/EngineMain {
 	public static final field INSTANCE Lio/kuicksilver/ktor/server/EngineMain;
 	public final fun createServer ([Ljava/lang/String;)Lio/ktor/server/engine/EmbeddedServer;
 	public static final fun main ([Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/server/H2cMode : java/lang/Enum {
+	public static final field Off Lio/kuicksilver/ktor/server/H2cMode;
+	public static final field Only Lio/kuicksilver/ktor/server/H2cMode;
+	public static final field WithHttp11 Lio/kuicksilver/ktor/server/H2cMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/H2cMode;
+	public static fun values ()[Lio/kuicksilver/ktor/server/H2cMode;
 }
 
 public final class io/kuicksilver/ktor/server/Http3Advertising : java/lang/Enum {
@@ -41,6 +55,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/
 public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration : io/ktor/server/engine/BaseApplicationEngine$Configuration {
 	public fun <init> ()V
 	public final fun getAltSvc ()Z
+	public final fun getConnectUdp ()Z
 	public final fun getConnectionIdleTimeoutSeconds ()I
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;
@@ -72,6 +87,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun plainConnector (Lkotlin/jvm/functions/Function1;)V
 	public static synthetic fun plainConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 	public final fun setAltSvc (Z)V
+	public final fun setConnectUdp (Z)V
 	public final fun setConnectionIdleTimeoutSeconds (I)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;)V
@@ -106,6 +122,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 
 public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/ktor/server/engine/EngineConnectorConfig {
 	public fun getAddressDescription ()Ljava/lang/String;
+	public final fun getH2c ()Lio/kuicksilver/ktor/server/H2cMode;
 	public fun getHost ()Ljava/lang/String;
 	public fun getPort ()I
 	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
@@ -118,11 +135,13 @@ public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/kto
 public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverPlainConnector;
+	public final fun getH2c ()Lio/kuicksilver/ktor/server/H2cMode;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPort ()I
 	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getTrustedGateway ()Z
 	public final fun proxyProtocol (Lkotlin/jvm/functions/Function1;)V
+	public final fun setH2c (Lio/kuicksilver/ktor/server/H2cMode;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setPort (I)V
 	public final fun setProxyProtocol (Lio/kuicksilver/ktor/server/ProxyProtocolConfig;)V

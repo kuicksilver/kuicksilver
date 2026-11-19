@@ -11,3 +11,5 @@ client.h1Response
 server.h1Request
 server.proxyHeader
 quic.bbrInvariants
+http3.udpTemplate
+http3.udpDatagrams

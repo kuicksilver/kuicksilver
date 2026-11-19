@@ -1,0 +1,3 @@
+{"start_time": 1, "end_time": 2, "log_dir": "fixture-log-dir", "servers": ["quic-go"], "clients": ["kuicksilver"], "urls": {}, "tests": {}, "quic_version": "0x1",
+ "results": [[{"abbr": "H", "name": "handshake", "result": "succeeded"}, {"abbr": "M", "name": "multiplexing", "result": "failed"}]],
+ "measurements": [[]]}

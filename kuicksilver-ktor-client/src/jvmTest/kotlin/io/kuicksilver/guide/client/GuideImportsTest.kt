@@ -22,6 +22,8 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
@@ -104,4 +106,5 @@ suspend fun everyClientImport(
     stream.output.writeFully("ping".encodeToByteArray())
     println(stream.input.readBuffer().readString())
     client.closeHttp3Connections()
+    HttpClient(Kuicksilver) { engine { connectUdpProxy = ConnectUdpProxy(UdpProxyTemplate.wellKnown("masque.example")) } }.close()
 }

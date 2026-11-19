@@ -284,6 +284,17 @@ internal class H3Session(
     /** Test hook: runs in a response writer's finish on the session's dispatcher, right before the stream's FIN is handed over. */
     internal var beforeResponseFinForTest: (suspend (QuicStream) -> Unit)? = null
 
+    /** Test hook: a request's STOP_SENDING watch was started, before it is stored in [ServerRequestImpl.stopWatch]. */
+    internal var stopWatchStartedForTest: ((ServerRequestImpl, kotlinx.coroutines.Job) -> Unit)? = null
+
+    /** Test hook: runs in [fail] once [closed] is complete, before the transport is closed (the CONNECTION_CLOSE). */
+    internal var beforeFailTransportCloseForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: spends [n] tokens of the request-reset budget at [glitchClock]'s time. Session dispatcher only. */
+    internal fun spendResetBudgetForTest(n: Int) {
+        resetBudget?.spend(glitchClock(), n)
+    }
+
     /** Test hook: runs on a server's request stream once the HEADERS frame of a 431 was written, before its flush and FIN. */
     internal var afterReject431HeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
@@ -874,17 +885,41 @@ internal class H3Session(
      * counted: a reset with H3_NO_ERROR once our response was complete ([responseComplete]: section 4.1 lets a client end
      * its request so after a complete response), and one that follows our own STOP_SENDING (the stream then fails with that
      * stop, never with the client's reset). An H3_NO_ERROR reset before the response was complete counts like any other.
+     * A request handed to the application ([req]) is abandoned once: a reset after its STOP_SENDING ([countClientStop]) is
+     * free.
      */
     fun countClientReset(
         e: Throwable?,
         responseComplete: Boolean = false,
+        req: ServerRequestImpl? = null,
     ) {
         if (!isServer) return
         val reset = transportCause(e ?: return) as? QuicException.StreamError.Reset ?: return
         if (reset.initiator != Initiator.Peer || (reset.code == Http3ErrorCode.NO_ERROR && responseComplete)) return
+        spendAbandonment(req)
+    }
+
+    /**
+     * Server: the client stopped our response to [req] (STOP_SENDING, any code) before it was complete. That abandons the
+     * request as a reset does (the engine cancels its handler, the stream's credit comes back), so it spends a token of
+     * [resetBudget] too, once per request whichever of its stop and reset came first: without it, complete requests stopped
+     * at once were Rapid Reset (CVE-2023-44487) that cost nothing, and a reset sent after our own STOP_SENDING (free, see
+     * [countClientReset]) made the pair cost nothing as well. A stop after the complete response costs nothing. Session
+     * dispatcher only.
+     */
+    fun countClientStop(req: ServerRequestImpl) {
+        if (!isServer || req.respondedInFull) return
+        spendAbandonment(req)
+    }
+
+    private fun spendAbandonment(req: ServerRequestImpl?) {
+        if (req != null) {
+            if (req.abandonmentCounted) return
+            req.abandonmentCounted = true
+        }
         val budget = resetBudget ?: return
         if (!budget.spend(glitchClock())) {
-            throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "request stream resets above 33/s (burst 1000)")
+            throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "request streams abandoned above 33/s (burst 1000)")
         }
     }
 

@@ -36,11 +36,13 @@ internal object SimFixtures {
     fun server(
         chain: List<ByteArray> = listOf(TestCerts.server),
         key: ByteArray = TestCerts.serverKey,
+        certificateCompression: Boolean = true,
     ): TlsConfig =
         tlsConfig(TlsRole.Server) {
             alpn =
                 listOf("hq-interop")
             ; identity = TlsIdentity.fromDer(chain, key.copyOf())
+            this.certificateCompression = certificateCompression
         }
 }
 
@@ -377,7 +379,13 @@ class SimulatorTest {
             val conn =
                 sim.connect(
                     tlsClient = SimFixtures.client(),
-                    tlsServer = SimFixtures.server(listOf(TestCerts.serverBigChain, TestCerts.intermediate), TestCerts.serverBigChainKey),
+                    // a plain chain: compressed (RFC 8879) it fits the 3x budget and the limit is never reached
+                    tlsServer =
+                        SimFixtures.server(
+                            listOf(TestCerts.serverBigChain, TestCerts.intermediate),
+                            TestCerts.serverBigChainKey,
+                            certificateCompression = false,
+                        ),
                 )
             val r = sim.runUntil(10.seconds) { conn.handshakeDone }
             ok(r, "big chain")

@@ -42,6 +42,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.markTunnel
+import io.kuicksilver.quic.ownAddresses
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.releaseStreamCredit
 import kotlinx.coroutines.CancellationException
@@ -259,6 +260,8 @@ private suspend fun H3Session.handleArmedRequestStream(
             ) {
                 headSettled()
                 abort(st, Http3ErrorCode.MESSAGE_ERROR)
+                // a reset the client made us send (RFC 9114 section 10.5; MadeYouReset, CVE-2025-8671), as on HTTP/2
+                glitch("a malformed request")
                 return
             }
         pendingHeaders.remove(st.id)
@@ -324,6 +327,38 @@ private suspend fun H3Session.handleArmedRequestStream(
             return
         }
         onDelivered() // the application holds it now: it gives the stream's credit back
+        // a stop of the response before it is complete abandons the request as a reset does, and spends the same token. The
+        // watch ends with the complete response ([ServerRequestImpl.responseComplete]), after which a stop costs nothing: left
+        // waiting for the stream's end, its frame held the request (its body channel, headers, deferreds) for as long as the
+        // stream lived, an idle connection's last request included
+        if (!req.respondedInFull) {
+            val watch =
+                scope.launch {
+                    val code =
+                        try {
+                            st.awaitSendStopped()
+                        } catch (_: QuicException) {
+                            null
+                        }
+                    if (code != null) {
+                        try {
+                            countClientStop(req)
+                        } catch (e: H3ProtocolError) {
+                            // not cancellable: the complete response cancels this watch, and once fail completed `closed` it
+                            // must still send the CONNECTION_CLOSE (a cancel inside quic.close dropped it)
+                            withContext(NonCancellable) { fail(e.code, e.message ?: "") }
+                        }
+                    }
+                }
+            stopWatchStartedForTest?.invoke(req, watch)
+            req.stopWatch = watch
+            // the response may complete on the writer's thread meanwhile: it sets respondedInFull before it reads stopWatch, this
+            // sets stopWatch before it reads respondedInFull, so one of the two cancels the watch
+            if (req.respondedInFull) {
+                watch.cancel()
+                req.stopWatch = null
+            }
+        }
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
@@ -335,6 +370,7 @@ private suspend fun H3Session.handleArmedRequestStream(
             bodyLimit,
             tunnel = { req.tunnel },
             responseComplete = { req.respondedInFull },
+            abandoned = req,
         ) { f ->
             // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
             if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
@@ -522,6 +558,15 @@ internal class ServerRequestImpl(
     /** Set by an engine that reports its handler's end ([handlerEnded]): only that gives the stream's credit back then. */
     @Volatile var engineManaged = false
 
+    /** The client's abandonment of this request (its STOP_SENDING or reset) was counted ([H3Session.countClientStop]). Session dispatcher only. */
+    var abandonmentCounted = false
+
+    /**
+     * The watch for the client's STOP_SENDING on the response ([H3Session.countClientStop]): cancelled once the response is
+     * complete, when a stop no longer abandons anything.
+     */
+    @Volatile var stopWatch: Job? = null
+
     /**
      * The application is done with this request: its response ended (complete or abandoned), it reset the request, or a
      * call to answer it failed. The stream's MAX_STREAMS credit may go back to the client once the stream is finished at
@@ -608,7 +653,11 @@ internal class ServerRequestImpl(
         private set
 
     fun responseComplete() {
-        if (!tunnel) respondedInFull = true
+        if (!tunnel) {
+            respondedInFull = true
+            stopWatch?.cancel() // nothing left to abandon: a stop from now on is free ([H3Session.countClientStop])
+            stopWatch = null
+        }
         if (tunnel) {
             sendEnded = true
             if (receiveEnded) done()
@@ -623,6 +672,15 @@ internal class ServerRequestImpl(
     }
 
     private val datagramChannel = if (hasDatagramSemantics(method, protocol)) session.datagrams.register(st.id) else null
+
+    /** This host's addresses the request's connection shows ([io.kuicksilver.quic.ownAddresses]): a proxy refuses them as targets. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal val connectionOwnAddresses: List<io.ktor.network.sockets.InetSocketAddress>
+        get() = session.quic.ownAddresses
+
+    /** Tests: datagrams for this request wait to be read (they arrived before its CONNECT was answered). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    internal val datagramsWaitingForTest: Boolean get() = datagramChannel?.isEmpty == false
 
     /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
     var tunnel = false
@@ -935,7 +993,20 @@ internal class ServerRequestImpl(
         }
     }
 
+    /** The application reset the request ([reset]). */
+    @Volatile private var resetByApplication = false
+
+    /**
+     * An engine's handler is over, whether or not it ran: a request it never answered nor reset is reset with [code] here,
+     * so it ends (STOP_SENDING and RESET_STREAM, [done]) also when its handler was cancelled before it started its work.
+     * Any thread.
+     */
+    fun resetIfUnanswered(code: Long) {
+        if (!responseStarted && !resetByApplication) reset(code)
+    }
+
     override fun reset(code: Long) {
+        resetByApplication = true
         st.reset(code)
         st.stopSending(code)
         // on the session's dispatcher, in afterEnd: a launch into the session's scope after the connection ended never runs,

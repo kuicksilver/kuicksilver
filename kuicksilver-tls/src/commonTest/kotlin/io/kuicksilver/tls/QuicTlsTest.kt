@@ -306,7 +306,14 @@ class QuicHandshakeTest {
     }
 
     @Test fun largeChainHandshake() {
-        val p = pair(server = Fixtures.server(listOf(TestCerts.serverBigChain, TestCerts.intermediate), TestCerts.serverBigChainKey))
+        // a plain chain: the 14 KB flight is the point (compressed with RFC 8879 it is about 1 KB)
+        val p =
+            pair(
+                server =
+                    Fixtures.server(listOf(TestCerts.serverBigChain, TestCerts.intermediate), TestCerts.serverBigChainKey) {
+                        certificateCompression = false
+                    },
+            )
         try {
             p.run()
             assertTrue(p.cs.done && p.ss.done)

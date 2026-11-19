@@ -539,6 +539,28 @@ class ServerH2Test {
             }
         }
 
+    /**
+     * A stopping server reads no further request: a TLS h2 connection still sending its preface gets GOAWAY (last stream 0)
+     * and the close at once, instead of holding the stop for the request-head deadline (60 s here).
+     */
+    @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
+        serverTest {
+            val (server, port) =
+                h2Server(configure = { requestHeaderTimeoutSeconds = 60 }) { routing { get("/") { call.respondText("ok") } } }
+            RawH2Client.connect(port).use { raw ->
+                raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
+                withTimeout(10.seconds) {
+                    server.engine.h2Live.count
+                        .first { it == 1 }
+                }
+                val t =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+                server.stopSuspend(10_000, 15_000)
+                assertTrue(t.elapsedNow() < 5.seconds, "the stop waited ${t.elapsedNow()}")
+            }
+        }
+
     @Test fun negative_headerBlockSlowerThanTimeoutCloses() =
         serverTest {
             val (server, port) =

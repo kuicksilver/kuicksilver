@@ -539,6 +539,43 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
         *last_size = __atomic_load_n(&u->emsgsize_last, __ATOMIC_RELAXED);
     return __atomic_load_n(&u->emsgsize, __ATOMIC_RELAXED);
 }
+int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN], uint8_t *quote, uint32_t cap,
+                             uint32_t *quote_len, uint32_t *kind) {
+    if (!u || !dst || (!quote && cap) || !quote_len || !kind)
+        return 0;
+    pthread_mutex_lock(&u->ptb_mu);
+    int news = u->unreach_count != 0;
+    if (news) {
+        uint32_t i = u->unreach_head;
+        uint32_t n = u->unreach[i].quote_len < cap ? u->unreach[i].quote_len : cap;
+        if (n)
+            memcpy(quote, u->unreach[i].quote, n);
+        *quote_len = n;
+        *kind = u->unreach[i].kind;
+        memcpy(dst, u->unreach[i].dst, KSL_UDP_ADDR_LEN);
+        u->unreach_head = (i + 1) % UNREACH_RING;
+        u->unreach_count--;
+    }
+    pthread_mutex_unlock(&u->ptb_mu);
+    return news;
+}
+/* the receiver's note of an unreachable (ksl_udp_recv.c): into the ring unless it is full (a flood only costs the newest) */
+void ksl_udp_note_unreachable(ksl_udp *u, const uint8_t dst[KSL_UDP_ADDR_LEN], const uint8_t *quote, uint32_t quote_len,
+                              uint32_t kind) {
+    pthread_mutex_lock(&u->ptb_mu);
+    if (u->unreach_count < UNREACH_RING) {
+        uint32_t i = (u->unreach_head + u->unreach_count) % UNREACH_RING;
+        if (quote_len > KSL_UDP_PTB_QUOTE)
+            quote_len = KSL_UDP_PTB_QUOTE;
+        if (quote_len)
+            memcpy(u->unreach[i].quote, quote, quote_len);
+        u->unreach[i].quote_len = quote_len;
+        u->unreach[i].kind = kind;
+        memcpy(u->unreach[i].dst, dst, KSL_UDP_ADDR_LEN);
+        u->unreach_count++;
+    }
+    pthread_mutex_unlock(&u->ptb_mu);
+}
 /* the receiver's side of the ring (ksl_udp_recv.c): a full ring keeps the older messages, a flood only costs the newest */
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                       uint32_t mtu) {
@@ -686,6 +723,16 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     (void)u;
     if (last_size)
         *last_size = 0;
+    return 0;
+}
+int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN], uint8_t *quote, uint32_t cap,
+                             uint32_t *quote_len, uint32_t *kind) {
+    (void)u;
+    (void)dst;
+    (void)quote;
+    (void)cap;
+    (void)quote_len;
+    (void)kind;
     return 0;
 }
 #ifdef KSL_TEST

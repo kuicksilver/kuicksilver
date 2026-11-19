@@ -20,6 +20,7 @@ import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -56,6 +57,22 @@ public suspend fun Socket.tls(
         throw TlsException.Config("Socket.tls needs a client configuration; use tlsServer for the server side")
     }
     return TlsSocket.start(this, config, context)
+}
+
+/**
+ * [tls] with [sessions] as the session cache instead of [io.kuicksilver.tls.SessionCache.Default]: a client engine keeps the
+ * tickets of each kind of peer in a cache of its own (the Ktor client's `https://` proxies apart from its origins).
+ */
+@InternalKuicksilverApi
+public suspend fun Socket.tls(
+    config: TlsConfig,
+    context: CoroutineContext,
+    sessions: SessionCache,
+): TlsSocket {
+    if (config.role != TlsRole.Client) {
+        throw TlsException.Config("Socket.tls needs a client configuration; use tlsServer for the server side")
+    }
+    return TlsSocket.start(this, config, context, sessions = sessions)
 }
 
 /** Accepts TLS on a server-side [Socket] (after `ServerSocket.accept()`). */
@@ -383,6 +400,7 @@ public class TlsSocket private constructor(
             config: TlsConfig,
             context: CoroutineContext,
             opened: ByteReadChannel? = null,
+            sessions: SessionCache? = null,
         ): TlsSocket {
             val ctx = raw.coroutineContext + context
             val rawIn = opened ?: raw.openDeliveringReadChannel()
@@ -392,7 +410,11 @@ public class TlsSocket private constructor(
                     if (config.role ==
                         TlsRole.Client
                     ) {
-                        TlsConnection.client(rawIn, rawOut, config, ctx)
+                        if (sessions == null) {
+                            TlsConnection.client(rawIn, rawOut, config, ctx)
+                        } else {
+                            TlsConnection.client(rawIn, rawOut, config, ctx, sessions)
+                        }
                     } else {
                         TlsConnection.server(rawIn, rawOut, config, ctx)
                     }

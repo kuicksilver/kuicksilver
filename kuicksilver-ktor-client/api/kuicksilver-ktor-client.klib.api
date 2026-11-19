@@ -198,6 +198,19 @@ final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.clie
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.toString|toString(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/ConnectUdpProxy { // io.kuicksilver.ktor.client/ConnectUdpProxy|null[0]
+    constructor <init>(io.kuicksilver.http3/UdpProxyTemplate, io.kuicksilver.ktor.client/ProxyCredentials? = ..., kotlin/Function1<io.ktor.http/Url, kotlin/Boolean> = ...) // io.kuicksilver.ktor.client/ConnectUdpProxy.<init>|<init>(io.kuicksilver.http3.UdpProxyTemplate;io.kuicksilver.ktor.client.ProxyCredentials?;kotlin.Function1<io.ktor.http.Url,kotlin.Boolean>){}[0]
+
+    final val applies // io.kuicksilver.ktor.client/ConnectUdpProxy.applies|{}applies[0]
+        final fun <get-applies>(): kotlin/Function1<io.ktor.http/Url, kotlin/Boolean> // io.kuicksilver.ktor.client/ConnectUdpProxy.applies.<get-applies>|<get-applies>(){}[0]
+    final val credentials // io.kuicksilver.ktor.client/ConnectUdpProxy.credentials|{}credentials[0]
+        final fun <get-credentials>(): io.kuicksilver.ktor.client/ProxyCredentials? // io.kuicksilver.ktor.client/ConnectUdpProxy.credentials.<get-credentials>|<get-credentials>(){}[0]
+    final val template // io.kuicksilver.ktor.client/ConnectUdpProxy.template|{}template[0]
+        final fun <get-template>(): io.kuicksilver.http3/UdpProxyTemplate // io.kuicksilver.ktor.client/ConnectUdpProxy.template.<get-template>|<get-template>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ConnectUdpProxy.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/FileAltSvcStore|null[0]
     constructor <init>(kotlinx.io.files/Path, kotlin/Function0<kotlin/Long> = ...) // io.kuicksilver.ktor.client/FileAltSvcStore.<init>|<init>(kotlinx.io.files.Path;kotlin.Function0<kotlin.Long>){}[0]
 
@@ -242,6 +255,9 @@ final class io.kuicksilver.ktor.client/Http2ClientConfig { // io.kuicksilver.kto
     final var pingInterval // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval|{}pingInterval[0]
         final fun <get-pingInterval>(): kotlin.time/Duration // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval.<get-pingInterval>|<get-pingInterval>(){}[0]
         final fun <set-pingInterval>(kotlin.time/Duration) // io.kuicksilver.ktor.client/Http2ClientConfig.pingInterval.<set-pingInterval>|<set-pingInterval>(kotlin.time.Duration){}[0]
+    final var priorKnowledge // io.kuicksilver.ktor.client/Http2ClientConfig.priorKnowledge|{}priorKnowledge[0]
+        final fun <get-priorKnowledge>(): kotlin.collections/Set<io.kuicksilver.ktor.client/HostPort> // io.kuicksilver.ktor.client/Http2ClientConfig.priorKnowledge.<get-priorKnowledge>|<get-priorKnowledge>(){}[0]
+        final fun <set-priorKnowledge>(kotlin.collections/Set<io.kuicksilver.ktor.client/HostPort>) // io.kuicksilver.ktor.client/Http2ClientConfig.priorKnowledge.<set-priorKnowledge>|<set-priorKnowledge>(kotlin.collections.Set<io.kuicksilver.ktor.client.HostPort>){}[0]
     final var settings // io.kuicksilver.ktor.client/Http2ClientConfig.settings|{}settings[0]
         final fun <get-settings>(): io.kuicksilver.http2/Http2Settings // io.kuicksilver.ktor.client/Http2ClientConfig.settings.<get-settings>|<get-settings>(){}[0]
         final fun <set-settings>(io.kuicksilver.http2/Http2Settings) // io.kuicksilver.ktor.client/Http2ClientConfig.settings.<set-settings>|<set-settings>(io.kuicksilver.http2.Http2Settings){}[0]
@@ -301,6 +317,9 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings|{}settings[0]
         final fun <get-settings>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<get-settings>|<get-settings>(){}[0]
         final fun <set-settings>(io.kuicksilver.http3/Http3Settings) // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<set-settings>|<set-settings>(io.kuicksilver.http3.Http3Settings){}[0]
+    final var webTransportIgnoresConnectUdpProxy // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresConnectUdpProxy|{}webTransportIgnoresConnectUdpProxy[0]
+        final fun <get-webTransportIgnoresConnectUdpProxy>(): kotlin/Boolean // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresConnectUdpProxy.<get-webTransportIgnoresConnectUdpProxy>|<get-webTransportIgnoresConnectUdpProxy>(){}[0]
+        final fun <set-webTransportIgnoresConnectUdpProxy>(kotlin/Boolean) // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresConnectUdpProxy.<set-webTransportIgnoresConnectUdpProxy>|<set-webTransportIgnoresConnectUdpProxy>(kotlin.Boolean){}[0]
     final var webTransportIgnoresProxy // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresProxy|{}webTransportIgnoresProxy[0]
         final fun <get-webTransportIgnoresProxy>(): kotlin/Boolean // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresProxy.<get-webTransportIgnoresProxy>|<get-webTransportIgnoresProxy>(){}[0]
         final fun <set-webTransportIgnoresProxy>(kotlin/Boolean) // io.kuicksilver.ktor.client/Http3ClientConfig.webTransportIgnoresProxy.<set-webTransportIgnoresProxy>|<set-webTransportIgnoresProxy>(kotlin.Boolean){}[0]
@@ -352,6 +371,9 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final var connectTimeout // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout|{}connectTimeout[0]
         final fun <get-connectTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<get-connectTimeout>|<get-connectTimeout>(){}[0]
         final fun <set-connectTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<set-connectTimeout>|<set-connectTimeout>(kotlin.time.Duration){}[0]
+    final var connectUdpProxy // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectUdpProxy|{}connectUdpProxy[0]
+        final fun <get-connectUdpProxy>(): io.kuicksilver.ktor.client/ConnectUdpProxy? // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectUdpProxy.<get-connectUdpProxy>|<get-connectUdpProxy>(){}[0]
+        final fun <set-connectUdpProxy>(io.kuicksilver.ktor.client/ConnectUdpProxy?) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectUdpProxy.<set-connectUdpProxy>|<set-connectUdpProxy>(io.kuicksilver.ktor.client.ConnectUdpProxy?){}[0]
     final var connectionAttemptDelay // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectionAttemptDelay|{}connectionAttemptDelay[0]
         final fun <get-connectionAttemptDelay>(): kotlin.time/Duration // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectionAttemptDelay.<get-connectionAttemptDelay>|<get-connectionAttemptDelay>(){}[0]
         final fun <set-connectionAttemptDelay>(kotlin.time/Duration) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectionAttemptDelay.<set-connectionAttemptDelay>|<set-connectionAttemptDelay>(kotlin.time.Duration){}[0]
@@ -394,6 +416,9 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final var proxyResolver // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver|{}proxyResolver[0]
         final fun <get-proxyResolver>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver.<get-proxyResolver>|<get-proxyResolver>(){}[0]
         final fun <set-proxyResolver>(io.kuicksilver.ktor.client/ProxyResolver) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver.<set-proxyResolver>|<set-proxyResolver>(io.kuicksilver.ktor.client.ProxyResolver){}[0]
+    final var proxyTls // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyTls|{}proxyTls[0]
+        final fun <get-proxyTls>(): kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit>? // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyTls.<get-proxyTls>|<get-proxyTls>(){}[0]
+        final fun <set-proxyTls>(kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit>?) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyTls.<set-proxyTls>|<set-proxyTls>(kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder,kotlin.Unit>?){}[0]
     final var quic // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic|{}quic[0]
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<get-quic>|<get-quic>(){}[0]
         final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
@@ -448,11 +473,8 @@ final class io.kuicksilver.ktor.client/ProxyCredentials { // io.kuicksilver.ktor
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ProxyCredentials.toString|toString(){}[0]
 }
 
-final class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/ProxyException|null[0]
-    constructor <init>(kotlin/String, kotlin/Int?) // io.kuicksilver.ktor.client/ProxyException.<init>|<init>(kotlin.String;kotlin.Int?){}[0]
-
-    final val replyCode // io.kuicksilver.ktor.client/ProxyException.replyCode|{}replyCode[0]
-        final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
+final class io.kuicksilver.ktor.client/ProxyTlsException : io.kuicksilver.ktor.client/ProxyException { // io.kuicksilver.ktor.client/ProxyTlsException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable) // io.kuicksilver.ktor.client/ProxyTlsException.<init>|<init>(kotlin.String;kotlin.Throwable){}[0]
 }
 
 final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.client/ResolvedProxy|null[0]
@@ -464,6 +486,8 @@ final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.cl
         final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.client/ResolvedProxy.port.<get-port>|<get-port>(){}[0]
     final val remoteDns // io.kuicksilver.ktor.client/ResolvedProxy.remoteDns|{}remoteDns[0]
         final fun <get-remoteDns>(): kotlin/Boolean // io.kuicksilver.ktor.client/ResolvedProxy.remoteDns.<get-remoteDns>|<get-remoteDns>(){}[0]
+    final val tls // io.kuicksilver.ktor.client/ResolvedProxy.tls|{}tls[0]
+        final fun <get-tls>(): kotlin/Boolean // io.kuicksilver.ktor.client/ResolvedProxy.tls.<get-tls>|<get-tls>(){}[0]
     final val type // io.kuicksilver.ktor.client/ResolvedProxy.type|{}type[0]
         final fun <get-type>(): io.ktor.client.engine/ProxyType // io.kuicksilver.ktor.client/ResolvedProxy.type.<get-type>|<get-type>(){}[0]
 
@@ -473,8 +497,16 @@ final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.cl
 
     final object Companion { // io.kuicksilver.ktor.client/ResolvedProxy.Companion|null[0]
         final fun http(kotlin/String, kotlin/Int, io.kuicksilver.ktor.client/ProxyCredentials? = ...): io.kuicksilver.ktor.client/ResolvedProxy // io.kuicksilver.ktor.client/ResolvedProxy.Companion.http|http(kotlin.String;kotlin.Int;io.kuicksilver.ktor.client.ProxyCredentials?){}[0]
+        final fun https(kotlin/String, kotlin/Int, io.kuicksilver.ktor.client/ProxyCredentials? = ...): io.kuicksilver.ktor.client/ResolvedProxy // io.kuicksilver.ktor.client/ResolvedProxy.Companion.https|https(kotlin.String;kotlin.Int;io.kuicksilver.ktor.client.ProxyCredentials?){}[0]
         final fun socks5(kotlin/String, kotlin/Int, io.kuicksilver.ktor.client/ProxyCredentials? = ..., kotlin/Boolean = ...): io.kuicksilver.ktor.client/ResolvedProxy // io.kuicksilver.ktor.client/ResolvedProxy.Companion.socks5|socks5(kotlin.String;kotlin.Int;io.kuicksilver.ktor.client.ProxyCredentials?;kotlin.Boolean){}[0]
     }
+}
+
+open class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/ProxyException|null[0]
+    constructor <init>(kotlin/String, kotlin/Int?, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/ProxyException.<init>|<init>(kotlin.String;kotlin.Int?;kotlin.Throwable?){}[0]
+
+    final val replyCode // io.kuicksilver.ktor.client/ProxyException.replyCode|{}replyCode[0]
+        final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
 }
 
 final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/HttpClientEngineFactory<io.kuicksilver.ktor.client/KuicksilverEngineConfig> { // io.kuicksilver.ktor.client/Kuicksilver|null[0]

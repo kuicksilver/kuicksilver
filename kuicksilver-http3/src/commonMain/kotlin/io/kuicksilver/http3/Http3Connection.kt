@@ -341,6 +341,33 @@ public var Http3Connection.beforeTransportClosedForTest: (suspend () -> Unit)?
     }
 
 /**
+ * Test hook: the monotonic clock (nanoseconds) of this connection's glitch and request-reset budgets, which refill 33 tokens
+ * a second (see `H3Session.glitchClock`). A test that freezes it (`{ 0L }`) leaves exactly the 1000 tokens of a full bucket,
+ * so a flood ends the connection however slowly the host lets it arrive.
+ */
+@InternalKuicksilverApi
+public var Http3Connection.glitchClockForTest: () -> Long
+    get() = session.glitchClock
+    set(v) {
+        session.glitchClock = v
+    }
+
+/**
+ * For a server engine, once [this] request's handler is over, whether or not it ran: a request that got no response and was
+ * not reset is reset with [code] (H3_REQUEST_CANCELLED, RFC 9114 section 4.1.1), so it ends in both directions and no
+ * longer counts toward the connection's requests, also when its handler was cancelled before it started its work.
+ */
+@InternalKuicksilverApi
+public fun Http3ServerRequest.resetIfUnanswered(code: Long) {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.resetIfUnanswered(code)
+}
+
+/** Test hook: the requests of this connection that have not ended yet (as the GOAWAY idle close counts them). */
+@InternalKuicksilverApi
+public val Http3Connection.activeRequestsForTest: kotlinx.coroutines.flow.StateFlow<Int>
+    get() = session.activeRequestsForTest
+
+/**
  * The bytes written to [this] stream's [Http3Stream.output] that have been handed to the QUIC stream and from there to
  * the connection's send buffer: once it equals what was written, nothing waits in front of the transport (a client
  * WebSocket engine decides from it whether a session its close wait cut may still end with a FIN, as a TCP socket whose

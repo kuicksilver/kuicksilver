@@ -4,6 +4,8 @@
 # Runs every module's Kotlin/Native Linux test executable inside a container, continuing past failures, and fails at the
 # end if any module failed. Modules without an executable for the target are an error (the link step must have built it).
 # Usage: run-kexe.sh <docker-platform> <image> <konan-target-dir: linuxX64|linuxArm64> <module...>
+# KSL_KEXE_LOG_DIR=<dir> also keeps each module's output as <dir>/<module>.log (the test summary that tools/docs/verify.py
+# collect --gtest reads for the documentation site).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 platform="$1"; image="$2"; target="$3"; shift 3
@@ -13,7 +15,12 @@ for m in "$@"; do
   [ -f "$exe" ] || { echo "::error::missing $exe"; failed+=("$m (missing)"); continue; }
   chmod +x "$exe"
   echo "== $m ($target)"
-  bash "$here/docker-run.sh" "$platform" "$image" "$exe" || failed+=("$m")
+  if [ -n "${KSL_KEXE_LOG_DIR:-}" ]; then
+    mkdir -p "$KSL_KEXE_LOG_DIR"
+    bash "$here/docker-run.sh" "$platform" "$image" "$exe" 2>&1 | tee "$KSL_KEXE_LOG_DIR/$m.log" || failed+=("$m")
+  else
+    bash "$here/docker-run.sh" "$platform" "$image" "$exe" || failed+=("$m")
+  fi
 done
 if [ ${#failed[@]} -gt 0 ]; then echo "::error::test.kexe failed for: ${failed[*]}"; exit 1; fi
 echo "all ${#} modules passed on $target"

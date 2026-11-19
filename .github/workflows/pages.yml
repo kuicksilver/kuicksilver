@@ -1,55 +1,138 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Documentation site on GitHub Pages (https://kuicksilver.github.io/kuicksilver/, docs/release.md "Every release"): the
-# guide and the API reference of each release under /<version>/, /latest/ and a landing page (tools/docs/site.sh).
+# guide, the API reference and the "How we verify" pages of each release under /<version>/, /latest/ (the newest final
+# release), the development snapshot of main's tip under /dev/, and a landing page that lists them (tools/docs/site.py).
 #
-#   openssl-mingw (ubuntu) ── build (xcode-27) ── publish (ubuntu) ── deploy (ubuntu, actions/deploy-pages)
+#   resolve ─┬─ openssl-mingw ── build (xcode-27; releases only) ─┬─ publish ── deploy (actions/deploy-pages)
+#            └─ verify (actions: read; both channels) ─────────────┘
 #
-# build checks out the release tag and builds that version's pages. The Dokka build compiles every target's sources, so
-# it runs on the macOS image with the pinned Xcode, like build.yml's apple job, and gets the mingw OpenSSL from
-# openssl-mingw, which builds it in Docker exactly as build.yml's openssl-docker job does. publish adds the version to
-# the gh-pages branch, which keeps every published version, recomputes /latest/ and the landing page, and pushes the
-# branch; deploy publishes that tree with actions/deploy-pages. Runs on a published release (not on a prerelease), or by
-# hand for a version (from 0.3.0, the first release with tools/docs/site.sh). Never on push.
+# Two channels, decided by resolve:
+#   release  a published release (not a prerelease), or by hand with `version`: build checks out the tag and builds the
+#            version's guide and API reference (tools/docs/site.sh <version>) on the macOS image with the pinned Xcode,
+#            like build.yml's apple job, with the mingw OpenSSL that openssl-mingw builds in Docker as build.yml does.
+#   dev      after every successful build.yml run of a push to main in this repository (workflow_run), or by hand with
+#            `ref` (a tag or a full commit SHA on main): /dev/ is replaced with that commit's snapshot. Its guide and API
+#            reference are not rebuilt: build.yml's apple job already builds them as its documentation gate
+#            (tools/docs/site.sh --dev: links at the commit, a "development snapshot, not a release" banner) and uploads
+#            them from push runs on main as site-dev; verify takes that artifact from the same run as its verify-* data,
+#            so a snapshot's pages and its numbers are of one commit and one run. A run triggered for a commit that is no
+#            longer main's tip publishes nothing (the newer push has its own run).
+# workflow_run runs with this repository's main-branch workflow and token whatever triggered it, so resolve accepts only
+# a successful build.yml run of event push on main from this repository (never a pull request or a fork), and every
+# job keeps its least privilege: contents: read, actions: read only where runs are read, contents: write only in publish,
+# pages and id-token only in deploy.
+# verify builds the "How we verify" pages (<dir>/verify/, ru/verify/, zh/verify/; tools/docs/verify.py) from the newest
+# successful build.yml run of exactly that commit (for dev from a workflow_run: the triggering run), its verify-*
+# artifacts (kept 30 days), the newest fuzz.yml campaign on main and a perf.yml run of the commit if there is one; a
+# section without a result says "no data", and data of another commit or run fails the job. publish adds the
+# directory to the gh-pages branch (the store of every published version and the snapshot), recomputes /latest/ and the
+# landing page, and pushes, retrying on a concurrent update; deploy publishes gh-pages as it is at that moment, so
+# deployments in any order leave the newest state online.
 name: pages
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: released version to (re)build the site for, without the v (e.g. 0.3.0); its tag v<version> must exist
-        required: true
+        description: a released version to (re)build, without the v (e.g. 0.3.0); its tag v<version> must exist. Leave empty for ref
+        required: false
+        type: string
+      ref:
+        description: or the development snapshot (/dev/) of this tag or full commit SHA on main
+        required: false
         type: string
 permissions: {}
 defaults:
   run:
     shell: bash
-env:
-  VERSION_IN: ${{ inputs.version || github.event.release.tag_name }}
 
 jobs:
+  resolve:
+    # a published prerelease does not start the site (docs/release.md, "Prereleases on GitHub only"); a workflow_run only
+    # for a successful push run of build.yml on main in this repository
+    if: >-
+      (github.event_name == 'release' && !github.event.release.prerelease) ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      channel: ${{ steps.resolve.outputs.channel }}   # release, dev, or empty: nothing to publish
+      version: ${{ steps.resolve.outputs.version }}   # the version the pages name (a dev snapshot: the build's default)
+      dir: ${{ steps.resolve.outputs.dir }}           # <version> or dev
+      sha: ${{ steps.resolve.outputs.sha }}
+      date: ${{ steps.resolve.outputs.date }}         # the commit date (shown on a dev snapshot)
+      run: ${{ steps.resolve.outputs.run }}           # the triggering build.yml run (workflow_run), else empty
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0   # main's history and the tags: is the commit on main, which commit does a tag name
+          persist-credentials: false
+      - name: 'pages: what to publish'
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_REF: ${{ inputs.ref }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+          release() { # <version>
+            [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$1' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
+            sha=$(git rev-parse --verify "refs/tags/v$1^{commit}") || { echo "::error::no tag v$1"; exit 1; }
+            out channel release; out version "$1"; out dir "$1"; out sha "$sha"; out date "$(git log -1 --format=%cI "$sha")"; out run ""
+          }
+          dev() { # <commit sha> [triggering run]
+            git merge-base --is-ancestor "$1" origin/main || { echo "::error::$1 is not on main"; exit 1; }
+            # the release this commit prepares: the build's default version (build-logic, kuicksilver.kmp)
+            v=$(git show "$1:build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts" \
+              | sed -n 's/^version = providers.gradleProperty("kuicksilver.version").getOrElse("\([^"]*\)")$/\1/p')
+            [ -n "$v" ] || { echo "::error::no default version in build-logic at $1"; exit 1; }
+            out channel dev; out version "$v"; out dir dev; out sha "$1"; out date "$(git log -1 --format=%cI "$1")"; out run "${2:-}"
+          }
+          case "$EVENT" in
+            release) release "${TAG#v}" ;;
+            workflow_dispatch)
+              if [ -n "$IN_VERSION" ] && [ -z "$IN_REF" ]; then release "${IN_VERSION#v}"
+              elif [ -n "$IN_REF" ] && [ -z "$IN_VERSION" ]; then
+                if [[ "$IN_REF" =~ ^[0-9a-f]{40}$ ]]; then sha="$IN_REF"
+                else sha=$(git rev-parse --verify "refs/tags/$IN_REF^{commit}") || { echo "::error::'$IN_REF' is neither a full commit SHA nor a tag"; exit 1; }; fi
+                git cat-file -e "$sha^{commit}" || { echo "::error::no commit $sha"; exit 1; }
+                dev "$sha"
+              else echo "::error::give either version (a release) or ref (a dev snapshot)"; exit 1; fi ;;
+            workflow_run)
+              # only main's tip: a run that finished after a newer push leaves /dev/ to that push's run
+              if [ "$RUN_SHA" != "$(git rev-parse origin/main)" ]; then echo "$RUN_SHA is no longer main's tip: nothing to publish"; out channel ""
+              else dev "$RUN_SHA" "$RUN_ID"; fi ;;
+            *) echo "::error::unexpected event $EVENT"; exit 1 ;;
+          esac
+
   openssl-mingw:
     # the mingw-x64 OpenSSL of build.yml's openssl-docker job, built the same way (fetch.sh checks the tarball's signature
-    # and SHA-256) and from the same cache. A published prerelease does not start the site (docs/release.md, "Prereleases
-    # on GitHub only"): every later job needs this one, so all are skipped; by hand, any version still builds
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    # and SHA-256) and from the same cache; releases only
+    needs: resolve
+    if: needs.resolve.outputs.channel == 'release'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     timeout-minutes: 60
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: 'pages: version'
-        id: version
-        run: |
-          v="${VERSION_IN#v}"
-          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$VERSION_IN' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/v${{ steps.version.outputs.version }}
+          ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -57,7 +140,7 @@ jobs:
             build/openssl-work/cache
             build/openssl-work/src/*.tar.gz
             build/openssl-work/src/*.tar.gz.asc
-          key: openssl-docker-mingw-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+          key: openssl-docker-mingw-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/compression-libs.toml', 'tools/openssl/**') }}
       - name: 'openssl: fetch and verify'
         run: bash tools/openssl/fetch.sh
       - name: 'openssl: build mingw-x64'
@@ -72,17 +155,15 @@ jobs:
           retention-days: 1
 
   build:
-    needs: openssl-mingw
+    needs: [resolve, openssl-mingw]
     runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions:
       contents: read
     timeout-minutes: 240
-    outputs:
-      version: ${{ needs.openssl-mingw.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/v${{ needs.openssl-mingw.outputs.version }}
+          ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
@@ -100,14 +181,14 @@ jobs:
           "$RUNNER_TEMP/docs-venv/bin/pip" install --quiet --require-hashes -r tools/docs/requirements.txt
       - name: 'pages: build the site of this version'
         env:
-          VERSION: ${{ needs.openssl-mingw.outputs.version }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           DOCS_PYTHON="$RUNNER_TEMP/docs-venv/bin/python" GRADLE_ARGS="--stacktrace -x :kuicksilver-native:buildJniHost" \
             bash tools/docs/site.sh "$VERSION" "$RUNNER_TEMP/site"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: site-version
-          path: ${{ runner.temp }}/site/${{ needs.openssl-mingw.outputs.version }}
+          path: ${{ runner.temp }}/site/${{ needs.resolve.outputs.version }}
           retention-days: 1
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -119,70 +200,226 @@ jobs:
             !**/*.hprof
           retention-days: 7
 
-  publish:
-    needs: build
+  verify:
+    # the "How we verify" pages (tools/docs/verify.py) from the CI runs of the commit; for dev also its guide and API
+    # reference, the site-dev artifact of the same build.yml run
+    needs: resolve
+    if: needs.resolve.outputs.channel != ''
     runs-on: ubuntu-24.04
     permissions:
-      contents: write   # push the gh-pages branch, the store of every published version
+      actions: read     # gh run list / view / download on build.yml, fuzz.yml and perf.yml of this repository
+      contents: read
+    timeout-minutes: 20
+    env:
+      CHANNEL: ${{ needs.resolve.outputs.channel }}
+      SHA: ${{ needs.resolve.outputs.sha }}
+      DIR: ${{ needs.resolve.outputs.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}   # this workflow's tools/docs/verify.py; the commit's sources are checked out to src/
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: src
+          persist-credentials: false
+      - name: 'verify: the CI runs of the commit'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TRIGGER: ${{ needs.resolve.outputs.run }}
+        run: |
+          d="$RUNNER_TEMP/verify-in"; mkdir -p "$d/data" "$d/fuzz" "$d/perf" "$RUNNER_TEMP/site"
+          [ "$(git -C src rev-parse HEAD)" = "$SHA" ] || { echo "::error::src/ is not $SHA"; exit 1; }
+          # the build.yml run: the triggering one for a workflow_run, else the newest successful run of exactly this commit,
+          # a full one (push, schedule) before a dispatched one, which may have run only some jobs; a pull_request run built
+          # a merge commit and never counts
+          run="$TRIGGER"
+          if [ -z "$run" ] && [ "$CHANNEL" = dev ]; then
+            # a snapshot by hand: only a push run on main has the snapshot's site-dev
+            run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" --status success --limit 50 --json databaseId,event,headBranch \
+              --jq '[.[] | select(.event == "push" and .headBranch == "main")][0].databaseId // empty')
+          elif [ -z "$run" ]; then
+            run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" --status success --limit 50 --json databaseId,event \
+              --jq '([.[] | select(.event == "push" or .event == "schedule")] + [.[] | select(.event == "workflow_dispatch")])[0].databaseId // empty')
+          fi
+          if [ -n "$run" ]; then
+            gh run view "$run" --repo "$REPO" --json databaseId,attempt,headSha,headBranch,createdAt,url,event,conclusion > "$d/meta.json"
+            gh run download "$run" --repo "$REPO" --pattern 'verify-*' --dir "$d/data" \
+              || echo "::warning::build.yml run $run has no verify-* artifacts (expired after 30 days, or older than tools/docs/verify.py): the published pages are kept if they have data (publish, verify.py keep)"
+          else
+            echo "::warning::no successful build.yml run for $SHA: the pages say no data"
+          fi
+          if [ "$CHANNEL" = dev ]; then
+            # the snapshot's guide and API reference, built by that run's apple job (tools/docs/site.sh --dev), uploaded
+            # only by push runs on main
+            [ -n "$run" ] || { echo "::error::no successful build.yml run of $SHA: no development snapshot to publish"; exit 1; }
+            jq -e --arg sha "$SHA" '.headSha == $sha and .event == "push" and .headBranch == "main" and .conclusion == "success"' "$d/meta.json" > /dev/null \
+              || { echo "::error::build.yml run $run is not a successful push run on main of $SHA: no site-dev from it"; exit 1; }
+            gh run download "$run" --repo "$REPO" --name site-dev --dir "$RUNNER_TEMP/site/dev" \
+              || { echo "::error::build.yml run $run has no site-dev artifact (kept 7 days): re-run build.yml on main, then this workflow"; exit 1; }
+            jq -e --arg sha "$SHA" '.sha == $sha' "$RUNNER_TEMP/site/dev/snapshot.json" > /dev/null \
+              || { echo "::error::the site-dev artifact is not the snapshot of $SHA"; exit 1; }
+          fi
+          # the newest finished fuzzing campaign on main: shown with its own commit and date, never as this commit's
+          fuzz=$(gh run list --repo "$REPO" --workflow fuzz.yml --branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$fuzz" ]; then
+            gh run view "$fuzz" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/fuzz-meta.json"
+            gh run download "$fuzz" --repo "$REPO" --pattern 'fuzz-stats-*' --dir "$d/fuzz" || echo "::warning::fuzz.yml run $fuzz: no fuzz-stats artifacts"
+          fi
+          # a perf.yml run of this commit, if one was started: its result files only (perf-<peer>, not perf-<peer>-logs)
+          perf=$(gh run list --repo "$REPO" --workflow perf.yml --commit "$SHA" --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$perf" ]; then
+            gh run view "$perf" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/perf-meta.json"
+            names=$(gh api "repos/$REPO/actions/runs/$perf/artifacts" --paginate \
+              --jq '.artifacts[] | select(.expired | not) | .name | select(startswith("perf-") and (endswith("-logs") | not) and . != "perf-interop-image")')
+            for a in $names; do gh run download "$perf" --repo "$REPO" --name "$a" --dir "$d/perf/$a"; done
+          fi
+      - name: 'verify: the fuzz targets of the commit (no token in this step)'
+        run: |
+          KSL_FUZZ_STATE="$RUNNER_TEMP/fuzz-state" bash src/tools/fuzz/campaign.sh list > "$RUNNER_TEMP/verify-in/fuzz-targets.txt" \
+            || echo "::warning::tools/fuzz/campaign.sh list failed: the fuzz targets are the committed corpus directories"
+      - name: 'verify: build the pages'
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          DATE: ${{ needs.resolve.outputs.date }}
+        run: |
+          d="$RUNNER_TEMP/verify-in"
+          opt() { [ -e "$2" ] && printf '%s\n%s\n' "$1" "$2"; return 0; }
+          mapfile -t extra < <(opt --meta "$d/meta.json"; opt --fuzz-meta "$d/fuzz-meta.json"; opt --perf-meta "$d/perf-meta.json"; opt --fuzz-targets "$d/fuzz-targets.txt")
+          if [ "$CHANNEL" = dev ]; then ref="$SHA"; extra+=(--dir dev --snapshot-date "$DATE"); else ref="v$VERSION"; fi
+          python3 -I tools/docs/verify.py build --sha "$SHA" --version "$VERSION" --ref "$ref" --src src \
+            --out "$RUNNER_TEMP/verify-site/$DIR" --data "$d/data" --fuzz-stats "$d/fuzz" --perf "$d/perf" "${extra[@]}"
+          # nothing of a runner in the published pages: home and temporary paths, the user and host names
+          python3 -I tools/check/build-paths.py "$RUNNER_TEMP/verify-site" "$RUNNER_TEMP/site"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-verify
+          path: ${{ runner.temp }}/verify-site/${{ needs.resolve.outputs.dir }}
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.resolve.outputs.channel == 'dev'
+        with:
+          name: site-version
+          path: ${{ runner.temp }}/site/dev
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, build, verify]
+    # build is skipped for dev (verify brings the snapshot's guide and API reference)
+    if: >-
+      !cancelled() && needs.verify.result == 'success' &&
+      (needs.build.result == 'success' || needs.resolve.outputs.channel == 'dev')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # push the gh-pages branch, the store of every published version and the snapshot
     timeout-minutes: 30
     concurrency:
-      # one update of gh-pages at a time, none cancelled: each run adds a version to what the previous one pushed. A run
+      # one update per channel at a time, none cancelled (a waiting dev update may be replaced by a newer one); updates of
+      # the two channels can overlap, and a push that lost the race is redone on the new gh-pages below. A release run
       # that is cancelled anyway must be re-run (docs/release.md)
-      group: pages
+      group: pages-publish-${{ needs.resolve.outputs.channel }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}   # this workflow's tools/docs/site.py; only build checks out the tag
+          ref: ${{ github.sha }}   # this workflow's tools/docs/site.py and verify.py
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: site-version
           path: ${{ runner.temp }}/new
-      - name: 'pages: add the version to gh-pages'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-verify
+          path: ${{ runner.temp }}/new
+      - name: 'pages: add the directory to gh-pages'
+        # a rebuild whose verify job found no CI data (the build.yml artifacts expired) keeps the published verification
+        # data of the same commit, rendered in every language; with none, the "no data" pages go out with a warning. Only
+        # the verify section is decided there: the guide and the API reference are published either way (verify.py keep)
         env:
-          VERSION: ${{ needs.build.outputs.version }}
+          DIR: ${{ needs.resolve.outputs.dir }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          CHANNEL: ${{ needs.resolve.outputs.channel }}
+          # auto: after a build.yml run (workflow_run), manual: by hand
+          MODE: ${{ needs.resolve.outputs.run != '' && 'auto' || 'manual' }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          site="$RUNNER_TEMP/gh-pages"
           basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$basic"
           auth="AUTHORIZATION: basic $basic"
           url="https://github.com/$REPO.git"
-          rc=0; git -c http.extraheader="$auth" ls-remote --exit-code --heads "$url" gh-pages > /dev/null || rc=$?
-          case "$rc" in
-            0) git -c http.extraheader="$auth" clone --quiet --depth 1 --branch gh-pages --single-branch "$url" "$site" ;;
-            2) git init --quiet -b gh-pages "$site" ;;   # no gh-pages yet: the first publication starts the branch
-            *) echo "::error::git ls-remote $url failed ($rc)"; exit 1 ;;
-          esac
-          rm -rf "${site:?}/$VERSION"
-          cp -R "$RUNNER_TEMP/new" "$site/$VERSION"
-          python3 -I tools/docs/site.py index "$site"
-          python3 -I tools/docs/site.py check "$site"
-          cd "$site"
-          git add -A
-          if git diff --cached --quiet; then echo "gh-pages already has this version"; exit 0; fi
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit --quiet -m "Documentation site: $VERSION"
-          git -c http.extraheader="$auth" push --quiet "$url" HEAD:refs/heads/gh-pages
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: ${{ runner.temp }}/gh-pages
+          # one attempt on the current gh-pages: 0 pushed or nothing to do, 1 the push lost a race; any other failure ends
+          # the step (exit: errexit does not apply inside a function called from `if`)
+          update() {
+            local site="$RUNNER_TEMP/gh-pages" rc=0
+            rm -rf "$site"
+            git -c http.extraheader="$auth" ls-remote --exit-code --heads "$url" gh-pages > /dev/null || rc=$?
+            case "$rc" in
+              0) git -c http.extraheader="$auth" clone --quiet --depth 1 --branch gh-pages --single-branch "$url" "$site" || exit 1 ;;
+              2) git init --quiet -b gh-pages "$site" || exit 1 ;;   # no gh-pages yet: the first publication starts the branch
+              *) echo "::error::git ls-remote $url failed ($rc)"; exit 1 ;;
+            esac
+            rm -rf "$RUNNER_TEMP/this" "$site.before" && cp -R "$RUNNER_TEMP/new" "$RUNNER_TEMP/this" || exit 1
+            mkdir -p "$site.before/dev" && { [ ! -f "$site/dev/snapshot.json" ] || cp "$site/dev/snapshot.json" "$site.before/dev/"; } || exit 1
+            python3 -I tools/docs/verify.py keep --new "$RUNNER_TEMP/this" --old "$site/$DIR" || exit 1
+            rm -rf "${site:?}/$DIR" && cp -R "$RUNNER_TEMP/this" "$site/$DIR" || exit 1
+            python3 -I tools/docs/site.py index "$site" || exit 1
+            python3 -I tools/docs/site.py check "$site" || exit 1
+            git -C "$site" add -A || exit 1
+            if git -C "$site" diff --cached --quiet; then echo "gh-pages already has $DIR of $SHA"; return 0; fi
+            git -C "$site" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --quiet -m "Documentation site: $DIR ($SHA)" || exit 1
+            if [ "$CHANNEL" = dev ]; then
+              # right before the push: an automatic snapshot only while it is main's tip and nothing newer is published
+              # (a slow run of an older commit must not roll /dev/ back; tools/docs/dev-guard.sh)
+              tip=$(git -c http.extraheader="$auth" ls-remote "$url" refs/heads/main | cut -f1)
+              [ -n "$tip" ] || { echo "::error::cannot read main's tip"; exit 1; }
+              published=$(jq -r '.sha // "-"' "$site.before/dev/snapshot.json" 2>/dev/null || echo -)
+              relation=-
+              if [ "$published" != - ] && [ "$published" != "$SHA" ]; then
+                relation=$(gh api "repos/$REPO/compare/$SHA...$published" --jq .status 2>/dev/null || echo -)
+              fi
+              decision=$(bash tools/docs/dev-guard.sh "$MODE" "$SHA" "$tip" "$published" "$relation") || exit 1
+              if [ "$decision" != publish ]; then echo "/dev/ not updated: ${decision#skip: }"; return 0; fi
+            fi
+            git -C "$site" -c http.extraheader="$auth" push --quiet "$url" HEAD:refs/heads/gh-pages || return 1
+          }
+          for attempt in 1 2 3 4 5; do
+            if update; then exit 0; fi
+            echo "gh-pages moved during the update (attempt $attempt): again on the new tip"; sleep $((attempt * 10))
+          done
+          echo "::error::gh-pages could not be updated after 5 attempts"; exit 1
 
   deploy:
     needs: publish
     runs-on: ubuntu-24.04
     permissions:
+      contents: read    # check out gh-pages
       pages: write      # deploy to GitHub Pages
       id-token: write   # the OIDC token actions/deploy-pages authenticates with
     timeout-minutes: 15
     concurrency:
-      group: pages
+      # one deployment at a time; each deploys gh-pages as it is when it starts, so whichever runs last shows the newest
+      group: pages-deploy
       cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: gh-pages
+          path: gh-pages
+          persist-credentials: false
+      - name: 'pages: the published tree only'
+        run: rm -rf gh-pages/.git
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: gh-pages
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
