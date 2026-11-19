@@ -3090,6 +3090,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.u
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.http11AndH2cOnOnePort
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_aPrefixOfThePrefaceIsHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_aStopDoesNotWaitForAPrefaceInProgress
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_aStopWaitsForAStartedPrefaceUntilTheHeadDeadline
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_brokenPrefaceWithHttp11Gets505
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused
@@ -3638,6 +3639,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDead
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDeadlineRaceTest.negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.ClientSignalConcurrencyTest.observedOrderIsMonotonic
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDeadlineRaceTest.negative_aPrefaceReadAsItsDeadlineFiresIsThePreface
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aPrefaceSplitAcrossReadsAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aPrefaceStartedAsTheStopWinsTheCheckIsWaitedForOverH2cWithHttp11
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsThePrefaceWinsIsServedOverH2c
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsThePrefaceWinsIsServedOverTls
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c

@@ -226,33 +226,59 @@ class ServerH2cTest {
         }
 
     /**
-     * A stopping server waits for no preface: a connection still sending it (16 of its 24 octets here, the whole request
-     * line `PRI * HTTP/2.0`) on [H2cMode.WithHttp11] goes to HTTP/1.1, which reads those octets as a head that started
-     * and answers it 505 with `Connection: close` at once, and one on [H2cMode.Only] gets GOAWAY and the close, instead
-     * of holding the stop for the request-head deadline (60 s here). A whole preface that came with the stop is HTTP/2
-     * on both (H2PrefaceDrainRaceTest).
+     * A stopping server waits for no preface on [H2cMode.Only]: a connection still sending it (16 of its 24 octets here)
+     * gets the server's SETTINGS and a GOAWAY that names no stream (none was taken), then the close, instead of holding the
+     * stop for the request-head deadline (60 s here). [H2cMode.WithHttp11] waits for a preface that has started, as
+     * HTTP/1.1 waits for a head that has started (negative_aStopWaitsForAStartedPrefaceUntilTheHeadDeadline); a whole
+     * preface that came with the stop is HTTP/2 on both (H2PrefaceDrainRaceTest).
      */
     @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
         serverTest {
-            for (mode in listOf(H2cMode.WithHttp11, H2cMode.Only)) {
-                val (server, port) = h2cServer(mode, configure = { requestHeaderTimeoutSeconds = 60 })
-                RawH2Client.connectPlain(port).use { raw ->
-                    raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
-                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
-                    // Only: the HTTP/2 connection is waiting for the rest of the preface
-                    if (mode == H2cMode.Only) {
-                        withTimeout(10.seconds) {
-                            server.engine.h2Live.count
-                                .first { it == 1 }
-                        }
-                    }
-                    val t =
-                        kotlin.time.TimeSource.Monotonic
-                            .markNow()
-                    server.stopSuspend(10_000, 15_000)
-                    assertTrue(t.elapsedNow() < 5.seconds, "$mode: the stop waited ${t.elapsedNow()}")
-                    raw.readToEnd(within = 15.seconds)
+            val (server, port) = h2cServer(H2cMode.Only, configure = { requestHeaderTimeoutSeconds = 60 })
+            RawH2Client.connectPlain(port).use { raw ->
+                raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
+                // the HTTP/2 connection is waiting for the rest of the preface
+                withTimeout(10.seconds) {
+                    server.engine.h2Live.count
+                        .first { it == 1 }
                 }
+                val t =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+                server.stopSuspend(10_000, 15_000)
+                assertTrue(t.elapsedNow() < 5.seconds, "the stop waited ${t.elapsedNow()}")
+                val frames = raw.readToEnd(within = 15.seconds)
+                assertEquals(RawFrame.SETTINGS, frames.firstOrNull()?.type, "$frames")
+                val goAway = assertNotNull(frames.lastOrNull { it.type == RawFrame.GOAWAY }, "$frames")
+                assertEquals(0, goAway.lastStreamId, "$frames")
+                assertEquals(0L, goAway.errorCode, "$frames")
+            }
+        }
+
+    /**
+     * [H2cMode.WithHttp11]: a connection that has sent the start of the preface (8 octets, short of the request line) when
+     * the server stops is a request head that started, waited for as HTTP/1.1 waits for one: here it never completes, so
+     * the connection is closed at the request-head deadline (2 s) with HTTP/1.1's 408, and the stop ends then, well
+     * inside its grace period. A connection that has sent nothing is closed at once.
+     */
+    @Test fun negative_aStopWaitsForAStartedPrefaceUntilTheHeadDeadline() =
+        serverTest {
+            val seen = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val (server, port) =
+                h2cServer(H2cMode.WithHttp11, configure = {
+                    requestHeaderTimeoutSeconds = 2
+                    h2cPrefaceCheckForTest = { input, _ ->
+                        input.awaitContent(8) // the check starts with the octets in: a preface that started
+                        seen.complete(Unit)
+                    }
+                })
+            coroutineScope {
+                val answer = async { rawHttp(port, "PRI * HT", tls = null) }
+                withTimeout(10.seconds) { seen.await() }
+                server.stopSuspend(10_000, 15_000)
+                assertFalse(server.engine.stopWasForcedForTest, "the stop ran out its grace period")
+                val got = withTimeout(15.seconds) { answer.await() }
+                assertTrue(got.startsWith("HTTP/1.1 408 "), "the started preface was not cut at the head deadline: '$got'")
             }
         }
 

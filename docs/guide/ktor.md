@@ -472,12 +472,14 @@ SM
   do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
   hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
   of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
-  stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a whole preface already
-  received is HTTP/2 (GOAWAY, then the close, RFC 9113 section 6.8); a connection with only part of it goes to HTTP/1.1,
-  which treats it as any request head that started when the server stops: the whole request line `PRI * HTTP/2.0` is
-  answered 505 with `Connection: close` at once, a shorter part waits for the rest within the request-head deadline and
-  the stop's grace period. A request that arrived whole is answered, with `Connection: close`; only a connection that
-  sent nothing is closed at once. `Only` (a gRPC port) skips the check: a client that sends anything
+  stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a connection
+  that has sent nothing is closed at once, and one that has started is treated as a request head that started on
+  HTTP/1.1: waited for within the request-head deadline and the stop's grace period. A whole preface is HTTP/2, which
+  serves the requests that came with it and ends with the graceful two-step GOAWAY (RFC 9113 section 6.8); the first
+  octet that differs hands the connection to HTTP/1.1, which answers that request with `Connection: close`; a client
+  that stops part way is closed at the deadline with HTTP/1.1's 408. "Arrived" means read by the server from the socket:
+  bytes still in the kernel's buffer, or a TLS record not yet decrypted, when the stop begins are not seen, and such a
+  connection counts as one that has sent nothing. `Only` (a gRPC port) skips the check: a client that sends anything
   else, an HTTP/1.1 request included, gets the connection error of an invalid preface (GOAWAY with PROTOCOL_ERROR, then
   the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
 - **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers

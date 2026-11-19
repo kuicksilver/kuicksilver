@@ -12,6 +12,8 @@ import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.network.connectTcp
@@ -30,6 +32,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -94,22 +97,7 @@ class H2PrefaceDrainRaceTest {
             }
             withTimeout(10.seconds) { beforeStop() }
             val stop = async { server.stopSuspend(10_000, 15_000) }
-            val frames =
-                withTimeout(20.seconds) {
-                    buildList {
-                        while (true) {
-                            val f = raw.readFrame() ?: break
-                            add(f)
-                            // the graceful stop's PING (the first GOAWAY's round trip, RFC 9113 section 6.8) is answered
-                            if (f.type == RawFrame.PING && f.flags and 0x1 == 0) {
-                                raw.write(RawH2Client.frame(RawFrame.PING, 0x1, 0, f.payload))
-                            }
-                        }
-                    }
-                }
-            val answered = frames.any { it.stream == 1 && it.type == RawFrame.HEADERS }
-            assertTrue(answered, "stream 1 was taken by the core, so it must be answered: $frames")
-            assertTrue(frames.any { it.type == RawFrame.GOAWAY }, "the stop ends the connection with GOAWAY: $frames")
+            assertServedUnderTwoStepGoAway(readToEnd(raw))
             val t =
                 kotlin.time.TimeSource.Monotonic
                     .markNow()
@@ -178,55 +166,172 @@ class H2PrefaceDrainRaceTest {
             run(server, port, tls = true) { prefaceWon.await() }
         }
 
+    /** The server's frames until it closes; the graceful stop's PING (its first GOAWAY's round trip) is answered. */
+    private suspend fun readToEnd(raw: RawH2Client): List<RawFrame> =
+        withTimeout(20.seconds) {
+            buildList {
+                while (true) {
+                    val f = raw.readFrame() ?: break
+                    add(f)
+                    if (f.type == RawFrame.PING && f.flags and 0x1 == 0) {
+                        raw.write(RawH2Client.frame(RawFrame.PING, 0x1, 0, f.payload))
+                    }
+                }
+            }
+        }
+
+    /**
+     * An HTTP/2 connection (the server's SETTINGS first) whose stream 1 was answered under the graceful stop of RFC 9113
+     * section 6.8: a first GOAWAY with the largest stream identifier, a last one naming stream 1, both NO_ERROR.
+     */
+    private fun assertServedUnderTwoStepGoAway(frames: List<RawFrame>) {
+        assertEquals(RawFrame.SETTINGS, frames.firstOrNull()?.type, "HTTP/2: the server's preface first: $frames")
+        assertTrue(frames.any { it.stream == 1 && it.type == RawFrame.HEADERS }, "stream 1 came with the preface, so answered: $frames")
+        val goAways = frames.filter { it.type == RawFrame.GOAWAY }
+        assertTrue(goAways.size >= 2, "a two-step GOAWAY: $frames")
+        assertEquals(Int.MAX_VALUE, goAways.first().lastStreamId, "the first GOAWAY names the largest stream: $frames")
+        assertEquals(1, goAways.last().lastStreamId, "the last GOAWAY names stream 1: $frames")
+        assertTrue(goAways.all { it.errorCode == 0L }, "NO_ERROR: $frames")
+    }
+
+    /** A plain connector serving h2c next to HTTP/1.1, with [check] as its preface check's hook; started. */
+    private suspend fun withHttp11Server(
+        check: suspend (ByteReadChannel, Job) -> Unit,
+    ): Pair<EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>, Int> {
+        val server =
+            kuicksilverServer(null, configure = {
+                plainConnector {
+                    host = "127.0.0.1"
+                    port = 0
+                    h2c = H2cMode.WithHttp11
+                }
+                http3 = false
+                h2cPrefaceCheckForTest = check
+            }) { routing { get("/") { call.respondText("ok") } } }
+        server.startSuspend(wait = false)
+        return server to
+            server.engine
+                .resolvedConnectors()
+                .first()
+                .port
+    }
+
+    /** The preface, SETTINGS and a GET on stream 1, as one prior-knowledge client sends them. */
+    private val prefaceAndGet: ByteArray =
+        RawH2Client.PREFACE + RawH2Client.frame(RawFrame.SETTINGS, 0, 0) +
+            RawH2Client.frame(
+                RawFrame.HEADERS,
+                0x5,
+                1,
+                RawH2Client.block(listOf(":method" to "GET", ":scheme" to "http", ":authority" to "server.test", ":path" to "/")),
+            )
+
     /**
      * [H2cMode.WithHttp11]: the whole preface, SETTINGS and a GET are in when the stop wins the preface check (the check is
-     * held, so the stop is the only side that can win). The connection is HTTP/2 all the same: the server's SETTINGS
-     * first, then GOAWAY, never an HTTP/1.1 answer (a 505 to `PRI * HTTP/2.0`) that a prior-knowledge client cannot read.
+     * held, so the stop is the only side that can win). The connection is HTTP/2 all the same, and the GET that came with
+     * the preface is served under the graceful two-step GOAWAY, never an HTTP/1.1 answer (a 505 to `PRI * HTTP/2.0`) that
+     * a prior-knowledge client cannot read, nor a GOAWAY that refuses it.
      */
     @Test fun negative_aWholePrefaceAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11() =
         serverTest {
             val inCheck = CompletableDeferred<Unit>()
-            val server =
-                kuicksilverServer(null, configure = {
-                    plainConnector {
-                        host = "127.0.0.1"
-                        port = 0
-                        h2c = H2cMode.WithHttp11
-                    }
-                    http3 = false
-                    h2cPrefaceCheckForTest = { input ->
-                        input.awaitContent(RawH2Client.PREFACE.size) // the whole preface is in
-                        inCheck.complete(Unit)
-                        kotlinx.coroutines.awaitCancellation()
-                    }
-                }) { routing { get("/") { call.respondText("ok") } } }
-            server.startSuspend(wait = false)
-            val port =
-                server.engine
-                    .resolvedConnectors()
-                    .first()
-                    .port
+            val (server, port) =
+                withHttp11Server { input, _ ->
+                    input.awaitContent(prefaceAndGet.size) // the whole preface and the GET are in
+                    inCheck.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                }
             coroutineScope {
                 RawH2Client.connectPlain(port).use { raw ->
-                    val get = listOf(":method" to "GET", ":scheme" to "http", ":authority" to "server.test", ":path" to "/")
-                    raw.write(
-                        RawH2Client.PREFACE + RawH2Client.frame(RawFrame.SETTINGS, 0, 0) +
-                            RawH2Client.frame(RawFrame.HEADERS, 0x5, 1, RawH2Client.block(get)),
-                    )
+                    raw.write(prefaceAndGet)
                     withTimeout(10.seconds) { inCheck.await() }
                     val stop = async { server.stopSuspend(10_000, 15_000) }
-                    val frames =
-                        withTimeout(20.seconds) {
-                            buildList {
-                                while (true) add(raw.readFrame() ?: break)
-                            }
-                        }
-                    assertEquals(RawFrame.SETTINGS, frames.firstOrNull()?.type, "HTTP/2: the server's preface first: $frames")
-                    val goAway = assertNotNull(frames.firstOrNull { it.type == RawFrame.GOAWAY }, "GOAWAY: $frames")
-                    assertEquals(0L, goAway.errorCode, "NO_ERROR: $frames")
-                    if (goAway.lastStreamId >= 1) {
-                        assertTrue(frames.any { it.stream == 1 && it.type == RawFrame.HEADERS }, "stream 1 named, so answered: $frames")
-                    }
+                    assertServedUnderTwoStepGoAway(readToEnd(raw))
+                    raw.close()
+                    withTimeout(20.seconds) { stop.await() }
+                }
+            }
+        }
+
+    /**
+     * The octets the channel's writer flushed that no reader has moved into its read buffer yet (ktor-io's ByteChannel
+     * keeps them apart until the next awaitContent or read): found through the channel views around it, by reflection.
+     */
+    private fun flushedNotRead(channel: Any): Int {
+        if (channel is ByteChannel) {
+            val f = ByteChannel::class.java.getDeclaredField("flushBufferSize")
+            f.isAccessible = true
+            return f.getInt(channel)
+        }
+        var type: Class<*>? = channel.javaClass
+        while (type != null) {
+            for (f in type.declaredFields) {
+                if (!ByteReadChannel::class.java.isAssignableFrom(f.type)) continue
+                f.isAccessible = true
+                val inner = f.get(channel) ?: continue
+                if (inner !== channel) return flushedNotRead(inner)
+            }
+            type = type.superclass
+        }
+        error("no ByteChannel inside ${channel.javaClass}")
+    }
+
+    /**
+     * [H2cMode.WithHttp11]: a whole preface split across two reads when the stop wins the preface check. Its first 10
+     * octets were moved into the channel's read buffer, the other 14 (with SETTINGS and the GET) were flushed into the
+     * channel after them and not moved yet. The connection is HTTP/2 all the same: a look at the read buffer alone saw 10
+     * octets and handed the preface to HTTP/1.1, which answered it 505.
+     */
+    @Test fun negative_aPrefaceSplitAcrossReadsAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11() =
+        serverTest {
+            val firstIn = CompletableDeferred<Unit>()
+            val restFlushed = CompletableDeferred<Unit>()
+            val (server, port) =
+                withHttp11Server { input, _ ->
+                    input.awaitContent(10) // moves the first 10 octets into the read buffer
+                    firstIn.complete(Unit)
+                    // the rest is flushed into the channel, not moved: nothing reads it while this hook holds the check
+                    while (flushedNotRead(input) < prefaceAndGet.size - 10) yield()
+                    restFlushed.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                }
+            coroutineScope {
+                RawH2Client.connectPlain(port).use { raw ->
+                    raw.write(prefaceAndGet.copyOfRange(0, 10))
+                    withTimeout(10.seconds) { firstIn.await() }
+                    raw.write(prefaceAndGet.copyOfRange(10, prefaceAndGet.size))
+                    withTimeout(10.seconds) { restFlushed.await() }
+                    val stop = async { server.stopSuspend(10_000, 15_000) }
+                    assertServedUnderTwoStepGoAway(readToEnd(raw))
+                    raw.close()
+                    withTimeout(20.seconds) { stop.await() }
+                }
+            }
+        }
+
+    /**
+     * [H2cMode.WithHttp11]: the stop wins the preface check while only the first 16 octets of the preface are in (the
+     * request line `PRI * HTTP/2.0`), and the rest comes after the stop began. A preface that has started is a request
+     * head that started: it is waited for (within the request-head deadline), and the connection is HTTP/2, the GET that
+     * came with it served under the graceful GOAWAY. Before, the stop handed the 16 octets to HTTP/1.1, which answered 505.
+     */
+    @Test fun negative_aPrefaceStartedAsTheStopWinsTheCheckIsWaitedForOverH2cWithHttp11() =
+        serverTest {
+            val stopping = CompletableDeferred<Job>()
+            val (server, port) =
+                withHttp11Server { input, draining ->
+                    input.awaitContent(16)
+                    stopping.complete(draining)
+                    kotlinx.coroutines.awaitCancellation()
+                }
+            coroutineScope {
+                RawH2Client.connectPlain(port).use { raw ->
+                    raw.write(prefaceAndGet.copyOfRange(0, 16))
+                    val draining = withTimeout(10.seconds) { stopping.await() }
+                    val stop = async { server.stopSuspend(10_000, 15_000) }
+                    withTimeout(10.seconds) { draining.join() } // the stop began, and won the check: its side cannot lose
+                    raw.write(prefaceAndGet.copyOfRange(16, prefaceAndGet.size))
+                    assertServedUnderTwoStepGoAway(readToEnd(raw))
                     raw.close()
                     withTimeout(20.seconds) { stop.await() }
                 }
@@ -250,7 +355,7 @@ class H2PrefaceDrainRaceTest {
                         h2c = H2cMode.WithHttp11
                     }
                     http3 = false
-                    h2cPrefaceCheckForTest = { input ->
+                    h2cPrefaceCheckForTest = { input, _ ->
                         input.awaitContent(request.length) // the whole request is in
                         inCheck.complete(Unit)
                         kotlinx.coroutines.awaitCancellation()

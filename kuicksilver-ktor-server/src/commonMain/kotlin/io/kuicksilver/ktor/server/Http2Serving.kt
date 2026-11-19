@@ -25,9 +25,11 @@ import io.kuicksilver.ktor.server.h2.WebSocketOverH2
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
@@ -129,9 +131,13 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     var conn: H2ServerConnection? = null
     try {
         coroutineScope {
+            val reader = input ?: sock.openDeliveringReadChannel()
+            // the whole client preface already in the input as the connection begins (one the h2c check looked at, or one
+            // that came right behind the TLS handshake): it is the preface whatever the stop does, read by the core at once
+            val prefaceIn = reader.h2PrefaceAtOnce()
             val c =
                 H2ServerConnection.start(
-                    input ?: sock.openDeliveringReadChannel(),
+                    reader,
                     sock.openWriteChannel(),
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,
@@ -170,9 +176,9 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 }
             // RFC 9113 section 3.4: the client preface, within the request-head deadline (as the first request head on HTTP/1.1)
             // a preface read as the deadline fires is the preface (withTimeoutOrNull drops what the wait returned when its
-            // timeout lands after it, and the connection was ended with GOAWAY). A stopping server reads no further request:
-            // a preface still arriving when it starts draining is not waited for, else one slow or silent client held the
-            // stop for the whole deadline
+            // timeout lands after it, and the connection was ended with GOAWAY). A stopping server waits for no preface: one
+            // still arriving when it starts draining is not waited for, else one slow or silent client held the stop for the
+            // whole deadline; one the core has read, or one in the input when the connection began, is the preface
             val preface =
                 completedWithin(prefaceWithin) {
                     configuration.h2BeforePrefaceRaceForTest?.invoke(c, draining)
@@ -185,7 +191,14 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                         try {
                             select {
                                 arrived.onAwait { it }
-                                draining.onJoin { false }
+                                draining.onJoin {
+                                    // the stop won: a preface the core has read, or one that was in the input when the
+                                    // connection began, is the preface all the same; its connection is served under the
+                                    // graceful two-step GOAWAY (section 6.8) with the streams that came with it. Only a
+                                    // connection without one ends below, with GOAWAY naming what the core took
+                                    arrived.cancelAndJoin()
+                                    (prefaceIn && runCatching { c.awaitPreface() }.isSuccess) || c.prefaceReadAtOnce()
+                                }
                             }
                         } finally {
                             arrived.cancel()
@@ -472,3 +485,15 @@ internal inline fun releaseH2Stream(
         runCatching { log.warn("HTTP/2 stream $id: its release failed; the stream was given back", e) }
     }
 }
+
+/** Whether the core has read the client preface already, without waiting for it. */
+private suspend fun H2ServerConnection.prefaceReadAtOnce(): Boolean =
+    coroutineScope {
+        val read = async(start = CoroutineStart.UNDISPATCHED) { runCatching { awaitPreface() }.isSuccess }
+        if (read.isCompleted) {
+            read.await()
+        } else {
+            read.cancel()
+            false
+        }
+    }

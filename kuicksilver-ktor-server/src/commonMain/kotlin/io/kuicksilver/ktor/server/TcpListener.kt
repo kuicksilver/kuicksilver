@@ -452,9 +452,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             val i = input ?: sock.openDeliveringReadChannel()
                                             input = i
                                             // section 3.4: the preface, within the first request head's deadline; a client
-                                            // still sending it then (or when the server stops) goes to HTTP/1.1, whose own
-                                            // deadline has passed too, or which answers the head that started (or closes a
-                                            // connection that sent nothing)
+                                            // still sending it then goes to HTTP/1.1, whose own deadline has passed too; when
+                                            // the server stops, one that sent nothing goes there too and is closed as idle,
+                                            // one that started is waited for as a head that started
                                             h2c == H2cMode.Only ||
                                                 withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
                                                     i.startsWithH2PrefaceUnless(draining, configuration.h2cPrefaceCheckForTest)

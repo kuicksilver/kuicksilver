@@ -5,6 +5,8 @@ package io.kuicksilver.ktor.server
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -33,12 +35,12 @@ public enum class H2cMode {
      * they arrive and none is consumed: the first one that differs from the preface hands the connection to HTTP/1.1 at
      * once (a request shorter than the preface is never held back), and the wait for them is part of the first request
      * head's deadline (`requestHeaderTimeoutSeconds`), as on HTTP/1.1. Go's `golang.org/x/net/http2/h2c` handler and Netty's
-     * `CleartextHttp2ServerUpgradeHandler` serve both on one port too. When the server stops during the wait, a whole
-     * preface already received is HTTP/2 (GOAWAY, then the close); a connection with only part of it goes to HTTP/1.1,
-     * which reads it as a request head that started (as any other started head when the server stops): a whole request
-     * line `PRI * HTTP/2.0` is answered 505 with `Connection: close` at once, a shorter part waits for the rest within
-     * the request-head deadline (and the stop's grace period) like any slow head. Only a connection that sent nothing is
-     * closed at once without an answer.
+     * `CleartextHttp2ServerUpgradeHandler` serve both on one port too. When the server stops during the wait, a connection
+     * that sent nothing yet is closed at once; one that sent the start of the preface is still waited for, within the
+     * same deadline (and the stop's grace period), as a request head that started on HTTP/1.1 is: a whole preface is
+     * HTTP/2, which serves the requests that came with it and ends with the graceful GOAWAY (RFC 9113 section 6.8), and
+     * the first octet that differs hands the connection to HTTP/1.1, which answers that request with `Connection: close`.
+     * A client that stops part way is closed at the deadline (as HTTP/1.1, so with 408).
      */
     WithHttp11,
 
@@ -57,13 +59,14 @@ private val H2_CLIENT_PREFACE: ByteArray = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".en
  * Whether this channel starts with the HTTP/2 client connection preface (RFC 9113 section 3.4), consuming nothing: true once
  * its 24 octets arrived and match, false at the first octet that differs or at the end of the input, whichever comes first.
  * It waits for one more octet only while all those seen match, so at most the 24 octets of the preface; the caller bounds
- * the wait ([H2cMode.WithHttp11]: the request-head deadline).
+ * the wait ([H2cMode.WithHttp11]: the request-head deadline). [onOctet] runs each time octets are there to look at.
  */
 @OptIn(InternalAPI::class)
-internal suspend fun ByteReadChannel.startsWithH2Preface(): Boolean {
+internal suspend fun ByteReadChannel.startsWithH2Preface(onOctet: (() -> Unit)? = null): Boolean {
     var matched = 0
     while (matched < H2_CLIENT_PREFACE.size) {
         if (!awaitContent(matched + 1)) return false
+        onOctet?.invoke()
         val seen = readBuffer.peek()
         seen.skip(matched.toLong())
         while (matched < H2_CLIENT_PREFACE.size && !seen.exhausted()) {
@@ -75,12 +78,37 @@ internal suspend fun ByteReadChannel.startsWithH2Preface(): Boolean {
 }
 
 /**
- * Whether the octets already here are the whole HTTP/2 client connection preface, without waiting for any: false while
- * fewer than its 24 octets arrived, at the first that differs, or when the input failed.
+ * Whether at least [min] octets are in this channel now, without waiting: those ktor has already taken from the socket,
+ * moved into the read buffer from the writer's flush buffer when they sit there (awaitContent moves them and returns
+ * without suspending), so octets flushed while nobody was reading count too. False when fewer are there, at the end of
+ * the input, or when the input failed (a channel may report its failure while octets it took before are still readable:
+ * the caller's next reader sees them and the failure). Bytes still in the socket, not read by ktor yet, are not seen.
+ * Only while no other coroutine reads this channel.
  */
+internal suspend fun ByteReadChannel.hasAtOnce(min: Int): Boolean =
+    coroutineScope {
+        val probe =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitContent(min)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    false
+                }
+            }
+        if (probe.isCompleted) {
+            probe.await()
+        } else {
+            probe.cancel()
+            false
+        }
+    }
+
+/** Whether the whole HTTP/2 client connection preface is in this channel now ([hasAtOnce]), consuming nothing. */
 @OptIn(InternalAPI::class)
-private fun ByteReadChannel.prefaceArrived(): Boolean {
-    if (closedCause != null) return false
+internal suspend fun ByteReadChannel.h2PrefaceAtOnce(): Boolean {
+    if (!hasAtOnce(H2_CLIENT_PREFACE.size)) return false
     val seen = readBuffer.peek()
     for (octet in H2_CLIENT_PREFACE) {
         if (seen.exhausted() || seen.readByte() != octet) return false
@@ -89,33 +117,42 @@ private fun ByteReadChannel.prefaceArrived(): Boolean {
 }
 
 /**
- * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server waits for no preface, so a
- * connection still sending its first octets goes to HTTP/1.1, which answers what started as a request head and closes a
- * connection that sent nothing.
- * When the stop wins, the check is ended (joined, so nothing else reads the input meanwhile) and the octets looked at
- * again: a whole preface that came with the stop is HTTP/2 all the same (RFC 9113 section 3.3: prior knowledge), and
- * the HTTP/2 connection ends it with GOAWAY (section 6.8), never an HTTP/1.1 answer the client cannot read. The check
- * consumes nothing, so dropping it loses no octet.
+ * [startsWithH2Preface], except that a connection that has sent nothing when [stop] completes is not waited for: false
+ * then, and HTTP/1.1 closes it as idle at once. A connection that has sent its first octet is a request head that started
+ * (HTTP/1.1 would wait for the rest of it too), so the check goes on to its end, within the caller's bound (the
+ * request-head deadline; the stop's grace period cancels it): a whole preface is HTTP/2 (RFC 9113 section 3.3: prior
+ * knowledge), whose connection serves what came with it under the graceful GOAWAY (section 6.8), never an HTTP/1.1 answer
+ * the client cannot read. When the stop wins the race, the check is ended (joined, so nothing else reads the input
+ * meanwhile) unless it had seen an octet, and the input looked at again ([hasAtOnce], which also takes octets flushed
+ * into the channel while the check was not reading): any octet there starts the check over. It consumes nothing, so
+ * dropping it loses no octet.
  */
 internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(
     stop: Job,
-    checkForTest: (suspend (ByteReadChannel) -> Unit)? = null,
+    checkForTest: (suspend (ByteReadChannel, Job) -> Unit)? = null,
 ): Boolean =
     coroutineScope {
+        // completed once the check saw an octet: the connection has started to send, and is no longer idle
+        val started = Job()
         val check =
             async {
-                checkForTest?.invoke(this@startsWithH2PrefaceUnless)
-                startsWithH2Preface()
+                checkForTest?.invoke(this@startsWithH2PrefaceUnless, stop)
+                startsWithH2Preface { started.complete() }
             }
         try {
             select {
                 check.onAwait { it }
                 stop.onJoin {
-                    check.cancelAndJoin()
-                    prefaceArrived()
+                    if (started.isCompleted) {
+                        check.await()
+                    } else {
+                        check.cancelAndJoin()
+                        hasAtOnce(1) && startsWithH2Preface()
+                    }
                 }
             }
         } finally {
             check.cancel()
+            started.cancel()
         }
     }

@@ -14,6 +14,7 @@ import io.ktor.server.engine.BaseApplicationEngine
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
+import io.ktor.utils.io.ByteReadChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
@@ -472,10 +473,10 @@ public class KuicksilverApplicationEngine(
 
         /**
          * Test hook: runs inside an h2c connector's check for the client preface ([H2cMode.WithHttp11]) that races the
-         * stop, with the connection's input, before the check looks at it (a test that never returns from it leaves the
-         * stop as the only side that can win).
+         * stop, with the connection's input and the listener's draining job, before the check looks at it (a test that
+         * never returns from it leaves the stop as the only side that can win).
          */
-        internal var h2cPrefaceCheckForTest: (suspend (io.ktor.utils.io.ByteReadChannel) -> Unit)? = null
+        internal var h2cPrefaceCheckForTest: (suspend (ByteReadChannel, Job) -> Unit)? = null
 
         /**
          * Test hook: runs before an HTTP/2 connection's wait for the client preface races the stop, with the connection and
