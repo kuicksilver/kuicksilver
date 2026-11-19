@@ -3985,8 +3985,8 @@ events) may prefer `stallDetection = false` for them, or for the whole client.
 On a stall the engine drains the connection: it takes no new request, the alternative is marked broken for its origin
 (RFC 7838 section 2.4: 5 minutes, doubling; the backoff of a stall carries over the handshakes that work in between,
 since such a network lets handshakes through, and walks one level back down for each later connection that carried a
-whole exchange and ended without ever stalling; one that stalls after its first exchanges never lowers it), and then,
-per request:
+whole exchange and that the client closed in order without it ever stalling; one that stalls after its first exchanges,
+or dies by an idle timeout, never lowers it), and then, per request:
 
 - a request that may be repeated — an idempotent method (RFC 9110 section 9.2.2: GET, HEAD, OPTIONS, PUT, DELETE,
   TRACE), a body that can be sent again (bytes, a writer, none), and no response yet — goes over TCP at once
@@ -3997,7 +3997,8 @@ per request:
   networks, Wi-Fi roaming) that ends — any packet from the server — lets them finish over HTTP/3. When the path stays
   silent for `stallAbandonAfter` (10 s) after the stall, or the QUIC idle timeout comes first, they fail with
   `QuicStalledException` (its `silence` and `probeTimeouts` say what was seen) and the connection is closed. A
-  response that began is never repeated.
+  response that began is never repeated. A drained connection that came back closes once nothing runs on it any more,
+  a WebSocket or WebTransport session that shared it included.
 
 The engine does not honour an `Idempotency-Key` header (draft-ietf-httpapi-idempotency-key-header, not an RFC yet): a
 POST that carries one is still not repeated; the application may send it again itself.

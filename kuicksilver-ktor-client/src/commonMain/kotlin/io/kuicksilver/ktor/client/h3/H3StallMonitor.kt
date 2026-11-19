@@ -131,6 +131,8 @@ internal class H3StallMonitor(
     private val polled: () -> Unit = {},
     /** The watching loop started (+1) or ended (-1): no request watches the connection any more (tests). */
     private val looping: (Int) -> Unit = {},
+    /** A liveness PING went out (tests). */
+    private val pinged: () -> Unit = {},
 ) {
     private val watchers = MutableStateFlow(0)
     private val keys = AtomicReference(emptyList<String>())
@@ -254,9 +256,24 @@ internal class H3StallMonitor(
         }
     }
 
-    /** The connection is over (the monitor's job ends with it): a connection that never stalled lets the backoff walk down. */
-    fun ended() {
-        if (!everStalled) completedKeys.load().takeIf { it.isNotEmpty() }?.let { runCatching { onCompleted(it) } }
+    /**
+     * The connection is over (the monitor's job ends with it): one that never stalled, carried whole exchanges and was
+     * closed in order by this client (the pool's idle close, a retirement, the client's close: an application close of
+     * ours with H3_NO_ERROR) lets the backoff walk down. One that died otherwise (an idle timeout, a reset, an error)
+     * proves nothing about the path and lowers nothing. True when it lowered.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun ended(): Boolean {
+        if (everStalled) return false
+        val keys = completedKeys.load().takeIf { it.isNotEmpty() } ?: return false
+        val end = conn.quic.closed.takeIf { it.isCompleted }?.getCompleted()
+        val orderly =
+            end is io.kuicksilver.quic.QuicException.ConnectionLost.ApplicationClosed &&
+                end.initiator == io.kuicksilver.quic.Initiator.Local &&
+                Http3ErrorCode.normalize(end.code) == Http3ErrorCode.NO_ERROR
+        if (!orderly) return false
+        runCatching { onCompleted(keys) }
+        return true
     }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -324,6 +341,7 @@ internal class H3StallMonitor(
             // a quiet watched connection: nothing in flight, so a dead path would show no PTO; a PING gives it one
             if (quiet && now - maxOf(lastReceived, lastPing) >= pingGap) {
                 if (quic.ping()) {
+                    pinged()
                     lastPing = now
                     quiet = false
                     // at most half the idle timeout in force, so the PINGs keep the connection open (RFC 9114 section 5.1)
@@ -332,14 +350,9 @@ internal class H3StallMonitor(
                 }
             }
         }
-        // the last watcher left a drained connection: nobody else will use it (the pool dropped it), so it is closed now,
-        // in order when the path came back, rather than left to its idle timeout or kept alive by the peer's PINGs
-        val s = stall
-        if (s != null) {
-            abandon(s)
-        } else if (everStalled) {
-            withContext(NonCancellable) { runCatching { conn.close(Http3ErrorCode.NO_ERROR, "drained after a stall") } }
-        }
+        // the last watcher left a connection still stalled: the path is dead, it is closed now. One that came back is the
+        // pool's: drained at the stall, it closes at its last release (an unwatched WebSocket or session included)
+        stall?.let { abandon(it) }
     }
 
     private suspend fun declare(s: Stall) {
@@ -368,15 +381,15 @@ internal class H3StallMonitor(
         fun launch(
             scope: CoroutineScope,
             monitor: H3StallMonitor,
-            finally: () -> Unit,
+            /** With whether the ended connection lowered a stall's backoff ([ended]). */
+            finally: (Boolean) -> Unit,
         ): Job {
             val job =
                 scope.launch {
                     try {
                         monitor.run()
                     } finally {
-                        monitor.ended()
-                        finally()
+                        finally(monitor.ended())
                     }
                 }
             monitor.conn.quic.closed

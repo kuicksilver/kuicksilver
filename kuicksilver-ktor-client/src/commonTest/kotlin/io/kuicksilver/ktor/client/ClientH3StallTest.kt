@@ -3,6 +3,8 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
@@ -11,6 +13,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.application.install
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
@@ -20,7 +23,8 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
-import kotlinx.io.readByteArray
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -33,6 +37,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.BeforeTest
@@ -50,6 +55,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import io.ktor.server.websocket.WebSockets as ServerWebSockets
+import io.ktor.server.websocket.webSocket as serverWebSocket
 
 /**
  * Stall detection (`http3 { stallDetection }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
@@ -98,7 +105,12 @@ class ClientH3StallTest {
         val fullSent = CompletableDeferred<Unit>()
         val (s, port) =
             testServer(configure = { idle?.let { quic = quicConfig { maxIdleTimeout = it } } }) {
+                install(ServerWebSockets)
                 routing {
+                    // an echo WebSocket (over HTTP/3 with Extended CONNECT once a connection allows it, RFC 9220)
+                    serverWebSocket("/ws") {
+                        for (f in incoming) if (f is Frame.Text) outgoing.send(Frame.Text(f.readText()))
+                    }
                     // a large response, sent at once
                     get("/big") {
                         call.respondBytes(ByteArray(BIG) { 7 }, ContentType.Application.OctetStream)
@@ -164,6 +176,7 @@ class ClientH3StallTest {
         abandonAfter: Duration = 2.seconds,
         // windows that take a whole 4 MiB response before the application reads any of it
         windows: Boolean = false,
+        block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
         testClient(Http3DiscoveryMode.Auto, engine = {
             quic =
@@ -188,7 +201,7 @@ class ClientH3StallTest {
                         .apply { io = { local -> ios.open(local) } }
                         .build()
             }
-        })
+        }, block = block)
 
     /** The first call learns the server's Alt-Svc over TCP, the second sets up and uses HTTP/3. */
     private suspend fun warm(
@@ -606,10 +619,12 @@ class ClientH3StallTest {
                     val conn = engine.h3.connectionsForTest().single()
                     withTimeout(10.seconds) { engine.h3.stallWatchLoopsForTest.first { it == 0 } } // the finished watch's loop ended
                     val polls = engine.h3.stallPollsForTest.load()
-                    val sent = conn.quic.stats.packetsSent
+                    val pings = engine.h3.stallPingsForTest.load()
                     delay(2.seconds)
                     assertEquals(polls, engine.h3.stallPollsForTest.load(), "no wake-up without a watcher")
-                    assertEquals(sent, conn.quic.stats.packetsSent, "no PING without a watcher")
+                    // the monitor's own PINGs: the connection's other packets (ACKs, the server's tickets) are no PING of ours
+                    assertEquals(pings, engine.h3.stallPingsForTest.load(), "no PING without a watcher")
+                    assertTrue(!conn.quic.closed.isCompleted)
                 }
             } finally {
                 s.stop()
@@ -748,6 +763,132 @@ class ClientH3StallTest {
                         withTimeout(1.seconds) { conn.quic.closed.await() } // nothing on it needs the network: closed at once
                         assertEquals(BIG - first.size, ch.readBuffer().readByteArray().size, "the rest of the body is read")
                     }
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review round 3, item 2: an unwatched WebSocket over HTTP/3 shares the connection with a POST when the path is cut and
+     * comes back. The stall drains the connection; the POST finishes over it, and its end does not close the connection
+     * under the WebSocket, which goes on. The connection closes at its last release, when the WebSocket ends.
+     */
+    @Test fun aWebSocketOutlivesAStallThatRecovered() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, abandonAfter = 8.seconds, block = { install(WebSockets) }).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val conn = engine.h3.connectionsForTest().single()
+                    val stalled = CompletableDeferred<Unit>()
+                    engine.h3.stalledForTest = { stalled.complete(Unit) }
+                    val open = CompletableDeferred<Unit>()
+                    val goOn = CompletableDeferred<Unit>()
+                    coroutineScope {
+                        val ws =
+                            async {
+                                c.webSocket("wss://127.0.0.1:${s.port}/ws") {
+                                    assertEquals(HttpProtocolVersion.HTTP_3_0, call.response.version, "over the HTTP/3 connection")
+                                    send(Frame.Text("a"))
+                                    assertEquals("a", (incoming.receive() as Frame.Text).readText())
+                                    open.complete(Unit)
+                                    goOn.await()
+                                    send(Frame.Text("b"))
+                                    assertEquals("b", (incoming.receive() as Frame.Text).readText(), "the WebSocket goes on")
+                                }
+                            }
+                        withTimeout(10.seconds) { open.await() }
+                        ios.cut()
+                        val t0 = TimeSource.Monotonic.markNow()
+                        val post = async { c.post(url) { setBody("x") } }
+                        withTimeout(10.seconds) { stalled.await() }
+                        delay(2.seconds - t0.elapsedNow()) // a 2 s outage
+                        ios.heal()
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, post.await().version)
+                        withTimeout(10.seconds) { engine.h3.stallWatchLoopsForTest.first { it == 0 } } // the last watcher left
+                        assertTrue(!conn.quic.closed.isCompleted, "the WebSocket still holds the drained connection")
+                        goOn.complete(Unit)
+                        withTimeout(10.seconds) { ws.await() }
+                    }
+                    withTimeout(5.seconds) { conn.quic.closed.await() } // its last release closed it
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review round 3, item 3: a stall's backoff walks down end to end. After a stall (level 0), a new connection carries a
+     * whole exchange and the client closes it in order: the mark goes.
+     */
+    @Test fun aConnectionClosedInOrderWithoutAStallLowersTheBackoff() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    val origin = "https://127.0.0.1:${s.port}"
+                    val alt = "127.0.0.1:${s.port}"
+                    val engine = engineOf(c)
+                    warm(c, url)
+                    ios.cut()
+                    assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    withTimeout(10.seconds) { engine.h3.stallMonitorsForTest.first { it == 0 } }
+                    assertEquals(0, engine.altSvcLevelForTest(origin, alt))
+                    ios.heal()
+                    engine.expireAltSvcMarkForTest(origin, alt)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // a new connection, one whole exchange
+                    val ended = CompletableDeferred<Boolean>()
+                    val decayed = CompletableDeferred<Unit>()
+                    engine.h3.stallMonitorEndedForTest = { ended.complete(it) }
+                    engine.stallDecayedForTest = { decayed.complete(Unit) }
+                    engine.h3.dropConnectionsForTest().forEach { it.close() } // closed in order by the client
+                    assertEquals(true, withTimeout(10.seconds) { ended.await() })
+                    withTimeout(10.seconds) { decayed.await() }
+                    assertEquals(-1, engine.altSvcLevelForTest(origin, alt), "the mark at level 0 went")
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review round 3, item 4: a connection that never stalled but died by its idle timeout (2 s here) proves nothing
+     * about the path: the backoff stays.
+     */
+    @Test fun negative_aConnectionThatDiedByIdleTimeoutDoesNotLowerTheBackoff() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, idle = 2.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    val origin = "https://127.0.0.1:${s.port}"
+                    val alt = "127.0.0.1:${s.port}"
+                    val engine = engineOf(c)
+                    warm(c, url)
+                    ios.cut()
+                    assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    withTimeout(10.seconds) { engine.h3.stallMonitorsForTest.first { it == 0 } }
+                    ios.heal()
+                    engine.expireAltSvcMarkForTest(origin, alt)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // a new connection, one whole exchange
+                    val conn = engine.h3.connectionsForTest().single()
+                    val ended = CompletableDeferred<Boolean>()
+                    engine.h3.stallMonitorEndedForTest = { ended.complete(it) }
+                    ios.cut() // nothing more arrives: the connection dies by its idle timeout, no request watches it
+                    val end = withTimeout(10.seconds) { conn.quic.closed.await() }
+                    assertTrue(end is io.kuicksilver.quic.QuicException.ConnectionLost.Timeout, "$end")
+                    assertEquals(false, withTimeout(10.seconds) { ended.await() })
+                    assertEquals(0, engine.altSvcLevelForTest(origin, alt), "the backoff stays")
                 }
             } finally {
                 s.stop()

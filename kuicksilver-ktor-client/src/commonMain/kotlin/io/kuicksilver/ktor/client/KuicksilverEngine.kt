@@ -205,7 +205,10 @@ internal class KuicksilverEngine(
         }
         // a connection that carried a whole exchange and ended without ever stalling walks a stall's backoff one level down
         h3.exchangeCompleted = { k ->
-            engineScope.launch { altSvcLock.withLock { brokenAltSvc.decayStall(k.substringBefore('|'), k.substringAfter('|')) } }
+            engineScope.launch {
+                altSvcLock.withLock { brokenAltSvc.decayStall(k.substringBefore('|'), k.substringAfter('|')) }
+                stallDecayedForTest?.invoke()
+            }
         }
     }
     private val altSvcLock = Mutex()
@@ -923,6 +926,9 @@ internal class KuicksilverEngine(
         brokenAltSvc.markWorking(origin, alt)
         rememberSrtt(origin, conn.quic.stats.smoothedRtt)
     }
+
+    /** Runs after a stall's backoff was walked down for one origin and alternative (tests). */
+    internal var stallDecayedForTest: (() -> Unit)? = null
 
     /** The backoff level of [alt]'s broken mark for [origin], -1 without one (tests). */
     internal suspend fun altSvcLevelForTest(

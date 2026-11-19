@@ -880,8 +880,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   false }` sends no PING.
 - Ktor client: a completed QUIC handshake no longer lifts a broken mark the alternative got for a stall
   (`FallbackReason.QuicStalled`), so the backoff of a network that lets handshakes through and cuts the flows after
-  them keeps doubling; each later connection that carried a whole exchange and ended without ever stalling takes it one
-  level down.
+  them keeps doubling; each later connection that carried a whole exchange and that the client closed in order without
+  it ever stalling takes it one level down.
 - Ktor client: a POST or another request that may not be repeated, on an HTTP/3 connection that stalls, now waits up to
   `stallAbandonAfter` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
   timeout (30 s) with `QuicException.ConnectionLost.Timeout` before 0.3.0.

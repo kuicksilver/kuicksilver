@@ -423,6 +423,12 @@ internal class H3Pool(
     /** Stall monitors not over yet: their connection has not ended (tests). */
     internal val stallMonitorsForTest = kotlinx.coroutines.flow.MutableStateFlow(0)
 
+    /** Liveness PINGs the stall monitors sent (tests). */
+    internal val stallPingsForTest = kotlin.concurrent.atomics.AtomicLong(0)
+
+    /** A stall monitor ended with its connection, with whether that lowered a stall's backoff (tests). */
+    internal var stallMonitorEndedForTest: ((Boolean) -> Unit)? = null
+
     /** Wake-ups of the stall monitors' loops (tests). */
     internal val stallPollsForTest = kotlin.concurrent.atomics.AtomicLong(0)
 
@@ -448,9 +454,14 @@ internal class H3Pool(
                 clock,
                 onStall = { stall, keys ->
                     stalledConnections.update { it + (conn to stall) }
+                    // drained: no new request or session goes on it, and it closes at its last release (requests, WebSockets
+                    // and WebTransport sessions alike), so a path that comes back lets what runs on it finish
                     lock.withLock {
-                        connections.entries.removeAll { it.value.deferred.getCompletedOrNull() === conn }
-                        retired.removeAll { it.deferred.getCompletedOrNull() === conn }
+                        connections.values.filter { it.deferred.getCompletedOrNull() === conn }.forEach {
+                            retireUnderEveryKey(it)
+                            it.drain()
+                        }
+                        retired.filter { it.deferred.getCompletedOrNull() === conn }.forEach { it.drain() }
                         fresh.remove(conn)
                     }
                     stallMarker?.let { mark -> monitorScope.launch { mark(stall, keys) } }
@@ -461,10 +472,12 @@ internal class H3Pool(
                 warn = ::warn,
                 polled = { stallPollsForTest.addAndFetch(1) },
                 looping = { d -> stallWatchLoopsForTest.update { it + d } },
+                pinged = { stallPingsForTest.addAndFetch(1) },
             ).also { m ->
                 monitors[conn] = m
                 stallMonitorsForTest.update { it + 1 }
-                H3StallMonitor.launch(monitorScope, m) {
+                H3StallMonitor.launch(monitorScope, m) { lowered ->
+                    stallMonitorEndedForTest?.invoke(lowered)
                     stallMonitorsForTest.update { it - 1 }
                     stalledConnections.update { it - conn }
                     monitorScope.launch { monitorsLock.withLock { monitors.remove(conn) } }
