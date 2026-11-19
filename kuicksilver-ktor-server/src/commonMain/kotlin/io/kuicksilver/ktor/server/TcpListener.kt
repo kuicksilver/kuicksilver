@@ -380,7 +380,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             val within = (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)
                                             val afterHeader = input // the PROXY protocol header's input, if any
                                             withTimeoutOrRelease(within, { it.abort() }) {
-                                                if (afterHeader != null) client.tlsServer(tlsConfig, afterHeader) else client.tlsServer(tlsConfig)
+                                                if (afterHeader != null) {
+                                                    client.tlsServer(tlsConfig, afterHeader)
+                                                } else {
+                                                    client.tlsServer(tlsConfig)
+                                                }
                                             }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {

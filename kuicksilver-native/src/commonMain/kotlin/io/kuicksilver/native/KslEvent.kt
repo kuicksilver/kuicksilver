@@ -121,6 +121,7 @@ public object KslConst {
      * 0 bytes before, and for a resumption without key exchange (additive in ABI 7; RFC 9846 section 4.3.7).
      */
     public const val GET_GROUP: Int = 13
+
     /**
      * 2 bytes big-endian: the algorithm (1 zlib, 2 brotli) of the CompressedCertificate the peer sent its certificate in (RFC
      * 8879), 0 for a plain Certificate or none (additive in ABI 7).
