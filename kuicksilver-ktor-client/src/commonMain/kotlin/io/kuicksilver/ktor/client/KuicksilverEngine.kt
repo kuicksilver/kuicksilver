@@ -203,7 +203,7 @@ internal class KuicksilverEngine(
         h3.stallMarker = { stall, keys ->
             for (k in keys) markStalled(stall, k.substringBefore('|'), k.substringAfter('|'))
         }
-        // a connection that carried a whole exchange and never stalled walks a stall's backoff one level down
+        // a connection that carried a whole exchange and ended without ever stalling walks a stall's backoff one level down
         h3.exchangeCompleted = { k ->
             engineScope.launch { altSvcLock.withLock { brokenAltSvc.decayStall(k.substringBefore('|'), k.substringAfter('|')) } }
         }
@@ -923,6 +923,18 @@ internal class KuicksilverEngine(
         brokenAltSvc.markWorking(origin, alt)
         rememberSrtt(origin, conn.quic.stats.smoothedRtt)
     }
+
+    /** The backoff level of [alt]'s broken mark for [origin], -1 without one (tests). */
+    internal suspend fun altSvcLevelForTest(
+        origin: String,
+        alt: String,
+    ): Int = altSvcLock.withLock { brokenAltSvc.levelForTest(origin, alt) }
+
+    /** Ends [alt]'s broken mark for [origin] now, keeping its level (tests). */
+    internal suspend fun expireAltSvcMarkForTest(
+        origin: String,
+        alt: String,
+    ) = altSvcLock.withLock { brokenAltSvc.expireForTest(origin, alt) }
 
     /** Called once the HTTP/3 setup that lost a race is settled: QUIC confirmed, the alternative marked broken, or neither (tests). */
     internal var raceLoserSettledForTest: (() -> Unit)? = null

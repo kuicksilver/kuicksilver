@@ -1586,8 +1586,9 @@ events) may prefer `stallDetection = false` for them, or for the whole client.
 
 On a stall the engine drains the connection: it takes no new request, the alternative is marked broken for its origin
 (RFC 7838 section 2.4: 5 minutes, doubling; the backoff of a stall carries over the handshakes that work in between,
-since such a network lets handshakes through, and walks one level back down for each later connection that carries a
-whole exchange without a stall), and then, per request:
+since such a network lets handshakes through, and walks one level back down for each later connection that carried a
+whole exchange and ended without ever stalling; one that stalls after its first exchanges never lowers it), and then,
+per request:
 
 - a request that may be repeated — an idempotent method (RFC 9110 section 9.2.2: GET, HEAD, OPTIONS, PUT, DELETE,
   TRACE), a body that can be sent again (bytes, a writer, none), and no response yet — goes over TCP at once

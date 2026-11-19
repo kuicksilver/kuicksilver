@@ -120,18 +120,23 @@ internal class H3StallMonitor(
     private val clock: () -> Long,
     /** With the stall and the keys (`origin|alternative`) of the requests that watched the connection then. */
     private val onStall: suspend (Stall, Set<String>) -> Unit,
-    /** A watched exchange on a connection that never stalled received its whole response (`origin|alternative`). */
-    private val onCompleted: (String) -> Unit = {},
+    /**
+     * The connection ended without ever stalling, after it carried whole exchanges for these `origin|alternative` keys (a
+     * stall's backoff walks down for each; one that later stalls never counts, however many exchanges it carried first).
+     */
+    private val onCompleted: (Set<String>) -> Unit = {},
     /** Logs at Warn: a failure of the monitor itself, which goes on. */
     private val warn: (String, Throwable?) -> Unit = { _, _ -> },
     /** Each wake-up of the watching loop (tests count them). */
     private val polled: () -> Unit = {},
+    /** The watching loop started (+1) or ended (-1): no request watches the connection any more (tests). */
+    private val looping: (Int) -> Unit = {},
 ) {
     private val watchers = MutableStateFlow(0)
     private val keys = AtomicReference(emptyList<String>())
     private val aborts = AtomicReference(emptyList<(Stall) -> Unit>())
     private val bodies = AtomicReference(emptyList<(QuicStalledException) -> Unit>())
-    private val completedOnce = kotlin.concurrent.atomics.AtomicInt(0)
+    private val completedKeys = AtomicReference(emptySet<String>())
     private val marked = AtomicReference(emptySet<String>())
 
     /** The stall in force: declared and the path not back yet. */
@@ -162,9 +167,14 @@ internal class H3StallMonitor(
          * [QuicStalledException] (the block cancelled), so the request goes over TCP. A stall already in force ends it
          * before [block] starts.
          */
-        suspend fun <T> abortable(block: suspend () -> T): T {
+        suspend fun <T : Any> abortable(
+            /** What [block] returned when the stall's abort won the race with its return: given up (its stream closed). */
+            discard: (T) -> Unit = {},
+            block: suspend () -> T,
+        ): T {
             this@H3StallMonitor.stall?.let { throw it.exception(null) }
             var abort: ((Stall) -> Unit)? = null
+            val made = AtomicReference<T?>(null)
             try {
                 return coroutineScope {
                     val job = coroutineContext.job
@@ -172,9 +182,11 @@ internal class H3StallMonitor(
                     abort = a
                     aborts.update { it + a }
                     this@H3StallMonitor.stall?.let(a) // declared between the check and the registration
-                    block()
+                    block().also { made.store(it) }
                 }
             } catch (e: CancellationException) {
+                // the abort landed after the block returned: the scope throws, and what it returned would leak
+                made.load()?.let { runCatching { discard(it) } }
                 val s = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<StallAbort>().firstOrNull()
                 if (s != null && currentCoroutineContext().isActive) throw s.stall.exception(null)
                 throw e
@@ -199,7 +211,7 @@ internal class H3StallMonitor(
             body.load()?.let { l -> bodies.update { it - l } }
             keys.update { it - key }
             watchers.update { it - 1 }
-            if (completed && !everStalled && completedOnce.compareAndSet(0, 1)) runCatching { onCompleted(key) }
+            if (completed && !everStalled) completedKeys.update { it + key }
         }
     }
 
@@ -228,6 +240,7 @@ internal class H3StallMonitor(
     suspend fun run() {
         while (abandoned == null && !conn.quic.closed.isCompleted) {
             watchers.first { it > 0 }
+            looping(1)
             try {
                 watchWhileWatched()
             } catch (e: CancellationException) {
@@ -235,8 +248,15 @@ internal class H3StallMonitor(
             } catch (e: Throwable) {
                 warn("HTTP/3 stall detection failed on a connection; it goes on watching", e)
                 delay(settings.pollInterval)
+            } finally {
+                looping(-1)
             }
         }
+    }
+
+    /** The connection is over (the monitor's job ends with it): a connection that never stalled lets the backoff walk down. */
+    fun ended() {
+        if (!everStalled) completedKeys.load().takeIf { it.isNotEmpty() }?.let { runCatching { onCompleted(it) } }
     }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -312,8 +332,14 @@ internal class H3StallMonitor(
                 }
             }
         }
-        // the last watcher left a drained connection: nobody else will use it
-        stall?.let { abandon(it) }
+        // the last watcher left a drained connection: nobody else will use it (the pool dropped it), so it is closed now,
+        // in order when the path came back, rather than left to its idle timeout or kept alive by the peer's PINGs
+        val s = stall
+        if (s != null) {
+            abandon(s)
+        } else if (everStalled) {
+            withContext(NonCancellable) { runCatching { conn.close(Http3ErrorCode.NO_ERROR, "drained after a stall") } }
+        }
     }
 
     private suspend fun declare(s: Stall) {
@@ -349,6 +375,7 @@ internal class H3StallMonitor(
                     try {
                         monitor.run()
                     } finally {
+                        monitor.ended()
                         finally()
                     }
                 }

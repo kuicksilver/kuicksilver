@@ -32,8 +32,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: `QuicConnection.ping()` (experimental) sends one PING to test the path for liveness (RFC 9000 section 10.1.2);
   on a dead path it leads to probe timeouts (`stats.ptoCount`) where a quiet connection shows none.
   `ConnectionStats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides'.
-- HTTP/3: `Http3Response.received` (experimental) completes once the whole response arrived (its FIN), before the
-  application read it.
+- HTTP/3: `Http3Response.bodyReceived` (experimental) completes once the whole response arrived: its FIN and every byte
+  before it are local (the request stream's "Data Recvd" state, RFC 9000 section 3.2), however little the application
+  read of it yet.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
@@ -879,7 +880,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   false }` sends no PING.
 - Ktor client: a completed QUIC handshake no longer lifts a broken mark the alternative got for a stall
   (`FallbackReason.QuicStalled`), so the backoff of a network that lets handshakes through and cuts the flows after
-  them keeps doubling; each later connection that carries a whole exchange without a stall takes it one level down.
+  them keeps doubling; each later connection that carried a whole exchange and ended without ever stalling takes it one
+  level down.
 - Ktor client: a POST or another request that may not be repeated, on an HTTP/3 connection that stalls, now waits up to
   `stallAbandonAfter` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
   timeout (30 s) with `QuicException.ConnectionLost.Timeout` before 0.3.0.

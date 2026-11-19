@@ -856,6 +856,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RemoteAddressTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestFramesTest.negative_headersLengthAboveIntRangeIsTooLarge
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aCallerCancelledAsTheRequestReturnsAbandonsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aFewGreaseFramesOnRequestStreamsAreFree
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.bodyReceivedCompletesBeforeAReaderTookTheBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.cancelledRequestStopsStreamAndConnectionSurvives
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.completeResponseSurvivesAnAbruptStopBeforeTheBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.contentLengthMismatchIsMessageError
@@ -1566,6 +1567,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Endpoi
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aServerElsewhereIsReachedFromTheWildcard
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointCloseTest.closeClosesEveryEndpoint
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3SharedTicketsTest.aTicketFromIpv4ResumesOverIpv6
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallTest.aConnectionThatStallsAfterAnExchangeNeverLowersTheBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallTest.aLargeResponseThatArrivedWholeSurvivesAStallWithASlowReader
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallTest.aLongerRttAfterTheHandshakeIsNoStall
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallTest.aQuietWatchedConnectionWakesUpOnlyForItsPings
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallTest.aRequestHandedTheConnectionAsItStallsGoesOverTcp

@@ -11,6 +11,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -30,6 +31,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -97,6 +99,10 @@ class ClientH3StallTest {
         val (s, port) =
             testServer(configure = { idle?.let { quic = quicConfig { maxIdleTimeout = it } } }) {
                 routing {
+                    // a large response, sent at once
+                    get("/big") {
+                        call.respondBytes(ByteArray(BIG) { 7 }, ContentType.Application.OctetStream)
+                    }
                     // a whole response, sent at once
                     get("/full") {
                         call.respondText("firstrest")
@@ -156,9 +162,20 @@ class ClientH3StallTest {
         hardDelay: Duration? = Duration.INFINITE,
         minSilence: Duration = 500.milliseconds,
         abandonAfter: Duration = 2.seconds,
+        // windows that take a whole 4 MiB response before the application reads any of it
+        windows: Boolean = false,
     ): HttpClient =
         testClient(Http3DiscoveryMode.Auto, engine = {
-            quic = quicConfig { maxIdleTimeout = idle }
+            quic =
+                quicConfig {
+                    maxIdleTimeout = idle
+                    if (windows) {
+                        initialStreamWindow = 8L * 1024 * 1024
+                        maxStreamWindow = 8L * 1024 * 1024
+                        initialConnectionWindow = 16L * 1024 * 1024
+                        maxConnectionWindow = 16L * 1024 * 1024
+                    }
+                }
             eventListener = heard
             http3 {
                 this.hardDelay = hardDelay
@@ -475,7 +492,7 @@ class ClientH3StallTest {
                         }
                         assertEquals("first", first.decodeToString())
                         withTimeout(10.seconds) { arrived.await() }
-                        delay(100.milliseconds) // the watch's last wake-up
+                        withTimeout(10.seconds) { engine.h3.stallWatchLoopsForTest.first { it == 0 } } // the watch is over
                         val polls = engine.h3.stallPollsForTest.load()
                         delay(1.seconds) // a slow reader
                         assertEquals(polls, engine.h3.stallPollsForTest.load(), "the whole response arrived: nothing to watch")
@@ -504,8 +521,10 @@ class ClientH3StallTest {
                 client(ios, heard, abandonAfter = 8.seconds).use { c ->
                     val url = "https://127.0.0.1:${s.port}/"
                     warm(c, url)
+                    val engine = engineOf(c)
+                    val conn = engine.h3.connectionsForTest().single()
                     val stalled = CompletableDeferred<Unit>()
-                    engineOf(c).h3.stalledForTest = { stalled.complete(Unit) }
+                    engine.h3.stalledForTest = { stalled.complete(Unit) }
                     ios.cut()
                     val t0 = TimeSource.Monotonic.markNow()
                     coroutineScope {
@@ -519,6 +538,10 @@ class ClientH3StallTest {
                     }
                     assertEquals(1, s.posts.load())
                     assertEquals(1, heard.marked.load(), "the stall marked the alternative broken all the same")
+                    // review finding 2 (second round): the drained connection that recovered is closed once its last request is
+                    // over, not left to its idle timeout, and its monitor ends with it
+                    withTimeout(5.seconds) { conn.quic.closed.await() }
+                    withTimeout(5.seconds) { engine.h3.stallMonitorsForTest.first { it == 0 } }
                 }
             } finally {
                 s.stop()
@@ -581,7 +604,7 @@ class ClientH3StallTest {
                     warm(c, url)
                     val engine = engineOf(c)
                     val conn = engine.h3.connectionsForTest().single()
-                    delay(500.milliseconds) // the last wake-up of the finished watch
+                    withTimeout(10.seconds) { engine.h3.stallWatchLoopsForTest.first { it == 0 } } // the finished watch's loop ended
                     val polls = engine.h3.stallPollsForTest.load()
                     val sent = conn.quic.stats.packetsSent
                     delay(2.seconds)
@@ -656,6 +679,81 @@ class ClientH3StallTest {
             }
         }
 
+    /**
+     * Review finding 1 (second round): on a network that lets each new connection carry one exchange and then cuts its
+     * flow, the backoff must rise at every stall. A connection that stalls never lets it walk down, however many exchanges
+     * it carried first; only one that ends without a stall does.
+     */
+    @Test fun aConnectionThatStallsAfterAnExchangeNeverLowersTheBackoff() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    val origin = "https://127.0.0.1:${s.port}"
+                    val alt = "127.0.0.1:${s.port}"
+                    val engine = engineOf(c)
+                    assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // learns the alternative
+                    for (round in 0..2) {
+                        // a new connection carries one whole exchange...
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "round $round")
+                        // ...and then its flow is cut
+                        ios.cut()
+                        assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "round $round")
+                        withTimeout(10.seconds) { engine.h3.stallMonitorsForTest.first { it == 0 } } // that connection is over
+                        assertEquals(round, engine.altSvcLevelForTest(origin, alt), "round $round")
+                        ios.heal()
+                        engine.expireAltSvcMarkForTest(origin, alt) // the backoff passed
+                    }
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 3 (second round): a 4 MiB response arrived whole (the windows let it in) while the application read
+     * only its first bytes; most of it is still behind the body channel. The watch ends at the stream's "Data Recvd" all
+     * the same, so a stall of the connection (another request into the cut path) leaves the body alone, and it is read
+     * to its end afterwards.
+     */
+    @Test fun aLargeResponseThatArrivedWholeSurvivesAStallWithASlowReader() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, windows = true).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val conn = engine.h3.connectionsForTest().single()
+                    val arrived = CompletableDeferred<Unit>()
+                    engine.h3.receivedForTest = { arrived.complete(Unit) }
+                    c.prepareGet("${url}big").execute { r ->
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        val ch = r.bodyAsChannel()
+                        val first = ByteArray(16)
+                        var got = 0
+                        while (got < first.size) {
+                            val n = ch.readAvailable(first, got, first.size - got)
+                            if (n < 0) fail("the body ended after $got bytes")
+                            got += n
+                        }
+                        withTimeout(20.seconds) { arrived.await() }
+                        ios.cut()
+                        assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "the other request stalls and goes over TCP")
+                        withTimeout(1.seconds) { conn.quic.closed.await() } // nothing on it needs the network: closed at once
+                        assertEquals(BIG - first.size, ch.readBuffer().readByteArray().size, "the rest of the body is read")
+                    }
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
     @Test fun negative_stallThresholdsOutOfRangeAreRefused() {
         assertFailsWith<IllegalArgumentException> {
             testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallProbeTimeouts = 0 } }).close()
@@ -677,3 +775,6 @@ class ClientH3StallTest {
         }
     }
 }
+
+/** The large response of [ClientH3StallTest]: 4 MiB. */
+private const val BIG = 4 * 1024 * 1024

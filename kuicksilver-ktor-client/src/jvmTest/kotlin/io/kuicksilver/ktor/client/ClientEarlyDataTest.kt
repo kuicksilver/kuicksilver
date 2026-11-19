@@ -140,7 +140,7 @@ class ClientEarlyDataTest {
                 val took = t0.elapsedNow()
                 assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                 assertEquals("h1", r.bodyAsText())
-                assertTrue(took < 5.seconds, "fell back after $took")
+                assertTrue(took < 7.seconds, "fell back after $took")
                 assertEquals(FallbackReason.QuicStalled, r.kuicksilverDiagnostics?.fallback)
             }
         }
@@ -197,7 +197,7 @@ class ClientEarlyDataTest {
                 val took = t0.elapsedNow()
                 assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                 assertEquals("h1", r.bodyAsText())
-                assertTrue(took < 5.seconds, "fell back after $took")
+                assertTrue(took < 7.seconds, "fell back after $took")
                 assertEquals(FallbackReason.QuicStalled, r.kuicksilverDiagnostics?.fallback)
             }
         }

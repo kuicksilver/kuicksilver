@@ -42,8 +42,8 @@ abstract interface io.kuicksilver.http3/Http3Response { // io.kuicksilver.http3/
         abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3Response.streamId.<get-streamId>|<get-streamId>(){}[0]
     abstract val trailers // io.kuicksilver.http3/Http3Response.trailers|{}trailers[0]
         abstract fun <get-trailers>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/Http3Headers?> // io.kuicksilver.http3/Http3Response.trailers.<get-trailers>|<get-trailers>(){}[0]
-    open val received // io.kuicksilver.http3/Http3Response.received|{}received[0]
-        open fun <get-received>(): kotlinx.coroutines/Deferred<kotlin/Unit>? // io.kuicksilver.http3/Http3Response.received.<get-received>|<get-received>(){}[0]
+    open val bodyReceived // io.kuicksilver.http3/Http3Response.bodyReceived|{}bodyReceived[0]
+        open fun <get-bodyReceived>(): kotlinx.coroutines/Deferred<kotlin/Unit>? // io.kuicksilver.http3/Http3Response.bodyReceived.<get-bodyReceived>|<get-bodyReceived>(){}[0]
 
     abstract fun cancel(kotlin/Long = ...) // io.kuicksilver.http3/Http3Response.cancel|cancel(kotlin.Long){}[0]
     abstract suspend fun updatePriority(io.kuicksilver.quic/StreamPriority) // io.kuicksilver.http3/Http3Response.updatePriority|updatePriority(io.kuicksilver.quic.StreamPriority){}[0]

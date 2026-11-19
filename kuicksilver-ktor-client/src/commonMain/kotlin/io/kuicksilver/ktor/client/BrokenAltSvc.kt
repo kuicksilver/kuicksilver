@@ -80,7 +80,7 @@ internal class BrokenAltSvc(
     }
 
     /**
-     * A connection through [alt] carried a whole exchange and never stalled: an expired stall mark ([markWorking] keeps
+     * A connection through [alt] carried a whole exchange and ended without ever stalling: an expired stall mark ([markWorking] keeps
      * them) goes one backoff level down, and the mark at level 0 goes, so a network that stopped cutting UDP flows walks
      * back to the 5-minute backoff and then to none. A live mark is left alone (nothing goes there while it lives).
      */
@@ -92,6 +92,22 @@ internal class BrokenAltSvc(
         val m = marks[k] ?: return
         if (m.reason != FallbackReason.QuicStalled || live(m)) return
         if (m.level == 0) marks.remove(k) else marks[k] = Mark(m.until, m.untilWall, m.level - 1, m.reason)
+    }
+
+    /** The backoff level of [alt]'s mark, live or expired, or -1 without one (tests). */
+    internal fun levelForTest(
+        origin: String,
+        alt: String,
+    ): Int = marks[key(origin, alt)]?.level ?: -1
+
+    /** Ends [alt]'s mark now and keeps its level, as the passing of its backoff would (tests). */
+    internal fun expireForTest(
+        origin: String,
+        alt: String,
+    ) {
+        val k = key(origin, alt)
+        val m = marks[k] ?: return
+        marks[k] = Mark(clock() - 1, wallClock() - 1, m.level, m.reason)
     }
 
     fun onNetworkChanged() {

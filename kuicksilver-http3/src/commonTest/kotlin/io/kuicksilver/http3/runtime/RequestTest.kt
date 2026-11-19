@@ -108,7 +108,7 @@ class RequestTest {
             }
         }
 
-    /** `Http3Response.received`: the whole response arrived (its FIN), before the application read any of it. */
+    /** `Http3Response.bodyReceived`: the whole response arrived (its FIN), before the application read any of it. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun receivedCompletesAtTheFinBeforeTheBodyIsRead() =
@@ -120,13 +120,42 @@ class RequestTest {
                     w.finish()
                 }
                 val resp = p.client.request(get("/hello"))
-                val received = assertNotNull(resp.received)
+                val received = assertNotNull(resp.bodyReceived)
                 withTimeout(10.seconds) { received.await() }
                 assertEquals("hello", resp.body.readAllBytes().decodeToString(), "the body is still all there")
             }
         }
 
-    /** `received` fails with the body when the stream is reset before its end. */
+    /**
+     * `bodyReceived` follows the stream's "Data Recvd" state (RFC 9000 section 3.2), not the hand-over to the body: a 4 MiB
+     * response the application has not read at all is whole locally (the windows let it all in), while most of it still
+     * waits behind the body channel.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun bodyReceivedCompletesBeforeAReaderTookTheBody() =
+        h3Test {
+            val big = 4 * 1024 * 1024
+            val windows =
+                quicConfig {
+                    initialStreamWindow = 8L * 1024 * 1024
+                    maxStreamWindow = 8L * 1024 * 1024
+                    initialConnectionWindow = 16L * 1024 * 1024
+                    maxConnectionWindow = 16L * 1024 * 1024
+                }
+            H3Pair.open(clientQuic = windows).useScoped { p ->
+                launch {
+                    val w = p.server.acceptRequest().respond(200)
+                    w.output.writeFully(ByteArray(big) { 7 })
+                    w.finish()
+                }
+                val resp = p.client.request(get("/big"))
+                withTimeout(20.seconds) { assertNotNull(resp.bodyReceived).await() }
+                assertEquals(big, resp.body.readAllBytes().size, "all of it is read afterwards")
+            }
+        }
+
+    /** `bodyReceived` fails with the body when the stream is reset before its end. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun negative_receivedFailsWithAResetBody() =
@@ -150,7 +179,7 @@ class RequestTest {
                     got += r
                 }
                 partRead.complete(Unit)
-                val received = assertNotNull(resp.received)
+                val received = assertNotNull(resp.bodyReceived)
                 assertFailsWith<Throwable> { withTimeout(10.seconds) { received.await() } }
             }
         }

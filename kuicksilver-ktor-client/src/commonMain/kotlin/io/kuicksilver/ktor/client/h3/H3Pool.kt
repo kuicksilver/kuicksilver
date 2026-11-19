@@ -408,7 +408,7 @@ internal class H3Pool(
      */
     internal var stallMarker: (suspend (Stall, Set<String>) -> Unit)? = null
 
-    /** A watched exchange received its whole response on a connection that never stalled (`origin|alternative`; the engine's). */
+    /** A connection ended without ever stalling after it carried a whole exchange for `origin|alternative` (the engine's). */
     internal var exchangeCompleted: ((String) -> Unit)? = null
 
     /** Called once per stalled connection, after the pool dropped it and before the requests that may go again are released (tests). */
@@ -416,6 +416,12 @@ internal class H3Pool(
 
     /** A watched exchange's whole response arrived (tests). */
     internal var receivedForTest: (() -> Unit)? = null
+
+    /** Stall monitors whose watching loop runs now: a request watches their connection (tests). */
+    internal val stallWatchLoopsForTest = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /** Stall monitors not over yet: their connection has not ended (tests). */
+    internal val stallMonitorsForTest = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     /** Wake-ups of the stall monitors' loops (tests). */
     internal val stallPollsForTest = kotlin.concurrent.atomics.AtomicLong(0)
@@ -451,12 +457,15 @@ internal class H3Pool(
                     warn(stall.exception(null).message ?: "HTTP/3 connection stalled", null)
                     stalledForTest?.invoke(conn)
                 },
-                onCompleted = { key -> exchangeCompleted?.invoke(key) },
+                onCompleted = { keys -> keys.forEach { k -> exchangeCompleted?.invoke(k) } },
                 warn = ::warn,
                 polled = { stallPollsForTest.addAndFetch(1) },
+                looping = { d -> stallWatchLoopsForTest.update { it + d } },
             ).also { m ->
                 monitors[conn] = m
+                stallMonitorsForTest.update { it + 1 }
                 H3StallMonitor.launch(monitorScope, m) {
+                    stallMonitorsForTest.update { it - 1 }
                     stalledConnections.update { it - conn }
                     monitorScope.launch { monitorsLock.withLock { monitors.remove(conn) } }
                 }
@@ -1737,7 +1746,7 @@ internal class H3Pool(
             withSocketInactivityTimeout(data, activity) {
                 val w = watch
                 if (w != null && repeatable) {
-                    w.abortable { send(conn, data, callContext, extraHeaders, body, activity) }
+                    w.abortable(discard = { it.cancel() }) { send(conn, data, callContext, extraHeaders, body, activity) }
                 } else {
                     send(conn, data, callContext, extraHeaders, body, activity)
                 }
@@ -1747,7 +1756,7 @@ internal class H3Pool(
         // once the whole response arrived the exchange needs the network no more, and a stall must not touch it
         watch?.onAbandon { response.body.cancel(it) }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        response.received?.invokeOnCompletion { cause ->
+        response.bodyReceived?.invokeOnCompletion { cause ->
             watch?.end(completed = cause == null)
             if (watch != null) receivedForTest?.invoke()
         }

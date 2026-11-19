@@ -30,6 +30,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.awaitReceivedAll
 import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CancellationException
@@ -628,14 +629,22 @@ internal class ResponseImpl(
     private val receivedDeferred = CompletableDeferred<Unit>()
 
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-    override val received: Deferred<Unit> get() = receivedDeferred
+    override val bodyReceived: Deferred<Unit> get() = receivedDeferred
 
     init {
-        // the pump ends at the FIN (its last bytes in the body channel) or with the body's failure
+        // the stream's "Data Recvd" state (RFC 9000 section 3.2): the FIN and every byte before it are local, however
+        // little of them the pump has handed to a slow reader yet
+        val dataRecvd =
+            session.scope.launch {
+                st.awaitReceivedAll()
+                receivedDeferred.complete(Unit)
+            }
+        // the pump's end settles it too: at the FIN, or with the body's failure (a pump that failed the body, a reset or a
+        // lost connection, returns normally: the body tells)
         pump.invokeOnCompletion { cause ->
-            // a pump that ended the body with a failure (a reset, a lost connection) returns normally: the body tells
             val failure = cause ?: bodyChannel.closedCause
             if (failure == null) receivedDeferred.complete(Unit) else receivedDeferred.completeExceptionally(failure)
+            dataRecvd.cancel()
         }
         // a pump cancelled before it ran (launched after the connection ended) still ends the body: its reader never hangs
         session.onCancelled(pump) { e ->
