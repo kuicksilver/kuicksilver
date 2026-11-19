@@ -259,7 +259,10 @@ public object KslConst {
     public const val LIVE_SESSION: Int = 4
     public const val LIVE_UDP: Int = 5
     public const val LIVE_WAKE: Int = 6
-    public const val LIVE_COUNT: Int = 7
+
+    /** ECH key sets from `ksl_ech_keys_new` not yet freed (`KSL_LIVE_ECH_KEYS`, ABI 7, additive). */
+    public const val LIVE_ECH_KEYS: Int = 7
+    public const val LIVE_COUNT: Int = 8
     public const val UDP_GET_FD: Int = 1
     public const val UDP_GET_CAPS: Int = 2
     public const val UDP_GET_LOCAL: Int = 3

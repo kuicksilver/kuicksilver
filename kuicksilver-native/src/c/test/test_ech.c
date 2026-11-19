@@ -1949,6 +1949,50 @@ static void test_first_keys_threads(void) {
 /* ---------- review of 2026-11-20 ---------- */
 static void test_review_guards(void) {
     SECTION("ech_review_guards");
+    /* out of memory while an ECHConfig is read is no "nothing usable" (which a caller may answer with GREASE and the name in
+       the clear): the check fails, and the session's list is refused with KSL_E_NO_MEMORY */
+    {
+        uint8_t out[600];
+        size_t n = 9;
+        ksl_test_ech_store_fail = 1;
+        int r = ksl_ech_config_list_check(key_a.list, key_a.list_len, out, sizeof out, &n);
+        ksl_ctx *oc = ech_client(KSL_VERIFY_OPENSSL, 0);
+        ksl_ssl *c = ksl_ssl_new(oc, KSL_MODE_QUIC);
+        uint32_t code = 0;
+        int a = 0;
+        char msg[200] = "";
+        int set = ksl_ssl_set(c, KSL_SET_ECH_CONFIG_LIST, key_a.list, key_a.list_len);
+        ksl_ssl_last_error(c, &code, &a, msg, sizeof msg);
+        ksl_test_ech_store_fail = 0;
+        CHECK(r == KSL_ERROR && n == 0, "negative_ech_list_check_out_of_memory_is_no_empty_result");
+        CHECK(set == KSL_ERROR && strstr(msg, "out of memory") != NULL,
+              "negative_ech_config_list_out_of_memory_refused");
+        ksl_ssl_free(c);
+        ksl_ctx_free(oc);
+    }
+    /* RFC 9849 section 4.1, every ECHConfig of a key counts: a key whose ECHCONFIG block lists a second ECHConfig with another
+       key's config_id is refused with that key, as two keys with one config_id are (OpenSSL tries the first entry only) */
+    {
+        uint8_t l[600];
+        size_t n = key_a.list_len;
+        memcpy(l, key_a.list, n);
+        memcpy(l + n, key_b.list + 2, key_b.list_len - 2); /* key_b's ECHConfig after key_a's */
+        n += key_b.list_len - 2;
+        l[0] = (uint8_t)((n - 2) >> 8), l[1] = (uint8_t)(n - 2);
+        echkey two = key_a;
+        two.pem = pem_with_list(&key_a, l, n);
+        blob alone = keyset(1, &two, 1), both = keyset(2, &two, 1, &key_b, 1);
+        char msg[256] = "";
+        ksl_ech_keys *k1 = ksl_ech_keys_new(alone.buf, alone.len, msg, sizeof msg);
+        ksl_ech_keys *k2 = ksl_ech_keys_new(both.buf, both.len, msg, sizeof msg);
+        CHECK(k1 != NULL, "a key with two ECHConfigs of distinct config_ids reads");
+        CHECK(k2 == NULL && strstr(msg, "config_id") != NULL, "negative_ech_second_entry_shares_a_config_id");
+        ksl_ech_keys_free(k1);
+        ksl_ech_keys_free(k2);
+        free(alone.buf);
+        free(both.buf);
+        free(two.pem);
+    }
     /* section 6.1.6: a rejection is acted on only after the outer handshake was authenticated for the public_name, which a
        client that verifies nothing (KSL_VERIFY_NONE) never does: ECH is refused on such a session */
     {

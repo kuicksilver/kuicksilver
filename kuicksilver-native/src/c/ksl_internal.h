@@ -195,6 +195,8 @@ struct ksl_ssl {
 int64_t ksl_ticket_now(void);
 #ifdef KSL_TEST
 extern int64_t ksl_test_ticket_clock_skew;
+extern int
+    ksl_test_ech_store_fail; /* ksl_ech.c: the next ECHConfig checks fail as if OSSL_ECHSTORE_new ran out of memory */
 #endif
 
 struct ksl_key {

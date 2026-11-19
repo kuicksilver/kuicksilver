@@ -3,6 +3,7 @@
 /* JNI glue for io.kuicksilver.native.KslNative: RegisterNatives in JNI_OnLoad, no cached JNIEnv, handles as jlong,
  * byte[] for control-plane data (copied in the same call), direct ByteBuffer addresses for the packet hot path. */
 #include <jni.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ksl.h"
@@ -223,9 +224,10 @@ static jbyteArray j_ech_config_list_check(JNIEnv *e, jclass c, jbyteArray list, 
     bytes b = get_bytes(e, list);
     size_t cap = b.n > 2 ? b.n : 2, n = 0;
     uint8_t *kept = malloc(cap);
-    int r = kept ? ksl_ech_config_list_check(b.p, b.n, kept, cap, &n) : KSL_ERROR;
+    int oom = kept == NULL || (list != NULL && b.p == NULL); /* the copy of the list failed: no "does not parse" */
+    int r = oom ? KSL_ERROR : ksl_ech_config_list_check(b.p, b.n, kept, cap, &n);
     drop(&b);
-    jint status = kept == NULL ? -2 : r == KSL_OK ? 0 : -1;
+    jint status = oom ? -2 : r == KSL_OK ? 0 : -1;
     (*e)->SetIntArrayRegion(e, out, 0, 1, &status);
     jbyteArray a = r == KSL_OK && n > 0 ? new_bytes(e, kept, n) : NULL;
     free(kept);
@@ -236,7 +238,11 @@ static jlong j_ech_keys_new(JNIEnv *e, jclass c, jbyteArray a, jobjectArray msg)
     (void)c;
     bytes b = get_bytes(e, a);
     char m[256] = "";
-    ksl_ech_keys *k = ksl_ech_keys_new(b.p, b.n, m, sizeof m);
+    ksl_ech_keys *k = NULL;
+    if (a != NULL && b.p == NULL) /* the copy of the keys failed: no "the keys do not read" */
+        snprintf(m, sizeof m, "ksl: out of memory");
+    else
+        k = ksl_ech_keys_new(b.p, b.n, m, sizeof m);
     drop(&b);
     if (!k && msg)
         (*e)->SetObjectArrayElement(e, msg, 0, (*e)->NewStringUTF(e, m));

@@ -24,7 +24,9 @@ struct ksl_ech_keys {
 };
 #endif
 
-#define ECH_GREASE(v) (((v) & 0x0f0f) == 0x0a0a)
+#ifdef KSL_TEST
+int ksl_test_ech_store_fail = 0;
+#endif
 /* The syntax of an ECHConfigList (RFC 9849 section 4): its length exact, every ECHConfig framed inside it, and the contents of each
    ECHConfig of version 0xfe0d well formed to their last byte: config_id, kem_id, public_key<1..2^16-1>, cipher_suites<4..2^16-4> of
    4-byte pairs, maximum_name_length, public_name<1..255>, extensions<0..2^16-1> each framed, no trailing byte, and no extension type
@@ -100,7 +102,7 @@ static int list_syntax_ok(const uint8_t *list, size_t len) {
    length must match `len` exactly, every entry must fit, and an entry OpenSSL would not read (longer than OSSL_ECH_MAX_ECHCONFIG_LEN)
    is dropped. The whole list must pass list_syntax_ok first (a malformed ECHConfig of version 0xfe0d, or an extension type twice,
    is a list that does not parse). KSL_OK with at least one entry kept; else KSL_ERROR with *code KSL_E_NOT_SUPPORTED (no entry usable, or no ECH in
-   this build) or KSL_E_BAD_ARG (the framing does not parse, *out_len 0; or the result does not fit `cap`, *out_len the size it
+   this build), KSL_E_NO_MEMORY (*out_len 0) or KSL_E_BAD_ARG (the framing does not parse, *out_len 0; or the result does not fit `cap`, *out_len the size it
    needs). */
 static int check_list(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len, uint32_t *code) {
     *out_len = 0;
@@ -125,9 +127,23 @@ static int check_list(const uint8_t *list, size_t len, uint8_t *out, size_t cap,
             memcpy(one + 2, list + off, entry);
             OSSL_ECHSTORE *es = OSSL_ECHSTORE_new(NULL, NULL);
             BIO *in = BIO_new_mem_buf(one, (int)(entry + 2));
+#ifdef KSL_TEST
+            if (ksl_test_ech_store_fail) {
+                OSSL_ECHSTORE_free(es);
+                es = NULL;
+            }
+#endif
+            if (es == NULL || in == NULL) { /* out of memory is no "unusable": the caller must not take it for none */
+                BIO_free(in);
+                OSSL_ECHSTORE_free(es);
+                ERR_clear_error();
+                *out_len = 0;
+                *code = KSL_E_NO_MEMORY;
+                return KSL_ERROR;
+            }
             int entries = 0;
-            usable = es != NULL && in != NULL && OSSL_ECHSTORE_read_echconfiglist(es, in) == 1 &&
-                     OSSL_ECHSTORE_num_entries(es, &entries) == 1 && entries == 1;
+            usable = OSSL_ECHSTORE_read_echconfiglist(es, in) == 1 && OSSL_ECHSTORE_num_entries(es, &entries) == 1 &&
+                     entries == 1;
             BIO_free(in);
             OSSL_ECHSTORE_free(es);
             ERR_clear_error();
@@ -472,7 +488,7 @@ int ksl_ech_inner_versions_ok(SSL *ssl) {
         return 0;
     for (size_t i = 1; i + 1 < vl; i += 2) {
         unsigned ver = ((unsigned)v[i] << 8) | v[i + 1];
-        if (ver <= TLS1_2_VERSION && !ECH_GREASE(ver))
+        if (ver <= TLS1_2_VERSION) /* every GREASE value (RFC 8701, 0x?a?a) is above TLS 1.2 */
             return 0;
     }
 #else
@@ -543,9 +559,12 @@ int ksl_ech_ssl_init(ksl_ssl *s) {
     return 1;
 }
 
+#if KSL_HAS_ECH
+static void ech_keys_release(ksl_ech_keys *k);
+#endif
 void ksl_ech_ctx_free(ksl_ctx *c) {
 #if KSL_HAS_ECH
-    ksl_ech_keys_free(c->ech_keys);
+    ech_keys_release(c->ech_keys); /* the context's own reference, not a handle */
     c->ech_keys = NULL;
     CRYPTO_THREAD_lock_free(c->ech_lock);
     c->ech_lock = NULL;
@@ -559,23 +578,40 @@ static void ech_msg(char *msg, size_t msglen, const char *m) {
         snprintf(msg, msglen, "%s", m);
 }
 #if KSL_HAS_ECH
-/* The config_id of the ECHConfig in one key's PEM (its ECHCONFIG block: an ECHConfigList of one entry), -1 when there is none */
-static int pem_config_id(const uint8_t *pem, size_t len) {
+/* The config_ids of the ECHConfigs of version 0xfe0d in one key's PEM (its ECHCONFIG block, an ECHConfigList: OpenSSL takes
+   every entry of it for that key), added as bits to ids[32]; 0 when one of them is set there already, else 1 (a block that does
+   not frame is left to OpenSSL, which refuses the key) */
+static int pem_config_ids(const uint8_t *pem, size_t len, uint8_t ids[32]) {
     BIO *in = BIO_new_mem_buf(pem, (int)len);
     char *name = NULL, *header = NULL;
     unsigned char *data = NULL;
     long dl = 0;
-    int id = -1;
-    while (id < 0 && in != NULL && PEM_read_bio(in, &name, &header, &data, &dl) == 1) {
-        if (strcmp(name, "ECHCONFIG") == 0 && dl >= 7)
-            id = data[6]; /* list length 2, version 2, length 2, then config_id */
+    int dup = 0, found = 0;
+    while (!found && in != NULL && PEM_read_bio(in, &name, &header, &data, &dl) == 1) {
+        if (strcmp(name, "ECHCONFIG") == 0) {
+            found = 1;
+            size_t n = (size_t)dl, off = 2;
+            int framed = n >= 2 && (((size_t)data[0] << 8) | data[1]) == n - 2;
+            while (framed && !dup && off < n && ksl_span_fits(off, 4, n)) {
+                size_t version = ((size_t)data[off] << 8) | data[off + 1],
+                       el = ((size_t)data[off + 2] << 8) | data[off + 3];
+                if (!ksl_span_fits(off + 4, el, n))
+                    break;
+                if (version == ECH_VERSION && el >= 1) { /* contents: config_id first */
+                    uint8_t id = data[off + 4];
+                    dup = (ids[id >> 3] >> (id & 7)) & 1;
+                    ids[id >> 3] |= (uint8_t)(1u << (id & 7));
+                }
+                off += 4 + el;
+            }
+        }
         OPENSSL_free(name);
         OPENSSL_free(header);
         OPENSSL_clear_free(data, (size_t)dl); /* the PRIVATE KEY block is read too: its PKCS#8 bytes are wiped */
     }
     BIO_free(in);
     ERR_clear_error();
-    return id;
+    return !dup;
 }
 #endif
 /* Keys are loaded from their PEM only (OSSL_ECHSTORE_read_pem), never handed over as a store OSSL_ECHSTORE_new_config made:
@@ -593,7 +629,8 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
     }
     OSSL_ECHSTORE *es = OSSL_ECHSTORE_new(NULL, NULL);
     size_t off = 0;
-    int count = 0, retry = 0, ok = es != NULL, ids[ECH_KEYS_MAX];
+    int count = 0, retry = 0, ok = es != NULL;
+    uint8_t ids[32] = {0}; /* the config_ids of the set so far, one bit each */
     const char *why = "ksl: out of memory";
     while (ok && off < len) {
         ok = ksl_span_fits(off, 4, len);
@@ -606,15 +643,13 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
         why = "ksl: bad ECH key framing: (uint32 length || flags || PEM)*, 1 to 16 keys, flags 0 or 1";
         if (!ok)
             break;
-        int for_retry = keys[off] & 1, before = 0, after = 0, id = pem_config_id(keys + off + 1, l - 1);
-        for (int i = 0; ok && id >= 0 && i < count; i++)
-            ok = ids[i] != id;
+        int for_retry = keys[off] & 1, before = 0, after = 0;
+        ok = pem_config_ids(keys + off + 1, l - 1, ids);
         why =
             "ksl: two ECH keys share a config_id (RFC 9849 section 4.1: distinct ones; OpenSSL tries only the first): make "
             "one of them again";
         if (!ok)
             break;
-        ids[count] = id;
         BIO *in = BIO_new_mem_buf(keys + off + 1, (int)(l - 1));
         ok = in != NULL && OSSL_ECHSTORE_num_keys(es, &before) == 1 &&
              OSSL_ECHSTORE_read_pem(es, in, for_retry ? OSSL_ECH_FOR_RETRY : OSSL_ECH_NO_RETRY) == 1 &&
@@ -641,6 +676,7 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
     }
     k->refs = 1;
     k->es = es;
+    ksl_live_add(KSL_LIVE_ECH_KEYS, 1);
     return k;
 #else
     (void)keys;
@@ -649,12 +685,21 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
     return NULL;
 #endif
 }
-void ksl_ech_keys_free(ksl_ech_keys *k) {
 #if KSL_HAS_ECH
+/* drops one reference, a handle's or a context's; the last one frees the set */
+static void ech_keys_release(ksl_ech_keys *k) {
     if (k == NULL || __atomic_sub_fetch(&k->refs, 1, __ATOMIC_ACQ_REL) != 0)
         return;
     OSSL_ECHSTORE_free(k->es);
     free(k);
+}
+#endif
+void ksl_ech_keys_free(ksl_ech_keys *k) {
+#if KSL_HAS_ECH
+    if (k == NULL)
+        return;
+    ksl_live_add(KSL_LIVE_ECH_KEYS, -1);
+    ech_keys_release(k);
 #else
     (void)k;
 #endif
@@ -674,14 +719,14 @@ int ksl_ctx_set_ech_keys(ksl_ctx *c, ksl_ech_keys *keys) {
         __atomic_add_fetch(&keys->refs, 1, __ATOMIC_RELAXED);
     /* rotation: sessions made from now on get the new set, sessions already made keep their copy (ksl_ech_ssl_init) */
     if (!CRYPTO_THREAD_write_lock(c->ech_lock)) {
-        ksl_ech_keys_free(keys);
+        ech_keys_release(keys);
         ksl_ctx_set_error(c, KSL_E_NO_MEMORY, "ksl: the ECH key lock is unavailable (a system resource)");
         return KSL_ERROR;
     }
     ksl_ech_keys *old = c->ech_keys;
     c->ech_keys = keys;
     CRYPTO_THREAD_unlock(c->ech_lock);
-    ksl_ech_keys_free(old);
+    ech_keys_release(old);
     return KSL_OK;
 #else
     (void)keys;

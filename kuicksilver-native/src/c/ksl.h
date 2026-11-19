@@ -46,7 +46,7 @@ extern "C" {
    ksl_icmp_ptb_build, ksl_icmp_open, ksl_icmp_send and ksl_icmp_close (a CONNECT-UDP proxy's ICMP Packet Too Big, RFC 9298
    section 6.1; new functions, no KSL_OPT or KSL_GET number); Encrypted Client Hello (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE,
    KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS, KSL_GET_VERIFY_NAME, ksl_ech_config_list_check,
-   ksl_ech_keys_new, ksl_ech_keys_free and ksl_ctx_set_ech_keys (15 to 17) */
+   ksl_ech_keys_new, ksl_ech_keys_free, ksl_ctx_set_ech_keys (15 to 17) and KSL_LIVE_ECH_KEYS (7; KSL_LIVE_COUNT is 8) */
 
 /* return codes */
 #define KSL_OK 0
@@ -321,8 +321,10 @@ uint32_t ksl_abi_version(void);
 #define KSL_LIVE_UDP 5     /* ksl_udp objects opened and not closed */
 /* clang-format off */
 #define KSL_LIVE_WAKE 6 /* wake descriptors those ksl_udp objects hold: pipe ends (Linux, Apple) or wake sockets (Windows) */
+#define KSL_LIVE_ECH_KEYS 7 /* ksl_ech_keys handles from ksl_ech_keys_new not yet dropped with ksl_ech_keys_free (ABI 7, additive;
+                               a context's own reference is not counted) */
 /* clang-format on */
-#define KSL_LIVE_COUNT 7
+#define KSL_LIVE_COUNT 8
 int ksl_live_objects(int64_t *out,
                      size_t n); /* writes the first min(n, KSL_LIVE_COUNT) counters; returns KSL_LIVE_COUNT */
 
@@ -432,7 +434,8 @@ int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
    version is not 0xfe0d, its KEM or every cipher suite is unsupported, it has an unsupported mandatory extension (section 4.2), or its
    public_name is not a DNS name or could be read as an IPv4 address (section 6.1.7). KSL_OK: *out_len is the length written, 0 when
    the list parses but holds nothing usable (or the build has no ECH). KSL_ERROR: the list does not parse (*out_len 0: a length that
-   does not match, an empty list, an ECHConfig that does not fit, more than 65537 bytes), or out is too small (*out_len the size needed). Touches no
+   does not match, an empty list, an ECHConfig that does not fit, more than 65537 bytes; or out of memory, never reported as
+   nothing usable), or out is too small (*out_len the size needed). Touches no
    context: safe from any thread. */
 int ksl_ech_config_list_check(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len);
 /* A server's ECH keys, parsed once and kept in ksl (the private keys never leave it): framed as (uint32 big-endian length || entry)*,
