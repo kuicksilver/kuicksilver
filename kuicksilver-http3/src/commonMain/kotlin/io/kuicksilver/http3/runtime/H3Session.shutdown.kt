@@ -139,6 +139,7 @@ internal suspend fun H3Session.fail(
     if (!closed.complete(Http3Exception.Protocol(code, Initiator.Local, null, "${Http3ErrorCode.name(code)}: $reason"))) return
     requests.close(closed.getCompleted())
     try {
+        beforeFailTransportCloseForTest?.invoke()
         quic.close(code, reason.take(200))
     } catch (e: CancellationException) {
         throw e

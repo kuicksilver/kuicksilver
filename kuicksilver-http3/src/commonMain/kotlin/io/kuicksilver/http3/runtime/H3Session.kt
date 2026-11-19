@@ -277,6 +277,17 @@ internal class H3Session(
     /** Test hook: runs in a response writer's finish on the session's dispatcher, right before the stream's FIN is handed over. */
     internal var beforeResponseFinForTest: (suspend (QuicStream) -> Unit)? = null
 
+    /** Test hook: a request's STOP_SENDING watch was started, before it is stored in [ServerRequestImpl.stopWatch]. */
+    internal var stopWatchStartedForTest: ((ServerRequestImpl, kotlinx.coroutines.Job) -> Unit)? = null
+
+    /** Test hook: runs in [fail] once [closed] is complete, before the transport is closed (the CONNECTION_CLOSE). */
+    internal var beforeFailTransportCloseForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: spends [n] tokens of the request-reset budget at [glitchClock]'s time. Session dispatcher only. */
+    internal fun spendResetBudgetForTest(n: Int) {
+        resetBudget?.spend(glitchClock(), n)
+    }
+
     /** Test hook: runs on a server's request stream once the HEADERS frame of a 431 was written, before its flush and FIN. */
     internal var afterReject431HeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
