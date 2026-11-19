@@ -50,6 +50,10 @@ while [ $# -gt 0 ]; do
 done
 case "${KSL_MATRIX_ALL_MODULES-}" in ''|0|1) ;; *) refuse_args "KSL_MATRIX_ALL_MODULES='${KSL_MATRIX_ALL_MODULES}': 1 (every module on the old platforms) or 0 (the changed ones), nothing else" ;; esac
 # a release run tests every module on the old platforms: its gate must not depend on what changed since origin/main
+# the device of the current-API device steps (53-55 by default); never the API 24 emulator's, which step 56 starts and
+# stops (tools/ci/avd-api24.sh: emulator-<KSL_AVD_API24_PORT, default 5580>)
+dev="${KSL_DEVICE_SERIAL:-emulator-5554}"
+[ "$dev" != "emulator-${KSL_AVD_API24_PORT:-5580}" ] || refuse_args "KSL_DEVICE_SERIAL='$dev' is the API 24 emulator's serial (tools/ci/avd-api24.sh); the current-API device steps need the other emulator"
 release_run=0
 if [ "$with_interop" = 1 ] && [ "$with_windows" = 1 ]; then release_run=1; KSL_MATRIX_ALL_MODULES=1; export KSL_MATRIX_ALL_MODULES; fi
 # Kotlin incremental compilation is off: a gate must not trust compiler state left by earlier builds in this checkout
@@ -298,7 +302,6 @@ step "check: local-matrix step selection"        bash -c 'bash tools/ci/local-ma
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
 if [ "$skip_android" = 0 ]; then
 # the current-API emulator only (ANDROID_SERIAL): an API 24 emulator left running would otherwise run these tests too
-dev="${KSL_DEVICE_SERIAL:-emulator-5554}"
 step "android: device tests (emulator)"         bash tools/ci/device-serial.sh "$dev" $G androidConnectedCheck
 step "android: connection migration (emulator, host peer)" bash tools/ci/device-serial.sh "$dev" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
 step "android: compose demo migration (emulator, host server)" bash tools/ci/device-serial.sh "$dev" $G -p samples/compose-demo :androidApp:migrationDemoDeviceTest   # HTTP/3 survives the switch, OkHttp breaks; a skip fails
@@ -430,6 +433,7 @@ if [ "$scoped" = 1 ]; then
   echo "  JDK 17 and 25: ${scope_jvm:-no module (the steps pass without running a test)}"
   echo "  API 24:        ${scope_android:-no module (the step passes without running a test)}"
 fi
+[ "$skip_android" = 1 ] || echo "device of the current-API device steps: $dev (gate record: android.device_serial)"
 wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
 # "interop" (the JVM interop image) is the Linux OpenSSL of the platforms build-image.sh packs, found as it finds them:
 # KSL_INTEROP_PLATFORMS, else the Docker server's architecture (not uname -m, which a Rosetta shell reports as x86_64 on
@@ -529,6 +533,7 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes
     echo "with_windows=$with_windows"; echo "with_browser=$with_browser"
     if [ "$scoped" = 1 ]; then echo "old_platforms.all_modules=${KSL_MATRIX_ALL_MODULES:-0}"; echo "old_platforms.why=$scope_why"
       echo "old_platforms.jvm=${scope_jvm:-none}"; echo "old_platforms.android=${scope_android:-none}"; fi
+    [ "$skip_android" = 1 ] || echo "android.device_serial=$dev"
     echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
   if [ -z "$selection" ]; then echo "gate record: $record (result=$result, tree $tree)"
   else echo "partial record: $record (result=$result, tree $tree; --${selection%%=*} ${selection#*=}: not a gate, no stamp written)"; fi

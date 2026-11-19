@@ -55,4 +55,13 @@ for nm in "android: device tests (emulator)" "android: connection migration (emu
   if grep -F "step \"$nm\"" "$script" | grep -qF 'bash tools/ci/device-serial.sh "$dev" $G'; then echo "ok   pinnedDevice[$nm]"
   else echo "FAIL pinnedDevice[$nm]: not run through tools/ci/device-serial.sh"; fails=$((fails + 1)); fi
 done
+KSL_DEVICE_SERIAL=emulator-5580 t negative_deviceIsApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
+KSL_DEVICE_SERIAL=emulator-5582 KSL_AVD_API24_PORT=5582 t negative_deviceIsMovedApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
+# the device of the current-API steps, an override included, is printed and written into the gate record
+out=$(KSL_DEVICE_SERIAL=emulator-5556 bash "$script" --dry-run --only 53 2>&1)
+if grep -qx 'device of the current-API device steps: emulator-5556 (gate record: android.device_serial)' <<< "$out" \
+  && grep -qF 'echo "android.device_serial=$dev"' "$script"; then echo "ok   deviceSerialOverrideRecorded"
+else echo "FAIL deviceSerialOverrideRecorded"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
+out=$(bash "$script" --dry-run --only 53 2>&1)
+if grep -q '^device of the current-API device steps: emulator-5554 ' <<< "$out"; then echo "ok   deviceSerialDefault"; else echo "FAIL deviceSerialDefault"; fails=$((fails + 1)); fi
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

@@ -165,8 +165,8 @@ tests on API 24 (emulator)`, so that a failure on an old runtime shows up before
 
   `KSL_AVD_API24_PORT`, `KSL_AVD_API24_HEAP_LIMIT` and `KSL_AVD_API24_BOOT_TIMEOUT` change the port, the heap limit
   and the boot timeout (the script's header). The current-API device steps, in turn, run on `emulator-5554` only
-  ([`tools/ci/device-serial.sh`](../tools/ci/device-serial.sh); `KSL_DEVICE_SERIAL` names another device) and refuse
-  to start without it, so an API 24 emulator left running never takes their tests.
+  ([`tools/ci/device-serial.sh`](../tools/ci/device-serial.sh); `KSL_DEVICE_SERIAL` names another device, never the API 24
+  emulator's; the gate record keeps it as `android.device_serial`) and refuse to start without it, so an API 24 emulator left running never takes their tests.
 
 - All three test only the modules that changed since the branch left `origin/main`, and the modules that depend on
   them ([`tools/ci/changed-modules.sh`](../tools/ci/changed-modules.sh)): the dependencies are read from every module's
