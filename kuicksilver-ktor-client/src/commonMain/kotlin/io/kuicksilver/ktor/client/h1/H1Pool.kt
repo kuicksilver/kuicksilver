@@ -1558,7 +1558,7 @@ internal class H1Pool(
         // (proxyTlsConfigFor), and a rejection there is the proxy's (echRejectionIn stops at a ProxyTlsException).
         // A rejection is retried once on a new connection with the server's retry configurations, or without ECH when it
         // sent none (section 6.1.6), within the same connect timeout
-        val route = dns.echRoute(url.host) { config.ech.configLists[it] }
+        val route = dns.echRoute(url.host) { config.ech.listFor(it) }
         return withEchRetry(route) { offer -> connectOnce(data, url, true, proxy, key, dns, h2Ok, connectStarted, offer) }
     }
 

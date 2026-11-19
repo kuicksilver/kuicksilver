@@ -1495,6 +1495,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theDnsResolvesTheOriginOverTcp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theRaceAsksTheDnsOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.acceptedOverHttp3
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.configListKeysAreComparedAsHostNames
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.earlyDataUnderARejectedEchIsSentAgainOnTheRetry
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echGoesInsideAConnectTunnel
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echRouteRetriesOnceAndSharesTheRetryBetweenSiblings
@@ -1504,6 +1505,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.httpsRecordEchIsOffered
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aProxyHopRejectionIsNotTheOrigins
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aRejectedRetryIsNotRetriedAgain
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_anEarlyRequestOnARejectedRetryIsNotSentAThirdTime
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_echReliantRequestNeverFallsBackToTheOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationNeedsTls13Only
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationWithoutUsableConfigIsRefused
@@ -5801,6 +5803,7 @@ kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrSimulationTest.onAClea
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrSimulationTest.onALossyLinkBbrKeepsItsRateWhereCubicCollapses
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrSimulationTest.twoBbrFlowsShareTheBottleneck
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.CubicScenarioTest.noHystartInTheSlowStartAfterPersistentCongestion
+kuicksilver-tls/src/androidDeviceTest	io.kuicksilver.tls.AndroidOfflineTrustTest.offlineVerificationOpensNoUrl
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.negative_customRefusesTheWeakCrossCertificate
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.negative_secTrustRefusalOfAWeakChainIsBadCertificate
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.platformAcceptsAWeakCrossCertificateOffItsPath
@@ -5872,8 +5875,11 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.platfor
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.platformRefusalForTheNameOrOfAStrongChainKeepsItsReason
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.tofuAcceptsASha1SelfSignedLeafWithAStrongKey
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.weakReasonsPrintTheirName
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.aFailedSetKeepsTheKeysItTook
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.aRejectionForAnOriginNamedLikeThePublicNameIsStillOne
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.base64OfTheRecordParses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.closedKeysAreFreedAndRefuseNewContexts
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.customVerifierKnowsWhenTheNameIsHidden
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.keyMaterialArraysAreWiped
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.listParsingKeepsUsableConfigs
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_configurationsInTheWrongPlaceAreRefused
@@ -6241,6 +6247,7 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.openOrNullReport
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.openSendReceive
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.probeFailureMeansUnsupported
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslUdpSocketTest.supportedOnLinuxMacosAndWindows
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.OfflineTrustJvmTest.offlineFetchesNoIntermediateWithAiaOn
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.OfflineTrustJvmTest.offlineKeepsTheAnchors
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.OfflineTrustJvmTest.offlineMakesNoRevocationRequest
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PlatformBuiltPathJvmTest.negative_customRefusesTheWeakCrossCertificate

@@ -196,7 +196,7 @@ public class KuicksilverApplicationEngine(
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsKeyExchangeGroups: io.kuicksilver.tls.KeyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups.Default
 
-        /** Set by `EngineMain` (`kuicksilver.tls.echKeys`): the ECH keys of the connectors [identity] serves. */
+        /** Set by `EngineMain` (`kuicksilver.tls.echKeys`): the ECH keys of the connectors [identity] serves, closed when the engine stops. */
         @ExperimentalKuicksilverApi
         internal var tlsEchKeys: io.kuicksilver.tls.EchServerKeys? = null
 
@@ -674,15 +674,21 @@ public class KuicksilverApplicationEngine(
     ) {
         stopGraceMillis = gracePeriodMillis
         stopRequest.complete()
-        val result =
-            withTimeoutOrNull(gracePeriodMillis) {
-                serverJob.join()
-                true
+        try {
+            val result =
+                withTimeoutOrNull(gracePeriodMillis) {
+                    serverJob.join()
+                    true
+                }
+            stopWasForcedForTest = result == null
+            if (result == null) {
+                serverJob.cancel()
+                withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
             }
-        stopWasForcedForTest = result == null
-        if (result == null) {
-            serverJob.cancel()
-            withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
+        } finally {
+            // the ECH keys EngineMain read (`kuicksilver.tls.echKeys`) are the engine's own: their native set is freed with it
+            @OptIn(ExperimentalKuicksilverApi::class)
+            configuration.tlsEchKeys?.close()
         }
     }
 

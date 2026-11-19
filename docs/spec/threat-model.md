@@ -1188,9 +1188,9 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
   client-facing server forwarding to a backend) is not implemented. On a rejection the client answers a CertificateRequest with an empty Certificate (§6.1.7, the eighth carried patch, upstream
   issue https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
-  hook for it). Certificate validation under an accepted ECH stays offline on Windows and Apple (§10.7); on the JVM revocation is off per
-  connection, and a missing intermediate is fetched from the AIA extension only when the process turned that on,
-  process-wide.
+  hook for it). Certificate validation under an accepted ECH stays offline on Windows, Apple and the JVM (§10.7: the JVM builds the path from
+  the presented certificates and validates it without revocation or AIA fetches), and a custom verifier is told the name is
+  hidden.
 
 ## 4. What we do not protect against
 

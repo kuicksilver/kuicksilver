@@ -112,8 +112,8 @@ public enum class EchStatus {
  *
  * Prefer the `ByteArray` and `CharArray` constructors: the array given is zeroed at once, the key keeps its own copy only
  * until an [EchServerKeys] (or its [EchServerKeys.rotate]) has read it into native memory, then zeroes that copy too, so
- * such a key is used once (a second use throws [TlsException.Config]). A `String` cannot be wiped: a key made from one
- * keeps that text for its life (and can be used again).
+ * such a key is used once (a second use throws [TlsException.Config]); a set that fails to build gives its keys back
+ * unwiped. A `String` cannot be wiped: a key made from one keeps that text for its life (and can be used again).
  */
 @ExperimentalKuicksilverApi
 @OptIn(ExperimentalAtomicApi::class)
@@ -143,6 +143,14 @@ public class EchKey private constructor(
         text?.let { return it.encodeToByteArray() }
         return bytes.exchange(null)
             ?: throw TlsException.Config("ECH key already used: its key material was wiped after it was read; make a new EchKey")
+    }
+
+    /**
+     * Gives back [pem], taken by [takePem] for a set that then failed to build, so the key can be used again; a `String`
+     * key's copy is zeroed instead.
+     */
+    internal fun putBack(pem: ByteArray) {
+        if (text != null || !bytes.compareAndSet(null, pem)) pem.fill(0)
     }
 
     override fun toString(): String = "EchKey(inRetryConfigs=$inRetryConfigs)"
@@ -272,6 +280,7 @@ public class EchServerKeys(
             KslLoader.ensureLoaded()
             val pems = ArrayList<ByteArray>(keys.size)
             var framed: ByteArray? = null
+            var built = false
             try {
                 for (k in keys) pems += k.takePem()
                 var size = 0
@@ -289,13 +298,13 @@ public class EchServerKeys(
                     p.copyInto(f, at + 5)
                     at += 4 + l
                 }
-                return Ksl.echKeysNew(f)
+                return Ksl.echKeysNew(f).also { built = true }
             } catch (e: KslException.Internal) {
                 throw TlsException.Config("ECH keys refused: ${e.message}")
             } finally {
-                // the key material lives on in native memory only
+                // built: the key material lives on in native memory only; failed: the keys get their bytes back
                 framed?.fill(0)
-                pems.forEach { it.fill(0) }
+                for ((i, p) in pems.withIndex()) if (built) p.fill(0) else keys[i].putBack(p)
             }
         }
     }
@@ -349,17 +358,28 @@ internal fun unusableEchMessage(hasEch: Boolean): String =
 internal fun echStatusOf(ssl: Long): EchStatus = EchStatus.of(Ksl.sslGet(ssl, KslConst.GET_ECH_STATUS).firstOrNull()?.toInt() ?: 0)
 
 /**
- * The name a server certificate is checked against on [ssl] now: [reference], or after an ECH rejection the configuration's
- * `public_name` (RFC 9849 section 6.1.7), which the paused path (platform verifiers, a custom verifier, pins) must check.
+ * What a server certificate is checked against on [ssl] now, read where the handshake pauses for it: [name] is [reference],
+ * or after an ECH rejection the configuration's `public_name` (RFC 9849 section 6.1.7), which the paused path (platform
+ * verifiers, a custom verifier, pins) must check. [hidden]: ECH was accepted (the ServerHello decided it), so [name] is
+ * one ECH hid (section 10.7); [publicName]: ECH was offered and not accepted, a rejection, so [name] is the `public_name`.
+ * Both come from the session's ECH outcome, never from comparing names: an origin may be named like the `public_name`.
  */
+internal class EchVerifyName(
+    val name: HostName,
+    val hidden: Boolean,
+    val publicName: Boolean,
+)
+
 internal fun verifyNameOf(
     ssl: Long,
     reference: HostName,
     echOffered: Boolean,
-): HostName {
-    if (!echOffered) return reference
-    val name = Ksl.sslGet(ssl, KslConst.GET_VERIFY_NAME).decodeToString()
-    return if (name.isEmpty() || name == reference.value) reference else HostName.normalize(name)
+): EchVerifyName {
+    if (!echOffered) return EchVerifyName(reference, hidden = false, publicName = false)
+    val accepted = echStatusOf(ssl) == EchStatus.Accepted
+    val read = Ksl.sslGet(ssl, KslConst.GET_VERIFY_NAME).decodeToString()
+    val name = if (read.isEmpty() || read == reference.value) reference else HostName.normalize(read)
+    return EchVerifyName(name, hidden = accepted, publicName = !accepted)
 }
 
 private const val ECH_REQUIRED = 121

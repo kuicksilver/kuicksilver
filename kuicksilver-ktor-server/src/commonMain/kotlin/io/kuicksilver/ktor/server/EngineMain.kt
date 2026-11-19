@@ -32,7 +32,8 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
  * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
  * `kuicksilver.tls.echKeys` (a list of PEM files of Encrypted Client Hello keys, each what `openssl ech` writes, every one
- * of them sent in retry configurations; read once at startup, rotated in code with `EchServerKeys.rotate`),
+ * of them sent in retry configurations; read once at startup, rotated in code with `EchServerKeys.rotate`, freed when the
+ * engine stops),
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
  * proxy, is a trusted gateway: no `421 Misdirected Request`),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;

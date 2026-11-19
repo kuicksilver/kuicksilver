@@ -1643,7 +1643,8 @@ configuration comes from, for each connection:
 
 1. the `ech` parameter of the HTTPS record whose endpoint the connection goes to (RFC 9848), when `http3.httpsRecords`
    looks records up (`Http3DiscoveryMode.Auto`) and `ech.fromHttpsRecords` is on (the default);
-2. else `ech.configLists` for the request's host, given out of band;
+2. else `ech.configLists` for the request's host, given out of band (keys compared as host names: case, a trailing dot
+   and IPv6 brackets do not matter, and two keys for one host fail the engine's creation);
 3. else none, and the connection sends GREASE ECH (`ech.grease`, on by default, RFC 9849 section 6.2.1), so that it
    looks like one with ECH.
 
@@ -1661,10 +1662,13 @@ val client =
 ```
 
 - **Rejection.** A server that cannot decrypt the configuration (it rotated its keys) answers with its retry
-  configurations after the client authenticated it for the `public_name`: the engine retries once, on a new connection to
-  the same addresses, with them (RFC 9849 section 6.1.6), or without ECH when the server sent none ("securely disabled").
-  A retry that is rejected again fails the request with `TlsException.EchRejected` in its causes; no request is sent on a
-  rejected connection. Retry configurations are used for that retry only, never stored.
+  configurations after the client authenticated it for the `public_name`: the engine retries once, on a new connection
+  to the addresses the request already resolved (over HTTP/3 the same address; over TCP the race of those addresses
+  again), with them (RFC 9849 section 6.1.6), or without ECH when the server sent none, or none of a version this client
+  supports ("securely disabled"). Retry configurations of the supported version of which none is usable fail the
+  request instead: never a retry with the name in the clear. A retry that is rejected again fails the request with
+  `TlsException.EchRejected` in its causes. No request is processed on a rejected connection: a 0-RTT request the server
+  ignored there is sent again on the retry. Retry configurations are used for that retry only, never stored.
 - **SVCB-reliant.** When every endpoint of the origin's HTTPS records has an `ech` parameter, the request never falls back
   to a connection without it: not to the origin's own address, not to the endpoint an AliasMode chain appends, not to an
   `Alt-Svc` alternative whose own records have none (RFC 9848 sections 5.1 and 6); when no endpoint can be reached the

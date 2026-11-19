@@ -96,6 +96,11 @@ internal class KuicksilverEngine(
         // a list given for a host is offered or refused now: one without a usable ECHConfig, or any in a build without ECH,
         // would otherwise send the host's name in the clear (with GREASE) on every connection
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        config.ech.configLists.keys.groupBy(::echHostKey).values.firstOrNull { it.size > 1 }?.let {
+            throw IllegalArgumentException("ech.configLists: ${it.joinToString()} name one host (${echHostKey(it.first())})")
+        }
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         for ((host, list) in config.ech.configLists) {
             try {
                 io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {

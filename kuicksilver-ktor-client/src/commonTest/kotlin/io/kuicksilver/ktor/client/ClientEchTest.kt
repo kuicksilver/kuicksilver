@@ -26,6 +26,7 @@ import io.ktor.utils.io.writeByteArray
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.SvcbRecord
+import io.kuicksilver.ktor.client.h3.resendsAfterEarlyEchRejection
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.connectTcp
@@ -157,6 +158,33 @@ class ClientEchTest {
             } finally {
                 server.stopSuspend(0, 0)
             }
+        }
+
+    /**
+     * A configLists key is a host name, compared as host names compare: case and a trailing dot do not keep the configuration
+     * from being offered (a mismatch would have sent GREASE with the name in the clear); two keys for one host are refused.
+     */
+    @Test fun configListKeysAreComparedAsHostNames() =
+        clientTest {
+            val names = Names()
+            val (server, port) = echServer(EchServerKeys(listOf(keyA)), names)
+            try {
+                helloRelay(port) { relayPort, hellos ->
+                    client(more = { ech { configLists = mapOf("Server.TEST." to listA) } }).use { c ->
+                        assertEquals("ok", c.get("https://server.test:$relayPort/").bodyAsText())
+                    }
+                    val hello = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
+                    assertEquals(EchTestKeys.PUBLIC_NAME, hello.serverName)
+                }
+                assertEquals(listOf<String?>("server.test"), names.all(), "the server decrypted the inner ClientHello")
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+            val e =
+                assertFailsWith<IllegalArgumentException> {
+                    client(more = { ech { configLists = mapOf("server.test" to listA, "SERVER.test." to listA) } }).close()
+                }
+            assertTrue("server.test" in e.message!!, e.message)
         }
 
     /** RFC 9849 section 6.2.1: GREASE ECH on every connection without a configuration, by default; off when switched off. */
@@ -541,6 +569,17 @@ class ClientEchTest {
         assertNull(echRejectionIn(proxy))
         assertNull(echRejectionIn(RuntimeException("wrapped", proxy)))
         assertNotNull(echRejectionIn(RuntimeException("wrapped", TlsException.EchRejected(null))))
+    }
+
+    /**
+     * A 0-RTT request on a connection whose ECH was rejected is sent once more, on a connection with the retry's offer; never
+     * when that connection already was the retry (RFC 9849 section 6.1.6: one retry), which would make a third connection.
+     */
+    @Test fun negative_anEarlyRequestOnARejectedRetryIsNotSentAThirdTime() {
+        assertTrue(resendsAfterEarlyEchRejection(alreadyResent = false, handshakeComplete = false, offeredRetry = false))
+        assertFalse(resendsAfterEarlyEchRejection(alreadyResent = false, handshakeComplete = false, offeredRetry = true))
+        assertFalse(resendsAfterEarlyEchRejection(alreadyResent = true, handshakeComplete = false, offeredRetry = false))
+        assertFalse(resendsAfterEarlyEchRejection(alreadyResent = false, handshakeComplete = true, offeredRetry = false))
     }
 
     // ---- wire helpers ----

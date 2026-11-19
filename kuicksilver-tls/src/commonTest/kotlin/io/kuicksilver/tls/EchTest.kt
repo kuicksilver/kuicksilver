@@ -246,6 +246,99 @@ class EchTest {
     private class PausedForTest : RuntimeException()
 
     /**
+     * RFC 9849 section 10.7 for a custom verifier: its context says whether the name it checks is one an accepted ECH hid
+     * (make no network request about it) or the public_name of a rejection (the result only authenticates the rejection).
+     */
+    @Test fun customVerifierKnowsWhenTheNameIsHidden() {
+        val seen = ArrayList<Triple<String?, Boolean, Boolean>>()
+        val verifier =
+            object : CertificateVerifier {
+                override suspend fun verify(
+                    chain: List<Certificate>,
+                    serverName: String?,
+                    role: TlsRole,
+                ): VerifyResult = VerifyResult.Accepted(chain)
+
+                override suspend fun verify(
+                    chain: List<Certificate>,
+                    serverName: String?,
+                    role: TlsRole,
+                    context: VerificationContext,
+                ): VerifyResult {
+                    seen += Triple(serverName, context.hiddenName, context.echPublicName)
+                    return VerifyResult.Accepted(chain)
+                }
+            }
+
+        @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+        fun run(
+            list: EchConfigList?,
+            key: EchKey,
+        ) {
+            val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Custom(verifier)) { echConfigList = list })
+            val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(key)) })
+            c.setTransportParameters(Fixtures.tp)
+            s.setTransportParameters(Fixtures.tp)
+            val p = Pump(c, s)
+            p.run(onVerify = { runBlocking { c.verifyPeer(it.chain) } })
+            p.close()
+        }
+        run(listA, keyA)
+        run(listA, keyB)
+        run(null, keyA)
+        assertEquals(
+            kotlin.collections.listOf(
+                Triple<String?, Boolean, Boolean>("server.test", true, false),
+                Triple<String?, Boolean, Boolean>(EchTestKeys.PUBLIC_NAME, false, true),
+                Triple<String?, Boolean, Boolean>("server.test", false, false),
+            ),
+            seen,
+        )
+    }
+
+    /**
+     * A rejection is told from an acceptance by the session's ECH outcome, not by the name: an origin whose name is the
+     * configuration's public_name still verifies a rejection as one (not hidden, no pins, no first contact).
+     */
+    @Test fun aRejectionForAnOriginNamedLikeThePublicNameIsStillOne() {
+        val seen = ArrayList<Pair<Boolean, Boolean>>()
+        val verifier =
+            object : CertificateVerifier {
+                override suspend fun verify(
+                    chain: List<Certificate>,
+                    serverName: String?,
+                    role: TlsRole,
+                ): VerifyResult = VerifyResult.Accepted(chain)
+
+                override suspend fun verify(
+                    chain: List<Certificate>,
+                    serverName: String?,
+                    role: TlsRole,
+                    context: VerificationContext,
+                ): VerifyResult {
+                    seen += context.hiddenName to context.echPublicName
+                    return VerifyResult.Accepted(chain)
+                }
+            }
+
+        @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+        val client =
+            Fixtures.client(trust = TrustConfig.Custom(verifier)) {
+                serverName = EchTestKeys.PUBLIC_NAME
+                echConfigList = listA
+            }
+        val c = KslQuicCrypto.newSession(client)
+        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        c.setTransportParameters(Fixtures.tp)
+        s.setTransportParameters(Fixtures.tp)
+        val p = Pump(c, s)
+        p.run(onVerify = { runBlocking { c.verifyPeer(it.chain) } })
+        p.close()
+        assertEquals(kotlin.collections.listOf(false to true), seen)
+        assertEquals(EchStatus.Rejected, p.c.echStatus)
+    }
+
+    /**
      * RFC 9849 section 10.7: the platform verifier fetches nothing over the network (OCSP, CRL, AIA) for a name ECH hid. It
      * is asked offline exactly when ECH was accepted; for a rejection (the public_name, visible anyway), GREASE and no ECH
      * it may go online as before.
@@ -419,7 +512,13 @@ class EchTest {
      * keeps its own reference, a configuration built afterwards cannot make a context from it, and rotate is refused.
      */
     @Test fun closedKeysAreFreedAndRefuseNewContexts() {
+        val live = {
+            io.kuicksilver.native.Ksl
+                .liveObjects()[io.kuicksilver.native.KslConst.LIVE_ECH_KEYS]
+        }
+        val before = live()
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
+        assertEquals(before + 1, live(), "one native set while open")
         val lease = KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true)
         try {
             val freed = ArrayList<Int>()
@@ -427,6 +526,7 @@ class EchTest {
             keys.close()
             keys.close()
             assertEquals(kotlin.collections.listOf(1), freed, "the set is freed once, at close")
+            assertEquals(before, live(), "the handle is gone; the context keeps its own reference")
             assertEquals(1, lease.ctx.echAppliedVersion, "the context built before keeps its set")
             val e = assertFailsWith<TlsException.Config> { KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true) }
             assertTrue("closed" in e.message!!, e.message)
@@ -434,6 +534,17 @@ class EchTest {
         } finally {
             lease.close()
         }
+    }
+
+    /** A set that fails to build wipes none of its keys: those it took are put back, and a set without the bad one takes them. */
+    @Test fun aFailedSetKeepsTheKeysItTook() {
+        val good = EchKey(EchTestKeys.A.encodeToByteArray())
+        val bad = EchKey("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n".encodeToByteArray())
+        assertFailsWith<TlsException.Config> { EchServerKeys(listOf(good, bad)) }
+        val used = EchKey(EchTestKeys.B.encodeToByteArray())
+        EchServerKeys(listOf(used)).close()
+        assertFailsWith<TlsException.Config> { EchServerKeys(listOf(good, used)) } // used: already wiped
+        EchServerKeys(listOf(good)).close()
     }
 
     /** A rotation reaches the contexts already built from the configuration; the old key keeps decrypting while it is kept. */

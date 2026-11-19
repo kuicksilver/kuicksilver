@@ -237,7 +237,7 @@ internal class KslQuicTlsSession(
 
     // the name the last verification pause is for, read on the loop (the public_name after an ECH rejection): verifyPeer runs
     // off the loop, which may free the native session meanwhile, so it reads nothing native
-    @Volatile private var pausedName: HostName? = null
+    @Volatile private var pausedName: EchVerifyName? = null
     private var alpn: String? = null
     private var group: String? = null
     private var ech: EchStatus = EchStatus.None
@@ -583,8 +583,8 @@ internal class KslQuicTlsSession(
 
     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
     override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult {
-        val name = pausedName ?: reference
-        return verification.verify(chain, name, echPublicName = name != reference, hiddenName = echOffered && name == reference)
+        val v = pausedName ?: EchVerifyName(reference, hidden = false, publicName = false)
+        return verification.verify(chain, v.name, echPublicName = v.publicName, hiddenName = v.hidden)
     }
 
     /**

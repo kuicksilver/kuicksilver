@@ -27,9 +27,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).
   Session tickets of connections with ECH and without it are cached apart, never offered on the other kind.
   With ECH accepted, `TrustConfig.Platform` verifies offline (RFC 9849 section 10.7): Windows retrieves URLs and
-  revocation from its cache only, Apple turns off SecTrust's network fetches, and the JVM checks the chain under the
-  default anchors with a PKIX trust manager of the connection's own whose revocation checking is off (fetching an
-  intermediate from the AIA extension stays a process-wide JDK setting, `com.sun.security.enableAIAcaIssuers`).
+  revocation from its cache only, Apple turns off SecTrust's network fetches, and the JVM builds the path from the
+  presented certificates under the default anchors and checks it with a PKIX `CertPathValidator`, revocation off, so
+  neither an OCSP/CRL request nor an AIA fetch goes out whatever the process set. A `TrustConfig.Custom` verifier gets a
+  `VerificationContext` (`CertificateVerifier.verify` overload, experimental) with `hiddenName` and `echPublicName`.
 - Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
   Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
   on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by
@@ -1028,6 +1029,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     The HTTP/3 connection inside a CONNECT-UDP tunnel offers the origin's ECH, with its one retry through the tunnel.
   - `EchServerKeys` is `AutoCloseable`: `close()` frees its native set, which otherwise stayed for the life of the
     process.
+- TLS, Encrypted Client Hello, second review of 2026-11-20:
+  - JVM, RFC 9849 section 10.7: under an accepted ECH the path is built from the presented certificates and checked with
+    a PKIX `CertPathValidator`; no AIA fetch of a missing intermediate goes out any more where the process set
+    `com.sun.security.enableAIAcaIssuers` (before, a process-wide switch the connection could not turn off).
+  - A rejection is told from an acceptance by the session's ECH outcome, not by comparing names: an origin named like
+    the configuration's `public_name` was verified as if ECH had been accepted (pins, offline, TOFU first contact).
+  - An `EchServerKeys` that fails to build gives its keys back unwiped; before, a bad key wiped the good ones taken
+    with it. The server engine closes the `EchServerKeys` it made from `kuicksilver.tls.echKeys` when it stops.
+  - Ktor client: `configLists` keys are compared as host names (case, a trailing dot, IPv6 brackets); before, a key in
+    another spelling sent GREASE with the name in the clear. Two keys for one host are refused. A 0-RTT request on a
+    rejected connection that was already the retry is no longer sent a third time.
+  - `ksl`: a key whose ECHCONFIG block holds several ECHConfigs has each config_id checked for uniqueness; running out
+    of memory while an ECHConfig is read is reported as such, never as "nothing usable"; `KSL_LIVE_ECH_KEYS` (ABI 7,
+    additive; `KSL_LIVE_COUNT` is 8) counts the key-set handles; the dead `ECH_GREASE` macro is gone.
 - TLS, Encrypted Client Hello (`ksl`). Each item is checked where OpenSSL 4.1 does not:
   - An ECHConfigList whose 0xfe0d ECHConfig is malformed, for example by a trailing byte or an extension type given
     twice, does not parse (RFC 9849 sections 4, 4.2).

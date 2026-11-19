@@ -163,7 +163,7 @@ internal class Verification(
                         }
 
                         is TrustConfig.Custom -> {
-                            inner.verifier.verify(presented, reference.value, config.role)
+                            inner.verifier.verify(presented, reference.value, config.role, VerificationContext(hiddenName, echPublicName))
                         }
 
                         else -> {
@@ -175,7 +175,7 @@ internal class Verification(
                 }
 
                 is TrustConfig.Custom -> {
-                    base.verifier.verify(presented, reference.value, config.role)
+                    base.verifier.verify(presented, reference.value, config.role, VerificationContext(hiddenName, echPublicName))
                 }
 
                 is TrustConfig.Tofu -> {

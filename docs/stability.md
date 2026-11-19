@@ -257,6 +257,8 @@ type is experimental, so are its members.
 |---|---|
 | `TlsIdentity.Reloadable`, `TlsIdentity.reloadable`, `TrustConfig.ReloadableCa`, `TrustConfig.reloadable` | rotating the server certificate and the client CA bundle without a restart |
 | `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
+| `EchConfigList`, `EchKey`, `EchServerKeys` (`AutoCloseable`), `EchStatus`, `TlsException.EchRejected`, `TlsConfig.echConfigList`, `echGrease`, `echKeys` (and the builder's), `TlsConnection.echStatus`, `QuicTlsSession.echStatus` | Encrypted Client Hello (RFC 9849) |
+| `CertificateVerifier.verify(chain, serverName, role, context)`, `VerificationContext` (`hiddenName`, `echPublicName`) | what a custom verifier is told about the name it checks (RFC 9849 sections 6.1.7 and 10.7) |
 
 ### `kuicksilver-quic`
 
@@ -305,6 +307,7 @@ the connection core are internal.
 | `logger`, `eventListener`, `KuicksilverEventListener`, `ProtocolReason`, `http3 { qlog; connectionListener }` | observability |
 | `http2 { enabled; settings; pingInterval }`, `Http2ClientConfig`, `FallbackReason.H2Refused` | HTTP/2 on the TCP path |
 | JVM and Android: `FileAltSvcStore(file)` | the persistent Alt-Svc store from a `java.io.File` (Android API 24 and up) |
+| `ech { }`, `EchClientConfig` (`configLists`, `grease`, `fromHttpsRecords`) | Encrypted Client Hello (RFC 9849, RFC 9848) |
 
 ### `kuicksilver-ktor-server`
 
@@ -314,6 +317,7 @@ the connection core are internal.
 | `identityReloadInterval` | `EngineMain` watching the certificate and client CA files |
 | `logger`, `qlog`, `connectionListener`, `eventListener`, `KuicksilverServerEventListener` | observability |
 | `http2`, `http2Settings` | HTTP/2 on TLS connectors (opt-in) |
+| `KuicksilverTlsConnector.echKeys` and its builder's `echKeys`; `EngineMain`'s `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of a server (RFC 9849) |
 
 ### `kuicksilver-ktor-network`
 

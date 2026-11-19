@@ -21,9 +21,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 @ExperimentalKuicksilverApi
 public class EchClientConfig {
     /**
-     * ECHConfigLists given out of band, by the request's host exactly as in request URLs (as [HostPort] compares hosts):
-     * every connection for that origin offers it (directly, to an `Alt-Svc` alternative, and inside a proxy's CONNECT or
-     * SOCKS5 tunnel), unless an HTTPS record's endpoint brings its own. Empty by default. The engine refuses an entry when
+     * ECHConfigLists given out of band, by the request's host, compared as host names (without case, a trailing dot or the
+     * brackets of an IPv6 literal; two keys for one host fail the engine's creation): every connection for that origin
+     * offers it (directly, to an `Alt-Svc` alternative, and inside a proxy's CONNECT, SOCKS5 or CONNECT-UDP tunnel), unless
+     * an HTTPS record's endpoint brings its own. Empty by default. The engine refuses an entry when
      * the `tls` block allows TLS 1.2 (ECH is TLS 1.3 only, RFC 9849 section 6.1), when the list holds no usable ECHConfig,
      * and in a build without ECH, with IllegalArgumentException when it is created (each with its own message): a list
      * given here never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` without a usable
@@ -35,6 +36,15 @@ public class EchClientConfig {
      * host); any other exception the block throws reaches the caller of the engine's creation unchanged.
      */
     public var configLists: Map<String, EchConfigList> = emptyMap()
+
+    /**
+     * The [configLists] entry of [host], the keys compared as host names: without case, a trailing dot or the brackets of
+     * an IPv6 literal.
+     */
+    internal fun listFor(host: String): EchConfigList? {
+        val key = echHostKey(host)
+        return configLists.entries.firstOrNull { echHostKey(it.key) == key }?.value
+    }
 
     /**
      * Send a GREASE `encrypted_client_hello` extension on every TLS connection that offers no configuration (RFC 9849
@@ -128,8 +138,9 @@ internal fun echRejectionIn(e: Throwable?): TlsException.EchRejected? {
 
 /**
  * [connect] with [route]'s offer, and once more with the retry's offer when the server rejected ECH (RFC 9849 section
- * 6.1.6): to the same address, which the section allows ("clients can reuse the same server IP address"), never to one a
- * new lookup returned. A second rejection, or one without a retry, is the failure.
+ * 6.1.6), to the addresses of the request's resolution, which the section allows ("clients can reuse the same server IP
+ * address"), never to one a new lookup returned: over HTTP/3 [connect] goes to the address the rejected connection went
+ * to, over TCP it races those addresses again. A second rejection, or one without a retry, is the failure.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal suspend fun <T> withEchRetry(
@@ -147,6 +158,14 @@ internal suspend fun <T> withEchRetry(
         return connect(retry)
     }
 }
+
+/** [host] as [EchClientConfig.configLists] compares it. */
+internal fun echHostKey(host: String): String =
+    host
+        .lowercase()
+        .removeSuffix(".")
+        .removePrefix("[")
+        .removeSuffix("]")
 
 /** Whether the engine's connections can offer ECH at all: TLS 1.3 only (RFC 9849 section 6.1, rule 1). */
 @OptIn(ExperimentalKuicksilverApi::class)

@@ -783,7 +783,7 @@ internal class H3Pool(
         val left = -deadline.elapsedNow().inWholeMilliseconds
         if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
         ensureOpen()
-        val route = dns.echRoute(originHost) { config.ech.configLists[it] }
+        val route = dns.echRoute(originHost) { config.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
@@ -1149,7 +1149,7 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
-        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
+        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
         // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
         if (t.udpProxy == null) shareSameAddress(t, dns, wt)
         val (e, connect) =
@@ -1402,10 +1402,16 @@ internal class H3Pool(
         offer: EchRoute.Offer,
     ) {
         if (offer.list == null) return
+        if (offer.retry) retryOffered.update { it + c }
         c.closed.invokeOnCompletion { failure ->
             if (failure == null) echRejectionIn(c.closed.getCompleted())?.let { route.rejected(offer, it) }
+            retryOffered.update { it - c }
         }
     }
+
+    /** The 0-RTT connections whose ECH offer was a retry's (RFC 9849 section 6.1.6): a rejection there sends nothing again. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
 
     /**
      * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
@@ -1709,10 +1715,12 @@ internal class H3Pool(
                 // 1-RTT data, so the request was not processed. It goes once more, on a new connection that offers the
                 // retry configurations (or none when the server sent none, section 6.1.6); a second rejection is the failure
                 val echRejected = echRejectionIn(e)
-                if (echRejected != null && !echRetried && !conn.quic.isHandshakeComplete) {
+                if (echRejected != null &&
+                    resendsAfterEarlyEchRejection(echRetried, conn.quic.isHandshakeComplete, conn in retryOffered.load())
+                ) {
                     echRetried = true
                     echEarlyRetriesForTest.addAndFetch(1)
-                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
+                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
                     route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
                     lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
                     events.emit("retry") { retry(data, attempts + 2, e) }
@@ -2153,3 +2161,14 @@ internal fun h3WebSocketStreamEnd(
         drained = drained,
         cutByCloseWait = cutByCloseWait,
     )
+
+/**
+ * Whether a request on a 0-RTT connection whose ECH the server rejected goes once more (the server ignored its early data,
+ * RFC 9849 section 6.1, rule 7): only before the handshake completed, only once per request, and never when that
+ * connection already offered a retry's configuration (section 6.1.6: one retry; a third connection would offer it again).
+ */
+internal fun resendsAfterEarlyEchRejection(
+    alreadyResent: Boolean,
+    handshakeComplete: Boolean,
+    offeredRetry: Boolean,
+): Boolean = !alreadyResent && !handshakeComplete && !offeredRetry

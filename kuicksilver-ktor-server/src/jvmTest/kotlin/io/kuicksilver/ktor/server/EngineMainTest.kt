@@ -551,6 +551,8 @@ class EngineMainTest {
             val keys = server.engine.configuration.tlsEchKeys
             kotlin.test.assertNotNull(keys)
             server.stop(0, 0)
+            // the engine made the keys, so it frees them when it stops: a closed set takes no rotation
+            assertFailsWith<io.kuicksilver.tls.TlsException.Config> { keys.rotate(listOf(io.kuicksilver.tls.EchKey(EchTestKeys.B))) }
             val bad = File(dir, "ech-bad.pem").apply { writeText("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n") }
             assertFailsWith<io.kuicksilver.tls.TlsException.Config> {
                 EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.echKeys=${bad.path}")).engine
