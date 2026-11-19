@@ -341,6 +341,40 @@ class H2PrefaceDrainRaceTest {
         }
 
     /**
+     * [H2cMode.WithHttp11]: a new connection that has sent nothing when the stop wins the preface check, and whose preface
+     * comes only after (inside the new connection's 2 s window, NEW_CONNECTION_FIRST_BYTE): it is waited for, and the
+     * connection is HTTP/2, its GET served under the graceful GOAWAY. The hook holds the check until the stop's side
+     * cancels it, and the client writes only then. Without the window the check gave up at once and HTTP/1.1, which then
+     * read the preface, answered 505.
+     */
+    @Test fun negative_aNewConnectionsPrefaceThatComesAfterTheStopWinsTheCheckIsHttp2OverH2cWithHttp11() =
+        serverTest {
+            val checking = CompletableDeferred<Unit>()
+            val stopWon = CompletableDeferred<Unit>()
+            val (server, port) =
+                withHttp11Server { _, draining ->
+                    try {
+                        checking.complete(Unit)
+                        draining.join()
+                        kotlinx.coroutines.awaitCancellation()
+                    } finally {
+                        stopWon.complete(Unit) // the stop's side ended the check: it now looks for a first octet
+                    }
+                }
+            coroutineScope {
+                RawH2Client.connectPlain(port).use { raw ->
+                    withTimeout(10.seconds) { checking.await() } // the check runs, and only the stop can end it
+                    val stop = async { server.stopSuspend(10_000, 15_000) }
+                    withTimeout(10.seconds) { stopWon.await() }
+                    raw.write(prefaceAndGet)
+                    assertServedUnderTwoStepGoAway(readToEnd(raw))
+                    raw.close()
+                    withTimeout(20.seconds) { stop.await() }
+                }
+            }
+        }
+
+    /**
      * [H2cMode.WithHttp11]: a whole HTTP/1.1 request is in when the stop wins the preface check (the check is held, so the
      * stop is the only side that can win). HTTP/1.1 takes the connection after the stop, and the request that arrived is
      * answered with `Connection: close`, never dropped unanswered.

@@ -14,6 +14,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
@@ -22,8 +23,12 @@ import kotlinx.io.readString
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
 
 /**
  * The two races of the HTTP/1.1 pipeline between work it started and an event from outside, each outcome forced through
@@ -50,13 +55,20 @@ class H1PipelineSelectRaceTest {
     private fun TestScope.pipeline(
         draining: Job?,
         input: (ByteChannel) -> ByteReadChannel = { it },
+        newConnectionUntil: TimeMark? = null,
         handler: suspend H1RequestScope.(Request) -> Unit,
     ): Conn {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
         val connection = H1Connection(input(toServer), fromServer, null, null)
         val job =
-            backgroundScope.startH1Pipeline(connection, 1.hours, 1.hours, draining = draining) {
+            backgroundScope.startH1Pipeline(
+                connection,
+                1.hours,
+                1.hours,
+                draining = draining,
+                newConnectionUntil = newConnectionUntil,
+            ) {
                 handled += it.uri.toString()
                 handler(it)
             }
@@ -199,6 +211,70 @@ class H1PipelineSelectRaceTest {
             runCurrent()
             assertEquals(listOf("/slow", "/fail"), handled)
             assertTrue(!c.toServer.readBuffer.exhausted(), "the partial head was read on after the handler failed")
+        }
+
+    /** Whether each handled request was to end its connection ([H1RequestScope.closing]: `Connection: close`). */
+    private val closingSeen = mutableListOf<Boolean>()
+
+    /** A pipeline as the engine starts it: a new connection's first byte is waited for until 2 s after it began. */
+    private fun TestScope.newConnection(draining: Job): Conn =
+        pipeline(draining, newConnectionUntil = testScheduler.timeSource.markNow() + 2.seconds) {
+            closingSeen += closing()
+            respond("ok")
+        }
+
+    /**
+     * The server stops while a new connection has received nothing: its first request, on its way, comes 300 ms later
+     * (inside the 2 s window) and is answered with `Connection: close`, and the connection ends after it. Before, the
+     * connection was closed at once without an answer, and its client could not tell whether the request was processed.
+     */
+    @Test fun negative_aNewConnectionsFirstRequestThatComesAfterTheStopIsAnswered() =
+        runTest {
+            val draining = Job()
+            val c = newConnection(draining)
+            draining.complete()
+            runCurrent()
+            assertFalse(c.job.isCompleted, "the new connection was closed at once")
+            advanceTimeBy(300.milliseconds)
+            c.send("POST /order HTTP/1.1\r\nHost: s\r\nContent-Length: 0\r\n\r\n")
+            runCurrent()
+            assertEquals(listOf("/order"), handled)
+            assertEquals(listOf(true), closingSeen, "the answer must say Connection: close")
+            assertTrue(c.job.isCompleted, "the connection stayed open after the answer")
+        }
+
+    /** A new connection that sends nothing within its 2 s window is closed then, without an answer. */
+    @Test fun aSilentNewConnectionIsClosedAtTheEndOfItsWindow() =
+        runTest {
+            val draining = Job()
+            val c = newConnection(draining)
+            draining.complete()
+            advanceTimeBy(1900.milliseconds)
+            runCurrent()
+            assertFalse(c.job.isCompleted, "closed before its window ended")
+            advanceTimeBy(200.milliseconds)
+            runCurrent()
+            assertTrue(c.job.isCompleted, "still open after its window")
+            assertEquals(emptyList(), handled)
+            assertTrue(c.fromServer.readBuffer().exhausted(), "an answer was sent")
+        }
+
+    /**
+     * The window is for a connection's first request only: a keep-alive connection idle after its first request closes at
+     * once when the server stops (RFC 9112 section 9.5), inside what would have been the window.
+     */
+    @Test fun negative_aKeepAliveConnectionIdleAfterItsFirstRequestClosesAtOnceOnTheStop() =
+        runTest {
+            val draining = Job()
+            val c = newConnection(draining)
+            c.send("GET /first HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            assertEquals(listOf("/first"), handled)
+            assertEquals(listOf(false), closingSeen, "the first request keeps the connection")
+            assertFalse(c.job.isCompleted)
+            draining.complete()
+            runCurrent()
+            assertTrue(c.job.isCompleted, "the idle keep-alive connection waited after the stop")
         }
 
     /**

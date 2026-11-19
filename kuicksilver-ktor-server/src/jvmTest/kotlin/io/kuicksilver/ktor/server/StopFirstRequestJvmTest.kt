@@ -31,6 +31,8 @@ import kotlin.time.Duration.Companion.seconds
  * (NEW_CONNECTION_FIRST_BYTE from its acceptance, within the request-head deadline and the grace period, as Go's
  * `Server.Shutdown` takes a new connection for idle only after 5 s); its first request is then answered with
  * `Connection: close`. A keep-alive connection idle between requests still closes at once (RFC 9112 section 9.5).
+ * An end-to-end smoke test over a real socket and the real clock; the window itself is proven in virtual time by
+ * H1PipelineSelectRaceTest (and for h2c by H2PrefaceDrainRaceTest).
  */
 class StopFirstRequestJvmTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
