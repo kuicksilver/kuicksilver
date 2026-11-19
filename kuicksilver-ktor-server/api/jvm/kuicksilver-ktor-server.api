@@ -1,3 +1,8 @@
+public final class io/kuicksilver/ktor/server/ConnectUdpRoutingKt {
+	public static final fun connectUdp (Lio/ktor/server/routing/Route;Lio/kuicksilver/http3/UdpProxy;)Lio/ktor/server/routing/Route;
+	public static synthetic fun connectUdp$default (Lio/ktor/server/routing/Route;Lio/kuicksilver/http3/UdpProxy;ILjava/lang/Object;)Lio/ktor/server/routing/Route;
+}
+
 public final class io/kuicksilver/ktor/server/EarlyDataKt {
 	public static final fun getReceivedEarly (Lio/ktor/server/request/ApplicationRequest;)Z
 }
@@ -50,6 +55,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/
 public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration : io/ktor/server/engine/BaseApplicationEngine$Configuration {
 	public fun <init> ()V
 	public final fun getAltSvc ()Z
+	public final fun getConnectUdp ()Z
 	public final fun getConnectionIdleTimeoutSeconds ()I
 	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;
@@ -81,6 +87,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun plainConnector (Lkotlin/jvm/functions/Function1;)V
 	public static synthetic fun plainConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 	public final fun setAltSvc (Z)V
+	public final fun setConnectUdp (Z)V
 	public final fun setConnectionIdleTimeoutSeconds (I)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/server/KuicksilverServerEventListener;)V

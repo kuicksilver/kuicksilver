@@ -42,6 +42,15 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 	public static fun values ()[Lio/kuicksilver/ktor/client/AlternativeSource;
 }
 
+public final class io/kuicksilver/ktor/client/ConnectUdpProxy {
+	public fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getApplies ()Lkotlin/jvm/functions/Function1;
+	public final fun getCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
+	public final fun getTemplate ()Lio/kuicksilver/http3/UdpProxyTemplate;
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/kuicksilver/ktor/client/Dns {
 	public static final field Companion Lio/kuicksilver/ktor/client/Dns$Companion;
 	public static final field MAX_ADDRESSES_PER_FAMILY I
@@ -160,6 +169,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getWebTransportIgnoresConnectUdpProxy ()Z
 	public final fun getWebTransportIgnoresProxy ()Z
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
@@ -178,6 +188,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setWebTransportIgnoresConnectUdpProxy (Z)V
 	public final fun setWebTransportIgnoresProxy (Z)V
 }
 
@@ -280,6 +291,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public fun <init> ()V
 	public final fun getAssumeHttp11 ()Z
 	public final fun getConnectTimeout-UwyO8pc ()J
+	public final fun getConnectUdpProxy ()Lio/kuicksilver/ktor/client/ConnectUdpProxy;
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getDns ()Lio/kuicksilver/ktor/client/Dns;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
@@ -305,6 +317,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setAssumeHttp11 (Z)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setConnectUdpProxy (Lio/kuicksilver/ktor/client/ConnectUdpProxy;)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
 	public final fun setDns (Lio/kuicksilver/ktor/client/Dns;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V

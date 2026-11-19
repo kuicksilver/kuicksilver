@@ -148,6 +148,97 @@ class GuideSamplesTest {
             }
         }
 
+    /** `guide:http3:connect-udp`: a proxy, a UDP tunnel through it and HTTP/3 through a tunnel, all on in-memory UDP. */
+    @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+    @Test
+    fun connectUdpSamples() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val q = QuicPair.open(df = true) // Don't Fragment, so the proxy's path grows above 1200 bytes
+                val (quicConnection, serverQuic) = q.connect()
+                val net = q.net
+                val echoAt = InetSocketAddress("192.0.2.10", 443)
+                val echoIo = net.open(echoAt)
+                val echo =
+                    launch {
+                        while (true) {
+                            val (bytes, from) = echoIo.inbox.receive()
+                            net.deliver(echoAt, from, bytes.reversedArray())
+                        }
+                    }
+                val webAt = InetSocketAddress("192.0.2.20", 443)
+                val web =
+                    Http3Endpoint.bind(
+                        webAt,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                server = QuicServerConfig.Builder(H3Fixtures.server()).build()
+                                io = { net.open(webAt) }
+                            }.build(),
+                    )
+                val webServing =
+                    launch {
+                        val r = web.accept().acceptRequest()
+                        r.respond(200).apply { output.writeStringUtf8("through the tunnel") }.finish()
+                    }
+                var port = 40_000
+                val serving =
+                    launch {
+                        val connection = Http3Connection.server(serverQuic, http3Settings { enableConnectProtocol = true })
+                        val proxy =
+                            UdpProxy(
+                                UdpProxyConfig(
+                                    targetFilter = UdpTargetFilter.AllowAll, // in-memory targets in TEST-NET-1
+                                    resolver = { listOf(byteArrayOf(192.toByte(), 0, 2, 20)) },
+                                    socketFactory = { net.open(InetSocketAddress("10.0.0.2", ++port)) },
+                                ),
+                            )
+                        while (true) {
+                            // guide:http3:connect-udp (proxy)
+                            val request = connection.acceptRequest()
+                            if (ConnectUdp.isConnectUdp(request)) proxy.serve(request) else request.respond(404).finish()
+                        }
+                    }
+                val connection = Http3Connection.client(quicConnection)
+                // guide:http3:connect-udp (client)
+                val template = UdpProxyTemplate.parse("https://proxy.example/.well-known/masque/udp/{target_host}/{target_port}/")
+                val tunnel = connection.connectUdp(template, "192.0.2.10", 443)
+                tunnel.send("hello".encodeToByteArray())
+                val reply = tunnel.payloads.first()
+                tunnel.close()
+                assertEquals("olleh", reply.decodeToString())
+
+                val tls = H3Fixtures.client()
+                run {
+                    // guide:http3:connect-udp (proxied QUIC)
+                    val tunnel = connection.connectUdp(template, "example.com", 443)
+                    val inner =
+                        Http3Endpoint.bind(
+                            InetSocketAddress("127.0.0.1", 0),
+                            QuicEndpointConfig
+                                .Builder()
+                                .apply {
+                                    io =
+                                        { tunnel.asDatagramIo() }
+                                }.build(),
+                        )
+                    val h3 = inner.connect(tunnel.remoteAddress, tls)
+                    val response = h3.request(http3Request("GET", "example.com", "/"))
+                    assertEquals("through the tunnel", response.body.readAllBytes().decodeToString())
+                    h3.close()
+                    inner.close()
+                }
+                webServing.join()
+                serving.cancel()
+                echo.cancel()
+                echoIo.close()
+                web.close()
+                connection.close()
+                q.close()
+            }
+        }
+
     @Test fun capsulesSample() =
         runBlocking {
             withTimeout(30.seconds) {

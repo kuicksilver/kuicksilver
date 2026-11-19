@@ -137,6 +137,30 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   sends its Certificate uncompressed, since the chain compressed beforehand has no response in it. ksl ABI 7, additive:
   `KSL_OPT_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSORS`. A context whose OpenSSL has no
   algorithm (a system OpenSSL without zlib and brotli) starts with it off, and asking for it is `KSL_E_NOT_SUPPORTED`.
+- CONNECT-UDP (RFC 9298, Proxying UDP in HTTP), experimental, in `kuicksilver-http3` over HTTP/3: a client opens a UDP
+  tunnel through a proxy with `Http3Connection.connectUdp(UdpProxyTemplate, host, port)` and sends and receives UDP
+  payloads as HTTP datagrams with Context ID 0 (QUIC DATAGRAM frames, or DATAGRAM capsules when HTTP/3 datagrams are not
+  negotiated); `UdpTunnel.asDatagramIo()` makes the tunnel the UDP socket of a `QuicEndpoint` or `Http3Endpoint`, so QUIC
+  and HTTP/3 run end to end through the proxy (proxied QUIC, the MASQUE use). `UdpProxy.serve` is the proxy: the URI
+  Template of section 2 (the well-known `/.well-known/masque/udp/{target_host}/{target_port}/` by default), DNS before the
+  answer with `proxy-status` on errors, only globally reachable unicast targets by default (`UdpTargetFilter.PublicOnly`;
+  loopback, private, link-local, multicast and broadcast refused, CWE-918), source validation, Not-ECT, a link-MTU limit,
+  per-tunnel rate and unanswered-packet limits, tunnel limits in all and per client, and a two-minute idle timeout.
+  HTTP/1.1 (sections 3.2, 3.3) and HTTP/2 (sections 3.4, 3.5) are not offered (ADR-0024). The ICMP Packet Too Big of
+  section 6.1 is sent where the process may open a raw ICMP socket (Linux and Android with CAP_NET_RAW; `ksl_icmp_*`,
+  additive under ABI 7; `UdpProxyConfig.packetTooBig`, on by default, `UdpProxyStats.packetTooBig` says whether it
+  applies), through one raw socket per family for the proxy, rate-limited per target address across tunnels and over
+  the proxy; without the privilege the payload is dropped and counted only. The proxy refuses its own
+  addresses by default, keys clients by IPv4 address or IPv6 /64 with a rate shared by a client's tunnels and an
+  unanswered budget per client and target, runs at most 16 blocking name lookups (4 per client), drops a target datagram above the
+  link MTU whole and closes a tunnel on an ICMP port unreachable for its target that quotes a payload it sent (Linux and
+  Android; RFC 8085 section 5.2). The Ktor client keeps
+  tunnelled connections' session tickets apart from direct ones and has its own WebTransport switch for the CONNECT-UDP
+  proxy (`webTransportIgnoresConnectUdpProxy`); the Ktor
+  engines use it: the client's `connectUdpProxy = ConnectUdpProxy(template)` sends the `https` requests it applies to
+  over HTTP/3 through a tunnel (never over TCP or directly, no Alt-Svc), and the server's `connectUdp = true` with a
+  `connectUdp(proxy)` route serves CONNECT-UDP through Ktor's pipeline, behind the application's authentication. Template
+  and datagram parsing are fuzzed (`http3.udpTemplate`, `http3.udpDatagrams`).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

@@ -91,7 +91,8 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0, 7 in 0.3.0** (ABI 5 kept
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
 hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error; under 7 too,
-additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
+additive, `ksl_icmp_ptb_build`, `ksl_icmp_open`, `ksl_icmp_send` and `ksl_icmp_close` for a CONNECT-UDP proxy's ICMP Packet Too
+Big (RFC 9298 section 6.1, through a raw socket where the process may open one), `ksl_udp_take_unreachable` for a proxy's notice of an ICMP unreachable (section 3.1), `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a wildcard socket, `ksl_udp_sender` for
 several sender threads on one socket, `ksl_dns_query` for one record type from the system resolver, `ksl_resolve`,
 `ksl_addr_info` and `ksl_nat64_synthesize` for Happy Eyeballs (one address family per lookup, the state of a local
 address, the platform's NAT64 synthesis), `ksl_chain_level` with

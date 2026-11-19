@@ -18,11 +18,13 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.ktor.server.priority
 import io.kuicksilver.ktor.server.receivedEarly
@@ -93,6 +95,7 @@ fun everyServerImport(
                     val stream = session.acceptBidi()
                     stream.input.copyTo(stream.output)
                 }
+                connectUdp(UdpProxy())
             }
         }
     server.engine.http3Advertising = Http3Advertising.Drain

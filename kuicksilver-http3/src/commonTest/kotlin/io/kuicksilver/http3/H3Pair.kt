@@ -49,8 +49,11 @@ internal class MemoryNet {
     @Volatile var tap: ((InetSocketAddress, InetSocketAddress, ByteArray) -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    fun open(local: InetSocketAddress): MemoryIo {
-        val io = MemoryIo(this, local)
+    fun open(
+        local: InetSocketAddress,
+        capabilities: IoCapabilities = IoCapabilities.Portable,
+    ): MemoryIo {
+        val io = MemoryIo(this, local, capabilities)
         sockets[local] = io
         return io
     }
@@ -86,9 +89,10 @@ internal class MemoryNet {
 internal class MemoryIo(
     private val net: MemoryNet,
     override val localAddress: InetSocketAddress,
+    caps: IoCapabilities = IoCapabilities.Portable,
 ) : DatagramIo {
     val inbox = Channel<Pair<ByteArray, InetSocketAddress>>(Channel.UNLIMITED)
-    override val capabilities: StateFlow<IoCapabilities> = MutableStateFlow(IoCapabilities.Portable)
+    override val capabilities: StateFlow<IoCapabilities> = MutableStateFlow(caps)
 
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
@@ -161,10 +165,15 @@ internal class QuicPair private constructor(
         }
 
     companion object {
-        suspend fun open(serverQuic: QuicConfig = QuicConfig.Default): QuicPair {
+        /** [df]: the sockets set Don't Fragment, so DPLPMTUD raises the path MTU above 1200 (the network has no limit). */
+        suspend fun open(
+            serverQuic: QuicConfig = QuicConfig.Default,
+            df: Boolean = false,
+        ): QuicPair {
             val net = MemoryNet()
-            val a = net.open(InetSocketAddress("10.0.0.1", 1111))
-            val b = net.open(InetSocketAddress("10.0.0.2", 443))
+            val caps = if (df) IoCapabilities(false, false, 1, false, true, 1) else IoCapabilities.Portable
+            val a = net.open(InetSocketAddress("10.0.0.1", 1111), caps)
+            val b = net.open(InetSocketAddress("10.0.0.2", 443), caps)
             val server =
                 QuicEndpoint.bind(
                     b.localAddress,
@@ -211,8 +220,9 @@ internal class H3Pair(
             // WebTransport needs reset_stream_at; every other pair keeps the default transport
             serverQuic: QuicConfig = if (serverSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
             clientQuic: QuicConfig = if (clientSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
+            df: Boolean = false,
         ): H3Pair {
-            val q = QuicPair.open(serverQuic)
+            val q = QuicPair.open(serverQuic, df)
             val (c, s) = q.connect(clientQuic)
             return coroutineScope {
                 val server = async { Http3Connection.server(s, serverSettings) }

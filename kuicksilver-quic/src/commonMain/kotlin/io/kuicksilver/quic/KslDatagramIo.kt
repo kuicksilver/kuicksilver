@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
 ) : DatagramIo,
+    UnreachableReports,
     DirectReceive,
     QueuedReceive,
     NonSuspendingSend,
@@ -284,6 +285,16 @@ internal class KslDatagramIo private constructor(
             if (!socket.takePacketTooBig(ptbQuote, ptbMeta, ptbDst)) return
             sink(ptbQuote, ptbMeta[0], peerOf(ptbDst, 0), ptbMeta[1])
         }
+    }
+
+    private val unreachDst = ByteArray(KslUdpSocket.ADDR_LEN)
+    private val unreachQuote = ByteArray(KslUdpSocket.PTB_QUOTE)
+    private val unreachInfo = IntArray(2)
+
+    override fun takeUnreachable(): Unreachable? {
+        if (!socket.takeUnreachable(unreachDst, unreachQuote, unreachInfo)) return null
+        val to = peerOf(unreachDst, 0)
+        return Unreachable(to, unreachInfo[1] == KslUdpSocket.UNREACH_PORT, unreachQuote.copyOf(unreachInfo[0]))
     }
 
     private val emsgLast = IntArray(1)

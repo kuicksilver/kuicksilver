@@ -59,6 +59,7 @@
 
 #define GRO_MAX 65535
 #define PTB_RING 16       /* Packet Too Big messages kept between two ksl_udp_take_ptb calls */
+#define UNREACH_RING 8    /* ICMP unreachable entries kept between two ksl_udp_take_unreachable calls */
 #define ERRQUEUE_BATCH 16 /* error-queue messages read per drain */
 #define GSO_SEGMENTS 64
 /* the most UDP payload one IP datagram carries, which a GSO send must not exceed: IPv4 65535 - 20 (IP header) - 8 (UDP header)
@@ -110,6 +111,14 @@ struct ksl_udp {
         uint8_t dst[KSL_UDP_ADDR_LEN];
     } ptb[PTB_RING];
     uint32_t ptb_head, ptb_count, ptb_dropped, errqueue_reads;
+    /* ICMP port or host unreachable for a datagram we sent (ptb_mu): a ring, oldest first, as the Packet Too Big one; a full ring
+       keeps the older entries */
+    struct {
+        uint8_t quote[KSL_UDP_PTB_QUOTE];
+        uint32_t quote_len, kind;
+        uint8_t dst[KSL_UDP_ADDR_LEN];
+    } unreach[UNREACH_RING];
+    uint32_t unreach_head, unreach_count;
     uint64_t emsgsize;
     uint32_t emsgsize_last;
     /* sender clones (ksl_udp_sender): base is the socket a clone sends on (NULL on the socket ksl_udp_open made); refs, on that
@@ -132,6 +141,8 @@ extern void (*ksl_test_udp_recv_entered)(void);
 
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                       uint32_t mtu); /* ksl_udp.c */
+void ksl_udp_note_unreachable(ksl_udp *u, const uint8_t dst[KSL_UDP_ADDR_LEN], const uint8_t *quote, uint32_t quote_len,
+                              uint32_t kind); /* ksl_udp.c */
 
 /* strerror is not thread-safe; strerror_r is the XSI one (int) or, with _GNU_SOURCE on glibc and on bionic from API 23, the GNU one
    (char *, maybe not buf): _Generic picks the matching reader, NULL when the XSI call failed */

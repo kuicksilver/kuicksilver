@@ -46,6 +46,7 @@ int main(int argc, char **argv) {
     run_key();
     run_crypto();
     run_udp();
+    run_icmp();
     run_security();
     run_dns();
     run_net();

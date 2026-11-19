@@ -278,6 +278,34 @@ How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) 
 | `sendQueue` | `Int` | 32 | 1..4096 | 0.3.0 | capsules waiting to be written; when full, `send` suspends and a fallback `trySendDatagram` answers `QueueFull` |
 | `terminalTypes` | `Set<Long>` | empty | among `knownTypes`, not DATAGRAM | 0.3.0 | a capsule of such a type must be the stream's last: it is delivered, and any byte after it resets the stream with `H3_MESSAGE_ERROR` (WebTransport's WT_CLOSE_SESSION) |
 
+### UdpProxyConfig (*experimental*)
+
+`UdpProxyConfig(...)` (constructor parameters, immutable): how a `UdpProxy` serves CONNECT-UDP (RFC 9298); a bad value
+throws `IllegalArgumentException` when the object is built. Guide: [HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental);
+threats and limits: threat model 3.29.
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `pathTemplate` | `String` | `ConnectUdp.WELL_KNOWN_PATH` | a path and query URI Template with `target_host` and `target_port` once each, readable back | 0.3.0 | the path a request must have; another shape is answered 404, an invalid value 400 |
+| `targetFilter` | `UdpTargetFilter` | `UdpTargetFilter.PublicOnly` |  | 0.3.0 | which resolved addresses and ports may be reached; a refusal is 403 with `destination_ip_prohibited`, before a socket is opened |
+| `resolver` | `UdpProxyResolver` | `UdpProxyResolver.System` |  | 0.3.0 | resolves a `target_host` that is a DNS name, before the answer |
+| `resolveTimeout` | `Duration` | 5 s | positive | 0.3.0 | a resolution that takes longer is answered 504 with `dns_timeout` |
+| `idleTimeout` | `Duration` | 2 min | at least 2 min | 0.3.0 | a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor) |
+| `linkMtu` | `Int` (bytes) | 1500 | 1280..65 535 | 0.3.0 | UDP payloads above `linkMtu - 28` (IPv4) or `- 48` (IPv6) are dropped rather than sent fragmented |
+| `maxTunnels` | `Int` | 4096 | at least 1 | 0.3.0 | tunnels at once; one more is answered 503 with `connection_limit_reached` |
+| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client (an IPv4 address or an IPv6 `clientIpv6Prefix`); one more is answered 429 |
+| `clientIpv6Prefix` | `Int` | 64 | 1..128 | 0.3.0 | the prefix an IPv6 client is known by for its limits (a /64 is one client); IPv4 and IPv4-mapped clients are their address |
+| `clientPacketRate` | `Int` | 50000 | at least 1 | 0.3.0 | UDP payloads per second all of a client's tunnels together send to targets, on top of each tunnel's `packetRate` |
+| `clientPacketBurst` | `Int` | 5000 | at least 1 | 0.3.0 | the client bucket's size |
+| `packetRate` | `Int` | 20000 | at least 1 | 0.3.0 | UDP payloads per second a tunnel sends to its target; more are dropped |
+| `packetBurst` | `Int` | 2000 | at least 1 | 0.3.0 | payloads a tunnel may send at once (the token bucket's size) |
+| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a client sends to a target before it answers once, counted across the client's tunnels; later ones are dropped until it does; 0 turns it off |
+| `refuseOwnAddresses` | `Boolean` | `true` |  | 0.3.0 | refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with `destination_ip_prohibited` |
+| `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
+| `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
+| `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per target and 100 over the proxy, from the address the target sent to (`stats.packetTooBigNoSource` when a wildcard socket cannot tell it, `stats.packetTooBigFailed` when the raw socket does not send it); without the privilege the payload is only dropped (`stats.packetTooBig`) |
+| `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
+
 ## Http2Settings
 
 `Http2Settings(...)` (*experimental*, constructor parameters, immutable). Used by the Ktor client (`http2 { settings = … }`) and
@@ -330,6 +358,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` |  | 0.2.0 | call, protocol, race, Alt-Svc, DNS and pool events ([Ktor: Observability](ktor.md#observability-experimental)) |
 | `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP and SOCKS5 proxies; off the JVM an `https://` proxy URL is TLS to the proxy (since 0.3.0; a `java.net.Proxy` has no scheme, so on the JVM an `https://` proxy comes from `proxyResolver`); other types fail each request with `UnsupportedOperationException` | 0.2.0 | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
 | `proxyResolver` (*experimental*) | `ProxyResolver` | `ProxyResolvers.System` | `System`, `Environment`, `None` or your own | 0.3.0 | the proxy for requests `proxy` does not cover, per scheme, host and port (kept 30 s); each lookup is bounded by the engine's `connectTimeout` (not a per-request `HttpTimeout`) and fails the request with `ProxyException` beyond it; loopback is always direct with the built-ins; docs/guide/ktor.md, "Proxies" |
+| `connectUdpProxy` (*experimental*) | `ConnectUdpProxy?` | `null` | a template that passes RFC 9298 section 2 | 0.3.0 | a CONNECT-UDP proxy (MASQUE) for HTTP/3: the `https` requests its `applies` admits go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly, and neither use nor learn `Alt-Svc`; `proxy` and `proxyResolver` keep deciding for the others ([HTTP/3 through a CONNECT-UDP proxy](ktor.md#http3-through-a-connect-udp-proxy-experimental)) |
 | `pacFullWebSocketUrl` (*experimental*) | `Boolean` | `false` | — | 0.3.0 | with `ProxyResolvers.System` on Apple platforms and Windows: the PAC script the system settings name (inline, or by an `https://` or local `file:///` URL; never one WPAD found or one over plain `http://`) gets a `wss://` URI whole, path and query included (RFC 6455 section 4.1); off, every script gets `wss://host[:port]/` only, as browsers give it (CVE-2016-3763, CVE-2016-5134); docs/guide/ktor.md, "Proxies" |
 | `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | 0.3.0 | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins; in clear to an `http://` or SOCKS5 proxy, only inside TLS to an `https://` one |
 | `proxyTls` (*experimental*) | `(TlsConfig.Builder.() -> Unit)?` | `null` | — | 0.3.0 | the TLS of connections to an `https://` proxy (`ResolvedProxy.https`); null: the `tls` block over `trust`, then that trust without an `ExpectedName` or `Pinned` (the origin's name and keys), no client certificate; a block starts from that trust and may set anything; SNI and the verified name are the proxy's host and ALPN `http/1.1`, whatever it sets ([Ktor: Proxies](ktor.md#proxies)) |
@@ -367,6 +396,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)) |
+| `webTransportIgnoresConnectUdpProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `webTransport` to a URL `connectUdpProxy` applies to connects directly instead of being refused (its sessions do not go through the tunnel) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | 0.3.0 | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | 0.3.0 | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)) |
@@ -404,6 +434,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on); with `false` a WebSocket CONNECT gets 501 |
 | `webSocketMaxMessageSize` (*experimental*) | `Long` (bytes) | 16 777 216 (16 MiB) | 0.3.0 | at least 1; the largest WebSocket frame, and message once reassembled, the server takes from a client (RFC 6455 section 10.4), over HTTP/1.1, HTTP/2 and HTTP/3; an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and `PerMessageDeflate`'s `maxInflatedMessageSize` (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value ([Ktor: Server](ktor.md#server)) |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](ktor.md#webtransport-over-http3-experimental)) |
+| `connectUdp` (*experimental*) | `Boolean` | `false` | 0.3.0 | take CONNECT-UDP requests (RFC 9298) into the pipeline for `connectUdp(proxy)` routes (turns `enableConnectProtocol` on); without it they are answered 501; no configuration-file key ([CONNECT-UDP over HTTP/3](ktor.md#connect-udp-over-http3-experimental)) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | 0.2.0 | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |

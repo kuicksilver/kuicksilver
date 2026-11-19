@@ -955,6 +955,108 @@ public actual object Ksl {
 
     public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))
 
+    public actual fun udpTakeUnreachable(
+        udp: Long,
+        dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
+    ): Boolean {
+        require(dst.size >= KslConst.UDP_ADDR_LEN && quote.size >= KslConst.UDP_PTB_QUOTE && info.size >= 2) {
+            "udpTakeUnreachable buffer too small"
+        }
+        return memScoped {
+            val ql = alloc<UIntVar>()
+            val kind = alloc<UIntVar>()
+            val taken =
+                dst.usePinned { d ->
+                    quote.usePinned { q ->
+                        ksl_udp_take_unreachable(
+                            udp(udp),
+                            d.addressOf(0).reinterpret(),
+                            q.addressOf(0).reinterpret(),
+                            KslConst.UDP_PTB_QUOTE.toUInt(),
+                            ql.ptr,
+                            kind.ptr,
+                        ) == 1
+                    }
+                }
+            if (taken) {
+                info[0] = ql.value.toInt()
+                info[1] = kind.value.toInt()
+            }
+            taken
+        }
+    }
+
+    public actual fun icmpPtbBuild(
+        out: ByteArray,
+        target: ByteArray,
+        local: ByteArray,
+        payload: ByteArray,
+        len: Int,
+        mtu: Int,
+    ): Int {
+        if (out.size < KslConst.ICMP_PTB_MAX || target.size < KslConst.UDP_ADDR_LEN || local.size < KslConst.UDP_ADDR_LEN) return 0
+        if (len < 0 || len > payload.size || mtu < 0) return 0
+        // an empty payload still needs an address to pin: one byte of room, none of it read
+        val p = if (payload.isEmpty()) ByteArray(1) else payload
+        return out.usePinned { o ->
+            target.usePinned { t ->
+                local.usePinned { l ->
+                    p.usePinned { pl ->
+                        ksl_icmp_ptb_build(
+                            o.addressOf(0).reinterpret(),
+                            KslConst.ICMP_PTB_MAX.toUInt(),
+                            t.addressOf(0).reinterpret(),
+                            l.addressOf(0).reinterpret(),
+                            pl.addressOf(0).reinterpret(),
+                            len.toUInt(),
+                            mtu.toUInt(),
+                        ).toInt()
+                    }
+                }
+            }
+        }
+    }
+
+    public actual fun icmpOpen(
+        family: Int,
+        err: IntArray,
+    ): Int =
+        memScoped {
+            val e = alloc<IntVar>()
+            val fd = ksl_icmp_open(family, e.ptr)
+            if (err.isNotEmpty()) err[0] = e.value
+            fd
+        }
+
+    public actual fun icmpSend(
+        fd: Int,
+        msg: ByteArray,
+        len: Int,
+        target: ByteArray,
+        local: ByteArray,
+    ): Boolean {
+        if (len <= 0 || len > msg.size || len > KslConst.ICMP_PTB_MAX) return false
+        if (target.size < KslConst.UDP_ADDR_LEN || local.size < KslConst.UDP_ADDR_LEN) return false
+        return msg.usePinned { m ->
+            target.usePinned { t ->
+                local.usePinned { l ->
+                    ksl_icmp_send(
+                        fd,
+                        m.addressOf(0).reinterpret(),
+                        len.toUInt(),
+                        t.addressOf(0).reinterpret(),
+                        l.addressOf(0).reinterpret(),
+                    ) ==
+                        1
+                }
+            }
+        }
+    }
+
+    public actual fun icmpClose(fd: Int): Unit = ksl_icmp_close(fd)
+
     public actual fun udpTakePtb(
         udp: Long,
         quote: ByteArray,

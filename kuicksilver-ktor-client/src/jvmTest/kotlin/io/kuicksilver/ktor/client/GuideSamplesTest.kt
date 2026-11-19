@@ -32,6 +32,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.quic.KuicksilverLogger
@@ -75,6 +76,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
         assertTrue("guide:ktor:proxy" in guide, "marker proxy")
+        assertTrue("guide:ktor:connect-udp-client" in guide, "marker connect-udp-client")
         assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
         assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
@@ -260,6 +262,28 @@ class GuideSamplesTest {
                 server.stopSuspend(100, 1000)
             }
         }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun connectUdpProxySample() {
+        val password = "secret"
+        // guide:ktor:connect-udp-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    connectUdpProxy =
+                        ConnectUdpProxy(
+                            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+                            ProxyCredentials("user", password),
+                        ) { url -> !url.host.endsWith(".internal.test") } // these go the usual way
+                }
+            }
+        client.use {
+            val p = (it.engine as KuicksilverEngine).config.connectUdpProxy!!
+            assertEquals(false, p.applies(io.ktor.http.Url("https://a.internal.test/"))) // ClientConnectUdpProxyTest runs one
+            assertEquals("masque.example", p.template.authority)
+        }
+    }
 
     @Test fun proxySample() =
         clientTest {

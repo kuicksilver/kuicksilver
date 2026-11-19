@@ -41,6 +41,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.markTunnel
+import io.kuicksilver.quic.ownAddresses
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.releaseStreamCredit
 import kotlinx.coroutines.CancellationException
@@ -621,6 +622,15 @@ internal class ServerRequestImpl(
     }
 
     private val datagramChannel = if (hasDatagramSemantics(method, protocol)) session.datagrams.register(st.id) else null
+
+    /** This host's addresses the request's connection shows ([io.kuicksilver.quic.ownAddresses]): a proxy refuses them as targets. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal val connectionOwnAddresses: List<io.ktor.network.sockets.InetSocketAddress>
+        get() = session.quic.ownAddresses
+
+    /** Tests: datagrams for this request wait to be read (they arrived before its CONNECT was answered). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    internal val datagramsWaitingForTest: Boolean get() = datagramChannel?.isEmpty == false
 
     /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
     var tunnel = false

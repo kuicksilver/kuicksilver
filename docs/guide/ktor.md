@@ -77,11 +77,13 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.ktor.server.priority
 import io.kuicksilver.ktor.server.receivedEarly
@@ -124,6 +126,8 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
@@ -689,6 +693,33 @@ wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :k
 dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
+
+### CONNECT-UDP over HTTP/3 (experimental)
+
+With `connectUdp = true` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
+`:protocol` `connect-udp`) into Ktor's pipeline, and a `connectUdp(proxy)` route serves them with a `UdpProxy` of
+`kuicksilver-http3` ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)): the proxy reads the target from the path
+with its `pathTemplate`, checks it with its `targetFilter` (`UdpTargetFilter.PublicOnly` by default: loopback, private,
+link-local, multicast and broadcast targets are refused with 403) and its limits, answers and relays the tunnel; the call
+ends with the tunnel. The route matches only such a request, at any path, over HTTP/3; HTTP/1.1 and HTTP/2 do not carry
+CONNECT-UDP (ADR-0024). Without `connectUdp = true` the engine answers CONNECT-UDP with 501; a CONNECT-UDP request no route
+takes gets Ktor's 404, and one another route answers with a 2xx gets 501, since no tunnel was opened. Give the route one
+`UdpProxy` (its limits count the tunnels of every request) and put it behind authentication: "HTTP servers that support
+UDP proxying ought to restrict its use to authenticated users" (RFC 9298 section 7); a 401 or 407 from a check in front
+of it goes out as it is. The proxy's configuration is code (a filter, a resolver), so it has no configuration-file key.
+
+```kotlin
+// guide:ktor:connect-udp-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val proxyServer = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    connectUdp = true
+}) {
+    routing {
+        connectUdp(UdpProxy())                     // behind your authentication; public targets only by default
+    }
+}
+```
 
 ### Misdirected requests
 
@@ -1876,8 +1907,10 @@ or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target
   offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp. A new connection to the
   proxy resumes an earlier TLS session from a cache that holds proxy tickets only.
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an `https://` proxy) nor
-SOCKS5 CONNECT carries (no CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**Through an HTTP, HTTPS or SOCKS5 proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an
+`https://` proxy) nor SOCKS5 CONNECT carries (SOCKS5 UDP ASSOCIATE is not supported), as with Chrome and curl. HTTP/3 goes
+through a CONNECT-UDP proxy instead: [HTTP/3 through a CONNECT-UDP proxy](#http3-through-a-connect-udp-proxy-experimental).
+A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
@@ -1908,6 +1941,48 @@ val overTls = HttpClient(Kuicksilver) {
     engine {
         proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
         proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+    }
+}
+```
+
+### HTTP/3 through a CONNECT-UDP proxy (experimental)
+
+`connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
+origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
+origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). The proxy is
+reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
+tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+resolves it: the engine does not look it up.
+
+What it changes, for the `https` URLs its `applies` admits (all of them by default):
+
+- They go over HTTP/3 through the tunnel only, whatever the discovery mode (H3Only, Auto, Preferred): never over HTTP/1.1
+  or HTTP/2 and never directly, since both would leave the proxy out. An origin without HTTP/3, a refused tunnel
+  (`Http3Exception.ConnectRejected`, its `proxy-status` in `headers`) or a failed handshake fails the request instead of
+  falling back. `http3 { discovery = H1Only }` and an `http3Allowed` that says no fail it with UnsupportedOperationException.
+- `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
+- `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
+  URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
+  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
+  HTTP and SOCKS proxies only.
+- Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
+  origin cannot link a proxied connection to the client's own address by the ticket it resumes.
+
+`credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
+must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
+finds a path MTU above about 1250 bytes within a few round trips; over a path that does not carry that, the handshake
+through the tunnel times out.
+
+```kotlin
+// guide:ktor:connect-udp-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectUdpProxy = ConnectUdpProxy(
+            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+            ProxyCredentials("user", password),
+        ) { url -> !url.host.endsWith(".internal.test") }   // these go the usual way
     }
 }
 ```

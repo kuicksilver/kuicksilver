@@ -1033,6 +1033,72 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   (`TestTlsProxy.kt`). Not covered: a proxy that renegotiates or sends a post-handshake CertificateRequest (TLS 1.2 to
   the proxy only with `versions` in `proxyTls`), real proxies (Squid, Envoy) and the platform resolvers' real settings.
 
+### <a id="3-29-connect-udp-proxy-rfc-9298-7"></a>3.29 CONNECT-UDP proxy (RFC 9298 §7)
+
+- **Trust boundary:** B1. A client of a `UdpProxy` (`kuicksilver-http3`) chooses the target of every tunnel through the
+  `:path` of its request and sends what it likes in the tunnel's HTTP datagrams; targets send what they like to the
+  proxy's sockets. B2: the operator's `UdpProxyConfig` (the filter, the limits) is trusted.
+- **Threats:** server-side request forgery (CWE-918): a client reaches what the proxy's host can reach and it cannot,
+  services that trust the source address of the proxy (127.0.0.1, the proxy's own addresses, its private network, a cloud
+  metadata address at 169.254.169.254), broadcast and multicast groups; through a DNS name that resolves to such an address,
+  an IPv4-mapped, NAT64 or 6to4 form of one, a name a resolver reads as a number (`127.1`), or a DNS answer that changes
+  between check and use (rebinding). Resource exhaustion (CWE-400, CWE-770): many tunnels, each with a socket; floods of
+  datagrams to a target (a volumetric attack attributed to the proxy, section 7), or of oversized and unknown-context
+  datagrams and DATAGRAM capsules that the proxy would buffer; tunnels and sockets left behind by a client that goes away.
+  Parsing of the template, the target and the datagram payload (CWE-20). A third host's datagrams injected into a tunnel
+  through the proxy's unconnected socket.
+- **Mitigations:** `UdpTargetFilter.PublicOnly` by default: only globally reachable unicast (IANA special-purpose blocks,
+  loopback, private, shared, link-local, multicast, broadcast and 240.0.0.0/4 refused; IPv6 only 2000::/3 less its special
+  blocks; mapped, NAT64 and 6to4 addresses judged by their IPv4 address), applied to every resolved address, and the socket
+  sends only to the address that passed, so a second DNS answer is never used. A refusal comes before any socket exists.
+  The proxy's own addresses are refused by default (`refuseOwnAddresses`: the address the request's connection reached and
+  the listener's own, also in their IPv4-mapped, NAT64 and 6to4 forms); other addresses of the host (NAT aliases, other interfaces) are added by the operator
+  (`UdpTargetFilter.excluding`); `AllowAll` is `@DelicateKuicksilverApi`. Strict parsing: the template (RFC 9298 §2) and the target (§3: IP literal or LDH DNS name,
+  last label not numeric, ports 1..65535) in one bounded pass; a DATAGRAM capsule is judged by its Context ID before its
+  value is buffered, an unknown context or a payload above the link's limit is skipped as it arrives, more than 65527 bytes
+  aborts the stream; at most a link-sized datagram, 32 queued datagrams and four received ones per tunnel. Limits:
+  `maxTunnels` (4096), `maxTunnelsPerClient` (64 per client: an IPv4 address or an IPv6 /64), `packetRate` and
+  `packetBurst` per tunnel and `clientPacketRate` and `clientPacketBurst` per client over all its tunnels,
+  `unansweredLimit` (256 payloads a client sends to a target that never answered, across its tunnels), `idleTimeout`
+  (two minutes), 16 blocking name lookups at once and 4 per client (one more is refused, an abandoned one keeps its
+  thread, and counts, until it returns); a target datagram above the link MTU is dropped whole, never forwarded cut; an
+  ICMP port unreachable for the target closes the tunnel (Linux and Android) only when it quotes the start of a payload
+  the tunnel sent lately, 8 bytes of it at least or all of a shorter one (RFC 8085 §5.2): host unreachable and reports quoting the headers only or another payload are
+  ignored, so an off-path forger who sprays port unreachables over the proxy's ephemeral ports closes nothing without
+  having seen the traffic; every tunnel's socket and
+  slot are released on every end (FIN, reset, lost connection, socket failure, idle, cancellation). Only the target's
+  address and port are read from the socket. Authentication is the application's, before `serve`; the Ktor route goes through the pipeline, so an
+  `authenticate` block or an interceptor answers first, and the engine takes CONNECT-UDP only with `connectUdp = true`.
+  The Ktor client never sends a request meant for the proxy over TCP or directly when the tunnel fails, and never
+  resolves the origin's name itself (the proxy does).
+- **Raw ICMP socket (RFC 9298 §6.1, `UdpProxyConfig.packetTooBig`):** a proxy run with `CAP_NET_RAW` holds a raw ICMP
+  socket in a server process, which could forge any ICMP message to anyone (CWE-250, CWE-406) and, reading, would see the
+  host's ICMP traffic; a raw socket per tunnel would make the kernel hand every incoming ICMP message to each (thousands
+  at `maxTunnels`). Mitigations: the socket only sends (every type filtered on receive, never read; one whose filter
+  cannot be set is closed), is non-blocking, one per family for the whole proxy, opened at its first message and closed
+  when the last tunnel ends; the only message `ksl` builds is a Packet Too Big to the
+  tunnel's own target (already allowed by the filter), from the address that target sent to, quoting a datagram that
+  target sent; `ksl_icmp_ptb_build` is a fixed-size, bounds-checked writer (lengths checked before any byte is written, at
+  most `KSL_ICMP_PTB_MAX` bytes, refusing mismatched families and out-of-range MTUs; C tests under ASan and UBSan); at
+  most 5 at once and 10 a second per target address over all its tunnels, 50 at once and 100 a second over the proxy,
+  one per dropped payload. The privilege is the operator's choice: without it
+  the probe fails, nothing changes but the counter; `packetTooBig = false` never probes. Residual: a process that holds
+  `CAP_NET_RAW` for this has it for everything else it runs too.
+- **Residual:** a target that answers (an open UDP service) passes `unansweredLimit`, as RFC 9298 §7 notes; the host's
+  addresses other than the one a request reached and the listener's (NAT aliases, other interfaces) are not refused
+  unless configured; a client that sends from many /64s or IPv4 addresses is limited by `maxTunnels` only; a client that
+  stays away two minutes gets a fresh `unansweredLimit`. An on-path attacker who sees a tunnel's payloads can still
+  forge a port unreachable that closes it (it can drop the traffic anyway), and a target whose stack quotes the headers
+  only never has its tunnel closed by ICMP (it ends idle); junk reports that fill the ring of 8 between two polls push a
+  genuine one out: that fails safe (the tunnel stays open and ends idle or by the client), it never closes one. The Ktor client keeps tunnelled connections' session tickets
+  apart from direct ones', per proxy route.
+- **Tests:** `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`,
+  `negative_invalidTargetValuesAndPathsAreRefused`, `negative_unknownContextIdIsDroppedByTheProxy`,
+  `negative_oversizedUdpPayloadAbortsTheStream`, `negative_rateLimitDropsBeyondTheBurst`,
+  `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`,
+  `negative_datagramFromAnotherSourceIsDiscarded` (`connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`), the
+  Jazzer targets `ConnectUdpFuzzTest.udpTemplate` and `.udpDatagrams`.
+
 ### 3.30 TLS certificate compression (RFC 8879)
 
 - **Trust boundary:** B1 (the peer's CompressedCertificate, before its certificate is verified) and B3 (zlib and brotli inside OpenSSL's libcrypto, ADR-0025).
@@ -1086,6 +1152,9 @@ PROXY protocol (§3.27):
 HTTPS proxies (§3.28):
 16. `negative_proxyCertificateFromAnUntrustedCaFails`, `negative_proxyCertificateValidForTheOriginButNotTheProxyFails`, `negative_originTlsFailureIsNotAProxyFailure`, `negative_proxyCredentialsNeverCrossThePlainSocket`, `negative_proxyAuthenticationLoopEndsAfterOneAttempt`, `negative_proxyClosingMidHandshakeFails`, `negative_h3OnlyThroughAnHttpsProxyFails`, `negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `negative_httpAndHttpsProxiesAreDifferentRoutes`, `negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization`, `negative_proxyAuthorizationNeverGoesDirectToTheOrigin`, `negative_schemelessHttpProxyOn443IsRefused`, `negative_proxyOfferingNoCommonAlpnFails`, `negative_proxyTlsBlockCannotChangeTheProxysName`, `negative_httpsProxyUrlNeverSpeaksPlainToTheProxy` (`ClientHttpsProxyTest`, `ProxyConfigNativeTest`; JVM and Native)
 
+CONNECT-UDP (§3.29):
+17. `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`, `negative_invalidTargetValuesAndPathsAreRefused`, `negative_clientRefusesBeforeSending`, `negative_missingCapsuleProtocolFieldIsRefused`, `negative_unknownContextIdIsDroppedByTheProxy`, `negative_unknownContextIdIsDroppedByTheClient`, `negative_oversizedUdpPayloadAbortsTheStream`, `negative_payloadAboveTheLinkMtuIsDropped`, `negative_targetPayloadTooLargeForTheClientIsDropped`, `negative_datagramFromAnotherSourceIsDiscarded`, `negative_rateLimitDropsBeyondTheBurst`, `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`, `negative_clientResetFreesTheTunnel`, `negative_socketFailureClosesTheRequestStream`, `negative_dnsFailureAndTimeoutAreRefusedWithProxyStatus`, `negative_otherProtocolIsRefused` — `connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`; `negative_unknownContextSkippedWithoutBuffering`, `negative_oversizedContextZeroAbortsBeforeItsBytesArrive`, `negative_emptyOrTruncatedContextIdIsDropped` — `message.DatagramFilterParserTest`; `negative_templatesBreakingSection2AreRejected`, `negative_invalidTargetsAreRejectedByTheClient`, `negative_invalidTargetValuesAreInvalidNotMatched`, `negative_ambiguousServerTemplatesAreRejected` — `message.UdpUriTemplateTest`; `negative_defaultProxyRefusesLoopbackThroughTheRoute`, `negative_aRefusalBeforeTheRouteGoesOutAsItIs`, `negative_engineWithoutConnectUdpAnswers501`, `negative_otherRoutesTwoHundredIs501` — `ServerConnectUdpTest` (Ktor server); `negative_aRefusedTunnelNeverFallsBackToADirectConnection`, `negative_h1OnlyWithAConnectUdpProxyIsRefused` — `ClientConnectUdpProxyTest` (Ktor client)
+
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)
 
@@ -1120,7 +1189,7 @@ correctness, not assumed to be free of bugs.
 
 | Boundary | What crosses it | Trusted on the inner side | Not trusted | Controls (where they live) | Threats |
 |---|---|---|---|---|---|
-| **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the PROXY protocol header, from a connector's `trustedSources` only (`kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyProtocolCodec.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.27, 3.30 |
+| **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the PROXY protocol header, from a connector's `trustedSources` only (`kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyProtocolCodec.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.27, 3.29, 3.30 |
 | **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`, a name resolver `Dns`, whose answers are data, not trust) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md`; a resolver's answers are checked as destinations and never stand in for the host name (3.25) | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20, 3.25, 3.26 |
 | **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | byte buffers without an explicit length: every buffer of data crossing into C carries its length; `strlen` is used only on NUL-terminated strings that OpenSSL or `ksl` produced or that the binding passes as C strings (labels, host names, cipher lists, key log lines), never on bytes from the network (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15, 3.30 |
 | **B4. Library ↔ operating system** | sockets (GSO/GRO, `recvmsg` ancillary data), the system resolver, the platform certificate verifiers, files (the extracted native library, the key log, qlog, the Alt-Svc store) | the kernel and the platform verifier (their compromise is out of scope, section 2) | file system locations other users can write; the resolver's answers (they come from the network, B1); what a platform API returns about an address | `KslLoader` extracts into a private directory and checks the library's SHA-256 before loading it (`kuicksilver-native/src/jvmMain/kotlin/io/kuicksilver/native/KslLoader.jvm.kt`); the key log refuses a symbolic link and is created with mode 0600 (`kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/KeylogFile.kt` and its platform files); GRO segments keep their own address (3.12); a stalled resolver holds a bounded number of threads (3.21.1) | 3.7, 3.11, 3.12, 3.16, 3.19, 3.21, 3.21.1, 3.24, 3.25, 3.26 |
@@ -1167,6 +1236,7 @@ weakness appears in different protocols.
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |
 | 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
 | 3.28 | HTTPS proxies: the proxy's certificate and name, credentials in clear to an `http://` proxy | CWE-295, CWE-319, CWE-522 |
+| 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing; a raw ICMP socket | CWE-918, CWE-400, CWE-770, CWE-20; CWE-250, CWE-406 |
 | 3.30 | certificate decompression bombs and mismatched lengths; a compressed chain without its OCSP response | CWE-409, CWE-130, CWE-299 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
