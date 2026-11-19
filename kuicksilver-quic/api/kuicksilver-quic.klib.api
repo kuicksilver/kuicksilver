@@ -1646,12 +1646,14 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
     }
 
     final class DontFragmentUnavailable : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.DontFragmentUnavailable|null[0]
-        constructor <init>(io.kuicksilver.quic/IpFamily?, kotlin/String) // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.<init>|<init>(io.kuicksilver.quic.IpFamily?;kotlin.String){}[0]
+        constructor <init>(io.kuicksilver.quic/IpFamily?, kotlin/String, kotlin/Boolean = ...) // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.<init>|<init>(io.kuicksilver.quic.IpFamily?;kotlin.String;kotlin.Boolean){}[0]
 
         final val detail // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail|{}detail[0]
             final fun <get-detail>(): kotlin/String // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail.<get-detail>|<get-detail>(){}[0]
         final val family // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family|{}family[0]
             final fun <get-family>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family.<get-family>|<get-family>(){}[0]
+        final val permanent // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.permanent|{}permanent[0]
+            final fun <get-permanent>(): kotlin/Boolean // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.permanent.<get-permanent>|<get-permanent>(){}[0]
 
         final fun createCopy(): io.kuicksilver.quic/QuicException.DontFragmentUnavailable // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.createCopy|createCopy(){}[0]
     }

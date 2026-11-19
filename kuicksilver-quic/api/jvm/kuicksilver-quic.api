@@ -1188,11 +1188,13 @@ public final class io/kuicksilver/quic/QuicException$DatagramUnsupported : io/ku
 }
 
 public final class io/kuicksilver/quic/QuicException$DontFragmentUnavailable : io/kuicksilver/quic/QuicException {
-	public fun <init> (Lio/kuicksilver/quic/IpFamily;Ljava/lang/String;)V
+	public fun <init> (Lio/kuicksilver/quic/IpFamily;Ljava/lang/String;Z)V
+	public synthetic fun <init> (Lio/kuicksilver/quic/IpFamily;Ljava/lang/String;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DontFragmentUnavailable;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 	public final fun getDetail ()Ljava/lang/String;
 	public final fun getFamily ()Lio/kuicksilver/quic/IpFamily;
+	public final fun getPermanent ()Z
 }
 
 public final class io/kuicksilver/quic/QuicException$EndpointClosing : io/kuicksilver/quic/QuicException {

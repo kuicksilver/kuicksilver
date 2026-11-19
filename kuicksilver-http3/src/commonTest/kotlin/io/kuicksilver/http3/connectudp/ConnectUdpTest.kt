@@ -831,6 +831,70 @@ class ConnectUdpTest {
             }
         }
 
+    /**
+     * The proxy remembers a family without DF only when that holds for good: a refusal that may pass next time (the
+     * accelerated socket could not open, out of descriptors) fails its own request, and the next request tries again; a
+     * permanent one is remembered, and the factory is not asked again.
+     */
+    @Test fun negative_onlyAPermanentLackOfDontFragmentIsRemembered() =
+        h3Test {
+            for (permanent in listOf(false, true)) {
+                var calls = 0
+                val rig =
+                    rig { f ->
+                        UdpProxyConfig(
+                            targetFilter = UdpTargetFilter.AllowAll,
+                            socketFactory = { a ->
+                                if (calls++ == 0) {
+                                    throw io.kuicksilver.quic.QuicException
+                                        .DontFragmentUnavailable(null, "test", permanent)
+                                }
+                                f(a)
+                            },
+                        )
+                    }
+                rig.use { r ->
+                    val e = assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                    assertEquals(500, e.status)
+                    assertTrue("details=\"no Don't Fragment for IPv4 targets on this host\"" in e.headers["proxy-status"]!!)
+                    if (permanent) {
+                        assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                        assertEquals(1, calls, "a permanent lack is remembered: no new socket is tried")
+                    } else {
+                        val got = rig.echo(echoAt)
+                        val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                        t.send("again".encodeToByteArray())
+                        assertContentEquals("again".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                        t.close()
+                    }
+                }
+            }
+        }
+
+    /** An AF_INET target socket reports IPv6 as without DF (it cannot reach IPv6 at all): later IPv6 targets are unaffected. */
+    @Test fun anIpv4SocketReportingIpv6DoesNotRefuseIpv6Targets() =
+        h3Test {
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketFactory = { a -> if (':' in a.hostname) f(a) else NoDfFor(f(a), IpFamily.V6) },
+                    )
+                }
+            rig.use { r ->
+                val got4 = rig.echo(echoAt)
+                val t4 = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                t4.send("v4".encodeToByteArray())
+                assertContentEquals("v4".encodeToByteArray(), withTimeout(5.seconds) { got4.receive() })
+                t4.close()
+                val got6 = rig.echo(InetSocketAddress("2001:db8::50", 5000))
+                val t6 = r.pair.client.connectUdp(template, "2001:db8::50", 5000)
+                t6.send("v6".encodeToByteArray())
+                assertContentEquals("v6".encodeToByteArray(), withTimeout(5.seconds) { got6.receive() })
+                t6.close()
+            }
+        }
+
     /** A socket factory that cannot set DF at all (no DF, no QUIC or tunnel) refuses the tunnel the same way. */
     @Test fun negative_aSocketFactoryWithoutDontFragmentRefusesTheTunnel() =
         h3Test {

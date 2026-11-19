@@ -277,17 +277,21 @@ public sealed class QuicException(
      * @property family the address family without DF; null when no traffic of the socket can have DF (the whole socket is
      *   refused), never "unknown".
      * @property detail why DF cannot be set.
+     * @property permanent whether it holds for as long as the process runs (the JVM without `ksl` below JDK 19, a system that
+     *   refuses both DF modes), so a caller may remember it; false where a later attempt may succeed (the accelerated socket
+     *   could not open this time, for example out of descriptors, and the portable one has no DF).
      */
     @ExperimentalKuicksilverApi
     public class DontFragmentUnavailable(
         public val family: IpFamily?,
         public val detail: String,
+        public val permanent: Boolean = true,
     ) : QuicException(
             "QUIC not used: the UDP socket cannot set Don't Fragment (RFC 9000 section 14) " +
                 "${if (family == null) "on any traffic" else "for ${family.label} destinations"}: $detail",
         ) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail)
+        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail, permanent)
     }
 
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */

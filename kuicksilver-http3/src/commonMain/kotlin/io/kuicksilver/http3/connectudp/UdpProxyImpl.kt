@@ -328,23 +328,33 @@ internal class UdpProxyImpl(
         // only when no candidate of a family with DF is left is the request refused
         var address: ByteArray? = null
         var io: OnceClosed? = null
+        val lacking = LinkedHashSet<IpFamily>() // the families found without DF for this request, for the refusal's details
         for (a in allowed.sortedBy { if (familyOf(it) in noDfFamilies) 1 else 0 }) {
             val family = familyOf(a)
-            if (family in noDfFamilies) continue
+            if (family in noDfFamilies) {
+                lacking += family
+                continue
+            }
+            if (family in lacking) continue // already found without DF in this request (not cached: maybe transient)
             val opened =
                 try {
                     OnceClosed(config.socketFactory(InetSocketAddress(if (family == IpFamily.V4) "0.0.0.0" else "::", 0)))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: QuicException.DontFragmentUnavailable) {
-                    learnNoDf(family)
+                    // remembered only when it holds for good (no ksl below JDK 19, both DF modes refused); a refusal that may
+                    // pass next time (the accelerated socket could not open, out of descriptors) fails this request only
+                    if (e.permanent) learnNoDf(family)
+                    lacking += family
                     continue
                 } catch (_: Throwable) {
                     return refuse(request, answered, 502, "proxy_internal_error")
                 }
-            val noDf = opened.io.noDontFragmentFamily
-            if (noDf != null) learnNoDf(noDf)
-            if (noDf == family) {
+            // only the family the socket was opened for counts: an AF_INET socket reports IPv6 as without DF because it
+            // cannot reach IPv6 at all, which says nothing about an IPv6 socket
+            if (opened.io.noDontFragmentFamily == family) {
+                learnNoDf(family)
+                lacking += family
                 opened.close()
                 continue
             }
@@ -353,7 +363,7 @@ internal class UdpProxyImpl(
             break
         }
         if (address == null || io == null) {
-            return refuseNoDf(request, answered, allowed.map(::familyOf).distinct().joinToString(" or ") { it.label })
+            return refuseNoDf(request, answered, lacking.joinToString(" or ") { it.label })
         }
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)

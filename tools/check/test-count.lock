@@ -380,6 +380,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.document
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.earlyDataContextCoversEveryValueOfOurSettings
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.refusalsNameTheOption
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.aNameIsServedThroughTheFamilyWithDontFragment
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.anIpv4SocketReportingIpv6DoesNotRefuseIpv6Targets
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.capsuleProtocolFieldNotRequiredWhenConfigured
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.clientKeys
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.datagramCapsulesWhenHttpDatagramsAreOff
@@ -401,6 +402,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_invalidTargetValuesAndPathsAreRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_missingCapsuleProtocolFieldIsRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oneClientCannotTakeEveryLookup
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_onlyAPermanentLackOfDontFragmentIsRemembered
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_otherProtocolIsRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oversizedUdpPayloadAbortsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_packetTooBigLimitsArePerTargetAndProxyWide
