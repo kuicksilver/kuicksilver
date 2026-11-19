@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -99,9 +100,29 @@ internal suspend fun openDatagramIo(
     prefer: IoPreference,
     logger: KuicksilverLogger,
 ): DatagramIo =
-    (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local, logger = logger) else null) ?: openPortableDatagramIo(local)
+    (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local, logger = logger) else null) ?: openPortableDatagramIo(local, true)
 
-internal expect suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo
+/**
+ * A UDP socket for traffic that is not QUIC, such as a CONNECT-UDP proxy's sockets towards its targets: RFC 9298 section 3.1
+ * asks DF "if possible" there ("In IPv4, the Don't Fragment (DF) bit MUST be set, if possible, to prevent fragmentation on
+ * the path"; the proxy itself keeps to its link MTU, "UDP proxies MUST NOT introduce fragmentation at the IP layer").
+ * Like [DatagramIo.open], with DF set in probe mode, else DO mode, wherever the socket can; unlike it, a socket without
+ * DF (the JVM without `ksl` below JDK 19, the Kotlin/Native portable socket, a system refusing both modes) is not refused,
+ * and no send is refused for its address family. QUIC endpoints keep [DatagramIo.open]'s rule: no DF, no QUIC.
+ */
+@InternalKuicksilverApi
+public suspend fun openDatagramIoDfIfPossible(
+    local: InetSocketAddress,
+    prefer: IoPreference = IoPreference.Accelerated,
+): DatagramIo =
+    (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local, requireDf = false) else null)
+        ?: openPortableDatagramIo(local, false)
+
+/** The portable socket: [strictDf] refuses one without DF ([QuicException.DontFragmentUnavailable]: QUIC), else DF if possible. */
+internal expect suspend fun openPortableDatagramIo(
+    local: InetSocketAddress,
+    strictDf: Boolean,
+): DatagramIo
 
 /** One line to standard error: what [KuicksilverLogger.Stderr], the default logger, writes. */
 internal expect fun printWarning(line: String)

@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -12,6 +14,7 @@ import io.kuicksilver.http3.message.UdpAddressClass
 import io.kuicksilver.http3.message.UdpUriTemplate
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.openDatagramIoDfIfPossible
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Duration
@@ -309,8 +312,11 @@ public fun interface UdpProxyResolver {
  *   second over the proxy, never more than the payloads dropped. Sent from the address the target sent to: see
  *   [socketFactory][UdpProxyConfig.socketFactory].
  * @property socketFactory opens the UDP socket of a tunnel on a wildcard address of the target's family (`0.0.0.0:0`
- *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment and, on
- *   the wildcard bind, reports each datagram's destination, the source of a [packetTooBig][UdpProxyConfig.packetTooBig]
+ *   or `[::]:0`); by default the accelerated socket where it exists, which sets Don't Fragment and, on the wildcard bind,
+ *   reports each datagram's destination, else the portable one with DF where it can. Unlike [DatagramIo.open], whose
+ *   QUIC sockets need DF ("no DF, no QUIC"), a target socket without DF is used: RFC 9298 section 3.1 asks DF "if
+ *   possible" there, and the proxy keeps "MUST NOT introduce fragmentation" by never sending more than [linkMtu]. Each
+ *   datagram's destination is the source of a [packetTooBig][UdpProxyConfig.packetTooBig]
  *   message. A factory may bind one address instead (its Packet Too Big messages leave from it); a wildcard socket that
  *   does not report destinations (the portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource].
  */
@@ -334,7 +340,7 @@ public class UdpProxyConfig(
     public val requireCapsuleProtocolField: Boolean = true,
     public val proxyName: String = "proxy",
     public val packetTooBig: Boolean = true,
-    public val socketFactory: suspend (InetSocketAddress) -> DatagramIo = { DatagramIo.open(it) },
+    public val socketFactory: suspend (InetSocketAddress) -> DatagramIo = { openDatagramIoDfIfPossible(it) },
 ) {
     internal val template: UdpUriTemplate = UdpUriTemplate.parsePath(pathTemplate)
 

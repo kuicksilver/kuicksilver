@@ -284,6 +284,38 @@ class NioDatagramIoTest {
         assertTrue(NioDatagramIo.dfUnavailableDetail(DF_INET6, false).contains("refused both"))
     }
 
+    /**
+     * Not for QUIC (a CONNECT-UDP target socket, RFC 9298 section 3.1: DF "if possible"): where DF cannot be set the socket
+     * opens all the same and refuses no send; QUIC's [DatagramIo.open] refuses it.
+     */
+    @Test fun aSocketForTargetsOpensWithoutDf() =
+        runBlocking {
+            NioDatagramIo.dfForTest = { -1 to false } // no ksl, no IP_DONTFRAGMENT (below JDK 19)
+            val a: DatagramIo
+            val b: DatagramIo
+            try {
+                assertFailsWith<QuicException.DontFragmentUnavailable> {
+                    DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
+                }
+                a = openDatagramIoDfIfPossible(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+                b = openDatagramIoDfIfPossible(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+            try {
+                assertEquals(null, (a as NioDatagramIo).noDfFamily, "nothing refused")
+                assertEquals(1, a.send(batchOf(ByteArray(500), to = b.localAddress)))
+                assertEquals(emptyList(), a.takeDfRefusals())
+                val inb = PacketBatch(1)
+                withTimeout(5.seconds) { while (b.receive(inb) == 0) continue }
+                assertEquals(500, inb.length(0))
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
     /** No DF on any traffic: the socket does not open, with the typed error. */
     @Test fun negative_aSocketWithoutDfDoesNotOpen() =
         runBlocking {

@@ -4,6 +4,9 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 
-internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo = NioDatagramIo.open(local)
+internal actual suspend fun openPortableDatagramIo(
+    local: InetSocketAddress,
+    strictDf: Boolean,
+): DatagramIo = NioDatagramIo.open(local, strictDf = strictDf)
 
 internal actual fun printWarning(line: String) = System.err.println(line)

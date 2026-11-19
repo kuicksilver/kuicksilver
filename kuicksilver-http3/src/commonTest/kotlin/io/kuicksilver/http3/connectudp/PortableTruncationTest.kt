@@ -16,6 +16,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.IoPreference
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.openDatagramIoDfIfPossible
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
@@ -54,13 +55,13 @@ class PortableTruncationTest {
                 )
             val proxySocket = CompletableDeferred<DatagramIo>()
             val loopback = InetSocketAddress("127.0.0.1", 0)
-            val target = DatagramIo.open(loopback, IoPreference.Portable)
+            val target = openDatagramIoDfIfPossible(loopback, IoPreference.Portable)
             val rig =
                 ProxyRig(pair) { _ ->
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
                         linkMtu = LINK_MTU,
-                        socketFactory = { DatagramIo.open(loopback, IoPreference.Portable).also { proxySocket.complete(it) } },
+                        socketFactory = { openDatagramIoDfIfPossible(loopback, IoPreference.Portable).also { proxySocket.complete(it) } },
                     )
                 }
             rig.serveAll()

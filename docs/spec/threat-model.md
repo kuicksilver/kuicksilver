@@ -1071,6 +1071,12 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   `authenticate` block or an interceptor answers first, and the engine takes CONNECT-UDP only with `connectUdp = true`.
   The Ktor client never sends a request meant for the proxy over TCP or directly when the tunnel fails, and never
   resolves the origin's name itself (the proxy does).
+- **Target sockets and Don't Fragment (RFC 9298 §3.1):** the proxy's sockets towards its targets carry the clients' UDP
+  payloads, not QUIC, so the "no DF, no QUIC" rule of the proxy's own endpoint does not apply to them: they set DF where
+  they can (`openDatagramIoDfIfPossible`, the default `socketFactory`) and are used without it where it is impossible
+  (RFC 9298 asks DF "if possible"); the proxy never sends more than `linkMtu`, so it introduces no fragmentation itself.
+  Without DF a forged ICMP message can make the target-side kernel fragment a payload above the MTU it cached for that
+  target; with DF in DO mode it makes the kernel refuse it (a dropped payload).
 - **Raw ICMP socket (RFC 9298 §6.1, `UdpProxyConfig.packetTooBig`):** a proxy run with `CAP_NET_RAW` holds a raw ICMP
   socket in a server process, which could forge any ICMP message to anyone (CWE-250, CWE-406) and, reading, would see the
   host's ICMP traffic; a raw socket per tunnel would make the kernel hand every incoming ICMP message to each (thousands
