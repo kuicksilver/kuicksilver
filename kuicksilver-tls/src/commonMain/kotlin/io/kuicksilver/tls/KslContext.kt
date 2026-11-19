@@ -57,8 +57,9 @@ internal class KslContext private constructor(
      */
     private val echApplied = AtomicInt(0)
 
-    // 1 while one thread applies a newer set: the native set and [echApplied] change together, never interleaved
-    private val echApplying = AtomicInt(0)
+    // held while one thread applies a newer set: the native set and [echApplied] change together, never interleaved; the
+    // others block on it (a rotation is rare and the native call short) instead of spinning
+    private val echApplying = BlockingLock()
 
     /** The version of the ECH keys this context decrypts with (tests). */
     internal val echAppliedVersion: Int get() = echApplied.load()
@@ -72,16 +73,9 @@ internal class KslContext private constructor(
     fun ensureEchKeys() {
         val keys = config.echKeys ?: return
         if (echApplied.load() >= keys.version) return
-        while (!echApplying.compareAndSet(0, 1)) {
-            // another thread applies one now (a rotation is rare and the native call short); it may be the one wanted
-            if (echApplied.load() >= keys.version) return
-        }
-        try {
-            if (echApplied.load() < keys.version) {
-                echApplied.store(keys.applyTo(handle))
-            }
-        } finally {
-            echApplying.store(0)
+        echApplying.withLock {
+            // the thread before may have applied the set wanted (or a newer one) meanwhile
+            if (echApplied.load() < keys.version) echApplied.store(keys.applyTo(handle))
         }
     }
 
