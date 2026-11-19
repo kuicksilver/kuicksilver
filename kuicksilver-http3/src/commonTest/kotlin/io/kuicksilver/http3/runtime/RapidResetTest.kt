@@ -9,9 +9,13 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.awaitAbandoned
+import io.kuicksilver.http3.handlerEnded
+import io.kuicksilver.http3.holdStreamUntilHandled
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CompletableDeferred
@@ -331,6 +335,201 @@ class RapidResetTest {
                 kotlinx.coroutines.yield()
                 assertTrue(wait.isActive, "the wait ended after a response sent in full")
                 wait.cancel()
+            }
+        }
+
+    /** Accepts every request with an engine's handler: holds its stream, waits until the client abandons it, then ends. */
+    private fun kotlinx.coroutines.CoroutineScope.abandonedHandlers(
+        server: Http3Connection,
+        resetAfter: Boolean = false,
+    ) = launch {
+        while (true) {
+            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+            r.holdStreamUntilHandled()
+            launch {
+                try {
+                    r.awaitAbandoned()
+                    // what the Ktor engine does with a cancelled handler: both directions of the request end
+                    if (resetAfter) r.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                } finally {
+                    r.handlerEnded()
+                }
+            }
+        }
+    }
+
+    /**
+     * Rapid Reset by STOP_SENDING alone: a complete request (HEADERS and FIN), its response then stopped. The client never
+     * resets anything, yet each stop abandons a request whose handler had started (the engine cancels it and its stream comes
+     * back), so each spends a token of the request-reset budget (RFC 9114 section 10.5): 1500 of them end the connection
+     * with H3_EXCESSIVE_LOAD. Before, a stop cost nothing and such a flood went on at full speed.
+     */
+    @Test fun negative_stopSendingFloodEndsWithExcessiveLoad() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L } // no refill: exactly 1000 tokens
+                val accept = abandonedHandlers(server)
+                val raw = RawPeer(c)
+                raw.openControl()
+                var sent = 0
+                runCatching {
+                    repeat(1500) {
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.headers(st.id, GET))
+                        peerMayHaveClosed { st.output.flushAndClose() }
+                        st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                        sent++
+                    }
+                } // fails once the server closed
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+                assertTrue(sent > 1000, "the connection ended after $sent stops")
+                accept.cancel()
+            }
+        }
+
+    /**
+     * STOP_SENDING first, the reset only once the server stopped the request in turn: a reset that follows our own
+     * STOP_SENDING is never seen as the client's (the stream fails with our stop), so before, neither half of the pair cost
+     * anything. The stop is the abandonment now, counted once: 1500 such requests end the connection with H3_EXCESSIVE_LOAD.
+     */
+    @Test fun negative_stopSendingThenResetFloodEndsWithExcessiveLoad() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val accept = abandonedHandlers(server, resetAfter = true)
+                val raw = RawPeer(c)
+                raw.openControl()
+                var sent = 0
+                runCatching {
+                    repeat(1500) {
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.headers(st.id, GET)) // no FIN: the request stays open
+                        peerMayHaveClosed { st.output.flush() }
+                        st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                        // the server's STOP_SENDING for the request: the reset below comes after it
+                        withTimeout(10.seconds) { st.awaitSendStopped() }
+                        st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                        sent++
+                    }
+                }
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+                // 1000 requests went whole; the 1001st one's stop ended the connection while the client waited for our stop
+                assertTrue(sent >= 1000, "the connection ended after $sent stopped and reset requests")
+                accept.cancel()
+            }
+        }
+
+    /**
+     * A request the client both stops and resets is abandoned once, and costs one token, whichever of the two the server
+     * saw first: 700 such requests (1400 frames) stay within the budget of 1000 and the next request is answered.
+     */
+    @Test fun stopAndResetOfOneRequestSpendOneToken() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val started = AtomicInt(0)
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            r.holdStreamUntilHandled()
+                            launch {
+                                try {
+                                    started.incrementAndFetch()
+                                    if (r.path == "/last") r.respond(200).finish() else r.awaitAbandoned()
+                                } finally {
+                                    r.handlerEnded()
+                                }
+                            }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                // the handler runs first, so the request is the application's and both halves of the abandon reach it
+                repeat(700) { i -> raw.rapidReset { awaitCondition("handler ${i + 1}") { started.load() > i } } }
+                val st = c.openBidi()
+                st.output.writeFully(
+                    raw.headers(
+                        st.id,
+                        listOf(
+                            ":method" to "GET",
+                            ":scheme" to "https",
+                            ":authority" to "server.test",
+                            ":path" to "/last",
+                        ),
+                    ),
+                )
+                st.output.flushAndClose()
+                val answer = runCatching { withTimeout(10.seconds) { st.input.readAllBytes() } }
+                assertTrue(answer.isSuccess && answer.getOrThrow().isNotEmpty(), "the request after 700 stopped and reset ones: $answer")
+                assertTrue(!server.closed.isCompleted, "closed: ${server.closed.takeIf { it.isCompleted }?.getCompleted()}")
+                accept.cancel()
+            }
+        }
+
+    /**
+     * Resets the client makes us send (MadeYouReset, CVE-2025-8671; RFC 9114 section 10.5), as HTTP/2 counts them: a
+     * malformed request head (no :path, RFC 9114 section 4.3.1) is reset with H3_MESSAGE_ERROR before it reaches the
+     * application, and each is a glitch, so 1500 of them end the connection with H3_EXCESSIVE_LOAD. Before, a client that
+     * read our resets sent them forever.
+     */
+    @Test fun negative_malformedRequestFloodEndsWithExcessiveLoad() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val noPath = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test")
+                runCatching {
+                    repeat(1500) {
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.headers(st.id, noPath))
+                        peerMayHaveClosed { st.output.flushAndClose() }
+                    }
+                } // fails once the server closed
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            }
+        }
+
+    /**
+     * The same after the request reached the application: a content-length the content does not match (RFC 9114 section
+     * 4.1.2) resets the stream with H3_MESSAGE_ERROR once the request's handler holds it; each is a glitch, and 1500 end
+     * the connection.
+     */
+    @Test fun negative_contentLengthMismatchFloodEndsWithExcessiveLoad() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                // each handler reads the body's failure, which gives its stream back
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { runCatching { r.body.readAllBytes() } }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val promised = GET + ("content-length" to "5")
+                runCatching {
+                    repeat(1500) {
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.headers(st.id, promised)) // and no content
+                        peerMayHaveClosed { st.output.flushAndClose() }
+                    }
+                }
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+                accept.cancel()
             }
         }
 

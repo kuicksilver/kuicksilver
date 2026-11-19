@@ -15,6 +15,7 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -258,8 +259,94 @@ class ServerH3FloodTest {
             }
         }
 
+    /**
+     * Rapid Reset by STOP_SENDING alone, against the engine: complete requests (HEADERS and FIN) whose responses the client
+     * stops at once. Each stop cancels a held handler and gives its stream back, as a reset does, so each spends a token of the
+     * same budget (RFC 9114 section 10.5): the 1001st ends the connection with H3_EXCESSIVE_LOAD. Before, the client never
+     * reset anything and the flood went on at full speed, without end.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_h3StopSendingFloodEndsWithExcessiveLoad() =
+        h3ServerTest {
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            server.engine.h3ConnectionForTest = { it.glitchClockForTest = { 0L } } // no refill: exactly 1000 tokens
+            val (ep, c) = rawH3(port)
+            try {
+                var sent = 0
+                val flood =
+                    runCatching {
+                        repeat(5_000) {
+                            val st = c.openBidi()
+                            st.output.writeFully(rawHeadersFrame(rawFieldSection(HOLD)))
+                            st.output.flushAndClose()
+                            st.stopSending(H3_REQUEST_CANCELLED)
+                            sent++
+                        }
+                    }
+                val closed =
+                    withTimeoutOrNull(15.seconds) { c.closed.await() }
+                        ?: fail("the connection is open after $sent stops; the flood ended with ${flood.exceptionOrNull()}")
+                assertEquals(H3_EXCESSIVE_LOAD, assertIs<QuicException.ConnectionLost.ApplicationClosed>(closed).code)
+                assertTrue(sent > 1_000, "the connection ended after $sent stops")
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            } finally {
+                c.close()
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * STOP_SENDING first, then the reset once the engine stopped the request in turn (it cancelled the handler): such a reset
+     * follows our own STOP_SENDING and is never the client's, so before, neither half of the pair cost anything. The stop
+     * counts once now (and a reset that came first instead takes its place, never a second token), and the flood ends with
+     * H3_EXCESSIVE_LOAD.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_h3StopSendingThenResetFloodEndsWithExcessiveLoad() =
+        h3ServerTest {
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            server.engine.h3ConnectionForTest = { it.glitchClockForTest = { 0L } }
+            val (ep, c) = rawH3(port)
+            try {
+                var sent = 0
+                val flood =
+                    runCatching {
+                        repeat(5_000) {
+                            val st = c.openBidi()
+                            st.output.writeFully(rawHeadersFrame(rawFieldSection(HOLD))) // no FIN
+                            st.output.flush()
+                            st.stopSending(H3_REQUEST_CANCELLED)
+                            // the engine's own STOP_SENDING, which a handler cancelled before its answer sends with the reset of
+                            // the request; when none comes the reset goes anyway, as the client's own
+                            withTimeoutOrNull(2.seconds) { st.awaitSendStopped() }
+                            st.reset(H3_REQUEST_CANCELLED)
+                            sent++
+                        }
+                    }
+                val closed =
+                    withTimeoutOrNull(15.seconds) { c.closed.await() }
+                        ?: fail(
+                            "the connection is open after $sent stopped and reset requests; the flood ended with ${flood.exceptionOrNull()}",
+                        )
+                assertEquals(H3_EXCESSIVE_LOAD, assertIs<QuicException.ConnectionLost.ApplicationClosed>(closed).code)
+                // 1000 requests went whole; the 1001st one's stop ended the connection while the client waited for our stop
+                assertTrue(sent >= 1_000, "the connection ended after $sent stopped and reset requests")
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            } finally {
+                c.close()
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
     private companion object {
         const val H3_REQUEST_CANCELLED = 0x10cL
         const val H3_EXCESSIVE_LOAD = 0x107L
+        val HOLD = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test", ":path" to "/hold")
     }
 }
