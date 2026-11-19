@@ -810,10 +810,16 @@ class EngineMainTest {
                         .port
                 assertEquals(null, handshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
                 val refused = handshakeFails(port, "x25519")
-                assertTrue(
-                    if (Runtime.version().feature() >= 20) refused is javax.net.ssl.SSLException else refused != null,
-                    "a client of x25519 alone is refused: $refused",
-                )
+                if (Runtime.version().feature() >= 20) {
+                    assertTrue(refused is javax.net.ssl.SSLException, "a client of x25519 alone is refused: $refused")
+                } else {
+                    // Kuicksilver's client: the server's handshake_failure (40) alert, found along the causes
+                    val alert =
+                        generateSequence(refused) { it.cause }
+                            .filterIsInstance<io.kuicksilver.tls.TlsException.AlertReceived>()
+                            .firstOrNull()
+                    assertEquals(40, alert?.code, "a client of x25519 alone is refused with handshake_failure: $refused")
+                }
             } finally {
                 server.stop(100, 500)
             }
