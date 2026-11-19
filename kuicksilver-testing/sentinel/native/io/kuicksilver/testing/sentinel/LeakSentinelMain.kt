@@ -25,6 +25,8 @@ fun leakSentinelTestMain(args: Array<String>) {
     LeakSentinel.install(
         sites = getenv("KUICKSILVER_LEAK_SITES")?.toKString().let { it != null && it != "0" && it != "false" },
         waitMs = getenv("KUICKSILVER_LEAK_WAIT_MS")?.toKString()?.toLongOrNull(),
+        slowMs = getenv("KUICKSILVER_LEAK_SLOW_MS")?.toKString()?.toLongOrNull(),
+        strict = getenv("KUICKSILVER_LEAK_STRICT")?.toKString().let { it != null && it != "0" && it != "false" },
     )
     val suites = GeneratedSuites.suites
     val wrapped = suites.map { SentinelSuite(it) }

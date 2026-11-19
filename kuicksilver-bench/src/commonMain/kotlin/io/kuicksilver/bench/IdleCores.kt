@@ -69,7 +69,7 @@ public class IdleCores(
             // a few round trips and every ACK delay after both completed: what is left after that is the idle state
             if (settleUntil == null && clientDone && serverDone) settleUntil = now + SETTLE
             val until = settleUntil
-            if (until != null && now >= until && toServer.count == 0 && toClient.count == 0) return Pair(client, server!!, now)
+            if (until != null && now >= until && toServer.count == 0 && toClient.count == 0) return Pair(client, server!!, now).also { held += Side(it.client, it.now, toServer); held += Side(it.server, it.now, toClient) }
             now = if (toServer.count > 0 || toClient.count > 0) now + 1.milliseconds
             else minOf(until ?: deadline, maxOf(now + 1.milliseconds, minOf(client.nextTimeoutOrNever(), server?.nextTimeoutOrNever() ?: client.nextTimeoutOrNever())))
         }
@@ -77,18 +77,34 @@ public class IdleCores(
         return null
     }
 
+    /**
+     * One side of a pair [open] returned that nothing closed yet: [close] ends it, under a virtual clock of its own from
+     * [now]. It keeps only its own core, so a client [closeClient] let go of is not kept reachable from here.
+     */
+    private class Side(val core: ConnectionCore, var now: TimeMark, val out: PacketBatch)
+
+    private val held = ArrayList<Side>()
+
     /** Closes the client's side of [pair] without telling the server and runs its timers until it is closed (its native state freed). */
     public fun closeClient(pair: Pair) {
-        val c = pair.client
-        c.close(0, "", pair.now)
-        val deadline = pair.now + 60_000.milliseconds
-        while (c.state != ConnectionState.Closed && pair.now < deadline) {
-            c.poll(toServer, pair.now); toServer.clear()
+        val side = Side(pair.client, pair.now, toServer)
+        closeSide(side)
+        pair.now = side.now
+        held.removeAll { it.core === pair.client }
+    }
+
+    private fun closeSide(side: Side) {
+        val c = side.core
+        if (c.state == ConnectionState.Closed) return
+        c.close(0, "", side.now)
+        val deadline = side.now + 60_000.milliseconds
+        while (c.state != ConnectionState.Closed && side.now < deadline) {
+            c.poll(side.out, side.now); side.out.clear()
             while (c.nextEvent() != null) Unit
-            pair.now = maxOf(pair.now + 1.milliseconds, c.nextTimeoutOrNever())
-            if (c.nextTimeoutOrNever() <= pair.now) c.onTimeout(pair.now)
+            side.now = maxOf(side.now + 1.milliseconds, c.nextTimeoutOrNever())
+            if (c.nextTimeoutOrNever() <= side.now) c.onTimeout(side.now)
         }
-        check(c.state == ConnectionState.Closed) { "the client did not close" }
+        check(c.state == ConnectionState.Closed) { "the connection did not close" }
     }
 
     private fun deliver(core: ConnectionCore, batch: PacketBatch, from: InetSocketAddress, now: TimeMark) {
@@ -96,7 +112,12 @@ public class IdleCores(
         batch.clear()
     }
 
-    override fun close() { toServer.close(); toClient.close(); identity.close() }
+    /** Ends both sides of every pair still open (their TLS sessions and keys are native memory), then the batches. */
+    override fun close() {
+        for (side in held) closeSide(side)
+        held.clear()
+        toServer.close(); toClient.close(); identity.close()
+    }
 
     private companion object { val SETTLE = 300.milliseconds }
 }

@@ -5,6 +5,7 @@
 // (tools/interop/Dockerfile) and as Linux executables (tools/interop/Dockerfile.native).
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
+    id("kuicksilver.leak-sentinel")   // every test must close what the library opened for it (docs/process.md)
     id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
 }
 kotlin {

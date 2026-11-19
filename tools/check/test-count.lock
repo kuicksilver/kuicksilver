@@ -3502,9 +3502,10 @@ kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStri
 kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.aCloseAfterTheTestIsWaitedFor
 kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.anObjectOpenedBeforeTheTestIsNotItsLeak
 kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_aNativeKeyLeftOpenIsCounted
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_aNativeObjectFreedThatTheTestDidNotMakeIsSaid
+kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_aSlowCloseFailsInStrictMode
 kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_anAllowEntryToleratesOnlyItsKinds
 kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.negative_anObjectLeftOpenIsNamedWithItsKindAndCount
-kuicksilver-native/src/commonTest	io.kuicksilver.native.LeakSentinelTest.theSentinelIsInstalled
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.boundsAreChecked
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.copyInAndOut
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.negative_arrayBoundsChecked

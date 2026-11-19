@@ -127,7 +127,12 @@ public class CoreLoopback(private val streams: Int = 1, private val payload: Int
         }
     }
 
-    override fun close() { toServer.close(); toClient.close() }
+    /** Ends both cores (their TLS sessions and keys are native memory), then the batches. */
+    override fun close() {
+        client.closeToTheEnd(now)
+        server?.closeToTheEnd(now)
+        toServer.close(); toClient.close()
+    }
 
     private companion object { const val MAX_WRITES_PER_STEP = 64 }
 }

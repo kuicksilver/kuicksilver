@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.testing.sentinel
 
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeAllCallback
@@ -11,7 +12,8 @@ import org.junit.jupiter.api.extension.ExtensionContext
 /**
  * The leak sentinel ([LeakSentinel]) on the JVM: registered for every test JVM through `META-INF/services` and
  * `junit.jupiter.extensions.autodetection.enabled` (the build sets both). A global extension wraps the class's own
- * `@AfterTest`/`@AfterAll` methods, so the check runs after the test's teardown. A failing test still has its leaks
+ * `@AfterTest`/`@AfterAll` methods, so the check runs after the test's teardown; a class with `@TestInstance(PER_CLASS)`
+ * is checked after all its tests only. A failing test still has its leaks
  * reported, as suppressed exceptions of its own failure.
  */
 class LeakSentinelExtension :
@@ -23,6 +25,8 @@ class LeakSentinelExtension :
         LeakSentinel.install(
             sites = System.getenv("KUICKSILVER_LEAK_SITES").let { it != null && it != "0" && it != "false" },
             waitMs = System.getenv("KUICKSILVER_LEAK_WAIT_MS")?.toLongOrNull(),
+            slowMs = System.getenv("KUICKSILVER_LEAK_SLOW_MS")?.toLongOrNull(),
+            strict = System.getenv("KUICKSILVER_LEAK_STRICT").let { it != null && it != "0" && it != "false" },
         )
     }
 
@@ -38,7 +42,10 @@ class LeakSentinelExtension :
 
     override fun afterEach(context: ExtensionContext) {
         val cls = context.requiredTestClass.name
-        if (LeakSentinel.perClass(cls)) return
+        // a class whose instance lives for all its tests (`@TestInstance(PER_CLASS)`) shares its fixtures across them by
+        // design (a client, a server, their pools): it is checked once, after all of them, as a `per-class` entry would
+        val shared = context.testInstanceLifecycle.orElse(null) == TestInstance.Lifecycle.PER_CLASS
+        if (shared || LeakSentinel.perClass(cls)) return
         check(context, cls, context.requiredTestMethod.name)
     }
 

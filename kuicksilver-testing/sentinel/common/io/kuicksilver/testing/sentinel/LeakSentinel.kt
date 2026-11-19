@@ -8,8 +8,12 @@ import io.kuicksilver.native.LeakRegistry
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The leak sentinel (docs/process.md, "The leak sentinel"): compiled into every module's tests (the build copies these
@@ -38,14 +42,27 @@ internal object LeakSentinel {
     /** How long [end] waits for teardown; `KUICKSILVER_LEAK_WAIT_MS` changes it. */
     var wait: Duration = 10.seconds
 
+    /** Teardown that takes longer than this is reported as slow; `KUICKSILVER_LEAK_SLOW_MS` changes it. */
+    var slow: Duration = 1500.milliseconds
+
+    /** Slow teardown fails the test too (`KUICKSILVER_LEAK_STRICT=1`), instead of only being reported. */
+    var strict: Boolean = false
+
     private val changes = Channel<Unit>(Channel.CONFLATED)
 
-    /** Turns the registry on (once per process); [sites]: each object keeps the stack that opened it. */
+    /**
+     * Turns the registry on (once per process); [sites]: each object keeps the stack that opened it; [slowMs] and [strict]:
+     * see [slow] and [strict].
+     */
     fun install(
         sites: Boolean,
         waitMs: Long?,
+        slowMs: Long? = null,
+        strict: Boolean = false,
     ) {
-        if (waitMs != null) wait = Duration.parse("${waitMs}ms")
+        if (waitMs != null) wait = waitMs.milliseconds
+        if (slowMs != null) slow = slowMs.milliseconds
+        this.strict = strict
         if (!LeakRegistry.enabled) LeakRegistry.enable(sites)
         LeakRegistry.onChange { changes.trySend(Unit) }
     }
@@ -57,17 +74,40 @@ internal object LeakSentinel {
         val sharedNative: LongArray,
     )
 
-    fun begin(): Scope = Scope(LeakRegistry.mark(), LeakRegistry.nativeObjects(), sharedNative.copyOf())
+    /**
+     * The start of a test or a class: the process's caches are emptied first, so what an earlier test left there and
+     * frees during this one cannot hide a native object this one leaks.
+     */
+    fun begin(): Scope {
+        runBlocking { for (clear in LeakRegistry.processCaches()) clear() }
+        return Scope(LeakRegistry.mark(), LeakRegistry.nativeObjects(), locked { sharedNative.copyOf() })
+    }
 
-    /** The native objects [shared] blocks made, per ksl counter, since the process started. */
+    /** The native objects [shared] blocks made, per ksl counter, since the process started. Under [lock]. */
     private val sharedNative = LongArray(KslConst.LIVE_COUNT)
 
-    /** The registry ids [shared] blocks opened. */
+    /** The registry ids [shared] blocks opened. Under [lock]. */
     private val sharedIds = HashSet<Long>()
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private val lock = AtomicInt(0)
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private inline fun <T> locked(block: () -> T): T {
+        while (!lock.compareAndSet(0, 1)) {
+            // held for a copy or a few additions: spin
+        }
+        try {
+            return block()
+        } finally {
+            lock.store(0)
+        }
+    }
 
     /**
      * Runs [block], which makes a fixture that lives for the whole test process (a native key cached by a fixtures
-     * object, made by whichever test needs it first): what it opens is no test's leak. Test thread only.
+     * object, made by whichever test needs it first): what it opens is no test's leak. Any thread; what another thread
+     * opens meanwhile counts as shared too.
      */
     fun <T> shared(block: () -> T): T {
         val before = LeakRegistry.nativeObjects()
@@ -77,8 +117,11 @@ internal object LeakSentinel {
         } finally {
             val after = LeakRegistry.nativeObjects()
             val end = LeakRegistry.mark()
-            if (after != null) for (i in sharedNative.indices) sharedNative[i] += after[i] - (before?.get(i) ?: 0L)
-            for (e in LeakRegistry.openSince(mark)) if (e.id < end) sharedIds += e.id
+            val opened = LeakRegistry.openSince(mark).filter { it.id < end }.map { it.id }
+            locked {
+                if (after != null) for (i in sharedNative.indices) sharedNative[i] += after[i] - (before?.get(i) ?: 0L)
+                sharedIds += opened
+            }
         }
     }
 
@@ -96,12 +139,21 @@ internal object LeakSentinel {
         test: String?,
         allow: List<LeakAllowEntry> = LeakAllowlist.entries,
         wait: Duration = this.wait,
+        slow: Duration = this.slow,
+        strict: Boolean = this.strict,
+        /** Called once the first look found something open (the sentinel's own negative controls). */
+        afterFirstLookForTest: (() -> Unit)? = null,
     ): String? {
         val allowed = allowedKinds(allow, className, test)
+        val where = if (test == null) className else "$className.$test"
+        val started = TimeSource.Monotonic.markNow()
+        var first: List<Leak> = emptyList()
         val left =
             runBlocking {
                 var left = settledLeftOpen(scope, allowed)
+                first = left
                 if (left.isNotEmpty()) {
+                    afterFirstLookForTest?.invoke()
                     withTimeoutOrNull(wait) {
                         while (true) {
                             changes.receive()
@@ -113,8 +165,31 @@ internal object LeakSentinel {
                 }
                 left
             }
-        if (left.isEmpty()) return null
-        return message(if (test == null) className else "$className.$test", left, wait)
+        freedBefore(scope)?.let { println("leak sentinel: $where $it") }
+        if (left.isNotEmpty()) return message(where, left, wait)
+        val took = started.elapsedNow()
+        if (first.isEmpty() || took <= slow) return null
+        val note =
+            "leak sentinel: $where took ${took.inWholeMilliseconds} ms to close " +
+                first.joinToString(", ") { "${it.kind} x${it.count}" } + " (more than ${slow.inWholeMilliseconds} ms)"
+        println(note)
+        return if (strict) "$note; KUICKSILVER_LEAK_STRICT fails slow teardown" else null
+    }
+
+    /**
+     * The ksl counters that ended below where they were when [scope] began: the test freed native objects it did not make
+     * (an earlier test's, or a fixture's). Not a failure, but such a drop can hide a leak of the same kind, so it is said.
+     */
+    fun freedBefore(scope: Scope): String? {
+        val before = scope.native ?: return null
+        val now = LeakRegistry.nativeObjects() ?: return null
+        val shared = locked { sharedNative.copyOf() }
+        val drops =
+            nativeKinds.mapNotNull { (i, kind) ->
+                val delta = now[i] - before[i] - (shared[i] - scope.sharedNative[i])
+                if (delta < 0) "$kind $delta" else null
+            }
+        return if (drops.isEmpty()) null else "freed ksl objects it did not make: ${drops.joinToString(", ")}"
     }
 
     /** One leaked kind: how many, and where each was opened (when the registry keeps sites). */
@@ -138,7 +213,8 @@ internal object LeakSentinel {
         allowed: Set<String>,
     ): List<Leak> {
         val out = ArrayList<Leak>()
-        for ((kind, entries) in LeakRegistry.openSince(scope.mark).filter { it.id !in sharedIds }.groupBy { it.kind }) {
+        val sharedNow = locked { sharedIds.toSet() to sharedNative.copyOf() }
+        for ((kind, entries) in LeakRegistry.openSince(scope.mark).filter { it.id !in sharedNow.first }.groupBy { it.kind }) {
             if ("*" in allowed || kind in allowed) continue
             out += Leak(kind, entries.size.toLong(), entries.mapNotNull { it.site })
         }
@@ -146,7 +222,7 @@ internal object LeakSentinel {
         val now = if (before != null) LeakRegistry.nativeObjects() else null
         if (before != null && now != null) {
             for ((i, kind) in nativeKinds) {
-                val more = now[i] - before[i] - (sharedNative[i] - scope.sharedNative[i])
+                val more = now[i] - before[i] - (sharedNow.second[i] - scope.sharedNative[i])
                 if (more > 0 && "*" !in allowed && kind !in allowed) out += Leak(kind, more, emptyList())
             }
         }

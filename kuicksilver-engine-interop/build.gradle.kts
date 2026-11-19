@@ -8,6 +8,7 @@
 //   ./gradlew --max-workers=2 :kuicksilver-engine-interop:jvmTest
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
+    id("kuicksilver.leak-sentinel")   // every test must close what the library opened for it (docs/process.md)
     id("org.jmailen.kotlinter")
 }
 kotlin {

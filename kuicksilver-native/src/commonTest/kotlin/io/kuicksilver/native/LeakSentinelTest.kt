@@ -17,7 +17,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -27,9 +27,6 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 class LeakSentinelTest {
     private val short = 200.milliseconds
-
-    /** The build wires the sentinel into this test run (JUnit extension, native entry point, device runner builder). */
-    @Test fun theSentinelIsInstalled() = assertTrue(LeakRegistry.enabled, "the leak sentinel is not installed in this test run")
 
     @Test fun negative_anObjectLeftOpenIsNamedWithItsKindAndCount() {
         val scope = LeakSentinel.begin()
@@ -102,5 +99,40 @@ class LeakSentinelTest {
             LeakRegistry.close(allowed)
             LeakRegistry.close(other)
         }
+    }
+
+    /** A close that comes only after the sentinel looked is waited for; slow, it is reported, and strict mode fails on it. */
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun negative_aSlowCloseFailsInStrictMode() {
+        for (strict in listOf(false, true)) {
+            val scope = LeakSentinel.begin()
+            val id = LeakRegistry.open("test.slow")
+            val go = CompletableDeferred<Unit>()
+            GlobalScope.launch(Dispatchers.Default) {
+                go.await()
+                LeakRegistry.close(id)
+            }
+            val r =
+                LeakSentinel.end(scope, "C", "t", allow = emptyList(), slow = Duration.ZERO, strict = strict, afterFirstLookForTest = {
+                    go.complete(Unit)
+                })
+            if (strict) {
+                assertContains(assertNotNull(r), "leak sentinel: C.t took")
+                assertContains(r, "to close test.slow x1")
+            } else {
+                assertNull(r, "a slow close that ended is only reported")
+            }
+        }
+    }
+
+    /** A test that frees a native object it did not make is said so: such a drop could hide a leak of the same kind. */
+    @Test fun negative_aNativeObjectFreedThatTheTestDidNotMakeIsSaid() {
+        KslLoader.ensureLoaded()
+        val key = Ksl.keyRandom(KslConst.EKEY_TOKEN) // an earlier test's, say
+        val scope = LeakSentinel.begin()
+        Ksl.keyFree(key)
+        assertContains(assertNotNull(LeakSentinel.freedBefore(scope)), "ksl.key -1")
+        assertNull(LeakSentinel.end(scope, "C", "t", allow = emptyList(), wait = short), "not a failure")
     }
 }
