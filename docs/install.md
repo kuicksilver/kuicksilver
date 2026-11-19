@@ -16,7 +16,7 @@ release in preparation: every guide says "version `0.3.0` or newer", and feature
 kill switch and `Http3Advertising`, certificate reload, the QUIC connection limits of the server engine, HTTP/2,
 WebTransport, among others; see the [CHANGELOG](../CHANGELOG.md)) are not in 0.2.1.
 
-**Before 0.3.0 is published**, build it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below,
+**Until 0.3.0 is on Maven Central**, build it from a checkout of `main` and use `0.3.0-SNAPSHOT` as the BOM version below,
 with `mavenLocal()` in your repositories. `./gradlew publishToMavenLocal` publishes every target, so it needs everything
 in [CONTRIBUTING.md](../CONTRIBUTING.md#building): Docker (OpenSSL and `libksl` for Linux and Windows), the Android NDK
 and, on macOS, Xcode. For a JVM application,
