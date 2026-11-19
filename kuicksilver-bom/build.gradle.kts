@@ -25,7 +25,7 @@ mavenPublishing {
     coordinates("io.kuicksilver", project.name, project.version.toString())
     pom {
         name.set(project.name)
-        description.set("Bill of materials for the Kuicksilver modules (QUIC, HTTP/3 and TLS 1.3 over OpenSSL 3.5 for Kotlin Multiplatform)")
+        description.set("Bill of materials for the Kuicksilver modules (QUIC, HTTP/3 and TLS 1.3 over OpenSSL 4.1 for Kotlin Multiplatform)")
         inceptionYear.set("2026")
         url.set("https://github.com/kuicksilver/kuicksilver")
         licenses { license { name.set("Apache-2.0"); url.set("https://www.apache.org/licenses/LICENSE-2.0.txt"); distribution.set("repo") } }
