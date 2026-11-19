@@ -379,6 +379,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3ServerQuicConfigTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.documentedDefaultsAreNotCaps
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.earlyDataContextCoversEveryValueOfOurSettings
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.refusalsNameTheOption
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.aNameIsServedThroughTheFamilyWithDontFragment
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.capsuleProtocolFieldNotRequiredWhenConfigured
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.clientKeys
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.datagramCapsulesWhenHttpDatagramsAreOff
@@ -387,6 +388,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.ipv6Target
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.largestPayloadWithALongContextIdIsDelivered
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aClientsTunnelsShareOneRate
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aMappedLiteralTargetIsIpv4
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aPacketTooBigTheSenderRefusesIsCounted
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aSocketFactoryWithoutDontFragmentRefusesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aTargetFamilyWithoutDontFragmentIsRefused
@@ -424,7 +426,6 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.PortableTruncationTest.negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.http3ThroughTheProxy
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.tunnelSocketShape
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.UdpTargetFilterTest.negative_configRefusesAnIdleTimeoutBelowTwoMinutesAndBadValues
@@ -1249,6 +1250,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.udpEcho
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.alpnWithoutH3Rejected
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.closingAnEndpointClosesItsConnectionsWithH3NoError
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.loopbackGet
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.connectudp.PortableTruncationTest.negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aCorpusInputNamedByTheSha1OfItsBytesPasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aWellFormedTablePasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negative_aCorpusInputWhoseBytesChangedUnderItsNameFails

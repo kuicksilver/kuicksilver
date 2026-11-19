@@ -768,6 +768,69 @@ class ConnectUdpTest {
             }
         }
 
+    /** An IPv4-mapped literal target (`::ffff:a.b.c.d`) is an IPv4 target: refused where IPv4 has no DF, served where IPv6 has none. */
+    @Test fun negative_aMappedLiteralTargetIsIpv4() =
+        h3Test {
+            for (noDf in listOf(IpFamily.V4, IpFamily.V6)) {
+                val rig =
+                    rig { f -> UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, socketFactory = { a -> NoDfFor(f(a), noDf) }) }
+                rig.use { r ->
+                    if (noDf == IpFamily.V4) {
+                        val e =
+                            assertFailsWith<Http3Exception.ConnectRejected> {
+                                r.pair.client.connectUdp(template, "::ffff:192.0.2.50", 5000)
+                            }
+                        assertEquals(500, e.status)
+                        assertTrue("for IPv4 targets" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                    } else {
+                        val got = rig.echo(echoAt)
+                        val t = r.pair.client.connectUdp(template, "::ffff:192.0.2.50", 5000)
+                        t.send("mapped".encodeToByteArray())
+                        assertContentEquals("mapped".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                        t.close()
+                    }
+                }
+            }
+        }
+
+    /**
+     * A name with addresses of both families, the one without DF first: the proxy uses the other family; a name with only
+     * addresses of the family without DF is refused with 500 `proxy_configuration_error`.
+     */
+    @Test fun aNameIsServedThroughTheFamilyWithDontFragment() =
+        h3Test {
+            val v4 = byteArrayOf(192.toByte(), 0, 2, 50)
+            val v6 =
+                ByteArray(16).also {
+                    it[0] = 0x20
+                    it[1] = 0x01
+                    it[2] = 0x0d
+                    it[3] = 0xb8.toByte()
+                    it[15] = 0x50
+                }
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        resolver = UdpProxyResolver { host -> if (host == "dual.example") listOf(v4, v6) else listOf(v4) },
+                        socketFactory = { a -> NoDfFor(f(a), IpFamily.V4) },
+                    )
+                }
+            rig.use { r ->
+                val got = rig.echo(InetSocketAddress("2001:db8::50", 5000))
+                val t = r.pair.client.connectUdp(template, "dual.example", 5000)
+                t.send("dual".encodeToByteArray())
+                assertContentEquals("dual".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                t.close()
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "v4only.example", 5000) }
+                assertEquals(500, e.status)
+                assertEquals(
+                    "proxy; error=proxy_configuration_error; details=\"no Don't Fragment for IPv4 targets on this host\"",
+                    e.headers["proxy-status"],
+                )
+            }
+        }
+
     /** A socket factory that cannot set DF at all (no DF, no QUIC or tunnel) refuses the tunnel the same way. */
     @Test fun negative_aSocketFactoryWithoutDontFragmentRefusesTheTunnel() =
         h3Test {

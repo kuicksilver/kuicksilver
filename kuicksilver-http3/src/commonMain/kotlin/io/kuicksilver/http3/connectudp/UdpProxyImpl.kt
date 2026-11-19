@@ -317,32 +317,46 @@ internal class UdpProxyImpl(
             } else {
                 emptyList()
             }
-        val address =
+        val allowed =
             candidates
                 .map(::unmapped)
-                .firstOrNull { a ->
-                    own.none { it.contentEquals(canonical(a)) } && config.targetFilter.allows(target.host.text, a, target.port)
+                .filter { a -> own.none { it.contentEquals(canonical(a)) } && config.targetFilter.allows(target.host.text, a, target.port) }
+                .ifEmpty { return refuse(request, answered, 403, "destination_ip_prohibited") }
+        // RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"; a socket without DF towards
+        // the target's family could (after an ICMP message lowered its cached path MTU): no DF, no tunnel. So the candidates
+        // of a family with DF come first (in their order), a family found without DF (cached for this proxy) is skipped, and
+        // only when no candidate of a family with DF is left is the request refused
+        var address: ByteArray? = null
+        var io: OnceClosed? = null
+        for (a in allowed.sortedBy { if (familyOf(it) in noDfFamilies) 1 else 0 }) {
+            val family = familyOf(a)
+            if (family in noDfFamilies) continue
+            val opened =
+                try {
+                    OnceClosed(config.socketFactory(InetSocketAddress(if (family == IpFamily.V4) "0.0.0.0" else "::", 0)))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: QuicException.DontFragmentUnavailable) {
+                    learnNoDf(family)
+                    continue
+                } catch (_: Throwable) {
+                    return refuse(request, answered, 502, "proxy_internal_error")
                 }
-                ?: return refuse(request, answered, 403, "destination_ip_prohibited")
+            val noDf = opened.io.noDontFragmentFamily
+            if (noDf != null) learnNoDf(noDf)
+            if (noDf == family) {
+                opened.close()
+                continue
+            }
+            address = a
+            io = opened
+            break
+        }
+        if (address == null || io == null) {
+            return refuseNoDf(request, answered, allowed.map(::familyOf).distinct().joinToString(" or ") { it.label })
+        }
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)
-        val io =
-            try {
-                OnceClosed(config.socketFactory(InetSocketAddress(if (v4) "0.0.0.0" else "::", 0)))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: QuicException.DontFragmentUnavailable) {
-                return refuseNoDf(request, answered, if (v4) "IPv4" else "IPv6")
-            } catch (_: Throwable) {
-                return refuse(request, answered, 502, "proxy_internal_error")
-            }
-        // RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"; a socket without DF towards
-        // the target's family could (after an ICMP message lowered its cached path MTU): no DF, no tunnel
-        val targetFamily = if (v4) IpFamily.V4 else IpFamily.V6
-        if (io.io.noDontFragmentFamily == targetFamily) {
-            io.close()
-            return refuseNoDf(request, answered, targetFamily.label)
-        }
         try {
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
             io.io.disableEcnMarking()
@@ -394,6 +408,21 @@ internal class UdpProxyImpl(
             io.close()
         }
     }
+
+    /**
+     * The address families this proxy's target sockets have no Don't Fragment for, as learned from the sockets it opened
+     * (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's [noDontFragmentFamily]): a host's DF
+     * support does not change while it runs, so later requests skip those candidates without opening a socket.
+     */
+    @kotlin.concurrent.Volatile
+    private var noDfFamilies: Set<IpFamily> = emptySet()
+
+    private fun learnNoDf(family: IpFamily) {
+        if (family !in noDfFamilies) noDfFamilies = noDfFamilies + family
+    }
+
+    /** The family of an address of 4 or 16 bytes (an IPv4-mapped one is already unmapped to its 4). */
+    private fun familyOf(a: ByteArray): IpFamily = if (a.size == 4) IpFamily.V4 else IpFamily.V6
 
     /**
      * The target's address family has no Don't Fragment on this host, so a tunnel could fragment (RFC 9298 section 3.1:

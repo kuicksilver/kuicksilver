@@ -54,16 +54,9 @@ class PortableTruncationTest {
                 )
             val proxySocket = CompletableDeferred<DatagramIo>()
             val loopback = InetSocketAddress("127.0.0.1", 0)
-            // no DF, no tunnel (RFC 9298 section 3.1): the Kotlin/Native portable socket cannot set DF, so it is not opened
-            // there; on the JVM the portable socket has DF (probe mode through ksl)
-            val target =
-                try {
-                    DatagramIo.open(loopback, IoPreference.Portable)
-                } catch (e: io.kuicksilver.quic.QuicException.DontFragmentUnavailable) {
-                    println("negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut skipped: ${e.message}")
-                    pair.close()
-                    return@h3Test
-                }
+            // the JVM's portable socket has DF (probe mode through ksl); the Kotlin/Native portable socket cannot set DF, so it
+            // is never a QUIC or CONNECT-UDP socket there (no DF, no tunnel: KtorDatagramIoTest.negative_thePortableSocketIsRefusedWithoutDf)
+            val target = DatagramIo.open(loopback, IoPreference.Portable)
             val rig =
                 ProxyRig(pair) { _ ->
                     UdpProxyConfig(
