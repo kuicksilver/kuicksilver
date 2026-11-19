@@ -16,3 +16,18 @@ tasks.withType<Test>().configureEach {
     systemProperty("kuicksilver.test.heapDumps", dumpPath) // where the fuzz tests name the case running last (FuzzCase.kt)
     doFirst { dumps.mkdirs() } // a HeapDumpPath that is no directory would be taken as a file name
 }
+
+// A failed test shows its assertion's message and stack on the console, so the CI job's log says what failed. Gradle's
+// default (exceptionFormat SHORT) printed only the exception's class and a location, "kotlin.AssertionError at null:-1" for
+// a Kotlin/Native test, and the message was only in the uploaded HTML report. Every test task: the JVM's Test and Kotlin/
+// Native's KotlinNativeTest (both AbstractTestTask). Failures only: no event for a test that passed, started or was skipped;
+// the stack is cut at the test's entry point (Gradle's TRUNCATE filter, the default).
+tasks.withType<AbstractTestTask>().configureEach {
+    testLogging {
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}
