@@ -380,13 +380,13 @@ class ClientConnectUdpProxyTlsTest {
     }
 
     /**
-     * A QUIC server on `[::1]:`[port] whose ALPN shares nothing with `h3` (its handshakes fail in TLS), counting the
-     * ClientHellos in [hellos]; null when that port is taken on ::1 (the caller skips).
+     * A QUIC server on `[::1]:`[port] (0: a free one) whose ALPN shares nothing with `h3` (its handshakes fail in TLS),
+     * counting the ClientHellos in [hellos], with the port it bound.
      */
     private suspend fun badTlsOnIpv6(
         port: Int,
         hellos: AtomicReference<Int>,
-    ): QuicEndpoint? {
+    ): Pair<QuicEndpoint, Int> {
         val tls =
             proxyServerTls {
                 alpn = listOf("hq-interop")
@@ -395,12 +395,12 @@ class ClientConnectUdpProxyTlsTest {
                     null
                 }
             }
-        return runCatching {
+        val ep =
             QuicEndpoint.bind(
                 InetSocketAddress("::1", port),
                 QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
             )
-        }.getOrNull()
+        return ep to ep.localAddress.port
     }
 
     /**
@@ -411,17 +411,23 @@ class ClientConnectUdpProxyTlsTest {
      */
     @Test fun negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout() =
         h3Test {
+            if (!ipv6LoopbackAvailable()) {
+                println(
+                    "negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout skipped: no IPv6 loopback ([::1]:0 does not bind)",
+                )
+                return@h3Test
+            }
             for (silent in listOf(true, false)) {
                 val hellos = AtomicReference(0)
-                val listening = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
-                val port = listening.localAddress.port
+                // one port on both: a port taken on ::1 gets a fresh pair, never a skip
+                val (listening, bad, port) =
+                    bindOnSamePort(
+                        { p -> DatagramIo.open(InetSocketAddress("127.0.0.1", p)).let { it to it.localAddress.port } },
+                        { it.close() },
+                        { p -> badTlsOnIpv6(p, hellos) },
+                        { it.closeAndJoin() },
+                    )
                 if (!silent) listening.close()
-                val bad = badTlsOnIpv6(port, hellos)
-                if (bad == null) {
-                    listening.close()
-                    println("negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout skipped: [::1]:$port taken")
-                    return@h3Test
-                }
                 try {
                     testClient(Http3DiscoveryMode.H3Only, engine = {
                         dns = TwoProxyAddresses
@@ -454,19 +460,28 @@ class ClientConnectUdpProxyTlsTest {
      */
     @Test fun negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure() =
         h3Test {
+            if (!ipv6LoopbackAvailable()) {
+                println(
+                    "negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure skipped: no IPv6 loopback ([::1]:0 does not bind)",
+                )
+                return@h3Test
+            }
             val proxy = loopbackProxy()
             val silentTarget = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
-            val (proxyServer, proxyPort) =
-                testServer(configure = { connectUdp = true }, tls = {
-                    identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
-                }) { routing { route("/") { connectUdp(proxy) } } }
             val hellos = AtomicReference(0)
-            val bad = badTlsOnIpv6(proxyPort, hellos)
+            // the proxy on 127.0.0.1 and the failing server on ::1 share a port: a port taken on ::1 gets a fresh pair
+            val (proxyServer, bad, proxyPort) =
+                bindOnSamePort(
+                    { p ->
+                        testServer(port = p, configure = { connectUdp = true }, tls = {
+                            identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
+                        }) { routing { route("/") { connectUdp(proxy) } } }
+                    },
+                    { it.stop(100, 500) },
+                    { p -> badTlsOnIpv6(p, hellos) },
+                    { it.closeAndJoin() },
+                )
             try {
-                if (bad == null) {
-                    println("negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure skipped: [::1]:$proxyPort taken")
-                    return@h3Test
-                }
                 testClient(Http3DiscoveryMode.H3Only, engine = {
                     dns = TwoProxyAddresses
                     connectUdpProxy = udpProxy(proxyPort)
@@ -478,7 +493,7 @@ class ClientConnectUdpProxyTlsTest {
                 assertTrue(hellos.load() > 0, "the ::1 proxy got no ClientHello")
                 assertEquals(1, proxy.stats.tunnelsOpened, "the tunnel's CONNECT did not reach the proxy")
             } finally {
-                bad?.closeAndJoin()
+                bad.closeAndJoin()
                 proxyServer.stop(100, 500)
                 silentTarget.close()
             }

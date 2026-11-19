@@ -86,14 +86,19 @@ class ClientH3SharedTicketsTest {
                         identity = ClientFixtures.identity()
                     }
                 val accepted = Channel<Http3Connection>(Channel.UNLIMITED)
-                val ep4 = server(InetSocketAddress("127.0.0.1", 0), tls, accepted)
-                val port = ep4.localAddress.port
-                val ep6 = runCatching { server(InetSocketAddress("::1", port), tls, accepted) }.getOrNull()
+                if (!ipv6LoopbackAvailable()) {
+                    println("aTicketFromIpv4ResumesOverIpv6 skipped: this host has no IPv6 loopback ([::1]:0 does not bind)")
+                    return@coroutineScope
+                }
+                // one port on both: a port taken on ::1 gets a fresh pair, never a skip
+                val (ep4, ep6, port) =
+                    bindOnSamePort(
+                        { p -> server(InetSocketAddress("127.0.0.1", p), tls, accepted).let { it to it.localAddress.port } },
+                        { it.close() },
+                        { p -> server(InetSocketAddress("::1", p), tls, accepted).let { it to it.localAddress.port } },
+                        { it.close() },
+                    )
                 try {
-                    if (ep6 == null) {
-                        println("aTicketFromIpv4ResumesOverIpv6 skipped: needs ::1 with port $port free")
-                        return@coroutineScope
-                    }
                     var v6Only = false
                     testClient(Http3DiscoveryMode.H3Only, engine = {
                         http3 { earlyData = true }
@@ -125,7 +130,7 @@ class ClientH3SharedTicketsTest {
                     }
                 } finally {
                     ep4.close()
-                    ep6?.close()
+                    ep6.close()
                     coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
                 }
             }
