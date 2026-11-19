@@ -150,8 +150,12 @@ tests on API 24 (emulator)`, so that a failure on an old runtime shows up before
   its one retry of a stalled APK install ([`tools/ci/android-connected-check.sh`](../tools/ci/android-connected-check.sh)).
   It never uses the emulator of the other device steps: [`tools/ci/avd-api24.sh`](../tools/ci/avd-api24.sh) starts the
   AVD `ksl_api24` headless on console port 5580, unless it already runs there, points Gradle at that device alone
-  (`ANDROID_SERIAL=emulator-5580`) and shuts it down afterwards only if it started it. The AVD is created once, with the
-  4 GiB data partition the hosted CI gives API 24:
+  (`ANDROID_SERIAL=emulator-5580`) and shuts it down afterwards only if it started it. Before the tests it checks the
+  app heap the device gives (`dalvik.vm.heapgrowthlimit`, else `dalvik.vm.heapsize`): at least 256 MiB, what the hosted
+  CI's x86_64 API 24 image gives, where the arm64 image limits an app to 48 MiB and the HTTP/2 device tests run out of
+  memory. It boots the emulator with that limit (`-prop dalvik.vm.heapgrowthlimit`), and fails before the tests on an
+  emulator started otherwise. The AVD is created once, with the 4 GiB data partition the hosted CI gives API 24, 2 GiB
+  of RAM and a 256 MiB heap; `create` run again on an existing AVD sets the same values again:
 
   ```sh
   ~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "system-images;android-24;default;arm64-v8a"   # if missing
@@ -159,12 +163,21 @@ tests on API 24 (emulator)`, so that a failure on an old runtime shows up before
   tools/ci/avd-api24.sh status      # whether it exists and whether its emulator runs
   ```
 
+  `KSL_AVD_API24_PORT`, `KSL_AVD_API24_HEAP_LIMIT` and `KSL_AVD_API24_BOOT_TIMEOUT` change the port, the heap limit
+  and the boot timeout (the script's header). The current-API device steps, in turn, run on `emulator-5554` only
+  ([`tools/ci/device-serial.sh`](../tools/ci/device-serial.sh); `KSL_DEVICE_SERIAL` names another device) and refuse
+  to start without it, so an API 24 emulator left running never takes their tests.
+
 - All three test only the modules that changed since the branch left `origin/main`, and the modules that depend on
   them ([`tools/ci/changed-modules.sh`](../tools/ci/changed-modules.sh)): the dependencies are read from every module's
-  `build.gradle.kts`, test scopes included. A change outside the module directories selects every module, unless it is
-  one no build or test reads (documentation outside `docs/guide/`, `.github/`, the samples, the gate's and the release's
-  own scripts); an unknown path selects every module. With no module changed they pass without running anything.
-  `KSL_MATRIX_ALL_MODULES=1` makes them test every module; a dry run that selects one of them prints the scope.
+  `build.gradle.kts`, test scopes included. Committed, staged and unstaged changes count, and untracked files under the
+  module directories and the build's own inputs. A change outside the module directories selects every module, unless it
+  is one no build or test reads (documentation outside `docs/guide/`, `.github/`, the samples, the gate's and the
+  release's own scripts); an unknown path selects every module. With no module changed they pass without running
+  anything. `KSL_MATRIX_ALL_MODULES=1` makes them test every module (`0` or unset scopes them; any other value is
+  refused), and a release run (`--with-interop --with-windows`) always tests every module. The scope is computed once,
+  before step 1, printed (by a dry run too) and written into the gate record (`old_platforms.jvm`,
+  `old_platforms.android`, `old_platforms.why`), so a pass that tested no module says so.
 
 ### Repository checks
 

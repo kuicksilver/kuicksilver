@@ -43,4 +43,16 @@ t negative_onlyAndFrom      2 "together"                             -- --only 3
 t negative_missingProducer  2 "select those steps too: --only 43,46" -- --only 46
 t negative_missingMarkers   2 "select those steps too: --only 66-68" -- --only 68
 t negative_fromMissesLink   2 "select those steps too: --only 61,69-76" -- --from 69
+KSL_MATRIX_ALL_MODULES=yes t negative_allModulesValue 2 "KSL_MATRIX_ALL_MODULES='yes'" -- --only 34
+KSL_MATRIX_ALL_MODULES=" 1" t negative_allModulesSpace 2 "KSL_MATRIX_ALL_MODULES=' 1'" -- --only 1
+# a release run tests every module on the old platforms, whatever KSL_MATRIX_ALL_MODULES says
+out=$(KSL_MATRIX_ALL_MODULES=0 bash "$script" --dry-run --with-interop --with-windows --only 34,56 2>&1)
+if grep -q '^scope of the old-platform steps: a release run' <<< "$out" && grep -q '^  JDK 17 and 25: kuicksilver-native ' <<< "$out" \
+  && grep -q '^  API 24: *kuicksilver-' <<< "$out"; then echo "ok   releaseRunTestsEveryModule"
+else echo "FAIL releaseRunTestsEveryModule:"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
+# the current-API device steps run through tools/ci/device-serial.sh, never on whatever device is attached
+for nm in "android: device tests (emulator)" "android: connection migration (emulator, host peer)" "android: compose demo migration (emulator, host server)"; do
+  if grep -F "step \"$nm\"" "$script" | grep -qF 'bash tools/ci/device-serial.sh "$dev" $G'; then echo "ok   pinnedDevice[$nm]"
+  else echo "FAIL pinnedDevice[$nm]: not run through tools/ci/device-serial.sh"; fails=$((fails + 1)); fi
+done
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

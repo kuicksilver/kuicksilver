@@ -91,7 +91,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    tools/ci/local-matrix.sh --with-interop --with-windows
    ```
    Hours: the steps of `build.yml`'s matrix on this Mac (Docker for Linux and mingw, the Android emulator running, the
-   interop images, the Windows VM). Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
+   interop images, the Windows VM). The API 24 device step starts and stops an emulator of its own, from an AVD
+   created once with `tools/ci/avd-api24.sh create` ([process.md](process.md#old-platforms-jdk-17-and-25-android-api-24));
+   a release run tests every module on JDK 17, JDK 25 and API 24, not only the changed ones. Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
    commit from start to end. Any later commit needs a new run, and only a run of every step counts: one with `--only`
    or `--from` (re-running some steps after a fix) writes `build/ci/gate/<commit>.partial`, never the stamp. The Compose

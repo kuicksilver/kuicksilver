@@ -5,7 +5,10 @@
 # the same module and interop case lists (tools/ci/matrix.sh), so moving to GitHub Actions is a change of runner, not of scripts. Docker provides Linux and mingw; the Android
 # emulator must be running for the device steps but the API 24 one, which starts and stops its own (tools/ci/avd-api24.sh).
 # The old-platform steps (JVM tests on JDK 17 and 25, device tests on API 24) test only the modules changed since origin/main
-# and their dependents (tools/ci/changed-modules.sh); KSL_MATRIX_ALL_MODULES=1 makes them test every module.
+# and their dependents (tools/ci/changed-modules.sh); KSL_MATRIX_ALL_MODULES=1 makes them test every module (0 or unset
+# scopes them, any other value is refused), and a release run (--with-interop --with-windows) always tests every module.
+# The scope is computed once, before step 1, printed, and written into the gate record (old_platforms.*). The current-API
+# device steps run on emulator-5554 only (tools/ci/device-serial.sh; KSL_DEVICE_SERIAL names another device).
 # Usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows] [--with-browser]
 #                                                      [--only <steps> | --from <n>]
 # --with-interop also runs the QUIC Interop Runner against every peer with both images (tools/interop/run-local.sh --check-required): hours, needs the peer images.
@@ -45,6 +48,10 @@ while [ $# -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     *) refuse_args "unknown option '$a'" ;; esac
 done
+case "${KSL_MATRIX_ALL_MODULES-}" in ''|0|1) ;; *) refuse_args "KSL_MATRIX_ALL_MODULES='${KSL_MATRIX_ALL_MODULES}': 1 (every module on the old platforms) or 0 (the changed ones), nothing else" ;; esac
+# a release run tests every module on the old platforms: its gate must not depend on what changed since origin/main
+release_run=0
+if [ "$with_interop" = 1 ] && [ "$with_windows" = 1 ]; then release_run=1; KSL_MATRIX_ALL_MODULES=1; export KSL_MATRIX_ALL_MODULES; fi
 # Kotlin incremental compilation is off: a gate must not trust compiler state left by earlier builds in this checkout
 # (Kotlin 2.4.20's classpath-snapshot diff failed on stale state in a gate run, 2026-10-16).
 G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false"; failed=0; n=0; results=""
@@ -164,13 +171,12 @@ win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does
 jdk_tests() { # <N>: CI's jdk-compat job for JDK N: the JVM suites, compiled against the JDK 17 API as always, run on a JDK N
   # toolchain (-Pkuicksilver.test.jdk, found through org.gradle.java.installations.paths as CI finds setup-java's), from
   # JDK 24 on with restricted native access denied unless enabled (JEP 472); the modules of tools/ci/changed-modules.sh
-  local v="$1" home mods; local -a jvm_args=()
+  local v="$1" home mods="$scope_jvm"; local -a jvm_args=()
   home=$(/usr/libexec/java_home -v "$v" 2>/dev/null) || home=""
   if [ -z "$home" ] || ! grep -Eq "^JAVA_VERSION=\"${v}[.\"]" "$home/release" 2>/dev/null; then
     echo "no JDK $v: /usr/libexec/java_home -v $v finds none (Homebrew: brew install openjdk@$v)"; return 2
   fi
-  # shellcheck disable=SC2086
-  mods=$(bash tools/ci/changed-modules.sh $KSL_MODULES) || return
+  echo "== scope: $scope_why"
   [ -n "$mods" ] || { echo "no module to test on JDK $v (KSL_MATRIX_ALL_MODULES=1 tests every one)"; return 0; }
   [ "$v" -lt 24 ] || jvm_args=("-Pkuicksilver.test.jvmArgs=--illegal-native-access=deny --enable-native-access=ALL-UNNAMED")
   echo "== JDK $v: $home"
@@ -179,9 +185,8 @@ jdk_tests() { # <N>: CI's jdk-compat job for JDK N: the JVM suites, compiled aga
 }
 android_api24() { # CI's android job at API 24: androidConnectedCheck (with its one retry of a stalled APK install) of the
   # kuicksilver.kmp modules tools/ci/changed-modules.sh selects, on the AVD ksl_api24 (emulator-5580), never another device
-  local mods
-  # shellcheck disable=SC2046
-  mods=$(bash tools/ci/changed-modules.sh $(grep -l 'id("kuicksilver.kmp")' kuicksilver-*/build.gradle.kts | cut -d/ -f1)) || return
+  local mods="$scope_android"
+  echo "== scope: $scope_why"
   [ -n "$mods" ] || { echo "no module to test on API 24 (KSL_MATRIX_ALL_MODULES=1 tests every one)"; return 0; }
   # shellcheck disable=SC2086
   KSL_CONNECTED_TASKS="$(ksl_tasks androidConnectedCheck $mods)" bash tools/ci/avd-api24.sh run \
@@ -289,12 +294,14 @@ step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-cl
 step --needs "android: AAR" "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
 step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh && bash tools/prefix/check-no-unprefixed-test.sh'
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
-step "check: local-matrix step selection"        bash -c 'bash tools/ci/local-matrix-test.sh && bash tools/ci/changed-modules-test.sh && bash tools/ci/android-connected-check-test.sh'   # --dry-run only: the refusals of --only/--from; the module scope of the old-platform steps on fixed path lists
+step "check: local-matrix step selection"        bash -c 'bash tools/ci/local-matrix-test.sh && bash tools/ci/changed-modules-test.sh && bash tools/ci/android-connected-check-test.sh && bash tools/ci/avd-api24-test.sh'   # --dry-run only: the refusals of --only/--from; the module scope of the old-platform steps; the device pinning and the API 24 emulator's checks (fake adb)
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
 if [ "$skip_android" = 0 ]; then
-step "android: device tests (emulator)"         $G androidConnectedCheck
-step "android: connection migration (emulator, host peer)" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
-step "android: compose demo migration (emulator, host server)" $G -p samples/compose-demo :androidApp:migrationDemoDeviceTest   # HTTP/3 survives the switch, OkHttp breaks; a skip fails
+# the current-API emulator only (ANDROID_SERIAL): an API 24 emulator left running would otherwise run these tests too
+dev="${KSL_DEVICE_SERIAL:-emulator-5554}"
+step "android: device tests (emulator)"         bash tools/ci/device-serial.sh "$dev" $G androidConnectedCheck
+step "android: connection migration (emulator, host peer)" bash tools/ci/device-serial.sh "$dev" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
+step "android: compose demo migration (emulator, host server)" bash tools/ci/device-serial.sh "$dev" $G -p samples/compose-demo :androidApp:migrationDemoDeviceTest   # HTTP/3 survives the switch, OkHttp breaks; a skip fails
 step "android: device tests on API 24 (emulator)" android_api24   # CI's android (24): its own AVD and emulator, started and stopped here
 fi
 # shellcheck disable=SC2086
@@ -404,14 +411,25 @@ if [ -n "$selection" ]; then
   echo "selection: --${selection%%=*} ${selection#*=}: $([ "$cnt" = 1 ] && echo step || echo steps) $(picked_ranges), $cnt of $total; a partial run, never a gate (its record: build/ci/gate/<commit>.partial)"
 fi
 pre_wanted=" "; for k in $(picked); do pre_wanted="$pre_wanted${pres[k]} "; done
-# the module scope of the old-platform steps, when one is selected (the steps themselves log it too)
+# the module scope of the old-platform steps, computed once when one is selected: printed here, logged by the steps and
+# written into the gate record, so a pass that tested no module says so
+scoped=0; scope_jvm=""; scope_android=""; scope_why="no old-platform step selected"
 for k in $(picked); do
-  case "${names[k]}" in "jvm: module tests on JDK "*|"android: device tests on API 24 (emulator)") ;; *) continue ;; esac
-  echo "scope of the old-platform steps (JDK 17 and 25: these modules; API 24: those of them with the kuicksilver.kmp plugin):"
-  # shellcheck disable=SC2086
-  bash tools/ci/changed-modules.sh $KSL_MODULES 2>&1 >/dev/null | sed 's/^/  /'
-  break
+  case "${names[k]}" in "jvm: module tests on JDK "*|"android: device tests on API 24 (emulator)") scoped=1; break ;; esac
 done
+if [ "$scoped" = 1 ]; then
+  scope_err=$(mktemp)
+  # shellcheck disable=SC2046,SC2086   # module lists split into arguments
+  { scope_jvm=$(bash tools/ci/changed-modules.sh $KSL_MODULES 2> "$scope_err" | tr '\n' ' ') \
+    && scope_why=$(head -1 "$scope_err" | sed 's/^changed-modules: //') \
+    && scope_android=$(bash tools/ci/changed-modules.sh $(grep -l 'id("kuicksilver.kmp")' kuicksilver-*/build.gradle.kts | cut -d/ -f1) 2>/dev/null | tr '\n' ' '); } \
+    || { cat "$scope_err" >&2; rm -f "$scope_err"; echo "local matrix: refused before step 1: the module scope of the old-platform steps failed" >&2; exit 2; }
+  rm -f "$scope_err"; scope_jvm="${scope_jvm% }"; scope_android="${scope_android% }"
+  [ "$release_run" = 0 ] || scope_why="a release run (--with-interop --with-windows) tests every module; $scope_why"
+  echo "scope of the old-platform steps: $scope_why"
+  echo "  JDK 17 and 25: ${scope_jvm:-no module (the steps pass without running a test)}"
+  echo "  API 24:        ${scope_android:-no module (the step passes without running a test)}"
+fi
 wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
 # "interop" (the JVM interop image) is the Linux OpenSSL of the platforms build-image.sh packs, found as it finds them:
 # KSL_INTEROP_PLATFORMS, else the Docker server's architecture (not uname -m, which a Rosetta shell reports as x86_64 on
@@ -508,7 +526,10 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes
     [ -z "$selection" ] || echo "selected=$(picked_ranges)"
     echo "tree=$tree"; echo "race-repeat=$race_repeat"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
-    echo "with_windows=$with_windows"; echo "with_browser=$with_browser"; echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
+    echo "with_windows=$with_windows"; echo "with_browser=$with_browser"
+    if [ "$scoped" = 1 ]; then echo "old_platforms.all_modules=${KSL_MATRIX_ALL_MODULES:-0}"; echo "old_platforms.why=$scope_why"
+      echo "old_platforms.jvm=${scope_jvm:-none}"; echo "old_platforms.android=${scope_android:-none}"; fi
+    echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
   if [ -z "$selection" ]; then echo "gate record: $record (result=$result, tree $tree)"
   else echo "partial record: $record (result=$result, tree $tree; --${selection%%=*} ${selection#*=}: not a gate, no stamp written)"; fi
 fi
