@@ -306,6 +306,9 @@ internal class H2Pool(
         for (c in all) c.close()
     }
 
+    /** Tests: the open connections. */
+    internal fun connectionsForTest(): List<H2Conn> = lock.withLock { routes.values.flatMap { it.conns } }
+
     /** Connections (the resource probe). */
     val connectionCount: Int get() = lock.withLock { routes.values.sumOf { it.conns.size } }
 

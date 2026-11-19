@@ -761,15 +761,16 @@ class ClientConnectionDiagnosticsTest {
                         withTimeout(10.seconds) { bodyRead.await() }
                         val waiting = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
                         withTimeout(10.seconds) { held.await() }
-                        (c.engine as KuicksilverEngine)
-                            .h3
-                            .connectionsForTest()
-                            .single()
-                            .quic
-                            .close(0x101, "test kills the connection")
+                        val conn =
+                            (c.engine as KuicksilverEngine)
+                                .h3
+                                .connectionsForTest()
+                                .single()
+                        conn.quic.close(0x101, "test kills the connection")
                         val aErr = assertNotNull(withTimeout(10.seconds) { waiting.await() }, "the waiting call failed")
                         val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
                         assertEquals(Transport.Quic, dA.transport)
+                        assertConnectionWideUntouched(dA, aErr, conn.closed.await(), conn.quic.closed.await())
                         aFailed.complete(Unit)
                         val bErr = assertNotNull(withTimeout(10.seconds) { body.await() }, "the body read failed")
                         assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
@@ -954,10 +955,18 @@ class ClientConnectionDiagnosticsTest {
                                 }
                             }
                         withTimeout(10.seconds) { bodyRead.await() }
+                        val conn =
+                            (c.engine as KuicksilverEngine)
+                                .h3
+                                .connectionsForTest()
+                                .single()
                         closeNow.complete(Unit)
                         val aErr = assertNotNull(withTimeout(10.seconds) { waiting.await() })
                         val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
                         assertEquals(3, dA.attempts)
+                        val closed = conn.closed.await()
+                        assertIs<io.kuicksilver.http3.Http3Exception.RequestNotProcessed>(closed, "the session's end: $closed")
+                        assertConnectionWideUntouched(dA, aErr, closed, conn.quic.closed.await())
                         aFailed.complete(Unit)
                         val bErr = assertNotNull(withTimeout(10.seconds) { body.await() })
                         assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
@@ -1044,10 +1053,17 @@ class ClientConnectionDiagnosticsTest {
                                 }
                             }
                         withTimeout(10.seconds) { bodyRead.await() }
+                        val conn =
+                            (c.engine as KuicksilverEngine)
+                                .h1
+                                .h2
+                                .connectionsForTest()
+                                .single()
                         val aErr = assertNotNull(runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull())
                         val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
                         assertEquals(Transport.Tcp, dA.transport)
                         assertEquals(HttpProtocolVersion.HTTP_2_0, dA.connection?.protocol)
+                        assertConnectionWideUntouched(dA, aErr, assertNotNull(conn.client.closeCause, "the connection's end"))
                         aFailed.complete(Unit)
                         val bErr = assertNotNull(withTimeout(10.seconds) { body.await() })
                         assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
@@ -1055,6 +1071,23 @@ class ClientConnectionDiagnosticsTest {
                 }
             }
         }
+
+    /**
+     * The connection's own end, the instances every call on it (and the listener) gets: the failing call's pool recorded each
+     * of them (by identity), none carries a call's diagnostics, and the call threw something else, its own.
+     */
+    private fun assertConnectionWideUntouched(
+        d: ProtocolDiagnostics,
+        thrown: Throwable,
+        vararg shared: Throwable,
+    ) {
+        for (x in shared) {
+            assertTrue(d.isConnectionWide(x), "the pool recorded the connection's end: $x")
+            assertTrue(x.suppressedExceptions.none { it is FailureDiagnostics }, "the shared instance carries a call's: $x")
+            assertNull(x.kuicksilverDiagnostics, "$x")
+            assertTrue(thrown !== x, "the call threw the shared instance $x")
+        }
+    }
 
     /** One exception that ends two calls (a connection's failure, shared) names neither; a cancellation carries nothing. */
     @Test fun negative_aSharedOrCancellingExceptionCarriesNoDiagnostics() {
