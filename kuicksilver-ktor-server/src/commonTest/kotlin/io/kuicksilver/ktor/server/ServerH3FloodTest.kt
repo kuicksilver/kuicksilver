@@ -33,6 +33,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -215,18 +216,33 @@ class ServerH3FloodTest {
      * H3_EXCESSIVE_LOAD. The server's budget clock is frozen, so exactly its 1000 tokens are spent whatever the host's
      * speed: with the clock running, a host that lets fewer than 33 resets a second through (a hosted Windows runner) refills
      * the bucket as fast as the flood empties it, and the connection never ended.
+     *
+     * Each request is held by its handler until the reset reaches it, so every reset comes before a complete response, and
+     * every one is counted. A request the server had already answered in full (`call.respondText`, as before) is stopped
+     * with H3_NO_ERROR once its response is complete (RFC 9114 section 4.1), and a client reset that comes after that stop
+     * costs nothing (`H3Session.countClientReset`): on a host where the client's reset lost the race to the response, the
+     * flood spent too few tokens and the connection stayed open (the Windows runner, run 44453449060). The flood's end is
+     * kept as well as its count, so a flood that stops for another reason fails with that reason, not with a timeout.
      */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     @Test
     fun negative_h3RapidResetFloodEndsWithExcessiveLoad() =
         h3ServerTest {
-            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
             server.engine.h3ConnectionForTest = { it.glitchClockForTest = { 0L } } // no refill: exactly 1000 tokens
             val (ep, c) = rawH3(port)
             try {
-                runCatching { repeat(5_000) { c.rapidReset("/") } } // fails once the server closed
-                val closed = withTimeout(15.seconds) { c.closed.await() }
+                var sent = 0
+                val flood = runCatching { repeat(5_000) { c.rapidReset("/hold").also { sent++ } } } // fails once the server closed
+                val closed =
+                    withTimeoutOrNull(15.seconds) { c.closed.await() }
+                        ?: fail("the connection is open after $sent resets; the flood ended with ${flood.exceptionOrNull()}")
                 assertEquals(H3_EXCESSIVE_LOAD, assertIs<QuicException.ConnectionLost.ApplicationClosed>(closed).code)
+                // the 1000 tokens were all spent first: the 1001st reset ended the connection, no earlier one
+                assertTrue(sent > 1_000, "the connection ended after $sent resets")
+                // the connection's end cancels whatever handler was still running
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
                 // the server still serves a new connection
                 val (ep2, c2) = rawH3(port)
                 try {
