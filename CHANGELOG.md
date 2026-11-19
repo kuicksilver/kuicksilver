@@ -852,6 +852,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: `ConnectionStats.memoryCeiling` counts the allocation of the stream reassembly buffers as its receive part,
+  `3 x maxConnectionWindow` plus 512 bytes for each stream the peer may open (`maxBidiStreams + maxUniStreams`), where it
+  counted `maxConnectionWindow`, the unread bytes alone; the allocation is now bounded by that (see Security). With the
+  defaults the value grows by about 30 MiB.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

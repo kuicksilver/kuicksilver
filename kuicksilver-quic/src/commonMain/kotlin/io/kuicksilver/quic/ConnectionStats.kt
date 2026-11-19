@@ -44,7 +44,11 @@ public class ConnectionStats internal constructor(
     public val pathMtu: Int,
     public val currentPath: PathId,
     public val datagramsDropped: Long,
-    /** Sum of the per-connection memory ceilings (threat-model 3.2): the most memory this connection may ever hold. */
+    /**
+     * Sum of the per-connection memory ceilings (threat-model 3.2): the most memory this connection may ever hold. Its receive part
+     * is the allocation of the stream reassembly buffers, not only the unread bytes: 3 x `maxConnectionWindow` (unread, kept after
+     * reads, doubling slack) plus 512 bytes for each stream the peer may open; a stream the application opens adds up to 512 bytes.
+     */
     public val memoryCeiling: Long,
     public val packetsReceived: Long,
     public val packetsSent: Long,

@@ -687,8 +687,11 @@ class LifecycleTest {
         val c = QuicConfig.Default
         val p = CorePair()
         p.use { _ ->
+            // the reassembly buffers' allocation: the connection window held unread, as much again kept after reads (the budget),
+            // the doubling slack on what is unread, and the smallest buffer of each stream the peer may open
             assertEquals(
-                c.maxConnectionWindow + c.maxSendBuffer + 3L * c.limits.cryptoOutOfOrderPerLevel + c.limits.cryptoPostHandshake +
+                3L * c.maxConnectionWindow + 512L * (c.maxBidiStreams + c.maxUniStreams) + c.maxSendBuffer +
+                    3L * c.limits.cryptoOutOfOrderPerLevel + c.limits.cryptoPostHandshake +
                     c.limits.undecryptablePackets * 1200L +
                     c.limits.qlogBytes,
                 p.client.stats.memoryCeiling,

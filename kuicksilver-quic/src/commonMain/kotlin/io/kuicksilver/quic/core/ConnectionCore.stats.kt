@@ -5,6 +5,7 @@ package io.kuicksilver.quic.core
 
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.recovery.SpaceId
+import io.kuicksilver.quic.stream.Reassembler
 
 // Memory accounting of one connection.
 
@@ -47,7 +48,10 @@ internal fun ConnectionCore.sizesForTest(): Map<String, Long> {
     return m
 }
 
+// the receive term is what the reassembly buffers may hold allocated (RangeBudget): the connection window unread, as much again
+// kept after reads, the doubling slack on what is unread, and the smallest buffer of each stream the peer may open
 internal fun ConnectionCore.memoryCeiling(): Long =
-    config.maxConnectionWindow + config.maxSendBuffer +
+    3L * config.maxConnectionWindow + Reassembler.MIN_WINDOW.toLong() * (config.maxBidiStreams + config.maxUniStreams) +
+        config.maxSendBuffer +
         3L * config.limits.cryptoOutOfOrderPerLevel + config.limits.cryptoPostHandshake +
         config.limits.undecryptablePackets.toLong() * path.mtu + config.limits.qlogBytes
