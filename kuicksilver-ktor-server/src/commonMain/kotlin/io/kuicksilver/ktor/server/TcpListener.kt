@@ -453,7 +453,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             input = i
                                             // section 3.4: the preface, within the first request head's deadline; a client
                                             // still sending it then (or when the server stops) goes to HTTP/1.1, whose own
-                                            // deadline has passed too, or which closes it as idle
+                                            // deadline has passed too, or which answers the head that started (or closes a
+                                            // connection that sent nothing)
                                             h2c == H2cMode.Only ||
                                                 withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
                                                     i.startsWithH2PrefaceUnless(draining, configuration.h2cPrefaceCheckForTest)

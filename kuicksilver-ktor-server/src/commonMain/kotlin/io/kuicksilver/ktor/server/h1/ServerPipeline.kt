@@ -717,14 +717,16 @@ private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS", "TRACE")
  * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser
  * reports), false when [draining] completes first and nothing is there to read. A byte that arrives as [draining]
  * completes is a head that started: true, whichever side the race picked ([HeadLimitedInput.hasInput] after the wait
- * ended).
+ * ended). A stop that completed before the wait began is the same: bytes already in the socket's buffer (a connection
+ * accepted as the server stopped, or handed over by the h2c preface check) are a head that started, read and answered.
  */
 @OptIn(InternalAPI::class)
 private suspend fun awaitRequestStart(
     input: HeadLimitedInput,
     draining: Job,
 ): Boolean {
-    if (!input.readBuffer.exhausted() || input.isClosedForRead) return true
+    // the pipeline's own buffer and the socket's: no other coroutine reads the input here, so hasInput may look at both
+    if (input.hasInput() || input.isClosedForRead) return true
     if (draining.isCompleted) return false
     return coroutineScope {
         val started =

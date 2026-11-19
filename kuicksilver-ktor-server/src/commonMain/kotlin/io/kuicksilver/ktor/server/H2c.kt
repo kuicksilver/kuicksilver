@@ -34,8 +34,11 @@ public enum class H2cMode {
      * once (a request shorter than the preface is never held back), and the wait for them is part of the first request
      * head's deadline (`requestHeaderTimeoutSeconds`), as on HTTP/1.1. Go's `golang.org/x/net/http2/h2c` handler and Netty's
      * `CleartextHttp2ServerUpgradeHandler` serve both on one port too. When the server stops during the wait, a whole
-     * preface already received is HTTP/2 (GOAWAY, then the close); a connection with only part of it is closed at once
-     * without an answer, so the stop waits for no slow client.
+     * preface already received is HTTP/2 (GOAWAY, then the close); a connection with only part of it goes to HTTP/1.1,
+     * which reads it as a request head that started (as any other started head when the server stops): a whole request
+     * line `PRI * HTTP/2.0` is answered 505 with `Connection: close` at once, a shorter part waits for the rest within
+     * the request-head deadline (and the stop's grace period) like any slow head. Only a connection that sent nothing is
+     * closed at once without an answer.
      */
     WithHttp11,
 
@@ -86,8 +89,9 @@ private fun ByteReadChannel.prefaceArrived(): Boolean {
 }
 
 /**
- * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server reads no further request, so a
- * connection still sending its first octets goes to HTTP/1.1 instead of holding the stop for the request-head deadline.
+ * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server waits for no preface, so a
+ * connection still sending its first octets goes to HTTP/1.1, which answers what started as a request head and closes a
+ * connection that sent nothing.
  * When the stop wins, the check is ended (joined, so nothing else reads the input meanwhile) and the octets looked at
  * again: a whole preface that came with the stop is HTTP/2 all the same (RFC 9113 section 3.3: prior knowledge), and
  * the HTTP/2 connection ends it with GOAWAY (section 6.8), never an HTTP/1.1 answer the client cannot read. The check

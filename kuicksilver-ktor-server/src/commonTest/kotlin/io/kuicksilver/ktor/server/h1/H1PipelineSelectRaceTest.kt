@@ -103,6 +103,36 @@ class H1PipelineSelectRaceTest {
         }
 
     /**
+     * The stop completed before the pipeline's first wait for a head, with a whole request already in the socket's buffer
+     * (a connection accepted as the server stops, or handed over by the h2c preface check the stop won): the request is
+     * read and answered, and the connection ends after it. Before, the wait saw its own empty buffer and the completed
+     * stop, and closed the connection over the request without an answer.
+     */
+    @Test fun negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered() =
+        runTest {
+            val draining = Job()
+            var seen: ByteReadChannel? = null
+            // the side that waits for the head never wins: only the stop's side (already completed) can decide
+            requestStartForTest = { if (it === seen) awaitCancellation() }
+            val toServer = ByteChannel()
+            seen = toServer
+            toServer.writeStringUtf8("GET /first HTTP/1.1\r\nHost: s\r\n\r\n")
+            toServer.flush()
+            draining.complete()
+            val fromServer = ByteChannel()
+            val job =
+                backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 1.hours, 1.hours, draining = draining) {
+                    handled += it.uri.toString()
+                    respond("first")
+                }
+            runCurrent()
+            assertTrue(job.isCompleted, "the connection stayed open after the stop")
+            val got = fromServer.readBuffer().readString()
+            assertTrue(got.endsWith("first"), "the request already in the socket's buffer was not answered: '$got'")
+            assertEquals(listOf("/first"), handled)
+        }
+
+    /**
      * The socket's input as a socket that is slow to hand over: its wait for bytes never returns, while the bytes that came
      * sit in its buffer, as when the stop cancels a wait whose bytes arrived but whose resumption had not run yet.
      */

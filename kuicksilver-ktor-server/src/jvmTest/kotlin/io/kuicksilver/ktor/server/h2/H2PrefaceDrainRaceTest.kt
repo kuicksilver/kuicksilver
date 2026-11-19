@@ -4,10 +4,17 @@
 
 package io.kuicksilver.ktor.server.h2
 
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 import io.kuicksilver.ktor.server.RawFrame
@@ -17,11 +24,13 @@ import io.kuicksilver.ktor.server.serverTest
 import io.kuicksilver.ktor.server.tlsServer
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -221,6 +230,59 @@ class H2PrefaceDrainRaceTest {
                     raw.close()
                     withTimeout(20.seconds) { stop.await() }
                 }
+            }
+        }
+
+    /**
+     * [H2cMode.WithHttp11]: a whole HTTP/1.1 request is in when the stop wins the preface check (the check is held, so the
+     * stop is the only side that can win). HTTP/1.1 takes the connection after the stop, and the request that arrived is
+     * answered with `Connection: close`, never dropped unanswered.
+     */
+    @Test fun negative_aWholeHttp11RequestAsTheStopWinsTheCheckIsAnsweredOverH2cWithHttp11() =
+        serverTest {
+            val request = "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n"
+            val inCheck = CompletableDeferred<Unit>()
+            val server =
+                kuicksilverServer(null, configure = {
+                    plainConnector {
+                        host = "127.0.0.1"
+                        port = 0
+                        h2c = H2cMode.WithHttp11
+                    }
+                    http3 = false
+                    h2cPrefaceCheckForTest = { input ->
+                        input.awaitContent(request.length) // the whole request is in
+                        inCheck.complete(Unit)
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            server.startSuspend(wait = false)
+            val port =
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                try {
+                    val w = tcp.openWriteChannel(autoFlush = true)
+                    val r = tcp.openReadChannel()
+                    w.writeStringUtf8(request)
+                    withTimeout(10.seconds) { inCheck.await() }
+                    coroutineScope {
+                        val stop = async { server.stopSuspend(10_000, 15_000) }
+                        val got = withTimeout(20.seconds) { r.readBuffer().readString() }
+                        assertTrue(got.startsWith("HTTP/1.1 200 "), "the request that arrived was not answered: '$got'")
+                        assertTrue(Regex("(?im)^connection: *close\r?$").containsMatchIn(got), "no Connection: close: '$got'")
+                        assertTrue(got.endsWith("ok"), got)
+                        withTimeout(20.seconds) { stop.await() }
+                    }
+                } finally {
+                    tcp.close()
+                }
+            } finally {
+                selector.close()
             }
         }
 

@@ -3449,6 +3449,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineS
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.aHeadThatWonTheRaceIsAnsweredAndTheStopClosesTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadInTheSocketsBufferAsTheServerStoppedIsAnswered
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadThatArrivedAsTheServerStoppedIsAnswered
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.headStartedBeforeTheStopIsServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.idleKeepAliveConnectionClosesAtStop
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.lingerAfterARefusalEndsAtStop
@@ -3640,6 +3641,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrain
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsThePrefaceWinsIsServedOverTls
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverTls
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aWholeHttp11RequestAsTheStopWinsTheCheckIsAnsweredOverH2cWithHttp11
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aWholePrefaceAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.NativeServerH3Test.h3ServedAndAdvertisedOnNative
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.contentRoundTrips
