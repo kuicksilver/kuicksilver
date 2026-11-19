@@ -610,9 +610,13 @@ a resumption's re-verification under ECH too:
   (`CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL`, `CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY`); an uncached status is unknown, which
   is a soft fail as always, and a missing intermediate that is not cached fails the chain.
 - **Apple**: `SecTrustSetNetworkFetchAllowed(false)`: no OCSP, CRL or intermediate fetch.
-- **JVM**: the default trust manager fetches nothing unless the process enabled it (`com.sun.net.ssl.checkRevocation`
-  with `ocsp.enable` or CRL distribution points, `com.sun.security.enableAIAcaIssuers`); those settings are process-wide
-  and are not turned off per connection, so leave them off where ECH matters.
+- **JVM**: the chain is checked under the default trust manager's anchors by a PKIX trust manager of the connection's own
+  with revocation checking off, so no OCSP or CRL request goes out even where the process set
+  `com.sun.net.ssl.checkRevocation` (the status is then unchecked, as a cache-only check that finds nothing). Fetching a
+  missing intermediate from the AIA extension is not per connection: the JDK does it only when the process set
+  `com.sun.security.enableAIAcaIssuers` (off by default), and nothing can turn it off for one connection, so leave it off
+  where ECH matters. With `ssl.TrustManagerFactory.algorithm` set to `SunX509` the default manager is kept: it checks no
+  revocation and fetches nothing.
 - **Android**: the platform trust manager makes no revocation or AIA requests during the handshake.
 - **Linux Native** (`Platform` is OpenSSL with the system directory) and `AnchoredCa`: `ksl` fetches nothing; revocation
   comes from stapled OCSP and configured CRLs only. A `TrustConfig.Custom` verifier is the application's code and must
