@@ -90,6 +90,7 @@ internal class KslNioSocket(
             runCatching { delegate.close() }
             throw e
         }
+        trackLeak("tcp.socket")
     }
 
     /** `SO_SNDBUF` and `SO_RCVBUF` of the channel as the system reports them now (a test hook). */
@@ -396,6 +397,7 @@ internal class KslNioServerSocket(
             runCatching { delegate.close() }
             throw e
         }
+        trackLeak("tcp.listener")
     }
 
     /** False once the descriptor is closed (tests). */

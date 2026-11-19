@@ -34,6 +34,7 @@ import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
 import io.kuicksilver.http3.webtransport.wtServerVersion
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -588,6 +589,7 @@ internal class ServerRequestImpl(
         if (!finished) {
             finished = true
             session.activeServerRequests.remove(st.id)
+            LeakRegistry.close(leakId)
             session.datagrams.unregister(st.id)
             if (isWebTransport) session.wtSessionEnded(st.id, wtSession)
             session.responseHandedOver(st)
@@ -642,6 +644,9 @@ internal class ServerRequestImpl(
         if (method == "CONNECT") st.markTunnel()
         session.activeServerRequests[st.id] = this
     }
+
+    /** The leak sentinel's record of this request while [H3Session.activeServerRequests] holds it (0 in production). */
+    private val leakId = LeakRegistry.open("h3.serverRequest")
 
     override suspend fun acceptConnect(headers: Http3Headers): Http3Stream {
         check(method == "CONNECT") { "acceptConnect() needs a CONNECT request" }

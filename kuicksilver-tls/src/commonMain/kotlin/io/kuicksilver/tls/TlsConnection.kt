@@ -1298,6 +1298,12 @@ public class SessionCache(
         /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */
         public val Default: SessionCache = SessionCache()
 
+        init {
+            // the process's own cache: the leak sentinel empties it before it counts a test's native sessions (off in production)
+            io.kuicksilver.native.LeakRegistry
+                .processCache { Default.clear() }
+        }
+
         internal fun key(
             sni: String?,
             reference: String,

@@ -1,10 +1,13 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic.runtime
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -303,6 +306,12 @@ internal class StreamRuntime(
 
     /** Completes when both halves are done (our data acknowledged or reset, the peer's consumed) or the connection ended. */
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    init {
+        // the leak sentinel's record of this stream (off in production: one read): it ends when the stream is done
+        val leak = LeakRegistry.open("quic.stream")
+        if (leak != 0L) done.invokeOnCompletion { LeakRegistry.close(leak) }
+    }
 
     internal fun finished() {
         retired()

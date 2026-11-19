@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ClientEngineClosedException
@@ -34,6 +36,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicException
@@ -267,6 +270,9 @@ internal class KuicksilverEngine(
                     selector.close()
                 }
             }
+        // the leak sentinel's record of this engine (off in production: one read): it ends once the cleanup after close() ran
+        val leak = LeakRegistry.open("client.engine")
+        if (leak != 0L) cleanup.invokeOnCompletion { LeakRegistry.close(leak) }
     }
 
     /** Set by [close]: new calls fail at once, the ones already made finish before the cleanup runs. */

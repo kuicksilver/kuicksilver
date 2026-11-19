@@ -23,6 +23,7 @@ import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.http3.webtransport.WtSettings
 import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.http3.webtransport.WtVersion
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
@@ -84,6 +85,12 @@ internal class H3Session(
     val dispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcherForTest ?: Dispatchers.Default.limitedParallelism(1)
     internal val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
+
+    init {
+        // the leak sentinel's record of this session (off in production: one read): it ends with the session's coroutines
+        val leak = LeakRegistry.open("h3.session")
+        if (leak != 0L) job.invokeOnCompletion { LeakRegistry.close(leak) }
+    }
 
     /** Where [launchDrainer] readers run: outside [scope], so one started after the connection ended still runs. */
     internal val afterEnd = CoroutineScope(SupervisorJob() + dispatcher + CoroutineName("http3-drain"))

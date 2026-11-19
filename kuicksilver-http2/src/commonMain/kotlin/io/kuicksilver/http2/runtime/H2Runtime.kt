@@ -21,6 +21,7 @@ import io.kuicksilver.http2.core.Role
 import io.kuicksilver.http2.message.H2Fields
 import io.kuicksilver.http2.message.H2Messages
 import io.kuicksilver.http2.message.MalformedMessage
+import io.kuicksilver.native.LeakRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -204,6 +205,12 @@ internal class H2Runtime(
 
     private val job = SupervisorJob(parent.coroutineContext[Job])
     private val scope = CoroutineScope(parent.coroutineContext + job)
+
+    init {
+        // the leak sentinel's record of this connection (off in production: one read): it ends with the runtime's coroutines
+        val leak = LeakRegistry.open("h2.connection")
+        if (leak != 0L) job.invokeOnCompletion { LeakRegistry.close(leak) }
+    }
 
     /** Completed by the peer's first SETTINGS (its preface, RFC 9113 section 3.4); failed when the connection ends first. */
     val prefaceReceived = CompletableDeferred<Unit>()

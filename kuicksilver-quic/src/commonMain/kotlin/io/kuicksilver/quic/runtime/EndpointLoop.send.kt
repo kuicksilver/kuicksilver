@@ -248,7 +248,7 @@ private inline fun EndpointLoop.flushBody(
                     timers.remove(c)
                     core.noteClock(now) // the IDs a moved connection leaves behind are kept from now, not from its last event
                     core.remove(c)
-                    runtimes.remove(c)
+                    runtimes.remove(c)?.forgotten()
                     if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
                 } else {
                     // held for a drain while its idle deadline stays passed: no timer of it runs until the drain decides
