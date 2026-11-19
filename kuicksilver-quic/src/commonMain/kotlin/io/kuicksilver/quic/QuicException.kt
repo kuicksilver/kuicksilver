@@ -138,10 +138,15 @@ public sealed class QuicException(
             override fun createCopy(): VersionNegotiation = VersionNegotiation(offered, supported)
         }
 
-        /** The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2). */
-        public class NoViablePath : ConnectionLost("no viable path") {
+        /**
+         * The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2); [cause], when set,
+         * says why the path could not carry QUIC (a custom `DatagramIo` may report one).
+         */
+        public class NoViablePath(
+            cause: Throwable? = null,
+        ) : ConnectionLost(if (cause == null) "no viable path" else "no viable path: ${cause.message}", cause) {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): NoViablePath = NoViablePath()
+            override fun createCopy(): NoViablePath = NoViablePath(cause)
         }
 
         /** A Stateless Reset from the peer (RFC 9000 section 10.3): it lost its state; the connection drains without a CONNECTION_CLOSE. */
@@ -260,9 +265,41 @@ public sealed class QuicException(
         override fun createCopy(): DatagramUnsupported = DatagramUnsupported(reason)
     }
 
+    /**
+     * The UDP socket cannot set the Don't Fragment bit (RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP
+     * layer. In IPv4, the Don't Fragment (DF) bit MUST be set if possible"), so QUIC is not used on it: [DatagramIo.open] and
+     * [QuicEndpoint.bind] throw it where no traffic of the socket could get DF (the JVM without the `ksl` native library
+     * below JDK 19, which has no `IP_DONTFRAGMENT`; Android or a system refusing both DF modes; the Kotlin/Native portable
+     * socket). Where only one address family has no DF ([QuicEndpoint.dontFragmentUnavailable]), nothing is sent to it: the
+     * path closes, or on the active path the connection ends with [ConnectionLost.TransportClosed] (NO_VIABLE_PATH) caused by
+     * it, and a server drops that family's Initials. The HTTP/3 client of kuicksilver-ktor-client falls back to TCP.
+     *
+     * @property family the address family without DF; null: the whole socket.
+     * @property detail why DF cannot be set.
+     */
+    public class DontFragmentUnavailable(
+        public val family: IpFamily?,
+        public val detail: String,
+    ) : QuicException(
+            "QUIC not used: the UDP socket cannot set Don't Fragment (RFC 9000 section 14) " +
+                "${if (family == null) "on any traffic" else "for ${family.label} destinations"}: $detail",
+        ) {
+        /** A copy of this exception, for the coroutines stack-trace recovery. */
+        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail)
+    }
+
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */
     public class EndpointClosing : QuicException("endpoint is closing") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
         override fun createCopy(): EndpointClosing = EndpointClosing()
     }
+}
+
+/** An IP address family, as [QuicException.DontFragmentUnavailable] names it. */
+public enum class IpFamily(
+    /** "IPv4" or "IPv6". */
+    public val label: String,
+) {
+    V4("IPv4"),
+    V6("IPv6"),
 }

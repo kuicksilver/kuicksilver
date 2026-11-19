@@ -19,6 +19,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramPolicy
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.PathFailureReason
@@ -31,9 +32,13 @@ import io.kuicksilver.quic.QuicPath
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
+import io.kuicksilver.quic.emit
+import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.TlsRole
@@ -299,6 +304,75 @@ internal class ConnectionRuntime(
             core.silentClose(QuicException.ConnectionLost.NoViablePath())
             drainEvents()
         }
+    }
+
+    /**
+     * The system refused one of this connection's datagrams of [size] bytes (at most 1200), sent on [target] to [to], as above
+     * the path MTU it cached ([io.kuicksilver.quic.PathMtuRefusedException]): that path cannot carry QUIC, and in DO mode every
+     * later datagram on it meets the same refusal. RFC 9000 section 14: the endpoint "MUST immediately cease sending QUIC
+     * packets, except for those in PMTU probes or those containing CONNECTION_CLOSE frames, on the affected path". A path
+     * other than the active one is closed; on the active one the connection ends with a CONNECTION_CLOSE of NO_VIABLE_PATH
+     * (a small packet may still fit; an HTTP/3 client falls back to TCP) instead of losing datagrams until the idle timeout.
+     * Loop dispatcher only.
+     */
+    internal fun onPathMtuRefused(
+        size: Int,
+        target: DatagramIo,
+        to: InetSocketAddress?,
+    ) {
+        if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining) return
+        val p =
+            pathList.firstOrNull {
+                (it.io ?: loop.io) === target && (to == null || it.remote.sameIpAs(to)) && it.stateFlow.value != PathState.Closed
+            }
+        // a refusal for a destination none of this connection's paths on that socket has is not this connection's
+        if (p == null && to != null) return
+        if (p != null && p.id != core.path.id) {
+            loop.observer.logger.emit(LogLevel.Warn) {
+                "a $size-byte datagram to ${p.remote} refused as above the path MTU the system cached (EMSGSIZE): closing that path"
+            }
+            closePath(p)
+            loop.core.markDirty(core)
+            return
+        }
+        loop.observer.logger.emit(LogLevel.Warn) {
+            "a $size-byte datagram refused as above the path MTU the system cached (EMSGSIZE: DF in DO mode after an ICMP message " +
+                "claiming less than 1200); closing the connection: no viable path"
+        }
+        core.fail(TransportError.NO_VIABLE_PATH, 0, "path MTU below 1200 (EMSGSIZE)", null)
+        loop.core.markDirty(core)
+        drainEvents()
+    }
+
+    /**
+     * A datagram of this connection on [target] to [to] (null: not known) was not sent because the socket has no DF for that
+     * address family ([e]; the other half of a dual-stack socket has it): no QUIC without DF (RFC 9000 section 14). As
+     * [onPathMtuRefused]: a path other than the active one is closed; on the active one the connection ends with a
+     * CONNECTION_CLOSE of NO_VIABLE_PATH caused by [e] (which can only go out where the socket has DF; towards that family it
+     * is refused like the rest). A destination none of this connection's paths on that socket has is not its own. Loop
+     * dispatcher only.
+     */
+    internal fun onDontFragmentUnavailable(
+        e: QuicException.DontFragmentUnavailable,
+        target: DatagramIo,
+        to: InetSocketAddress?,
+    ) {
+        if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining) return
+        val p =
+            pathList.firstOrNull {
+                (it.io ?: loop.io) === target && (to == null || it.remote.sameIpAs(to)) && it.stateFlow.value != PathState.Closed
+            }
+        if (p == null && to != null) return
+        if (p != null && p.id != core.path.id) {
+            loop.observer.logger.emit(LogLevel.Warn) { "${e.message}; closing the path to ${p.remote}" }
+            closePath(p)
+            loop.core.markDirty(core)
+            return
+        }
+        loop.observer.logger.emit(LogLevel.Warn) { "${e.message}; closing the connection: no viable path" }
+        core.fail(TransportError.NO_VIABLE_PATH, 0, "no Don't Fragment for this address family", e)
+        loop.core.markDirty(core)
+        drainEvents()
     }
 
     /** Loop dispatcher only; never called for the active path. */

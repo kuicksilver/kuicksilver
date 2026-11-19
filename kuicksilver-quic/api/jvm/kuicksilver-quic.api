@@ -560,6 +560,15 @@ public final class io/kuicksilver/quic/IoPreference : java/lang/Enum {
 	public static fun values ()[Lio/kuicksilver/quic/IoPreference;
 }
 
+public final class io/kuicksilver/quic/IpFamily : java/lang/Enum {
+	public static final field V4 Lio/kuicksilver/quic/IpFamily;
+	public static final field V6 Lio/kuicksilver/quic/IpFamily;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getLabel ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/IpFamily;
+	public static fun values ()[Lio/kuicksilver/quic/IpFamily;
+}
+
 public abstract interface class io/kuicksilver/quic/KuicksilverLogger {
 	public static final field Companion Lio/kuicksilver/quic/KuicksilverLogger$Companion;
 	public abstract fun isEnabled (Lio/kuicksilver/quic/LogLevel;)Z
@@ -999,6 +1008,7 @@ public abstract interface class io/kuicksilver/quic/QuicEndpoint : java/lang/Aut
 	public abstract fun closeAndJoin (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun connect (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun getDontFragmentUnavailable ()Lio/kuicksilver/quic/IpFamily;
 	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public abstract fun getStats ()Lio/kuicksilver/quic/EndpointStats;
 	public fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -1013,6 +1023,7 @@ public final class io/kuicksilver/quic/QuicEndpoint$Companion {
 
 public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
 	public static fun connectEarly (Lio/kuicksilver/quic/QuicEndpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static fun getDontFragmentUnavailable (Lio/kuicksilver/quic/QuicEndpoint;)Lio/kuicksilver/quic/IpFamily;
 	public static fun shutdown-rnQQ1Ag (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun updateLoadBalancer (Lio/kuicksilver/quic/QuicEndpoint;Lio/kuicksilver/quic/QuicLbConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -1112,6 +1123,8 @@ public final class io/kuicksilver/quic/QuicException$ConnectionLost$Internal : i
 
 public final class io/kuicksilver/quic/QuicException$ConnectionLost$NoViablePath : io/kuicksilver/quic/QuicException$ConnectionLost {
 	public fun <init> ()V
+	public fun <init> (Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$NoViablePath;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 }
@@ -1169,6 +1182,14 @@ public final class io/kuicksilver/quic/QuicException$DatagramUnsupported : io/ku
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DatagramUnsupported;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 	public final fun getReason ()Lio/kuicksilver/quic/DatagramUnsupportedReason;
+}
+
+public final class io/kuicksilver/quic/QuicException$DontFragmentUnavailable : io/kuicksilver/quic/QuicException {
+	public fun <init> (Lio/kuicksilver/quic/IpFamily;Ljava/lang/String;)V
+	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DontFragmentUnavailable;
+	public synthetic fun createCopy ()Ljava/lang/Throwable;
+	public final fun getDetail ()Ljava/lang/String;
+	public final fun getFamily ()Lio/kuicksilver/quic/IpFamily;
 }
 
 public final class io/kuicksilver/quic/QuicException$EndpointClosing : io/kuicksilver/quic/QuicException {

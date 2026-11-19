@@ -295,6 +295,12 @@ public class EndpointCore internal constructor(
     internal var droppedUndecryptable = 0L
     internal var droppedStateless = 0L
 
+    /**
+     * The address family the endpoint's socket cannot set DF for ([DfFamilyRestricted]): a client Initial from it is dropped
+     * before any state (no Retry, no Version Negotiation), as nothing could answer it without DF (RFC 9000 section 14).
+     */
+    internal var noDfFamily: IpFamily? = null
+
     /** Set by `QuicEndpoint.shutdown`: every new client Initial is refused with CONNECTION_REFUSED, statelessly (RFC 9000 section 10.2.3). */
     @Volatile internal var shuttingDown = false
     internal var testForgeRetryScidInTp = false
@@ -799,6 +805,11 @@ public class EndpointCore internal constructor(
                 droppedStateless++
                 return null
             }
+        // no DF towards that family: nothing could answer this client (RFC 9000 section 14), so no state, Retry or VN for it
+        if (noDfFamily != null && ipFamilyOf(from) == noDfFamily) {
+            droppedStateless++
+            return null
+        }
         if (hv.type == PacketType.ZeroRtt && serverEarly != null && !hv.unsupportedVersion) {
             bufferEarly(data, length, from, ecn, now)
             return null

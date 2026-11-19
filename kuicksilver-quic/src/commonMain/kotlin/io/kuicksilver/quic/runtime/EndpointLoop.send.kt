@@ -9,15 +9,21 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DfFamilyRestricted
 import io.kuicksilver.quic.NonSuspendingSend
+import io.kuicksilver.quic.PATH_MTU_FLOOR
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
+import io.kuicksilver.quic.PathMtuRefusedException
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.onEmsgsize
+import io.kuicksilver.quic.ipFamilyOf
 import io.kuicksilver.quic.runtime.EndpointLoop.Companion.FLUSH_ROUNDS
+import io.kuicksilver.quic.sameIpAs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -100,12 +106,30 @@ private inline fun EndpointLoop.sendOrLoseWith(
                 // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
                 val full = isFullThisFlush(target)
                 val sent = send(full).coerceIn(0, batch.count)
-                // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
-                if (rt != null && target is NonSuspendingSend) {
+                // a datagram of this batch the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6). Taken after
+                // every batch, stateless ones (rt null) too, so a refusal is never charged to the next connection's batch
+                if (target is NonSuspendingSend) {
                     val tooBig = target.takeEmsgsize()
-                    if (tooBig > 0) {
-                        rt.core.onEmsgsize(tooBig)
-                        core.markDirty(rt.core)
+                    if (rt != null && tooBig > 0) {
+                        val to = slotOfLength(batch, tooBig)
+                        if (tooBig <= PATH_MTU_FLOOR) {
+                            // DF in DO mode (probe refused) met a cached path MTU below QUIC's floor; a refusal that matches no
+                            // datagram of this batch is not this connection's, and one whose length several destinations share
+                            // (a probe on another path) cannot be placed: the socket reports only the length
+                            if (to != null) rt.onPathMtuRefused(tooBig, target, to)
+                        } else {
+                            rt.core.onEmsgsize(tooBig)
+                            core.markDirty(rt.core)
+                        }
+                    }
+                }
+                // slots the socket skipped for want of DF towards their family (no QUIC without DF): their path fails
+                if (target is DfFamilyRestricted) {
+                    for (to in target.takeDfRefusals()) {
+                        val family = ipFamilyOf(to)
+                        val e =
+                            QuicException.DontFragmentUnavailable(family, "this socket has no DF for ${family?.label ?: to}")
+                        rt?.onDontFragmentUnavailable(e, target, to)
                     }
                 }
                 if (sent < batch.count && !full) fullThisFlush.add(target)
@@ -114,6 +138,15 @@ private inline fun EndpointLoop.sendOrLoseWith(
             } catch (e: CancellationException) {
                 ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
                 sendFailures++
+                batch.count
+            } catch (e: QuicException.DontFragmentUnavailable) {
+                // no DF for this destination's address family: nothing goes out without it, the connection has no viable path
+                sendFailures++
+                rt?.onDontFragmentUnavailable(e, target, null)
+                batch.count
+            } catch (e: PathMtuRefusedException) {
+                sendFailures++
+                if (rt != null && e.size <= PATH_MTU_FLOOR) rt.onPathMtuRefused(e.size, target, e.destination)
                 batch.count
             } catch (e: SocketDefunctException) {
                 sendFailures++
@@ -126,6 +159,28 @@ private inline fun EndpointLoop.sendOrLoseWith(
             }
         }
     if (lost > 0) lose(lost, rt)
+}
+
+/**
+ * The one destination of the slots of [batch] that are [length] bytes long, or null when none is, or when such slots go to
+ * more than one destination (the accelerated socket reports a refused datagram by its length only, so the refusal cannot be
+ * placed on a path; a later batch places it).
+ */
+internal fun slotOfLength(
+    batch: PacketBatch,
+    length: Int,
+): io.ktor.network.sockets.InetSocketAddress? {
+    var found: io.ktor.network.sockets.InetSocketAddress? = null
+    for (i in 0 until batch.count) {
+        if (batch.length(i) != length) continue
+        val a = batch.address(i) ?: continue
+        if (found == null) {
+            found = a
+        } else if (!found.sameIpAs(a)) {
+            return null
+        }
+    }
+    return found
 }
 
 internal fun EndpointLoop.lose(

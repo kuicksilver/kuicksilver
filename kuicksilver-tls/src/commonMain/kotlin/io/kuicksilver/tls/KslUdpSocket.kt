@@ -292,6 +292,13 @@ public class KslUdpSocket private constructor(
 
         /** Granted on a wildcard bind only: [receive] reports each datagram's destination and [send] sends from a named source (RFC 9000 section 9). */
         public const val PKTINFO: Int = KslConst.UDP_PKTINFO
+
+        /**
+         * Granted only, with [DF]: a half of the socket refused probe mode and has DF in DO mode (a seccomp filter, gVisor;
+         * Windows without `IP_MTU_DISCOVER`; Apple, which has no modes), so a forged ICMP message can make the system refuse
+         * sends to a peer (counted by [emsgsize]; the caller fails the path).
+         */
+        public const val DF_DO: Int = KslConst.UDP_DF_DO
         public const val ADDR_LEN: Int = KslConst.UDP_ADDR_LEN
         public const val MAX_BATCH: Int = KslConst.UDP_MAX_BATCH
         public const val PTB_QUOTE: Int = KslConst.UDP_PTB_QUOTE

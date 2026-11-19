@@ -251,6 +251,13 @@ public enum class FallbackReason {
      */
     UdpUnreachable,
 
+    /**
+     * QUIC is not used on this host or for this address family: its UDP socket cannot set the Don't Fragment bit
+     * ([io.kuicksilver.quic.QuicException.DontFragmentUnavailable]; RFC 9000 section 14), for example the JVM without the
+     * `ksl` native library below JDK 19, or a system refusing both DF modes. The call goes over TCP at once.
+     */
+    QuicUnavailable,
+
     /** HTTP/1.1 won the race before HTTP/3 answered: HTTP/3 had not failed (yet), it was slower or is still connecting. */
     H3NotReady,
 
@@ -323,6 +330,23 @@ public val HttpResponse.kuicksilverDiagnostics: ProtocolDiagnostics?
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun classifyH3Failure(e: Throwable?): FallbackReason? =
+    when {
+        e != null && causedByNoDf(e) -> FallbackReason.QuicUnavailable
+        else -> classifyH3FailureByType(e)
+    }
+
+/** Whether [e] or one of its causes is [QuicException.DontFragmentUnavailable] (a bound endpoint, or a connection ended by it). */
+private fun causedByNoDf(e: Throwable): Boolean {
+    var c: Throwable? = e
+    var depth = 0
+    while (c != null && depth++ < 8) {
+        if (c is QuicException.DontFragmentUnavailable) return true
+        c = c.cause
+    }
+    return false
+}
+
+private fun classifyH3FailureByType(e: Throwable?): FallbackReason? =
     when (e) {
         null -> {
             null

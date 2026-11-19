@@ -415,6 +415,14 @@ internal class KslDatagramIo private constructor(
                         warnFallback(logger) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
                     } ?: return null
                 }
+            // no DF, no QUIC (RFC 9000 section 14): a socket the system gave no DF is not used; the portable socket decides
+            if (socket.grantedFlags and KslUdpSocket.DF == 0) {
+                socket.close()
+                warnFallback(logger) { "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket" }
+                return null
+            }
+            // DF in DO mode on a half (KslUdpSocket.DF_DO: probe mode refused, or Apple's DF bit) is DF too; a forged ICMP message
+            // can then make the system refuse sends, which the EMSGSIZE count reports and the endpoint loop turns into a failed path
             try {
                 configure(socket.fd)
             } catch (e: Throwable) {

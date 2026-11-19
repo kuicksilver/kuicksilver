@@ -5,6 +5,7 @@
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "ksl.h"
 
 #define H(x) ((jlong)(intptr_t)(x))
@@ -884,6 +885,42 @@ static jboolean j_udp_take_unreachable(JNIEnv *e, jclass c, jlong h, jbyteArray 
     (*e)->SetIntArrayRegion(e, info, 0, 2, i);
     return JNI_TRUE;
 }
+/* the descriptor of a JDK socket channel (sun.nio.ch.DatagramChannelImpl's int fdVal; on Windows the SOCKET), read through JNI,
+   which no module boundary stops; -1 when the object has no such field (another runtime) */
+static jint j_udp_channel_fd(JNIEnv *e, jclass c, jobject channel) {
+    (void)c;
+    if (!channel)
+        return -1;
+    jclass k = (*e)->GetObjectClass(e, channel);
+    jfieldID f = k ? (*e)->GetFieldID(e, k, "fdVal", "I") : NULL;
+    if (!f) {
+        (*e)->ExceptionClear(e); /* NoSuchFieldError */
+        return -1;
+    }
+    return (*e)->GetIntField(e, channel, f);
+}
+/* strerror(EMSGSIZE) in this process's locale, the text the JDK puts in a send's SocketException on Linux and Apple (it formats
+   errno under setlocale(LC_ALL, "")); null on Windows, whose JDK uses its own table */
+static jstring j_udp_emsgsize_text(JNIEnv *e, jclass c) {
+    (void)c;
+#ifdef _WIN32
+    (void)e;
+    return NULL;
+#else
+    const char *t = strerror(EMSGSIZE);
+    return t ? (*e)->NewStringUTF(e, t) : NULL;
+#endif
+}
+static jint j_udp_fd_df_probe(JNIEnv *e, jclass c, jlong fd) {
+    (void)e;
+    (void)c;
+    return ksl_udp_fd_df_probe((int64_t)fd);
+}
+static jint j_udp_fd_df_mode(JNIEnv *e, jclass c, jlong fd, jint family) {
+    (void)e;
+    (void)c;
+    return ksl_udp_fd_df_mode((int64_t)fd, family);
+}
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     (void)c;
     uint32_t l = 0;
@@ -1088,6 +1125,10 @@ static const JNINativeMethod methods[] = {
     {"icmpSend", "(I[BI[B[B)Z", (void *)j_icmp_send},
     {"icmpClose", "(I)V", (void *)j_icmp_close},
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
+    {"udpChannelFd", "(Ljava/lang/Object;)I", (void *)j_udp_channel_fd},
+    {"udpFdDfProbe", "(J)I", (void *)j_udp_fd_df_probe},
+    {"udpFdDfMode", "(JI)I", (void *)j_udp_fd_df_mode},
+    {"udpEmsgsizeText", "()Ljava/lang/String;", (void *)j_udp_emsgsize_text},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},
     {"resolve", "(" S_STR "I)[B", (void *)j_resolve},

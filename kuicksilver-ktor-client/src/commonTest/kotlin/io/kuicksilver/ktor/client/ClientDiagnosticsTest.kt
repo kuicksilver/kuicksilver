@@ -40,6 +40,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
@@ -256,6 +257,31 @@ class ClientDiagnosticsTest {
                         line.second.startsWith("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/1.1 (fallback=BrokenAlternative"),
                         line.second,
                     )
+                }
+            }
+        }
+
+    /**
+     * No DF, no QUIC (RFC 9000 section 14): an endpoint whose UDP socket cannot set Don't Fragment fails to bind with
+     * [QuicException.DontFragmentUnavailable], and the call goes over TCP at once, with [FallbackReason.QuicUnavailable].
+     */
+    @Test fun noDontFragmentFallsBackToTcpAtOnce() =
+        clientTest {
+            tlsH1WithSilentUdp(handler = serveOk) { port ->
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                    http3 {
+                        hardDelay = Duration.INFINITE
+                        endpoint =
+                            io.kuicksilver.quic.quicEndpointConfig {
+                                io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF on this socket") }
+                            }
+                    }
+                }).use { c ->
+                    val d = withTimeout(10.seconds) { assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics) }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
+                    assertEquals(FallbackReason.QuicUnavailable, d.fallback)
+                    assertIs<QuicException.DontFragmentUnavailable>(d.h3Failure)
                 }
             }
         }
