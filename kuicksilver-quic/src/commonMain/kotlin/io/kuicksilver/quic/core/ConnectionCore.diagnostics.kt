@@ -15,27 +15,25 @@ import io.kuicksilver.tls.TlsRole
 // only; nothing here allocates per packet.
 
 /**
- * Client: the server's 1-RTT packet that arrived through [socket] carried our ID at [off] in [buf]. The path of that socket
- * keeps it; while the ID stays the same this is one comparison, a new one is looked up among ours once.
+ * Client: the server's 1-RTT packet that arrived through [socket] from [from] carried our ID at [off] in [buf]. The path of
+ * that socket and that peer address keeps it (several paths can share a socket: a probe of the server's preferred address
+ * leaves from the active path's); a packet of no path changes nothing. While the ID stays the same this is one comparison,
+ * a new one is looked up among ours once.
  */
 internal fun ConnectionCore.noteClientRxCid(
     socket: PathId,
+    from: io.ktor.network.sockets.InetSocketAddress,
     buf: PacketBuffer,
     off: Int,
     len: Int,
 ) {
-    val all = paths.all
-    for (i in 0 until all.size) {
-        val p = all[i]
-        if (p.socket != socket) continue
-        val last = p.clientRxCid
-        if (last != null && last.contentEquals(buf, off, len)) return
-        val seq = cids.localSeqOf(buf, off, len)
-        if (seq < 0) return // not one of ours (cannot happen once routed here): the last known stays
-        p.clientRxCidSeq = seq
-        p.clientRxCid = cids.localCidOf(seq)
-        return
-    } // indexed: no iterator per packet (allocation gate)
+    val p = paths.byRemote(socket, from) ?: return // indexed lookup: no iterator per packet (allocation gate)
+    val last = p.clientRxCid
+    if (last != null && last.contentEquals(buf, off, len)) return
+    val seq = cids.localSeqOf(buf, off, len)
+    if (seq < 0) return // not one of ours (cannot happen once routed here): the last known stays
+    p.clientRxCidSeq = seq
+    p.clientRxCid = cids.localCidOf(seq)
 }
 
 /**

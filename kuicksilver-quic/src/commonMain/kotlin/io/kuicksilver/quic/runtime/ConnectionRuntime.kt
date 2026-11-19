@@ -176,6 +176,7 @@ internal class ConnectionRuntime(
 
     /** Publishes [pathInfos] anew when anything [shownIds] and its siblings record changed. Loop dispatcher only. */
     private fun refreshPathInfos() {
+        if (finished) return // the application side ended (onClosed went out): the last list stays, nothing follows it
         val all = core.paths.all
         val active = core.paths.active
         var changed = shown != all.size || all.size > shownIds.size

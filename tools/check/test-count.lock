@@ -3722,9 +3722,11 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsC
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.theListenerHearsTheLifecycleInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.zeroRttCountsOfferedAndAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aMigrationShowsTheNewPathWithFreshIds
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aPreferredAddressProbeIsCreditedToItsOwnPath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aReaderOnAnotherThreadSeesWholeLists
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aRotationShowsOnBothSides
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.negative_pathInfoToStringHasNoConnectionId
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.noPathsUpdateAfterClosed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathEventsAndListAgree
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathsAreThereFromOnOpened
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathsShowTheIdsBothSidesUse
@@ -3892,6 +3894,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_re
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_retirementBacklogBoundary
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_sequenceAtTheRetiredFloorIsKept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_sequenceNumberReusedForAnotherIdIsProtocolViolation
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientRxCidTest.aPacketFromAnotherAddressOnTheSameSocketIsCreditedToItsOwnPath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_secondVnIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_versionNegotiationAfterInitial
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_versionNegotiationAfterRetryIgnored

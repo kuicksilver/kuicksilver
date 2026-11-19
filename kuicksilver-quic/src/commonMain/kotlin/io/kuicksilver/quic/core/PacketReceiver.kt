@@ -443,7 +443,7 @@ internal class PacketReceiver(
         // section 9.5)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server) c.rxDcidSeq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
         // a client notes it per path for the diagnostics (ConnectionInfo.paths): one comparison per packet while the ID stays
-        if (type == PacketType.OneRtt && c.role == TlsRole.Client) c.noteClientRxCid(socket, data, hv.dcidOff, hv.dcidLen)
+        if (type == PacketType.OneRtt && c.role == TlsRole.Client) c.noteClientRxCid(socket, from, data, hv.dcidOff, hv.dcidLen)
         // until the first 1-RTT packet on the active path shows it, the client's Handshake packets there tell which of our IDs it uses:
         // a client whose Finished came without a 1-RTT packet and that rebinds before sending one is still followed with that ID
         if (type == PacketType.Handshake && c.role == TlsRole.Server && c.activeDcidSeq < 0 && c.path.isRemote(from) &&
