@@ -172,7 +172,13 @@ public class TlsSocket private constructor(
                 readDelivery.fail(channel, failure)
                 throw failure
             }
-        }
+        }.also { attachedReader = it }
+
+    /**
+     * The relay above, once attached: [close] and [abortTls] end it. It may wait for room in the application's channel,
+     * as a child of the raw socket's job: an application that stopped reading held that job, and the socket, for good.
+     */
+    @Volatile private var attachedReader: WriterJob? = null
 
     /** How the relay above fails the application's channel ([openDeliveringReadChannel]). */
     internal val readDelivery: ReadDelivery = ReadDelivery()
@@ -255,6 +261,7 @@ public class TlsSocket private constructor(
                 tls.close()
                 runCatching { rawOut.flushAndClose() } // everything handed to the socket's write channel reaches the wire before FIN
                 raw.close()
+                attachedReader?.job?.cancel() // the application stopped reading: nothing more reaches it
             }
         }
     }
@@ -278,6 +285,10 @@ public class TlsSocket private constructor(
         @OptIn(InternalKuicksilverApi::class)
         raw.abort()
         tls.close()
+        // and the application's pumps: the write pump waits for the application's next bytes, the read relay for room in
+        // its channel; both are children of the raw socket's job, which they held, and the socket, for good
+        attachedWriter?.job?.cancel()
+        attachedReader?.job?.cancel()
     }
 
     /**
