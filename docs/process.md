@@ -62,10 +62,11 @@ A test fails when an object it opened is still recorded, or a ksl counter is abo
 close, a connection's draining) is waited for, woken by every close and every native free, bounded by 10 s
 (`KUICKSILVER_LEAK_WAIT_MS`). The failure names each kind and its count; `KUICKSILVER_LEAK_SITES=1` keeps the stack that
 opened each object and prints it. Teardown that took longer than 1.5 s (`KUICKSILVER_LEAK_SLOW_MS`) is reported with its
-time, the test and the kinds it waited for, and fails the test with `KUICKSILVER_LEAK_STRICT=1`. Strict mode is not on in
-CI yet: in the JVM suites (2026-11-19), `ServerH1TimeoutTest.negative_abortedConnectionsReleaseTheirSockets` takes 3 s, the
-bound of its TLS clients' close, which waits for the server's `close_notify` behind a response the clients never read;
-the macOS suites of `kuicksilver-native` and `kuicksilver-ktor-network` pass it, the others were not run strict. A ksl counter that ends
+time, the test and the kinds it waited for, and fails the test with `KUICKSILVER_LEAK_STRICT=1`. Strict mode is on
+in CI (`build.yml`'s workflow env) and in `tools/ci/local-matrix.sh`, which passes it into its Docker steps; the Windows
+VM runner and the Android device runs do not get it. Its first finding was a product one: a TLS client's close waited
+up to its 3 s bound for the server's `close_notify` behind a response the application never read (`TlsSocketCloseTest`).
+A ksl counter that ends
 below its start (the test freed objects it did not make) is reported too: such a drop can hide a leak of the same kind.
 `LeakSentinelTest` holds the negative controls (an object left open, a native key left open, an allow entry that covers
 only its kinds, a slow close in strict mode, a native object freed that the test did not make);

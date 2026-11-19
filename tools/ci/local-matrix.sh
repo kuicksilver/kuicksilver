@@ -172,6 +172,7 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   bash tools/interop/build-image.sh
 }
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
+export KUICKSILVER_LEAK_STRICT="${KUICKSILVER_LEAK_STRICT:-1}" # a slow teardown fails its test, as in CI (docs/process.md)
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .

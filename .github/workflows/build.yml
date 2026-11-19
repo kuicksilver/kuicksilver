@@ -56,6 +56,8 @@ defaults:
     shell: bash
 env:
   G: ./gradlew --stacktrace
+  # the leak sentinel fails a test whose teardown is slow, not only one that leaks (docs/process.md)
+  KUICKSILVER_LEAK_STRICT: "1"
 
 jobs:
   lint:
