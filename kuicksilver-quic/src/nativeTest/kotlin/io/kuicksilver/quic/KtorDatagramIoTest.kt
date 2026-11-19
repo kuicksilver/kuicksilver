@@ -97,7 +97,9 @@ class KtorDatagramIoTest {
      * there 5 s later as well), no thread, while every selector of those binds had ended (`refusedSelectorsRunning`). Three
      * measured rounds tell a cache from a leak: round A with binds, the control C holding the threads without binds, round B
      * with binds again, each counted after a GC. A cache of the runtime fills in the first rounds and stays, so round B adds
-     * nothing; a leak of the binds adds as much in B as in A, and only B decides on Windows.
+     * nothing; a leak of the binds adds as much in B as in A, and only B decides on Windows. The next run (7c92d0695) showed a
+     * cache: Event +55 in round A, +6 in the control, +2 in round B, threads and semaphores flat, the same before and after
+     * the GC. The first busy round of refused binds fills a one-time cache of about 55 events, which then stays.
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
@@ -162,7 +164,7 @@ class KtorDatagramIoTest {
     /**
      * What the handle count was made of at each [mark], by kind ([handleBreakdown]): on Windows, where the count is every
      * handle of the process, a failure says which object types grew (threads and their events, or the sockets and events of a
-     * selector) and what is left after a further 5 s, and every run prints it, so a passing run shows the margin.
+     * selector) and what is left after a further 5 s.
      */
     private class HandleDiagnostics(
         private val what: String,
@@ -182,7 +184,6 @@ class KtorDatagramIoTest {
                 mark("5 s later")
             }
             val text = describe()
-            if (handlesCountThreads) println("KtorDatagramIoTest diagnostics, $what:\n$text")
             assertTrue(ok, "${message()}\n$text")
         }
 
