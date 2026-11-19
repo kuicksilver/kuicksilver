@@ -1382,6 +1382,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_serverWithoutEchIsRetriedWithoutEch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceWithTheRetryConfigurationsOverTcp
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.tlsBlockRunsOncePerConfigListsEntryAtCreation
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aDeadAlternativeReportsAltSvcRaceAndBrokenMark
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aFailedExchangeStillReleasesItsConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aListenerThrowingCancellationNeverFailsTheCall
@@ -5964,6 +5965,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.verify
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.ClientAlertJdkServerTest.negative_aJdkServerReadsTheAlertOfAClientThatRefusesItsCertificate
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.aBlockStillWaitingGivesNull
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.appliesNeverOverlap
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.concurrentRotationsGetDistinctVersions
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.keysAreAppliedWhenTheContextIsBuilt
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.racingAppliesNeverLeaveAnOlderSet

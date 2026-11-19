@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -264,6 +265,38 @@ class ClientEchTest {
     }
 
     /**
+     * The engine runs the `tls` block when it is created: to read its TLS versions, and once more per `configLists` entry, whose
+     * client configuration it builds to check the entry (and again for every connection). A [TlsException.Config] that
+     * build leads to is the entry's IllegalArgumentException; any other exception of the block reaches the caller as it was
+     * thrown.
+     */
+    @Test fun tlsBlockRunsOncePerConfigListsEntryAtCreation() {
+        fun runsAtCreation(entries: Map<String, io.kuicksilver.tls.EchConfigList>): Int {
+            val runs = AtomicInt(0)
+            client(more = {
+                val before = tls
+                tls = {
+                    before()
+                    runs.addAndFetch(1)
+                }
+                ech { configLists = entries }
+            }).close()
+            return runs.load()
+        }
+        val one = runsAtCreation(mapOf("server.test" to listA))
+        val two = runsAtCreation(mapOf("server.test" to listA, "other.test" to listA))
+        assertEquals(one + 1, two, "one more run per configLists entry, no connection made")
+        val thrown =
+            assertFailsWith<IllegalStateException> {
+                client(more = {
+                    tls = { throw IllegalStateException("from the tls block") }
+                    ech { configLists = mapOf("server.test" to listA) }
+                }).close()
+            }
+        assertEquals("from the tls block", thrown.message, "not wrapped")
+    }
+
+    /**
      * Through an HTTP CONNECT proxy the TLS session inside the tunnel is the origin's, with the origin's ECH: the proxy hop
      * is plain TCP and carries no ClientHello of its own (it learns the origin's name from the CONNECT line anyway).
      */
@@ -348,7 +381,9 @@ class ClientEchTest {
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
-                    // the ticket arrives after the handshake: forget the connection, so the next request resumes in 0-RTT
+                    // the ticket arrives after the handshake: wait for it, then forget the connection, so the next request
+                    // resumes in 0-RTT (dropping it before the ticket came would leave nothing to resume with)
+                    withTimeout(30.seconds) { while (engine.h3.ticketsForTest() == 0) yield() }
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
                     keys.rotate(listOf(keyB))
                     gateArmed.store(1)

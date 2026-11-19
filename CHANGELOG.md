@@ -27,7 +27,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).
   Session tickets of connections with ECH and without it are cached apart, never offered on the other kind.
   With ECH accepted, `TrustConfig.Platform` verifies offline (RFC 9849 section 10.7): Windows retrieves URLs and
-  revocation from its cache only, Apple turns off SecTrust's network fetches.
+  revocation from its cache only, Apple turns off SecTrust's network fetches, and the JVM checks the chain under the
+  default anchors with a PKIX trust manager of the connection's own whose revocation checking is off (fetching an
+  intermediate from the AIA extension stays a process-wide JDK setting, `com.sun.security.enableAIAcaIssuers`).
 - Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
   Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
   on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by

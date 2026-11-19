@@ -16,22 +16,68 @@ import java.security.cert.PKIXCertPathBuilderResult
 import java.security.cert.TrustAnchor
 import java.security.cert.X509CertSelector
 import java.security.cert.X509Certificate
+import javax.net.ssl.CertPathTrustManagerParameters
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
 internal actual val platformTrustViaOpenSsl: Boolean = false
 
-/** JVM: the default `X509TrustManager` (honours `javax.net.ssl.trustStore`); it never checks the host name, `ksl` does. */
+/**
+ * JVM: the default `X509TrustManager` (honours `javax.net.ssl.trustStore`); it never checks the host name, `ksl` does.
+ * [offline] (a name an accepted Encrypted Client Hello hid, RFC 9849 section 10.7): the same anchors in a PKIX manager of
+ * this connection's own that checks no revocation ([JvmTrust.offline]).
+ */
 internal actual object PlatformVerifier {
     actual suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
         offline: Boolean,
-    ): PlatformVerdict = JvmTrust.evaluateWith(JvmTrust.defaultTrustManager(), chain, role)
+    ): PlatformVerdict = JvmTrust.evaluate(JvmTrust.defaultTrustManager(), chain, role, offline)
 }
 
 internal object JvmTrust {
+    /** [evaluateWith] under [base], or under its offline form ([offline]) when [offline] is set. */
+    fun evaluate(
+        base: X509TrustManager,
+        chain: List<Certificate>,
+        role: TlsRole,
+        offline: Boolean,
+    ): PlatformVerdict = evaluateWith(if (offline) offline(base) ?: base else base, chain, role)
+
+    /**
+     * A PKIX trust manager with the anchors of [base] (its accepted issuers: the default manager's trust store) and revocation
+     * checking off, so that a verification makes no OCSP or CRL request (RFC 9849 section 10.7: "clients SHOULD take steps
+     * to minimize or protect such requests during certificate validation"). The JDK's PKIX manager checks revocation only
+     * when the process set `com.sun.net.ssl.checkRevocation`, and then fetches; this one never does, whatever the process
+     * set: the revocation status stays unchecked, as a cache-only check that finds nothing. Fetching an intermediate from
+     * the AIA extension is not a parameter of the manager: the JDK's path builder does it only when the process set
+     * `com.sun.security.enableAIAcaIssuers` (read once, for the whole process), so it cannot be turned off here. Null (the
+     * caller keeps [base]) when [base] has no anchors to copy, when the default algorithm is not PKIX (`SunX509` checks no
+     * revocation and fetches nothing anyway), or when the manager cannot be made.
+     */
+    fun offline(base: X509TrustManager): X509TrustManager? {
+        if (TrustManagerFactory.getDefaultAlgorithm() != "PKIX") return null
+        val issuers = base.acceptedIssuers.toList()
+        if (issuers.isEmpty()) return null
+        lastOffline?.let { (key, tm) -> if (key == issuers) return tm }
+        return try {
+            val params = PKIXBuilderParameters(issuers.map { TrustAnchor(it, null) }.toSet(), null)
+            params.isRevocationEnabled = false
+            val tmf = TrustManagerFactory.getInstance("PKIX")
+            tmf.init(CertPathTrustManagerParameters(params))
+            tmf.trustManagers
+                .filterIsInstance<X509TrustManager>()
+                .firstOrNull()
+                ?.also { lastOffline = issuers to it }
+        } catch (_: GeneralSecurityException) {
+            null
+        }
+    }
+
+    // the offline manager of the last anchors asked: the default manager is made per handshake, its anchors are not
+    @Volatile private var lastOffline: Pair<List<X509Certificate>, X509TrustManager>? = null
+
     fun defaultTrustManager(): X509TrustManager {
         val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
         tmf.init(null as KeyStore?)

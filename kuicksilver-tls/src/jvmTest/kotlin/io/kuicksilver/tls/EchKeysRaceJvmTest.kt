@@ -17,10 +17,16 @@ import kotlin.test.assertTrue
 /**
  * A server's ECH keys under concurrency: a context gets its keys when it is built, before any session, and racing rotations
  * and session starts never leave a context decrypting with an older set than the version it records (so a rotation is never
- * lost). The interleavings are forced with the test hooks of [EchServerKeys]; a wait that times out means the code under
- * test serialized the threads (what it should do), and the run goes on.
+ * lost). The interleavings are forced with the test hooks of [EchServerKeys]. A wait that must succeed has [MUST] (a slow
+ * machine still meets it); only a wait whose timeout is the expected outcome (the code under test serialized the threads)
+ * is short ([SERIALIZED]), and the run goes on after it.
  */
 class EchKeysRaceJvmTest {
+    private companion object {
+        const val MUST = 30L // seconds: a wait that must succeed
+        const val SERIALIZED = 1L // seconds: a wait expected to time out
+    }
+
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
         runBlocking { SessionCache.Default.clear() }
@@ -76,17 +82,64 @@ class EchKeysRaceJvmTest {
                 if (slow() && first) {
                     first = false
                     reached.countDown()
-                    go.await(2, TimeUnit.SECONDS)
+                    assertTrue(go.await(MUST, TimeUnit.SECONDS))
                 }
             }
             val t = thread { keys.rotate(listOf(EchKey(EchTestKeys.B))) }
-            assertTrue(reached.await(5, TimeUnit.SECONDS))
+            assertTrue(reached.await(MUST, TimeUnit.SECONDS))
             keys.rotate(listOf(EchKey(EchTestKeys.A))) // the main thread's rotation completes first
             lease.ctx.ensureEchKeys() // a session start takes it
             go.countDown()
-            t.join(5_000)
+            t.join(MUST * 1000)
+            assertTrue(!t.isAlive, "the slow rotation finished")
             keys.beforeSwapForTest = null
             assertEquals(EchStatus.Accepted, handshake(listOf(EchTestKeys.B), server), "the last rotation (B) is in use")
+        } finally {
+            lease.close()
+        }
+    }
+
+    /**
+     * N3: one apply at a time. A session start that finds a newer set while another one applies waits for it (blocked on the
+     * lock, not spinning), and never enters the native apply beside it.
+     */
+    @Test fun appliesNeverOverlap() {
+        val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
+        val server = Fixtures.server { echKeys = keys }
+        val lease = KslContext.acquire(server, quic = true)
+        try {
+            keys.rotate(listOf(EchKey(EchTestKeys.B)))
+            val inside =
+                java.util.concurrent.atomic
+                    .AtomicInteger(0)
+            val overlap =
+                java.util.concurrent.atomic
+                    .AtomicBoolean(false)
+            val firstIn = CountDownLatch(1)
+            val secondIn = CountDownLatch(1)
+            keys.applyHookForTest = { before, _ ->
+                if (before) {
+                    if (inside.incrementAndGet() > 1) overlap.set(true)
+                    if (firstIn.count == 1L) {
+                        firstIn.countDown()
+                        secondIn.await(SERIALIZED, TimeUnit.SECONDS) // the second may not come in: the timeout is expected
+                    } else {
+                        secondIn.countDown()
+                    }
+                } else {
+                    inside.decrementAndGet()
+                }
+            }
+            val a = thread { lease.ctx.ensureEchKeys() }
+            assertTrue(firstIn.await(MUST, TimeUnit.SECONDS))
+            keys.rotate(listOf(EchKey(EchTestKeys.A))) // a newer set, so the second start has one to apply
+            val b = thread { lease.ctx.ensureEchKeys() }
+            a.join(MUST * 1000)
+            b.join(MUST * 1000)
+            keys.applyHookForTest = null
+            assertTrue(!a.isAlive && !b.isAlive, "both session starts finished")
+            assertTrue(!overlap.get(), "two applies ran at once")
+            assertEquals(keys.version, lease.ctx.echAppliedVersion)
         } finally {
             lease.close()
         }
@@ -110,21 +163,22 @@ class EchKeysRaceJvmTest {
             keys.applyHookForTest = { before, v ->
                 if (before && v == v2) {
                     olderRead.countDown()
-                    olderGo.await(2, TimeUnit.SECONDS)
+                    olderGo.await(MUST, TimeUnit.SECONDS)
                 } else if (!before && v > v2) {
                     newerApplied.countDown()
-                    newerGo.await(2, TimeUnit.SECONDS)
+                    newerGo.await(MUST, TimeUnit.SECONDS)
                 }
             }
             val older = thread { lease.ctx.ensureEchKeys() }
-            assertTrue(olderRead.await(5, TimeUnit.SECONDS))
+            assertTrue(olderRead.await(MUST, TimeUnit.SECONDS))
             keys.rotate(listOf(EchKey(EchTestKeys.A))) // v3
             val newer = thread { lease.ctx.ensureEchKeys() }
-            newerApplied.await(1, TimeUnit.SECONDS) // with the applies serialized, the newer one waits for the older one
+            newerApplied.await(SERIALIZED, TimeUnit.SECONDS) // with the applies serialized, the newer one waits for the older one
             olderGo.countDown()
-            older.join(5_000)
+            older.join(MUST * 1000)
             newerGo.countDown()
-            newer.join(5_000)
+            newer.join(MUST * 1000)
+            assertTrue(!older.isAlive && !newer.isAlive, "both session starts finished")
             keys.applyHookForTest = null
             assertEquals(keys.version, lease.ctx.echAppliedVersion)
             assertEquals(EchStatus.Accepted, handshake(listOf(EchTestKeys.A), server), "the newest set (A) is in use")
