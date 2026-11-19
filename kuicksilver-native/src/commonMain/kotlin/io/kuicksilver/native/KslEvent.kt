@@ -67,6 +67,12 @@ public object KslConst {
      */
     public const val OPT_ALPN_POLICY: Int = 13
 
+    /**
+     * Both roles: 1 (the default) offers and accepts TLS certificate compression (RFC 8879; brotli, then zlib) and compresses
+     * a server's chain at [Ksl.ctxFreeze], 0 turns it off (ABI 7, additive).
+     */
+    public const val OPT_CERT_COMPRESSION: Int = 14
+
     /** A ClientHello without ALPN completes without it: the default. */
     public const val ALPN_POLICY_OPEN: Int = 0
 
@@ -115,7 +121,17 @@ public object KslConst {
      * 0 bytes before, and for a resumption without key exchange (additive in ABI 7; RFC 9846 section 4.3.7).
      */
     public const val GET_GROUP: Int = 13
+    /**
+     * 2 bytes big-endian: the algorithm (1 zlib, 2 brotli) of the CompressedCertificate the peer sent its certificate in (RFC
+     * 8879), 0 for a plain Certificate or none (additive in ABI 7).
+     */
+    public const val GET_CERT_COMPRESSION: Int = 14
 
+    /**
+     * 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with, bit 0 zlib, bit 1 brotli
+     * (RFC 8879; the bundled OpenSSL of Android and iOS: zlib only, ADR-0025). Additive in ABI 7.
+     */
+    public const val GET_CERT_COMPRESSORS: Int = 18
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3

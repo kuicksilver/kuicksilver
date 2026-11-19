@@ -49,6 +49,7 @@ int main(int argc, char **argv) {
     run_security();
     run_dns();
     run_net();
+    run_certcomp();
 #ifdef KSL_TEST_TCP
     run_tcp();
     run_verify();

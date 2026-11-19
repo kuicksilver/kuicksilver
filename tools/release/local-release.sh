@@ -351,7 +351,7 @@ check_lib() { # <classifier> <dir>: the checks CI runs on that library, plus its
     linux-*)
       bash tools/check/glibc-floor.sh "$f" 2.17 || return 1
       deps=$("$(ksl_llvm_tool llvm-readelf)" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
-      bad=$(printf '%s\n' "$deps" | grep -vE '^(libc\.so\.6|libpthread\.so\.0|libdl\.so\.2|ld-linux.*)$' || true) ;;
+      bad=$(printf '%s\n' "$deps" | grep -vE '^(libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|ld-linux.*)$' || true) ;;
     windows-*)   # tools/ci/jni-windows.sh already ran the export whitelist and the export-directory check inside its container
       deps=$("$(ksl_llvm_tool llvm-objdump)" -p "$f" | sed -n 's/^ *DLL Name: *//p')
       bad=$(printf '%s\n' "$deps" | grep -viE '^(kernel32|msvcrt|ws2_32|crypt32|bcrypt|advapi32|user32|api-ms-win-crt-[a-z-]+-l1-1-0)\.dll$' || true) ;;

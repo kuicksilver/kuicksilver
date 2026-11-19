@@ -221,7 +221,7 @@ jobs:
             build/openssl-work/cache
             build/openssl-work/src/*.tar.gz
             build/openssl-work/src/*.tar.gz.asc
-          key: openssl-docker-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+          key: openssl-docker-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/compression-libs.toml', 'tools/openssl/**') }}
       - name: 'env: nothing that changes a native build is set'
         # the libraries built here are those a release reuses (tools/clean-build-env.sh, ksl_build_env_guard: the values the
         # setup action sets on purpose, the pinned NDK's LLVM tools, pass)
@@ -675,6 +675,8 @@ jobs:
         run: |
           bash tools/check/double-build.sh macos-arm64
           bash tools/check/native-flags-test.sh   # the builder's compiler and flags (docs/guide/building.md)
+          bash tools/openssl/fetch-test.sh        # zlib and brotli verification (ADR-0025), on the tarballs fetched above
+          bash tools/openssl/brotli-pin-check-test.sh   # the brotli pin-update check, against a local fixture repository
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -722,7 +724,9 @@ jobs:
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_COMPILE
       - name: 'native: prefix whitelist (apple)'
-        run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+        run: |
+          bash tools/prefix/check-no-unprefixed-test.sh   # its negative controls (unprefixed OpenSSL, zlib and brotli references)
+          for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
       - name: 'native: Kuicksilver.xcframework (release, both slices; its size for the documentation site)'
         # the framework the Swift package ships (tools/release/xcframework.sh builds the release asset the same way)
         # with the flags of tools/release/xcframework.sh (-Pkuicksilver.version, no build cache), so the size is that of the
@@ -768,7 +772,7 @@ jobs:
     timeout-minutes: 120
     env:
       AAR: kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
-      SIZE_LIMIT: '3000000'
+      SIZE_LIMIT: '3200000'   # +200,000 for zlib and brotli's decoder in libcrypto (RFC 8879 certificate compression, ADR-0025)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }

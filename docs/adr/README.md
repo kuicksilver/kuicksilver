@@ -28,3 +28,4 @@ Documents and identifiers are in English.
 | [0021](0021-qlog-http3-events.md) | qlog HTTP/3 events: the qlog 0.3 family (h3-events-04), one trace per connection written by the loop, field values redacted by default | accepted |
 | [0022](0022-proxy-protocol.md) | The PROXY protocol on the server's TCP connectors: trusted sources only, the header first, the client in `origin` | accepted; implemented in 0.3.0 (experimental) |
 | [0023](0023-https-proxy.md) | HTTPS proxies in the client engine: TLS to the proxy, HTTP/1.1 only, the proxy's own name and trust | accepted; implemented in 0.3.0 (experimental) |
+| [0025](0025-zlib-and-brotli-in-libcrypto.md) | zlib and brotli, pinned and verified, compiled into libcrypto for TLS certificate compression | accepted |

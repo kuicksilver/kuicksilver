@@ -120,5 +120,7 @@ It is unrelated to `fuzz/ksl.cc` in ngtcp2, which is a data structure of that pr
 ## License
 
 Kuicksilver is licensed under the [Apache License 2.0](LICENSE). Its binaries statically link OpenSSL (version pinned in
-`gradle/openssl.toml`), which is also Apache-2.0 licensed; see [NOTICE](NOTICE) and [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt).
+`gradle/openssl.toml`), which is also Apache-2.0 licensed; see [NOTICE](NOTICE) and [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt). OpenSSL's
+libcrypto contains zlib ([zlib License](licenses/LICENSE.zlib.txt)) and brotli ([MIT](licenses/LICENSE.brotli.txt)) for TLS
+certificate compression.
 Parts of the Ktor engines and their tests are adapted from Ktor 3.6.0 (Apache-2.0), with per-file attribution.

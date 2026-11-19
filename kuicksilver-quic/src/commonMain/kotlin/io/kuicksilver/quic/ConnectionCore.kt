@@ -74,6 +74,7 @@ import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.VarInt
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.ResetKey
@@ -928,7 +929,9 @@ public class ConnectionCore internal constructor(
     /** The key-exchange group of the handshake (a `KeyExchangeGroups` name); null until it completed. */
     @ExperimentalKuicksilverApi
     public val keyExchangeGroup: String? get() = handshake.session.keyExchangeGroup
-
+    /** The algorithm the peer's certificate chain came compressed with (RFC 8879); null when uncompressed or not (yet) known. */
+    @ExperimentalKuicksilverApi
+    public val peerCertificateCompression: CertificateCompression? get() = handshake.session.peerCertificateCompression
     /**
      * Keying material from the TLS exporter (RFC 5705, RFC 9846 section 7.5) for [label] and [context], [length] bytes; usable once the
      * handshake completed.

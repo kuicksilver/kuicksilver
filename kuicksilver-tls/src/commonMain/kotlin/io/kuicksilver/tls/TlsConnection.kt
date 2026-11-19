@@ -158,6 +158,15 @@ public class TlsConnection private constructor(
         private set
 
     /**
+     * The algorithm the peer's certificate chain came compressed with (RFC 8879, [TlsConfig.Builder.certificateCompression]), null
+     * when it came uncompressed or the peer sent none (a resumption, a client without a certificate); set once the handshake
+     * completed.
+     */
+    @ExperimentalKuicksilverApi
+    public var peerCertificateCompression: CertificateCompression? = null
+        private set
+
+    /**
      * Whether the peer attempted a TLS 1.2 renegotiation on this connection: a server's HelloRequest, a client's ClientHello
      * after the handshake. Every renegotiation is refused (a no_renegotiation warning) and the connection goes on, except on a
      * connection that negotiated `h2`: RFC 9113 section 9.2.1, "An endpoint MUST treat a TLS renegotiation as a connection error
@@ -403,6 +412,7 @@ public class TlsConnection private constructor(
         protocolVersion = if (Ksl.sslGet(s(), KslConst.GET_VERSION)[1].toInt() == 0x03) TlsVersion.Tls12 else TlsVersion.Tls13
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
         keyExchangeGroup = groupOf(s())
+        peerCertificateCompression = CertificateCompression.of(Ksl.sslGet(s(), KslConst.GET_CERT_COMPRESSION))
         presented = chain()
         val effective = overrideCtx?.ctx?.config ?: config
         if (effective.role == TlsRole.Client) {

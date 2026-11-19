@@ -187,6 +187,8 @@ public class TlsConfig private constructor(
     @property:ExperimentalKuicksilverApi public val alpnFallback: String? = null,
     /** The key-exchange groups and a client's key shares; see [Builder.keyExchangeGroups]. */
     @property:ExperimentalKuicksilverApi public val keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default,
+    /** Whether TLS certificate compression (RFC 8879) is offered and used; see [Builder.certificateCompression]. */
+    @property:ExperimentalKuicksilverApi public val certificateCompression: Boolean = true,
     /** Made by [withOverride] for one sniSelector answer: its contexts are kept apart from the base configuration's ([SharedServerContexts]). */
     internal val isOverride: Boolean = false,
 ) {
@@ -218,6 +220,7 @@ public class TlsConfig private constructor(
             o.ocspStapling,
             alpnFallback,
             groups,
+            certificateCompression,
             isOverride = true,
         )
     }
@@ -392,6 +395,22 @@ public class TlsConfig private constructor(
         public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
 
         /**
+         * TLS certificate compression (RFC 8879), over TCP and QUIC; default true. A client offers brotli, then zlib, in its
+         * ClientHello and accepts the server's chain compressed with either; a server sends its chain compressed with the first
+         * of the client's algorithms it shares (compressed once per identity, when its context is built; a chain neither makes
+         * smaller goes out uncompressed) and offers the same two for client certificates when it asks for one. A peer without
+         * it gets and sends plain certificates. Over QUIC a smaller chain keeps more of the server's first flight inside the
+         * amplification limit before the client's address is validated (RFC 9000 section 8.1). TLS 1.3 only: a TLS 1.2
+         * handshake ignores it. What a peer sends is held to the certificate list bound of 100 KiB: an announced length above
+         * it, data that does not decompress to exactly the announced length, or a decompression past it ends the handshake with
+         * `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47). False: no extension, and a
+         * compressed certificate from the peer is an `unexpected_message` (10). The algorithm the peer's chain came in:
+         * [TlsConnection.peerCertificateCompression].
+         */
+        @ExperimentalKuicksilverApi
+        public var certificateCompression: Boolean = true
+
+        /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
          * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
@@ -437,6 +456,7 @@ public class TlsConfig private constructor(
                 ocspStapling,
                 fallback,
                 keyExchangeGroups,
+                certificateCompression,
             )
         }
     }

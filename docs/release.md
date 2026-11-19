@@ -153,9 +153,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `mingw-x64` emulated on Apple Silicon), `macos-arm64`, `macos-x64`, `ios-arm64`, `ios-sim-arm64`, the three Android
      ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` and the absence of the FIPS provider
      (`tools/check/openssl-no-fips.sh`) checked for each. Each build writes
-     `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
+     `provenance.txt` (the tarball's SHA-256 and those of the zlib and brotli built into libcrypto, the configure line,
+     the archives' SHA-256), which
      `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
-     its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
+     its negative controls; `tools/openssl/fetch-test.sh` those of the zlib and brotli verification). `mingw-x64` is the
+     `openssl-mingw-x64` the workflow downloads.
    - `Kuicksilver.xcframework.zip` for SwiftPM from those builds (`tools/release/xcframework.sh <version>`: the
      `samples/ios/kuicksilver-swift` umbrella, its layout, `CFBundleShortVersionString`, the checksum, which `swift
      package compute-checksum` must agree with) into `build/release/`, signed and a provenance subject like the SBOM
@@ -212,7 +214,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    commit identity stays as it is; the script prints the command), push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
-   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
+   `Kuicksilver.xcframework.zip` and their `.asc`. Attach as well the source tarballs the release build verified, from
+   `build/openssl-work/src`: `openssl-<v>.tar.gz` and its `.asc`, `zlib-<v>.tar.gz` and its `.asc`, `brotli-<v>.tar.gz`
+   (GitHub's archive of brotli's tag is not promised to stay the same byte for byte, so the pinned SHA-256 may not match a
+   later download; these copies are what `tools/verify/verify-release.sh --offline <dir>` takes in `<dir>/openssl/`).
+   SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
    Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. **Then, once the GitHub release is
    published** (before that the zip's URL does not resolve), the Swift package, in a terminal with the release key,
    exactly as the script printed (step 5 of its last lines):
@@ -414,7 +420,8 @@ the provenance.
 - the root publication of each module (`kuicksilver-quic`, ...) aggregating its platform publications, and the BOM
   listing the seven modules;
 - what Gradle cannot see: the `ksl` C shim (its ABI version, the commit) and **OpenSSL** (version, tarball SHA-256,
-  download URL, CPE `cpe:2.3:a:openssl:openssl:<version>`, the configure flags, `fips-provider: not built`), statically
+  download URL, CPE `cpe:2.3:a:openssl:openssl:<version>`, the configure flags, `fips-provider: not built`) with **zlib**
+  and **brotli** inside it (version, tarball SHA-256, download URL, CPE, license; from `gradle/compression-libs.toml`), statically
   linked, under every publication that embeds `kuicksilver-native` or depends on it. Values come from
   `gradle/openssl.toml`, `tools/openssl/configure-flags.txt` and `ksl.h`; the timestamp is the commit's, so the same commit
   gives the same documents.

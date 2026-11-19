@@ -91,8 +91,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **71 steps**; a release needs `--with-interop --with-windows`, which makes **76** (and `--with-browser`
-adds a Chrome WebTransport run, 77). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
+default it has **72 steps**; a release needs `--with-interop --with-windows`, which makes **77** (and `--with-browser`
+adds a Chrome WebTransport run, 78). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
 race tests the branch added or changed 10 times under load ([Race tests repeated under load](#repository-checks)), and it
 refuses to start if any of them fails. What the steps cover:
 
@@ -107,11 +107,11 @@ refuses to start if any of them fails. What the steps cover:
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
 | Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
-| C | the `ksl` C tests under ASan and UBSan on macOS; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
+| C | the `ksl` C tests under ASan and UBSan on macOS, again against an OpenSSL with brotli's decoder only, as Android and iOS ship it (`tools/c-test.sh --decoder-only`); on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |
-| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/check/build-paths.py` (no home-directory path in an artifact), of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`); OpenSSL built without key logging |
+| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/prefix/check-no-unprefixed.sh` (unprefixed OpenSSL, zlib and brotli symbols), of `tools/check/build-paths.py` (no home-directory path in an artifact), of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`); OpenSSL built without key logging; the refusals of `tools/openssl/fetch.sh` for a changed zlib or brotli tarball, a zlib signature by another key and a brotli tarball of another commit (`tools/openssl/fetch-test.sh`) |
 | Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared; `tools/check/native-flags-test.sh`: a builder's `CC`, `CPPFLAGS`, `CFLAGS` and `LDFLAGS` are added after the project's flags and never reach a release or the double build ([building.md](guide/building.md#your-compiler-and-flags)) |
 | Interop | the JVM and Kotlin/Native interop images against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in the QUIC Interop Runner, with the cells of [`tools/interop/required.json`](../tools/interop/required.json) required green (`--with-interop`; hours) |
 

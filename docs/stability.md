@@ -98,7 +98,8 @@ address, the platform's NAT64 synthesis), `ksl_chain_level` with
 `KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, `ksl_ctx_verify_chain_path`
 for the path a chain re-verification built, `ksl_ctx_set_crls`, `ksl_ocsp_check`, `KSL_OPT_REVOCATION`,
 `KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation, `KSL_OPT_ALPN_POLICY` for a TLS-over-TCP
-server's ALPN requirements, and `ksl_ctx_set_groups` with `KSL_GET_GROUP` for the key-exchange groups). It is bumped on
+server's ALPN requirements, `ksl_ctx_set_groups` with `KSL_GET_GROUP` for the key-exchange groups, and
+`KSL_OPT_CERT_COMPRESSION` and `KSL_GET_CERT_COMPRESSION` for TLS certificate compression). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
@@ -156,7 +157,9 @@ operating system.
 
 - **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is not supported yet (it is built and tested in CI only, below). The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
-  build verifies both before compiling (`tools/openssl/fetch.sh`).
+  build verifies both before compiling (`tools/openssl/fetch.sh`). Its libcrypto contains zlib and brotli for TLS
+  certificate compression, pinned in `gradle/compression-libs.toml` and verified the same way (brotli, which signs no
+  release, by its SHA-256, the tag and tree checked against the repository when the pin changes; [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
   `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
   (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). No artifact is built with 4.x. The CI job
   `openssl-next` (weekly, or `only=openssl-next` by hand; never required, never a source of release artifacts) builds the

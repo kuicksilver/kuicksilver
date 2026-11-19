@@ -144,6 +144,7 @@ class TlsConnectionTest {
                     TcpFixtures.client {
                         identity =
                             TlsIdentity.fromDer(listOf(TestCerts.client) + List(copies) { TestCerts.testCa }, TestCerts.clientKey.copyOf())
+                        certificateCompression = false // the repeated certificates compress to almost nothing (RFC 8879)
                     }
                 val server =
                     TcpFixtures.server {
@@ -165,6 +166,7 @@ class TlsConnectionTest {
                     TcpFixtures.server {
                         identity =
                             TlsIdentity.fromDer(listOf(TestCerts.server) + List(copies) { TestCerts.testCa }, TestCerts.serverKey.copyOf())
+                        certificateCompression = false // the repeated certificates compress to almost nothing (RFC 8879)
                     }
                 val (cd, sd) = connect(TcpFixtures.client(), server)
                 withTimeout(20.seconds) { cd.await() }.close()

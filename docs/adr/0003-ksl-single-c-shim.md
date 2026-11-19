@@ -170,3 +170,10 @@ supports. OpenSSL's own way to the server's order, `SSL_OP_CIPHER_SERVER_PREFERE
 suites too, which keep the client's order (`tcp_tls12_server_suite_choice`). The session context's list (an SNI override's
 once applied) is the one used. `KSL_GET_GROUP` reports the group's IANA code point. JNI `KslNative.ctxSetGroups`, cinterop
 `ksl_ctx_set_groups`, Kotlin `Ksl.ctxSetGroups`. 89 functions.
+
+TLS certificate compression, additive under 7 (RFC 8879; [ADR-0025](0025-zlib-and-brotli-in-libcrypto.md)):
+`KSL_OPT_CERT_COMPRESSION` on either context, 1 (the default) to offer brotli, then zlib, and to compress a server's chain once
+at `ksl_ctx_freeze`, 0 for neither; `KSL_GET_CERT_COMPRESSION` (2 bytes) for the algorithm the peer's certificate came in,
+noted by `ksl_msg_cb` (installed on a QUIC server session too when it asks for a client certificate). A server session that
+staples an OCSP response sends its Certificate uncompressed. Both take the number 14, after the `KSL_GET_GROUP` 13 of the
+key-exchange groups. No new function.

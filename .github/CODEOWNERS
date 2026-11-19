@@ -8,6 +8,7 @@
 /kuicksilver-native/                @kinchpik
 /gradle/openssl.toml                @kinchpik
 /gradle/openssl-next.toml           @kinchpik
+/gradle/compression-libs.toml       @kinchpik
 /tools/openssl/                     @kinchpik
 /tools/prefix/                      @kinchpik
 
