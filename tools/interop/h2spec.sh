@@ -14,11 +14,14 @@
 # :authority; the test identity names 127.0.0.1 but not host.docker.internal, so a server on a macOS host (the jvm and
 # macos kinds) runs as a trusted gateway (no 421 for a misdirected request, RFC 9110 section 7.4), while a server on a
 # Linux host and the linux-x64 container, which h2spec reaches as 127.0.0.1, keep the check on.
-# Usage: h2spec.sh [--no-build] [jvm|macos|linux-x64]...   (default: jvm); reports in build/h2spec/<kind>/
+# Usage: h2spec.sh [--no-build] [jvm|macos|linux-x64]...   (default: jvm); reports in build/h2spec/<kind>/, the list of
+#        the runs it makes in build/h2spec/variants.txt
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-image="summerwind/h2spec:2.6.0"
+# pinned by its registry digest (a single-arch linux/amd64 manifest); CI pulls exactly this reference (build.yml, linux-native),
+# tools/check/pins.sh refuses an h2spec reference without a digest
+image="summerwind/h2spec:2.6.0@sha256:5f4a65c30cae8569558ced048b4bfe0dcf01a221e36767ae504ccd8348a7aeb0"
 expected_cases=146 # h2spec 2.6.0, first run 2026-11-06: generic 44, http2 94 (RFC 9113 sections 3 to 8), hpack 8 (RFC 7541)
 linux_image=${KSL_H2SPEC_LINUX_IMAGE:-kuicksilver-openssl-linux-x64} # the image tools/ci/run-kexe.sh runs the linux-x64 tests in
 build=1
@@ -100,6 +103,18 @@ linux_run() { # the linuxX64 server and h2spec in one linux/amd64 container
   " || { echo "h2spec (linux-x64): the container run failed" >&2; return 1; }
   verdict linux-x64 "$dir/h2spec.txt"
 }
+
+# The runs of this invocation, declared before any of them starts: build/h2spec/variants.txt, one "<kind> <variant> <report
+# directory>" per run (tools/docs/verify.py collect --h2spec-manifest reads it, and a declared run without a report fails
+# there). A report or manifest left from an earlier invocation is cleared first, before anything can stop this one, so it
+# cannot stand in for a run that did not happen.
+mkdir -p build/h2spec
+manifest=build/h2spec/variants.txt
+: > "$manifest"
+for kind in "${kinds[@]}"; do
+  echo "$kind tls build/h2spec/$kind" >> "$manifest"
+  rm -f "build/h2spec/$kind/h2spec.txt"
+done
 
 # No implicit pull in the middle of a gate: the image must be there (docker pull it once; it is 32 MB).
 if ! docker image inspect "$image" > /dev/null 2>&1; then

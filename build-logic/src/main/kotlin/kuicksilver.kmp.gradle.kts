@@ -17,9 +17,12 @@ group = "io.kuicksilver"
 version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
 // API reference (Dokka HTML), aggregated by kuicksilver.docs in the root project and published by tools/docs/site.sh.
-// Source links point at the release tag v<version>; a -SNAPSHOT has no tag and links to main.
+// Source links point at the release tag v<version>; a -SNAPSHOT has no tag and links to main, or to the commit that
+// -Pkuicksilver.docs.sourceRef names (tools/docs/site.sh --dev: a development snapshot links to its own commit).
 private val docsVersion = version.toString()
-private val docsSourceRef = if (docsVersion.endsWith("-SNAPSHOT")) "main" else "v$docsVersion"
+private val docsSourceRef =
+    providers.gradleProperty("kuicksilver.docs.sourceRef").orNull
+        ?: if (docsVersion.endsWith("-SNAPSHOT")) "main" else "v$docsVersion"
 private val defaultLinkLists = mapOf(
     "kotlinStdlib" to "kotlinStdlib.package-list",
     "jdk" to "jdk.element-list",

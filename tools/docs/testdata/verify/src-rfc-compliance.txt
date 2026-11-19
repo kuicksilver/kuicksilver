@@ -1,0 +1,16 @@
+# Fixture: RFC compliance
+
+## QUIC
+
+| RFC | Section / topic | Status | Since | Summary | Details |
+|---|---|---|---|---|---|
+| RFC 9000 | §5 — versions | ✅ | 0.2.0 | Versions are negotiated. | [details](rfc/9000.md#s5) |
+| RFC 9000 | §7.2 — SCID | 🔶 | 0.3.0 | A deviation for one peer. | [details](rfc/9000.md#s7-2) |
+
+## HTTP
+
+| RFC | Section / topic | Status | Since | Summary | Details |
+|---|---|---|---|---|---|
+| RFC 9114 | §4 — requests | ✅ | 0.2.0 | Requests work. | [details](rfc/9114.md#s4) |
+| RFC 9218 | priorities | ⬜ | 0.4.0 | Planned. | [details](rfc/9218.md#p) |
+| RFC 7838 | Alt-Svc client cache | ❌ | — | Not planned. | [details](rfc/7838.md#c) |

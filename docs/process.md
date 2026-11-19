@@ -328,13 +328,20 @@ names, and the same module and interop case lists from [`tools/ci/matrix.sh`](..
 to `main` and `release/**`, on pull requests to them, weekly, and by hand. The QUIC Interop Runner jobs run only weekly
 and by hand, so hosted CI does not repeat every local step on every push. Its jobs: `lint`; the OpenSSL
 builds in Docker; `linux` (x64 and arm64: C tests, `libksl.so`, JVM suites, system OpenSSL); `linux-native` and
-`linux-native-arm64` (Kotlin/Native test executables); `windows` (the `mingwX64` test executables and the C tests on a
+`linux-native-arm64` (Kotlin/Native test executables; `linux-native` also runs h2spec against the linuxX64 server); `windows` (the `mingwX64` test executables and the C tests on a
 Windows runner); `windows-jvm` (JVM suites on Windows against the mingw-w64 dll); `windows-loops-bench` (by hand only, with `only=windows-loops-bench`: `MultiLoopBenchmark` on Windows, not a gate); `openssl-next` (weekly, or by hand with `only=openssl-next`: the newest OpenSSL 4.x built on linux-x64 and macos-arm64 with the C tests and a JVM smoke test; `continue-on-error`, never required, no artifact); `apple` (ABI dumps, ASan C tests, JVM suites, the Intel-Mac library, the double build) and `apple-native` (`macosArm64`
-and `iosSimulatorArm64` suites, `iosArm64` compiled); `android` (API 24 and 35 emulators); `jdk-compat`
+and `iosSimulatorArm64` suites, `iosArm64` compiled, the release `Kuicksilver.xcframework` built); `android` (API 24 and 35 emulators); `jdk-compat`
 (tests on JDK 17 and 25); `jvm-jar` and `consumer-smoke` (the jar with all five JNI libraries, a sample built from a
 local publication); and, weekly or on request, the QUIC Interop Runner against the six peers. Nothing in it publishes,
 signs or reads a secret, and pull requests from forks run with read-only rights; a maintainer approves the workflow
 runs of every pull request from an outside contributor before they start (repository setting).
+
+Every job that runs tests or builds an artifact also uploads a `verify-<job>-a<attempt>` artifact: the test counts, outcomes and
+artifact sizes of that job and nothing of the runner (`tools/docs/verify.py collect`). For a release, `pages.yml` turns
+the artifacts of the release commit's green run into the "How we verify" pages of the documentation site (platform matrix,
+engine interop, conformance suites, fuzzing, sizes, benchmarks, the RFC compliance summary), and refuses data of any
+other commit or run ([release.md](release.md), "Every release", step 9); after every green push run on `main` it
+publishes the same pages, with the guide and API reference that run built, as the development snapshot `/dev/`.
 
 Hosted CI is not the release gate: a release needs the local gate record (stage 5). A repository ruleset (id 27195213)
 covers the default branch and `refs/heads/release/*`: they cannot be deleted and take no non-fast-forward push, and

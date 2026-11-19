@@ -1,0 +1,1 @@
+{"servers": ["kuicksilver"], "clients": ["quinn"], "results": [[]], "measurements": [[{"name": "goodput", "abbr": "G", "result": "succeeded", "details": "9377 (± 120) kbps"}, {"name": "crosstraffic", "abbr": "C", "result": "failed", "details": ""}]]}

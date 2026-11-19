@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.kuicksilver.quic.api.CloseOrderTest" tests="3" skipped="1" failures="0" errors="0" timestamp="2026-11-18T10:00:00" hostname="fixture-private-host" time="0.5">
+  <properties/>
+  <testcase name="closesInOrder" classname="io.kuicksilver.quic.api.CloseOrderTest" time="0.1"/>
+  <testcase name="closesTwice" classname="io.kuicksilver.quic.api.CloseOrderTest" time="0.1"/>
+  <testcase name="ignoredOne" classname="io.kuicksilver.quic.api.CloseOrderTest" time="0.0"><skipped/></testcase>
+  <system-out><![CDATA[output that names fixture-private-host]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,4 @@
+server,client,measurement,rep,ok,ms,kbps,dir
+quiche,kuicksilver,goodput,1,1,9000,9000,x
+quiche,kuicksilver,goodput,2,1,9000,9400,x
+quiche,kuicksilver,goodput,3,0,,,x

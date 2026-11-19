@@ -1,0 +1,3 @@
+[==========] Running 3 tests from 1 test cases.
+[ RUN      ] io.kuicksilver.tls.HandshakeTest.handshake
+Uncaught Kotlin exception: kotlin.IllegalStateException
