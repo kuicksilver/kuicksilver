@@ -191,6 +191,40 @@ class PmtudStartResumptionTest {
         }
     }
 
+    @Test fun aPacketTooBigAboutACoalescedDatagramIsAccepted() {
+        // the 1300-byte first datagram holds packets of 1200 bytes or less: a Packet Too Big claiming 1250 bytes is about a
+        // datagram this path did send larger (RFC 9000 section 14.2.1, RFC 8899 section 4.6.1), not one it never sent
+        val serverQuic = quic()
+        val t = ticket(serverQuic)
+        val p = resumed(t, quic { initialUdpPayloadSize = 1300 }, serverQuic, link = 1500)
+        p.use { _ ->
+            val datagrams = ArrayList<ByteArray>()
+            val keep = p.filterToServer
+            p.filterToServer = { i, b ->
+                datagrams += b
+                keep(i, b)
+            }
+            p.step()
+            val first = datagrams.first()
+            assertEquals(1300, first.size)
+            val packets =
+                io.kuicksilver.quic.recovery.SpaceId.entries
+                    .flatMap { sp ->
+                        p.client.loss
+                            .space(sp)
+                            .sent
+                            .map { it.size }
+                    }
+            assertTrue(packets.all { it <= 1200 }, "coalesced packets: $packets")
+            val quote = first.copyOf(64)
+            assertTrue(
+                p.client.acceptPacketTooBig(quote, quote.size, CoreFixtures.serverAddr, 1250, PathId.Initial),
+                "a valid Packet Too Big about the 1300-byte datagram is taken as a hint",
+            )
+            assertEquals(1200, p.client.stats.pathMtu, "the size drops to the base, provisionally")
+        }
+    }
+
     @Test fun negative_zeroRttStaysWithinTheRememberedMaxUdpPayloadSize() {
         // RFC 9000 section 7.4.1: the client uses the remembered max_udp_payload_size for 0-RTT
         val serverQuic = quic { maxUdpPayloadSize = 1250 }

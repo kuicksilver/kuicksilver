@@ -76,7 +76,12 @@ internal class PacketBuilder(
      * carried (RFC 8899 section 4.3), the datagram: coalesced packets of 1200 bytes or less fill a datagram above the base.
      */
     private fun stampDatagram(n: Int) {
-        for (i in inDatagram.indices) inDatagram[i].datagramSize = n
+        for (i in inDatagram.indices) {
+            val p = inDatagram[i]
+            p.datagramSize = n
+            // what a Packet Too Big about this path may claim was too large is the datagram, not its largest packet
+            c.paths.byId(io.kuicksilver.quic.PathId(p.pathId))?.let { if (n > it.largestSent) it.largestSent = n }
+        }
         inDatagram.clear()
         datagramSeq++
     }
