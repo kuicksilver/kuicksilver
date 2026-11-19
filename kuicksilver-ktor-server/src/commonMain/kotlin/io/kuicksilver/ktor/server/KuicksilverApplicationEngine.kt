@@ -941,6 +941,9 @@ public class KuicksilverApplicationEngine(
     /** Test hook: sees each accepted HTTP/3 connection, after [afterH3AcceptForTest] and before it is served. */
     internal var h3ConnectionForTest: ((Http3Connection) -> Unit)? = null
 
+    /** Test hook: runs in each HTTP/3 request's handler coroutine before the request is handled; a suspension here holds it. */
+    internal var beforeH3HandlerForTest: (suspend () -> Unit)? = null
+
     /** Test hook: runs when an HTTP/3 connection accepts no more requests, while the requests it accepted may still run. */
     internal var afterH3RequestsAcceptedForTest: (() -> Unit)? = null
 

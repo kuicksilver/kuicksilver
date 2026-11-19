@@ -9,6 +9,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.activeRequestsForTest
 import io.kuicksilver.http3.glitchClockForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicClientConfig
@@ -301,8 +302,7 @@ class ServerH3FloodTest {
     /**
      * STOP_SENDING first, then the reset once the engine stopped the request in turn (it cancelled the handler): such a reset
      * follows our own STOP_SENDING and is never the client's, so before, neither half of the pair cost anything. The stop
-     * counts once now (and a reset that came first instead takes its place, never a second token), and the flood ends with
-     * H3_EXCESSIVE_LOAD.
+     * counts once now, and the flood ends with H3_EXCESSIVE_LOAD.
      */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     @Test
@@ -321,9 +321,9 @@ class ServerH3FloodTest {
                             st.output.writeFully(rawHeadersFrame(rawFieldSection(HOLD))) // no FIN
                             st.output.flush()
                             st.stopSending(H3_REQUEST_CANCELLED)
-                            // the engine's own STOP_SENDING, which a handler cancelled before its answer sends with the reset of
-                            // the request; when none comes the reset goes anyway, as the client's own
-                            withTimeoutOrNull(2.seconds) { st.awaitSendStopped() }
+                            // the engine's own STOP_SENDING: an abandoned request is always stopped in turn, also when its
+                            // handler was cancelled before it ran
+                            withTimeout(10.seconds) { st.awaitSendStopped() }
                             st.reset(H3_REQUEST_CANCELLED)
                             sent++
                         }
@@ -341,6 +341,44 @@ class ServerH3FloodTest {
                 c.close()
                 ep.close()
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A request the client abandons before its handler ran (the handler's coroutine was cancelled before it started its
+     * work) still ends: the engine stops the request (STOP_SENDING and a reset, H3_REQUEST_CANCELLED), the request no
+     * longer counts toward the connection's active ones, and a graceful stop does not wait for it. Before, only the
+     * handler's own `finally` ended an unanswered request, and a handler cancelled first left the request open for the
+     * connection's life: its receive half open, the GOAWAY idle close waiting for it (one per STOP_SENDING, within the
+     * reset budget).
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_requestAbandonedBeforeItsHandlerRanStillEnds() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { get("/hold") { awaitCancellation() } } }
+            val connection = CompletableDeferred<io.kuicksilver.http3.Http3Connection>()
+            server.engine.h3ConnectionForTest = { connection.complete(it) }
+            server.engine.beforeH3HandlerForTest = { awaitCancellation() } // the handler never gets to its work
+            val (ep, c) = rawH3(port)
+            var stopped = false
+            try {
+                val conn = withTimeout(10.seconds) { connection.await() }
+                val st = c.openBidi()
+                st.output.writeFully(rawHeadersFrame(rawFieldSection(HOLD))) // no FIN
+                st.output.flush()
+                withTimeout(10.seconds) { conn.activeRequestsForTest.first { it == 1 } }
+                st.stopSending(H3_REQUEST_CANCELLED)
+                assertEquals(H3_REQUEST_CANCELLED, withTimeoutOrNull(10.seconds) { st.awaitSendStopped() }, "the server's STOP_SENDING")
+                withTimeout(10.seconds) { conn.activeRequestsForTest.first { it == 0 } }
+                // nothing is left for a graceful stop to wait for (its grace is 5 s)
+                val took = kotlin.time.measureTime { server.stop(5_000, 10_000) }
+                stopped = true
+                assertTrue(took < 4.seconds, "the graceful stop took $took")
+            } finally {
+                c.close()
+                ep.close()
+                if (!stopped) server.stop(100, 500)
             }
         }
 

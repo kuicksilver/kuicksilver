@@ -14,6 +14,7 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.awaitAbandoned
 import io.kuicksilver.http3.handlerEnded
 import io.kuicksilver.http3.holdStreamUntilHandled
+import io.kuicksilver.http3.resetIfUnanswered
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
@@ -225,6 +226,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                             launch {
                                                 // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                                 try {
+                                                    beforeH3HandlerForTest?.invoke()
                                                     handleHttp3(req, local, peer, authorityCheck)
                                                 } catch (e: CancellationException) {
                                                     throw e
@@ -245,6 +247,12 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                             handler.join()
                                         } finally {
                                             watch.cancel()
+                                            // a request whose handler never got to answer or reset it (cancelled by the watch
+                                            // before its work began) still ends: STOP_SENDING and a reset, H3_REQUEST_CANCELLED
+                                            // (RFC 9114 section 4.1.1); left open, it kept its receive half and held the GOAWAY
+                                            // idle close for the connection's life
+                                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                            req.resetIfUnanswered(Http3ErrorCode.REQUEST_CANCELLED)
                                             @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
                                             req.handlerEnded()
                                         }

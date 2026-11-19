@@ -952,7 +952,20 @@ internal class ServerRequestImpl(
         }
     }
 
+    /** The application reset the request ([reset]). */
+    @Volatile private var resetByApplication = false
+
+    /**
+     * An engine's handler is over, whether or not it ran: a request it never answered nor reset is reset with [code] here,
+     * so it ends (STOP_SENDING and RESET_STREAM, [done]) also when its handler was cancelled before it started its work.
+     * Any thread.
+     */
+    fun resetIfUnanswered(code: Long) {
+        if (!responseStarted && !resetByApplication) reset(code)
+    }
+
     override fun reset(code: Long) {
+        resetByApplication = true
         st.reset(code)
         st.stopSending(code)
         // on the session's dispatcher, in afterEnd: a launch into the session's scope after the connection ended never runs,
