@@ -78,6 +78,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
         assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
         assertTrue("guide:ktor:http2-server" in guide, "marker http2-server")
+        assertTrue("guide:ktor:h2c-server" in guide, "marker h2c-server")
         assertTrue("guide:ktor:mtls-server" in guide, "marker mtls-server")
         assertTrue("guide:ktor:drain-wait" in guide, "marker drain-wait")
         assertTrue("guide:ktor:reload-from-files" in guide, "marker reload-from-files")
@@ -263,6 +264,23 @@ class GuideSamplesTest {
         assertTrue(configuration.http2, "the TLS connector offers h2") // ServerHttp2*Test serve it
         assertEquals(50, configuration.http2Settings.maxConcurrentStreams)
         identity.close()
+    }
+
+    @Test fun h2cServerSample() {
+        // guide:ktor:h2c-server
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                plainConnector {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                    h2c = H2cMode.WithHttp11 // HTTP/1.1 and h2c (prior knowledge) on this cleartext port; H2cMode.Only: h2c alone
+                }
+            }, module = Application::module)
+
+        val connector =
+            server.engine.configuration.connectors
+                .single() as KuicksilverPlainConnector
+        assertEquals(H2cMode.WithHttp11, connector.h2c) // ServerH2cTest serves it
     }
 
     @Test fun deploymentGuideHasEveryMarker() {

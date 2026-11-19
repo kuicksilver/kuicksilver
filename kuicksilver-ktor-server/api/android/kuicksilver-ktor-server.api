@@ -8,6 +8,15 @@ public final class io/kuicksilver/ktor/server/EngineMain {
 	public static final fun main ([Ljava/lang/String;)V
 }
 
+public final class io/kuicksilver/ktor/server/H2cMode : java/lang/Enum {
+	public static final field Off Lio/kuicksilver/ktor/server/H2cMode;
+	public static final field Only Lio/kuicksilver/ktor/server/H2cMode;
+	public static final field WithHttp11 Lio/kuicksilver/ktor/server/H2cMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/H2cMode;
+	public static fun values ()[Lio/kuicksilver/ktor/server/H2cMode;
+}
+
 public final class io/kuicksilver/ktor/server/Http3Advertising : java/lang/Enum {
 	public static final field Clear Lio/kuicksilver/ktor/server/Http3Advertising;
 	public static final field Drain Lio/kuicksilver/ktor/server/Http3Advertising;
@@ -106,6 +115,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 
 public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/ktor/server/engine/EngineConnectorConfig {
 	public fun getAddressDescription ()Ljava/lang/String;
+	public final fun getH2c ()Lio/kuicksilver/ktor/server/H2cMode;
 	public fun getHost ()Ljava/lang/String;
 	public fun getPort ()I
 	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
@@ -118,11 +128,13 @@ public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/kto
 public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverPlainConnector;
+	public final fun getH2c ()Lio/kuicksilver/ktor/server/H2cMode;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPort ()I
 	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getTrustedGateway ()Z
 	public final fun proxyProtocol (Lkotlin/jvm/functions/Function1;)V
+	public final fun setH2c (Lio/kuicksilver/ktor/server/H2cMode;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setPort (I)V
 	public final fun setProxyProtocol (Lio/kuicksilver/ktor/server/ProxyProtocolConfig;)V

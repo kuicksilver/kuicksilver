@@ -6,6 +6,18 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-server>
+final enum class io.kuicksilver.ktor.server/H2cMode : kotlin/Enum<io.kuicksilver.ktor.server/H2cMode> { // io.kuicksilver.ktor.server/H2cMode|null[0]
+    enum entry Off // io.kuicksilver.ktor.server/H2cMode.Off|null[0]
+    enum entry Only // io.kuicksilver.ktor.server/H2cMode.Only|null[0]
+    enum entry WithHttp11 // io.kuicksilver.ktor.server/H2cMode.WithHttp11|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/H2cMode.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/H2cMode> // io.kuicksilver.ktor.server/H2cMode.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/H2cMode.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/H2cMode> // io.kuicksilver.ktor.server/H2cMode.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.ktor.server/Http3Advertising : kotlin/Enum<io.kuicksilver.ktor.server/Http3Advertising> { // io.kuicksilver.ktor.server/Http3Advertising|null[0]
     enum entry Clear // io.kuicksilver.ktor.server/Http3Advertising.Clear|null[0]
     enum entry Drain // io.kuicksilver.ktor.server/Http3Advertising.Drain|null[0]
@@ -180,6 +192,8 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
 }
 
 final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.server.engine/EngineConnectorConfig { // io.kuicksilver.ktor.server/KuicksilverPlainConnector|null[0]
+    final val h2c // io.kuicksilver.ktor.server/KuicksilverPlainConnector.h2c|{}h2c[0]
+        final fun <get-h2c>(): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/KuicksilverPlainConnector.h2c.<get-h2c>|<get-h2c>(){}[0]
     final val host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host|{}host[0]
         final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host.<get-host>|<get-host>(){}[0]
     final val port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port|{}port[0]
@@ -197,6 +211,9 @@ final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.serve
     final class Builder { // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder|null[0]
         constructor <init>() // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.<init>|<init>(){}[0]
 
+        final var h2c // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c|{}h2c[0]
+            final fun <get-h2c>(): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c.<get-h2c>|<get-h2c>(){}[0]
+            final fun <set-h2c>(io.kuicksilver.ktor.server/H2cMode) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c.<set-h2c>|<set-h2c>(io.kuicksilver.ktor.server.H2cMode){}[0]
         final var host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host|{}host[0]
             final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<get-host>|<get-host>(){}[0]
             final fun <set-host>(kotlin/String) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<set-host>|<set-host>(kotlin.String){}[0]

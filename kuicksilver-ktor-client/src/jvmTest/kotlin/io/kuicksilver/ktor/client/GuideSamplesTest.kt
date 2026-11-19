@@ -79,6 +79,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
         assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
+        assertTrue("guide:ktor:h2c-client" in guide, "marker h2c-client")
         assertTrue("guide:ktor:mtls-client" in guide, "marker mtls-client")
         assertTrue("guide:ktor:protocol-log" in guide, "marker protocol-log")
     }
@@ -375,6 +376,24 @@ class GuideSamplesTest {
             assertTrue(config.http2.enabled)
             assertEquals(30.seconds, config.http2.pingInterval)
             assertEquals(1 shl 20, config.http2.settings.initialStreamWindow)
+        }
+    }
+
+    @Test
+    fun h2cClientSample() {
+        // guide:ktor:h2c-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    http2 {
+                        // these http:// origins speak HTTP/2 over cleartext TCP (h2c, prior knowledge); every other stays HTTP/1.1
+                        priorKnowledge = setOf(HostPort("backend.internal", 8080))
+                    }
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertEquals(setOf(HostPort("backend.internal", 8080)), config.http2.priorKnowledge) // ClientH2cTest serves it
         }
     }
 

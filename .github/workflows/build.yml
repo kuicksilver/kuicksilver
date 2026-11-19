@@ -371,7 +371,7 @@ jobs:
       - name: 'docker: h2spec linux-x64 (HTTP/2 server; TLS, and h2c where tools/interop/h2spec.sh has it)'
         # the release gate's h2spec run (tools/ci/local-matrix.sh) on the linuxX64 server: every case must pass. The image
         # is the digest pin of h2spec.sh itself, pulled here (the script never pulls). The script lists the runs it makes
-        # (build/h2spec/variants.txt: TLS today, h2c too once the script has it) and the next step reads each one's report
+        # (build/h2spec/variants.txt: one per transport, TLS and h2c) and the next step reads each one's report
         run: |
           image=$(sed -n 's/^image="\(summerwind\/h2spec:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/h2spec.sh)
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/h2spec.sh"; exit 1; }

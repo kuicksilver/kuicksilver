@@ -27,12 +27,14 @@ import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -98,7 +100,9 @@ internal fun h2SettingsWithin(
 }
 
 /**
- * Serves one TLS connection that negotiated ALPN `h2` (RFC 9113 section 3.2) until it is over, then closes [sock] within
+ * Serves one TLS connection that negotiated ALPN `h2` (RFC 9113 section 3.2), or one cleartext connection of a plain
+ * connector with h2c (section 3.3; [input] is then the socket's read channel, opened for the preface check or for a PROXY
+ * protocol header, and [scheme] `http`), until it is over, then closes [sock] within
  * [sendTimeout] of no progress. Deadlines on the client: its connection preface by [prefaceWithin] (what is left of the
  * request-head deadline after the TLS handshake), each field block by `requestHeaderTimeout` (the core's
  * `maxHeaderBlockTime`), each wait for request content by [idle], each wait for window by [sendTimeout]; a connection
@@ -117,6 +121,8 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     headerTimeout: Duration,
     sendTimeout: Duration,
     draining: Job,
+    input: io.ktor.utils.io.ByteReadChannel? = null,
+    scheme: String = "https",
 ) {
     val local = sock.localAddress as? InetSocketAddress
     val connAltSvc = H2AltSvc(altSvc) // RFC 7838 sections 3, 4: the field on every response, a frame per origin and value
@@ -125,7 +131,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         coroutineScope {
             val c =
                 H2ServerConnection.start(
-                    sock.openDeliveringReadChannel(),
+                    input ?: sock.openDeliveringReadChannel(),
                     sock.openWriteChannel(),
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,
@@ -151,19 +157,57 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             conn = c
             h2Live.add(c)
             events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_2_0, remote) }
+
+            // each request the core takes is a call: a request's failure is its own (handleH2 catches it; the supervisor is
+            // the second line); the loop ends with the connection
+            fun serveRequests() =
+                launch {
+                    supervisorScope {
+                        for (r in c.requests) {
+                            launch { handleH2(r, local, remote, proxy, peer, authorityCheck, connAltSvc, idle, sendTimeout, scheme) }
+                        }
+                    }
+                }
             // RFC 9113 section 3.4: the client preface, within the request-head deadline (as the first request head on HTTP/1.1)
             // a preface read as the deadline fires is the preface (withTimeoutOrNull drops what the wait returned when its
-            // timeout lands after it, and the connection was ended with GOAWAY)
+            // timeout lands after it, and the connection was ended with GOAWAY). A stopping server reads no further request:
+            // a preface still arriving when it starts draining is not waited for, else one slow or silent client held the
+            // stop for the whole deadline
             val preface =
                 completedWithin(prefaceWithin) {
-                    runCatching { c.awaitPreface() }.isSuccess.also { configuration.h2PrefaceForTest?.invoke() }
+                    configuration.h2BeforePrefaceRaceForTest?.invoke(c, draining)
+                    coroutineScope {
+                        val arrived =
+                            async {
+                                configuration.h2PrefaceAwaitForTest?.invoke()
+                                runCatching { c.awaitPreface() }.isSuccess
+                            }
+                        try {
+                            select {
+                                arrived.onAwait { it }
+                                draining.onJoin { false }
+                            }
+                        } finally {
+                            arrived.cancel()
+                        }
+                    }.also { configuration.h2PrefaceForTest?.invoke() }
                 }
             if (preface != true) {
-                // section 9.1: GOAWAY before the close (no stream was taken: its last stream is 0); a client that does not
-                // even read it is cut off after the send-stall deadline
+                // section 9.1: GOAWAY before the close, its last stream the last one the core took. The core reads on its
+                // own, so a preface and requests that arrived as the stop won the wait (or as the deadline fired) may have
+                // been taken: section 6.8, those up to the last stream named "might have been processed" and the client
+                // will not repeat them, so they are served to their end; with nothing taken the last stream is 0 and the
+                // client may repeat everything. Then the close: a client that does not even read the GOAWAY is cut off
+                // after the send-stall deadline
                 c.goAway(Http2ErrorCode.NO_ERROR)
+                serveRequests()
+                c.awaitEnded()
                 if (withTimeoutOrNull(sendTimeout) { c.awaitClosed() } == null) {
-                    c.abort(IOException("no HTTP/2 connection preface within the request header timeout ($headerTimeout)"))
+                    c.abort(
+                        IOException(
+                            "no HTTP/2 connection preface within the request header timeout ($headerTimeout), or the server stopped",
+                        ),
+                    )
                     sock.abort()
                 }
                 return@coroutineScope
@@ -187,14 +231,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                         }
                     },
                 )
-            launch {
-                // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
-                supervisorScope {
-                    for (r in c.requests) {
-                        launch { handleH2(r, local, remote, proxy, peer, authorityCheck, connAltSvc, idle, sendTimeout) }
-                    }
-                }
-            }
+            serveRequests()
             c.awaitClosed()
             watchers.forEach { it.cancel() }
         }
@@ -329,6 +366,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     altSvc: H2AltSvc,
     bodyIdle: Duration,
     sendTimeout: Duration,
+    scheme: String,
 ) {
     val job = currentCoroutineContext().job
     r.invokeOnFailure { job.cancel(CancellationException("HTTP/2 stream ${r.id} ended: ${it.message}", it)) }
@@ -373,6 +411,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     engineDispatcher,
                     userDispatcher,
                     configuration.webSocketMaxMessageSize,
+                    scheme,
                 )
             call.applyProxyHeader(proxy)
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_2_0, call) }

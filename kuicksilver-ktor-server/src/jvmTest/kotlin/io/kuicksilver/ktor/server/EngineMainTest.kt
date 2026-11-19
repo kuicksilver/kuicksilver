@@ -30,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -176,6 +177,56 @@ class EngineMainTest {
         assertEquals(true, http2("-P:kuicksilver.http2=true"))
         assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
     }
+
+    /**
+     * `kuicksilver.h2c` serves HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port (RFC 9113 section
+     * 3.3); off by default, and refused next to the TLS identity files (h2c needs the cleartext port).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun h2cKey() =
+        serverTest {
+            fun mode(vararg extra: String): H2cMode {
+                val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+                return server.engine.configuration.h2cDeploymentPort
+            }
+            assertEquals(H2cMode.Off, mode())
+            assertEquals(H2cMode.WithHttp11, mode("-P:kuicksilver.h2c=withHttp11"))
+            assertEquals(H2cMode.Only, mode("-P:kuicksilver.h2c=only"))
+            assertEquals(H2cMode.Off, mode("-P:kuicksilver.h2c=off"))
+            assertFailsWith<IllegalArgumentException> { mode("-P:kuicksilver.h2c=yes") }
+            assertFailsWith<IllegalArgumentException> { EngineMain.createServer(clientCaArgs("-P:kuicksilver.h2c=only")).engine }
+            // the deployment port serves h2c and HTTP/1.1
+            val server =
+                EngineMain.createServer(
+                    arrayOf(
+                        "-host=127.0.0.1",
+                        "-port=0",
+                        "-P:ktor.application.modules.size=1",
+                        "-P:ktor.application.modules.0=$module",
+                        "-P:kuicksilver.http3=false",
+                        "-P:kuicksilver.h2c=withHttp11",
+                    ),
+                )
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                RawH2Client.connectPlain(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, listOf(":method" to "GET", ":scheme" to "http", ":authority" to "server.test", ":path" to "/"))
+                    val f = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS }, "a response on stream 1")
+                    assertEquals(RawFrame.HEADERS, f.type)
+                }
+                val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n", tls = null)
+                assertTrue(r.startsWith("HTTP/1.1 200"), r)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 
     /** `kuicksilver.webSocketsOverHttp2` turns WebSockets over HTTP/2 (RFC 8441) off; on by default, as over HTTP/3. */
     @Test fun webSocketsOverHttp2Key() {

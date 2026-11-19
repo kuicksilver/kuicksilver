@@ -104,6 +104,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - qlog: the trace header's `common_fields` give `protocol_type` (`["QUIC"]`, or `["QUIC","HTTP3"]` when the ALPN list
   offers `h3`) and `reference_time` (0, the trace's start), and times never go back from one record to the next
   (draft-ietf-quic-qlog-main-schema-05 sections 3.4.1 and 3.4.7, quic-events-04 section 2).
+- h2c: HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3), opt-in on both Ktor engines (experimental;
+  ADR-0018, which supersedes ADR-0017's "no h2c"). Client: `http2 { priorKnowledge = setOf(HostPort(host, port)) }`
+  sends the connection preface at once to the `http://` origins listed, without TLS, ALPN or `Upgrade: h2c`; every other
+  `http://` request stays HTTP/1.1, `https://` always negotiates by ALPN, a listed server that does not answer with
+  SETTINGS fails the call (no fallback), an HTTP proxy is passed in a CONNECT tunnel, and no ALTSVC frame or `Alt-Svc`
+  of an `http` origin is learned. Server: `plainConnector { h2c = H2cMode.WithHttp11 }` serves HTTP/1.1 and h2c on one
+  port, told apart by the 24-octet client preface (looked at as it arrives, nothing consumed, a request shorter than the
+  preface never held back, the wait within the request-head deadline), `H2cMode.Only` h2c alone (anything else is a
+  PROTOCOL_ERROR); `EngineMain` key `kuicksilver.h2c` (`off`, `withHttp11`, `only`), refused with the TLS identity
+  files, as h2c is on a connector the configuration's identity turns into TLS. Every HTTP/2 setting, limit, deadline,
+  flood defence, RFC 9218 priority and RFC 8441 WebSocket applies as over TLS; the call's scheme is `http`, and
+  `:scheme https` over h2c gets 421 unless the connector's clients are trusted gateways. A `ws://` WebSocket to a listed
+  origin with no h2c connection opens one (pooled) and goes as an RFC 8441 Extended CONNECT when the server's SETTINGS
+  allow it, else as an HTTP/1.1 Upgrade. `Upgrade: h2c` (deprecated by
+  section 3.1) is never sent, and a request that offers it is served as HTTP/1.1. Cleartext: only behind a trusted
+  network or proxy (threat model 3.23.1, CWE-319). Interop: OkHttp's `H2_PRIOR_KNOWLEDGE`, Ktor's OkHttp engine and
+  curl `--http2-prior-knowledge` against the server, the client against Netty and Ktor's Netty engine (`enableH2c`);
+  `tools/interop/h2spec.sh` runs h2spec over h2c too (`--tls`, `--h2c`; both by default).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -1354,6 +1372,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   0-RTT allowance a HelloRetryRequest clears (OpenSSL 3.5's QUIC client otherwise keeps offering it). The handshake
   completes with 0-RTT rejected (RFC 9001 section 4.6.2: "A server will always reject 0-RTT if it sends a TLS
   HelloRetryRequest") and the session resumed.
+- HTTP/2 server: a stop waited for a client that had sent part of its connection preface, up to the stop's grace period:
+  the preface wait did not watch the stop. A stopping server now ends such a connection at once with GOAWAY, over TLS
+  and over h2c; its last stream is the last one the core took (0 when none), and requests taken before it (a preface and
+  a request that arrived as the stop came) are served, never left unanswered under a GOAWAY that names them (RFC 9113
+  section 6.8).
 - HTTP/3 client (ktor-client) and `QuicConnection.rebind`: a local process could take the replies of an HTTP/3
   connection to a server on localhost on macOS (and the other BSD-socket systems, iOS included). The client's endpoint was
   bound to the wildcard address, which shares its port with a socket another process binds to 127.0.0.1 or ::1, and the
