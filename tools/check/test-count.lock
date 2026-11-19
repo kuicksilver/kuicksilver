@@ -940,6 +940,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.sto
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.theStopWatchEndsWithTheCompleteResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RemoteAddressTest.requestRemoteAddressFollowsAMigrationTheSessionMissed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.invalidRequestReleasesItsBody
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestOnAServerConnectionReleasesItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestOnAnEndedConnectionReleasesItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestRefusedByGoAwayKeepsItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestFramesTest.negative_headersLengthAboveIntRangeIsTooLarge
@@ -1268,7 +1269,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3ConnectionSeededTest.s
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
-kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.negative_requestRefusedByGoAwayWhileWaitingKeepsItsBody
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestRefusedByGoAwayWhileWaitingKeepsItsBody
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenItsCallerGivesUp
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenTheConnectionEnds
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.SectionDeadlineRaceTest.negative_aSectionReadAsItsDeadlineFiresIsTheSection

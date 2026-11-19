@@ -107,7 +107,7 @@ class WaitingRequestBodyTest {
         assertTrue(w.body.isClosedForWrite, "the body of the POST whose caller gave up is closed for writing")
     }
 
-    @Test fun negative_requestRefusedByGoAwayWhileWaitingKeepsItsBody() {
+    @Test fun requestRefusedByGoAwayWhileWaitingKeepsItsBody() {
         val w = postWaitingForCredit()
         scope.launch { server.goAway() }
         scheduler.runCurrent()

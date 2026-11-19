@@ -6,6 +6,7 @@ package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http3.Http3EarlyDataPolicy
@@ -168,12 +169,21 @@ internal suspend fun H3Session.request(
         // whether a sender ever read the body or not (a connection that ended, a request refused as malformed, a caller
         // that gave up while the request waited for stream credit). Not one refused before anything of it left: its body
         // was never read, RequestNotProcessed.neverSent promises it can be sent again, and the Ktor engine does so (on a
-        // new connection, or over HTTP/1.1). The transport reason itself: ktor-io drops a cancel cause that is a
-        // ClosedWriteChannelException (its copy is null)
+        // new connection, or over HTTP/1.1)
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        if (!(e is Http3Exception.RequestNotProcessed && e.neverSent)) r.body?.cancel(H3Session.transportCause(e) ?: e)
+        if (!(e is Http3Exception.RequestNotProcessed && e.neverSent)) r.body?.releaseWith(e)
         throw e
     }
+
+/**
+ * Ends a request body whose request failed with [e]: its writer's next write fails with [e] (as ktor-io reports a cancel
+ * cause: [e] itself or a copy of it, possibly as the cause of a ClosedWriteChannelException), the failure its caller got.
+ * One exception: ktor-io drops a cause that is a ClosedWriteChannelException (its copy is null), the failure of a write
+ * to the request stream the transport ended, and a writer would learn nothing; the transport's exception under it goes instead.
+ */
+internal fun ByteReadChannel.releaseWith(e: Throwable) {
+    cancel(if (e is ClosedWriteChannelException) H3Session.transportCause(e) ?: e else e)
+}
 
 private suspend fun H3Session.requestRepeating(
     r: Http3Request,

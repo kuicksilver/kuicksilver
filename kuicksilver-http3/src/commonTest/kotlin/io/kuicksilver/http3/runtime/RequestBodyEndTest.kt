@@ -21,7 +21,6 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -34,19 +33,34 @@ import kotlin.time.Duration.Companion.seconds
 class RequestBodyEndTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private fun post(body: ByteChannel, headers: Http3Headers = Http3Headers.Empty) =
-        http3Request("POST", "server.test", "/") {
-            this.body = body
-            this.headers = headers
-        }
+    private fun post(
+        body: ByteChannel,
+        headers: Http3Headers = Http3Headers.Empty,
+    ) = http3Request("POST", "server.test", "/") {
+        this.body = body
+        this.headers = headers
+    }
 
-    /** [body] was ended by the library: closed for writing, and a write fails at once instead of waiting for a reader. */
-    private suspend fun assertReleased(body: ByteChannel) {
+    /**
+     * [body] was ended by the library with [failure], the exception its request threw: closed for writing, and a write
+     * fails at once with that failure (ktor-io reports a cancel cause as it is, as a copy, or as the cause of its own
+     * exception) instead of waiting for a reader.
+     */
+    private suspend fun assertReleased(
+        body: ByteChannel,
+        failure: Throwable,
+    ) {
         assertTrue(body.isClosedForWrite, "the body of the failed request is closed for writing")
-        assertFailsWith<Throwable>("a write to the body of the failed request succeeded") {
-            body.writeFully(ByteArray(1))
-            body.flush()
-        }
+        val w =
+            assertFailsWith<Throwable>("a write to the body of the failed request succeeded") {
+                body.writeFully(ByteArray(1))
+                body.flush()
+            }
+        val chain = generateSequence(w) { it.cause }.take(8).toList()
+        assertTrue(
+            chain.any { it::class == failure::class && it.message == failure.message },
+            "the writer sees the request's own failure ($failure): $chain",
+        )
     }
 
     /** A request on a connection that already ended fails at once: its body ends with the connection's error. */
@@ -58,7 +72,7 @@ class RequestBodyEndTest {
                 val body = ByteChannel()
                 val e = assertFailsWith<Throwable>("a request on an ended connection failed") { p.client.request(post(body)) }
                 assertFalse(e is Http3Exception.RequestNotProcessed, "the connection's error, not a refusal: $e")
-                assertReleased(body)
+                assertReleased(body, e)
             }
         }
 
@@ -67,10 +81,24 @@ class RequestBodyEndTest {
         h3Test {
             H3Pair.open().useScoped { p ->
                 val body = ByteChannel()
-                assertFailsWith<IllegalArgumentException>("a field value with trailing whitespace was refused") {
-                    p.client.request(post(body, Http3Headers.of("x-a" to "v ")))
-                }
-                assertReleased(body)
+                val e =
+                    assertFailsWith<IllegalArgumentException>("a field value with trailing whitespace was refused") {
+                        p.client.request(post(body, Http3Headers.of("x-a" to "v ")))
+                    }
+                assertReleased(body, e)
+            }
+        }
+
+    /** request() on a server's connection fails before anything else: the body it was handed ends too. */
+    @Test fun requestOnAServerConnectionReleasesItsBody() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val body = ByteChannel()
+                val e =
+                    assertFailsWith<IllegalStateException>(
+                        "request() on a server's connection was refused",
+                    ) { p.server.request(post(body)) }
+                assertReleased(body, e)
             }
         }
 
@@ -82,9 +110,16 @@ class RequestBodyEndTest {
         h3Test {
             H3Pair.open().useScoped { p ->
                 launch { runCatching { p.server.goAway() } }
-                withTimeout(5.seconds) { p.client.goAwayReceived.filterNotNull().first() }
+                withTimeout(5.seconds) {
+                    p.client.goAwayReceived
+                        .filterNotNull()
+                        .first()
+                }
                 val body = ByteChannel()
-                val e = assertFailsWith<Http3Exception.RequestNotProcessed>("a request after GOAWAY was refused") { p.client.request(post(body)) }
+                val e =
+                    assertFailsWith<Http3Exception.RequestNotProcessed>(
+                        "a request after GOAWAY was refused",
+                    ) { p.client.request(post(body)) }
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 assertTrue(e.neverSent, "refused before anything went out")
                 assertFalse(body.isClosedForWrite, "the body of a request never sent stays open for a retry")
