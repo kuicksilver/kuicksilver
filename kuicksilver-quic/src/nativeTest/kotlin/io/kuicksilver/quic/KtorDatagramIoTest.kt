@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -77,12 +78,14 @@ class KtorDatagramIoTest {
      * at once (the previous code: 40 refused binds left 78 descriptors open at that point) is counted before the threads
      * are let go, one that waits is counted once they were and it returned.
      *
-     * The count starts once a first round has held the same threads: Kotlin/Native's dispatchers start a thread when a task
-     * finds none free and keep it, so the first round starts every thread the measured one uses. On Windows the count is
-     * the process's handles (`GetProcessHandleCount`), threads and their events among them; counted from before the first
-     * hold, the threads it started read as leaks whenever no earlier test had grown `Dispatchers.IO` to its 64 threads
-     * (run 44453449060: "40 refused binds left 281 descriptors open", the same on main 8f76f749f, 279; the descriptors of
-     * Linux and macOS count no thread).
+     * The measured round is the second. Kotlin/Native's dispatchers start a thread when a task finds none free and keep it,
+     * so the first round starts every thread the second holds. On Windows the count is the process's handles
+     * (`GetProcessHandleCount`), threads and their events among them; counted from before the first hold, the threads it
+     * started read as leaks whenever no earlier test had grown `Dispatchers.IO` to its 64 threads (run 44453449060: "40
+     * refused binds left 281 descriptors open", the same on main 8f76f749f, 279). The baseline is taken once the count has
+     * settled after the first round: a selector loop that was still to run then (the regression this test is for) would
+     * close its pipe during the second round and hide one of that round's. Linux and macOS count descriptors only, no
+     * thread: there the second round's count is held against the one from before the first round too.
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
@@ -90,16 +93,40 @@ class KtorDatagramIoTest {
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val initial = settledDescriptors()
                 refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured round holds
-                val before = openDescriptors()
-                var leakedWhileHeld: Int? = null
-                refusedBindsWhileThreadsAreHeld(taken) { leakedWhileHeld = openDescriptors() - before }
-                val leaked = leakedWhileHeld ?: (openDescriptors() - before)
-                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+                val before = settledDescriptors()
+                var whileHeld: Int? = null
+                refusedBindsWhileThreadsAreHeld(taken) { whileHeld = openDescriptors() }
+                val after = whileHeld ?: settledDescriptors()
+                assertTrue(after - before < 10, "40 refused binds left ${after - before} descriptors open")
+                if (!handlesCountThreads) {
+                    assertTrue(after - initial < 10, "80 refused binds left ${after - initial} descriptors open")
+                }
             } finally {
                 held.close()
             }
         }
+
+    /**
+     * The count once it has stopped moving: read every 50 ms until five reads in a row agree, at most for 10 s (then the
+     * last read). The selector loops of binds that already returned close their pipes when a thread takes them, and
+     * nothing signals that; the count is what is measured.
+     */
+    private suspend fun settledDescriptors(): Int {
+        var last = openDescriptors()
+        var same = 0
+        val start =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        while (same < 5 && start.elapsedNow() < 10.seconds) {
+            delay(50)
+            val n = openDescriptors()
+            if (n == last) same++ else same = 0
+            last = n
+        }
+        return last
+    }
 
     /**
      * Makes 40 refused binds of [taken] while more tasks than `Dispatchers.Default` and `Dispatchers.IO` have threads hold
@@ -167,4 +194,8 @@ class KtorDatagramIoTest {
         }
 
     private fun openDescriptors(): Int = openHandleCount()
+
+    /** Whether [openDescriptors] counts every handle of the process, threads among them (Windows), not descriptors alone. */
+    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+    private val handlesCountThreads: Boolean = kotlin.native.Platform.osFamily == kotlin.native.OsFamily.WINDOWS
 }
