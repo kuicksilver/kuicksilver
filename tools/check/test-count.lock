@@ -3636,6 +3636,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDead
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDeadlineRaceTest.negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.ClientSignalConcurrencyTest.observedOrderIsMonotonic
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDeadlineRaceTest.negative_aPrefaceReadAsItsDeadlineFiresIsThePreface
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsThePrefaceWinsIsServedOverH2c
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsThePrefaceWinsIsServedOverTls
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverTls
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aWholePrefaceAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11

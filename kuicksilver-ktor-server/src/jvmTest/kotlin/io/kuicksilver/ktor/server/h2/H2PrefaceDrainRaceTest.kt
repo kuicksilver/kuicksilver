@@ -17,6 +17,7 @@ import io.kuicksilver.ktor.server.serverTest
 import io.kuicksilver.ktor.server.tlsServer
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -32,11 +33,11 @@ import kotlin.time.Duration.Companion.seconds
  * The stop racing the client preface (RFC 9113 sections 3.4 and 6.8): a client whose preface and first request arrive as
  * the server starts to stop. The core reads on its own, so it may have taken the request when the stop wins the wait for
  * the preface; that request is then served (or, had nothing been taken, the GOAWAY says last stream 0), never left
- * unanswered under a GOAWAY that names it. The hooks hold the wait until the stop began and the core took stream 1, and
- * keep the preface's side of the race from completing, so the stop wins in every run. On an h2c connector that also
- * serves HTTP/1.1 the preface check before it races the stop too, and a whole preface that came with a stop that won is
- * still HTTP/2 (RFC 9113 section 3.3), never handed to HTTP/1.1. The hooks are the server configuration's own, one
- * server per test.
+ * unanswered under a GOAWAY that names it. Each side is forced: the stop's by hooks that hold the wait until the stop
+ * began and the core took stream 1 and keep the preface's side from completing; the preface's by hooks that let the wait
+ * end on the preface and start the stop before anything after it runs. On an h2c connector that also serves HTTP/1.1
+ * the preface check before it races the stop too, and a whole preface that came with a stop that won is still HTTP/2
+ * (RFC 9113 section 3.3), never handed to HTTP/1.1. The hooks are the server configuration's own, one server per test.
  */
 class H2PrefaceDrainRaceTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -50,10 +51,24 @@ class H2PrefaceDrainRaceTest {
         h2PrefaceAwaitForTest = { kotlinx.coroutines.awaitCancellation() }
     }
 
+    /** The preface wins the wait (it and stream 1 are in, the stop has not begun); the stop begins right after it won. */
+    private fun KuicksilverApplicationEngine.Configuration.prefaceWinsThenStop(prefaceWon: CompletableDeferred<Unit>) {
+        val draining = CompletableDeferred<Job>()
+        h2BeforePrefaceRaceForTest = { c, d ->
+            c.requestsTaken.first { it >= 1 }
+            draining.complete(d)
+        }
+        h2PrefaceForTest = {
+            prefaceWon.complete(Unit)
+            draining.await().join() // nothing after the wait runs before the stop began
+        }
+    }
+
     private suspend fun run(
         server: EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>,
         port: Int,
         tls: Boolean,
+        beforeStop: suspend () -> Unit = {},
     ) = coroutineScope {
         val raw = if (tls) RawH2Client.connect(port) else RawH2Client.connectPlain(port)
         raw.use {
@@ -68,15 +83,24 @@ class H2PrefaceDrainRaceTest {
                 server.engine.h2Live.count
                     .first { it == 1 }
             }
+            withTimeout(10.seconds) { beforeStop() }
             val stop = async { server.stopSuspend(10_000, 15_000) }
             val frames =
                 withTimeout(20.seconds) {
                     buildList {
-                        while (true) add(raw.readFrame() ?: break)
+                        while (true) {
+                            val f = raw.readFrame() ?: break
+                            add(f)
+                            // the graceful stop's PING (the first GOAWAY's round trip, RFC 9113 section 6.8) is answered
+                            if (f.type == RawFrame.PING && f.flags and 0x1 == 0) {
+                                raw.write(RawH2Client.frame(RawFrame.PING, 0x1, 0, f.payload))
+                            }
+                        }
                     }
                 }
             val answered = frames.any { it.stream == 1 && it.type == RawFrame.HEADERS }
             assertTrue(answered, "stream 1 was taken by the core, so it must be answered: $frames")
+            assertTrue(frames.any { it.type == RawFrame.GOAWAY }, "the stop ends the connection with GOAWAY: $frames")
             val t =
                 kotlin.time.TimeSource.Monotonic
                     .markNow()
@@ -107,6 +131,42 @@ class H2PrefaceDrainRaceTest {
                     .port,
                 tls = false,
             )
+        }
+
+    @Test fun negative_aRequestTakenAsThePrefaceWinsIsServedOverH2c() =
+        serverTest {
+            val prefaceWon = CompletableDeferred<Unit>()
+            val server =
+                kuicksilverServer(null, configure = {
+                    plainConnector {
+                        host = "127.0.0.1"
+                        port = 0
+                        h2c = H2cMode.Only
+                    }
+                    http3 = false
+                    prefaceWinsThenStop(prefaceWon)
+                }) { routing { get("/") { call.respondText("ok") } } }
+            server.startSuspend(wait = false)
+            run(
+                server,
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port,
+                tls = false,
+            ) { prefaceWon.await() }
+        }
+
+    @Test fun negative_aRequestTakenAsThePrefaceWinsIsServedOverTls() =
+        serverTest {
+            val prefaceWon = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer(configure = {
+                    http2 = true
+                    http3 = false
+                    prefaceWinsThenStop(prefaceWon)
+                }) { routing { get("/") { call.respondText("ok") } } }
+            run(server, port, tls = true) { prefaceWon.await() }
         }
 
     /**
