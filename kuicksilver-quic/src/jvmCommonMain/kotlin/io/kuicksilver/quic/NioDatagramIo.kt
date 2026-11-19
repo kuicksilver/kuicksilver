@@ -217,8 +217,21 @@ internal class NioDatagramIo private constructor(
 
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
-        /** Linux and Android (the JDK's `os.name`), where the JDK's `IP_DONTFRAGMENT` is `IP_PMTUDISC_DO`. */
-        private val linuxKernel: Boolean = (System.getProperty("os.name") ?: "").lowercase().startsWith("linux")
+        private val osName: String = System.getProperty("os.name") ?: ""
+
+        /**
+         * Whether the JDK's `IP_DONTFRAGMENT` is set, given the `os.name` and the probe-mode bits [dfProbe] granted: never once
+         * probe mode is on, and never on Linux, Android or Windows, where the JDK's option is `IP_PMTUDISC_DO` (a forged ICMP
+         * Fragmentation Needed then makes the kernel refuse every larger send: Linux EMSGSIZE, Windows WSAEMSGSIZE, both
+         * verified); elsewhere (Apple, whose IP_DONTFRAG has no modes) it is set.
+         */
+        internal fun usesJdkDontFragment(
+            os: String,
+            probeGranted: Int,
+        ): Boolean {
+            val o = os.lowercase()
+            return probeGranted == 0 && !o.startsWith("linux") && !o.startsWith("windows")
+        }
 
         /**
          * RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST
@@ -227,18 +240,19 @@ internal class NioDatagramIo private constructor(
          * both: DF on every datagram, no local fragmentation, and no path MTU cache an ICMP message could lower to refuse
          * sends. The JDK cannot set it, so [dfProbe] does (through `ksl` on the JVM, `android.system.Os` on Android); it
          * returns the bits granted. Without it:
-         * - Linux keeps the kernel's default `IP_PMTUDISC_WANT`: DF on every datagram within the path MTU the kernel knows,
-         *   but one forged ICMP Fragmentation Needed makes it fragment larger ones locally without DF (the one remaining
-         *   deviation from section 14). The JDK's option is not used there: it is `IP_PMTUDISC_DO`, in which that ICMP message
-         *   makes the kernel refuse every larger send for ten minutes (quic-go CVE-2024-53259), against section 14.2.1.
-         * - Elsewhere (Apple: IP_DONTFRAG, which has no modes; Windows until its behaviour is checked) the JDK's
-         *   `IP_DONTFRAGMENT` where the runtime has it (JDK 19 and later).
+         * - Linux and Windows keep the system's default mode (Linux `IP_PMTUDISC_WANT`: DF on every datagram within the path
+         *   MTU the kernel knows, but one forged ICMP Fragmentation Needed makes it fragment larger ones locally without DF;
+         *   the one remaining deviation from section 14). The JDK's option is not used there: it is `IP_PMTUDISC_DO`, in which
+         *   that ICMP message makes the system refuse every larger send to the peer (quic-go CVE-2024-53259), against
+         *   section 14.2.1: Linux for ten minutes (EMSGSIZE); Windows likewise, verified on a Windows 11 VM against a
+         *   non-loopback peer (WSAEMSGSIZE in DO, PROBE unaffected; loopback ignores the cached MTU).
+         * - Apple (IP_DONTFRAG, which has no modes): the JDK's `IP_DONTFRAGMENT` where the runtime has it (JDK 19 and later).
          * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it
          * could run here later. A platform that refuses an option keeps the socket as it was.
          */
         private fun setDontFragment(ch: DatagramChannel): Int {
             val granted = dfProbe(ch)
-            if (granted != 0 || linuxKernel) return granted
+            if (!usesJdkDontFragment(osName, granted)) return granted
             val opt = dontFragmentOption() ?: return 0
             try {
                 if (opt in ch.supportedOptions()) ch.setOption(opt, true)

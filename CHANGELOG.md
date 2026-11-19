@@ -2369,9 +2369,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl` on the JVM and
   `android.system.Os` on Android, so a forged ICMP Fragmentation Needed can neither make the kernel refuse sends nor
   fragment them (quic-go CVE-2024-53259; section 14.2.1); the JDK's `IP_DONTFRAGMENT` is `IP_PMTUDISC_DO` there and is not
-  used (Linux without `ksl` keeps the kernel's default mode). Apple: the JDK's option (JDK 19 and later); Windows: probe
-  mode through `ksl` where the system takes it, else the JDK's option. Datagrams there stay within 1200 bytes, so PMTUD
-  stays off.
+  used (Linux without `ksl` keeps the kernel's default mode). Windows: probe mode through `ksl` where the system takes
+  it, else the system's default; never the JDK's option, which is `IP_PMTUDISC_DO` there too (checked on a Windows 11 VM:
+  after a forged message for a non-loopback peer DO sockets fail with WSAEMSGSIZE, PROBE ones still send; loopback is
+  unaffected). Apple: the JDK's option (JDK 19 and later). Datagrams there stay within 1200 bytes, so PMTUD stays off.
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).

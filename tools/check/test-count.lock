@@ -5353,6 +5353,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.concurrentStartRunsOnce
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocksReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.emptyDatagramDoesNotStopReceive
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.jdkDontFragmentOnlyWithoutProbeModeOutsideLinuxAndWindows
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.loopbackSendReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioClearsTosAfterValidationFailure
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioSetsDontFragmentWherePossible

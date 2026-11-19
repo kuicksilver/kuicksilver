@@ -121,9 +121,11 @@ class NioDatagramIoTest {
      * set if possible") and section 14.2.1 (an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased below
      * QUIC's smallest allowed maximum datagram size"): on Linux the portable socket is in probe mode (`IP_PMTUDISC_PROBE`, and
      * `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and never in the JDK's `IP_DONTFRAGMENT`, which is
-     * `IP_PMTUDISC_DO` there. Elsewhere without probe mode (Apple) the JDK's option is set where the JDK has it (19 and later).
-     * Its datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false). The forged-ICMP attack itself is
-     * `test_udp.c` `udp_fd_df_probe_forged_ptb` (a raw socket in a user and network namespace of its own).
+     * `IP_PMTUDISC_DO` there; Windows the same where the system takes PROBE, and never the JDK's option (DO there too).
+     * Apple has no probe mode: the JDK's option is set where the JDK has it (19 and later). Its datagrams stay within 1200
+     * bytes, so PMTUD stays off (`df` capability false). The forged-ICMP attack itself is `test_udp.c`
+     * `udp_fd_df_probe_forged_ptb` (Linux: a raw socket in a user and network namespace of its own); on Windows it cannot be
+     * reproduced over loopback, which ignores the cached path MTU (checked on a Windows 11 VM against a real peer instead).
      */
     @Test fun nioSetsDontFragmentWherePossible() =
         runBlocking {
@@ -150,9 +152,10 @@ class NioDatagramIoTest {
                         assertEquals(if (Runtime.version().feature() >= 19) true else null, a.dontFragmentForTest())
                     }
 
-                    // Windows: probe mode where the system takes it, else the JDK's option (its behaviour is being checked)
-                    granted != 0 -> {
-                        assertEquals(3, a.dfModeForTest(4))
+                    // Windows: probe mode where the system takes it; never the JDK's option (IP_PMTUDISC_DO)
+                    os.startsWith("windows") -> {
+                        if (granted != 0) assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE")
+                        assertEquals(if (Runtime.version().feature() >= 19) false else null, a.dontFragmentForTest())
                     }
                 }
                 assertFalse(a.capabilities.value.df)
@@ -169,6 +172,22 @@ class NioDatagramIoTest {
                 b.close()
             }
         }
+
+    /**
+     * The mode choice per OS and probe outcome: the JDK's `IP_DONTFRAGMENT` (`IP_PMTUDISC_DO` on Linux and Windows) only where
+     * probe mode was not granted and the system is neither Linux (Android reports Linux) nor Windows.
+     */
+    @Test fun jdkDontFragmentOnlyWithoutProbeModeOutsideLinuxAndWindows() {
+        val choose = NioDatagramIo.Companion::usesJdkDontFragment
+        for (os in listOf("Linux", "Windows 11", "Windows Server 2025")) {
+            assertFalse(choose(os, 0), "$os without probe mode (no ksl): the system's default, not DO")
+            assertFalse(choose(os, 1), "$os with probe mode")
+            assertFalse(choose(os, 3), "$os with probe mode on both halves")
+        }
+        assertTrue(choose("Mac OS X", 0), "Apple: IP_DONTFRAG, no modes")
+        assertFalse(choose("Mac OS X", 1), "probe mode granted wins anywhere")
+        assertTrue(choose("FreeBSD", 0), "another system without probe mode")
+    }
 
     @Test fun nioClearsTosAfterValidationFailure() =
         runBlocking {
