@@ -113,7 +113,7 @@ internal suspend fun h2WebSocket(
                 scheme,
                 url.authority(),
                 url.h3Path(),
-                proxyFieldsDropped(conn, fields),
+                fields,
                 endStream = false,
                 protocol = WEBSOCKET,
                 neverIndexed = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty(),

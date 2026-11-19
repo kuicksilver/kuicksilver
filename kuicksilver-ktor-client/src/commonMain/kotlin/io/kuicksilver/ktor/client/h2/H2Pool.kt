@@ -24,11 +24,6 @@ internal class H2Conn(
     route: String,
     createdAt: Long,
     override val remoteIp: ByteArray? = null,
-    /**
-     * Opened through a proxy (an HTTP CONNECT tunnel or SOCKS5): the request's `Proxy-Authorization` is the proxy's and
-     * never goes to the origin on it ([proxyFieldsDropped]).
-     */
-    val proxied: Boolean = false,
 ) : PooledConnection(route, createdAt) {
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -356,13 +351,3 @@ internal class H2RefusedRoutes(
         const val MAX_ROUTES = 1000
     }
 }
-
-/**
- * The request fields an HTTP/2 stream on [conn] carries to the origin: without `Proxy-Authorization` on a connection
- * through a proxy, whose credentials went in the CONNECT (RFC 9110 section 11.7.2: "consumed by the first inbound proxy
- * that was expecting to receive credentials", never forwarded to the origin), as HTTP/1.1 drops it inside a tunnel.
- */
-internal fun proxyFieldsDropped(
-    conn: H2Conn,
-    fields: List<Pair<String, String>>,
-): List<Pair<String, String>> = if (conn.proxied) fields.filter { !it.first.equals("proxy-authorization", ignoreCase = true) } else fields

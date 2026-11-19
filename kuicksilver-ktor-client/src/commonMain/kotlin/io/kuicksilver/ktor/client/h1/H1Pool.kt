@@ -1673,7 +1673,7 @@ internal class H1Pool(
                         h2Owned = true
                         try {
                             afterH2StartForTest?.invoke(client, tcp)
-                            return H2Conn(client, key, clock(), peerIp, proxied = proxy != null)
+                            return H2Conn(client, key, clock(), peerIp)
                         } catch (e: Throwable) {
                             // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
                             // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the
@@ -1729,7 +1729,7 @@ internal class H1Pool(
                     h2Owned = true
                     try {
                         afterH2StartForTest?.invoke(client, tcp)
-                        H2Conn(client, key, clock(), peerIp, proxied = proxy != null)
+                        H2Conn(client, key, clock(), peerIp)
                     } catch (e: Throwable) {
                         try {
                             client.abortInOrder(e)
