@@ -619,10 +619,12 @@ class ConnectionEndTest {
                         w.finish()
                     }
                 withTimeoutOrNull(20.seconds) { atEnd.await() } ?: fail("the pump did not reach the end of the content")
+                // the client has the response's head before the abandon: a reset can discard a HEADERS frame not yet sent
+                // (RFC 9000 section 3.1), and then the request itself fails, as it may (a slow device, API 24 in CI)
+                val r = withTimeout(5.seconds) { response.await() }
                 handler.cancel()
                 handler.join()
                 release.complete(Unit)
-                val r = withTimeout(5.seconds) { response.await() }
                 val body = withTimeoutOrNull(20.seconds) { runCatching { r.body.readAllBytes() } }
                 assertTrue(body != null, "the client's body read never ended: neither FIN nor reset was sent")
                 assertTrue(body.isFailure, "the abandoned response reads as failed, not complete: $body")
@@ -655,10 +657,10 @@ class ConnectionEndTest {
                         w.finish()
                     }
                 withTimeoutOrNull(20.seconds) { atFin.await() } ?: fail("finish did not reach the FIN")
+                val r = withTimeout(5.seconds) { response.await() } // its head first, as above
                 handler.cancel()
                 handler.join()
                 assertFalse(req.respondedInFull, "a response whose finish was cancelled before its FIN is not complete")
-                val r = withTimeout(5.seconds) { response.await() }
                 val read = withTimeoutOrNull(20.seconds) { runCatching { r.body.readAllBytes() } }
                 assertTrue(read != null && read.isFailure, "the abandoned response reads as failed: $read")
                 awaitNothingRegistered(s)
