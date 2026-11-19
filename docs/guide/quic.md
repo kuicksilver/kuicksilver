@@ -534,7 +534,8 @@ packets, or two PTOs in a row while sending above 1200, mean the path shrank: th
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
 dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF where the JDK has the
-option (`IP_DONTFRAGMENT`, JDK 19 and later; RFC 9000 section 14: "MUST be set if possible") but reports no DF capability,
+option (`IP_DONTFRAGMENT`, JDK 19 and later; RFC 9000 section 14: "MUST be set if possible"; on Linux the kernel's default
+mode sets DF instead, since the JDK's option there would let a forged ICMP message block sends) but reports no DF capability,
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 

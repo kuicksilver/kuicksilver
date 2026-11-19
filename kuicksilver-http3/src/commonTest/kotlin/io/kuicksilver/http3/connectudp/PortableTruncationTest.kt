@@ -30,11 +30,14 @@ import kotlin.time.Duration.Companion.seconds
  * datagram to their slot; the proxy's slot is one byte longer than the link carries, so a cut one is recognised. HTTP/3
  * datagrams are off, so a payload of any size would reach the client as a DATAGRAM capsule.
  *
- * The oversized datagram must still leave the target's socket: that socket sets DF (RFC 9000 section 14), so a send larger
- * than the path MTU the kernel knows fails with EMSGSIZE ("Message too long") instead of being fragmented; the Linux
- * containers of the local matrix refused 1600 bytes so. The proxy therefore runs at the smallest link MTU it accepts (1280)
- * and the target sends [OVERSIZED] bytes: above that MTU, yet within any path of at least an Ethernet MTU (1500 - 20 - 8
- * bytes of IPv4 and UDP headers = 1472), and far below the 65507-byte UDP maximum.
+ * The oversized datagram must still leave the target's socket. In the Linux containers of the local matrix it did not: an
+ * earlier test's proxy, running as root there, sent a real ICMP Packet Too Big (RFC 9298 section 6.1) for a flow to
+ * 127.0.0.1, which lowered the kernel's cached path MTU to that address for ten minutes, and the portable socket's
+ * `IP_DONTFRAGMENT` (`IP_PMTUDISC_DO` on Linux) turned every larger send into EMSGSIZE ("Message too long"). The portable
+ * socket no longer sets that mode on Linux (`NioDatagramIoTest.negative_aForgedPacketTooBigBelow1200DoesNotRefuseSends`).
+ * The proxy runs at the smallest link MTU it accepts (1280) and the target sends [OVERSIZED] bytes: above that MTU, within
+ * any path of at least an Ethernet MTU (1500 - 20 - 8 bytes of IPv4 and UDP headers = 1472), and far below the 65507-byte
+ * UDP maximum.
  */
 class PortableTruncationTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -89,7 +92,7 @@ class PortableTruncationTest {
     private companion object {
         const val LINK_MTU = 1280
 
-        /** Above [LINK_MTU] (and the proxy's receive slot of `LINK_MTU + 1`), within a 1500-byte loopback with DF set. */
+        /** Above [LINK_MTU] (and the proxy's receive slot of `LINK_MTU + 1`), within a path of an Ethernet MTU. */
         const val OVERSIZED = 1400
     }
 }

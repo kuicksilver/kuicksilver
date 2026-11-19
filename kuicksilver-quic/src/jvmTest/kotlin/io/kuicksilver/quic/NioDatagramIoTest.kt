@@ -118,18 +118,61 @@ class NioDatagramIoTest {
 
     /**
      * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". The portable socket sets it where the
-     * JDK can (`jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT`, JDK 19 and later); its datagrams stay within 1200 bytes, so
-     * PMTUD stays off (`df` capability false).
+     * JDK can (`jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT`, JDK 19 and later), except on Linux, where that option is
+     * `IP_PMTUDISC_DO` and the kernel's default mode sets DF already ([NioDatagramIo.linuxKernel]); its datagrams stay
+     * within 1200 bytes, so PMTUD stays off (`df` capability false).
      */
     @Test fun nioSetsDontFragmentWherePossible() =
         runBlocking {
-            val (a, _) = pair()
+            val (a, b) = pair()
             try {
                 val df = (a as io.kuicksilver.quic.NioDatagramIo).dontFragmentForTest()
-                if (Runtime.version().feature() >= 19) assertEquals(true, df) else assertEquals(null, df)
+                when {
+                    Runtime.version().feature() < 19 -> assertEquals(null, df)
+                    NioDatagramIo.linuxKernel -> assertEquals(false, df, "IP_PMTUDISC_DO on Linux")
+                    else -> assertEquals(true, df)
+                }
                 assertFalse(a.capabilities.value.df)
             } finally {
                 a.close()
+                b.close()
+            }
+        }
+
+    /**
+     * Self-attack (quic-go CVE-2024-53259; RFC 9000 section 14.2.1: an endpoint "MUST ignore an ICMP message that claims the
+     * PMTU has decreased below QUIC's smallest allowed maximum datagram size"): a forged ICMP Fragmentation Needed claiming a
+     * 1000-byte MTU for the socket's flow to 127.0.0.1 lowers the kernel's cached path MTU there for ten minutes. A socket in
+     * `IP_PMTUDISC_DO` then had every 1200-byte send to that address refused with EMSGSIZE ("Message too long"): the
+     * portable socket in the local matrix's Linux containers and, through it, every CONNECT-UDP target socket of the tests
+     * that ran later. The datagram must still arrive whole. Needs a raw ICMP socket (Linux, CAP_NET_RAW: the
+     * root user of the local matrix's containers); elsewhere it says it was skipped. The forged MTU stays above Linux's
+     * 552-byte floor and leaves sockets in probe mode (the accelerated one) untouched.
+     */
+    @Test fun negative_aForgedPacketTooBigBelow1200DoesNotRefuseSends() =
+        runBlocking {
+            val probe = PacketTooBigSender.probe()
+            if (!probe.available) {
+                println("negative_aForgedPacketTooBigBelow1200DoesNotRefuseSends skipped: ${probe.reason}")
+                return@runBlocking
+            }
+            val (a, b) = pair()
+            try {
+                PacketTooBigSender.create().use { forger ->
+                    // the message quotes a 1200-byte datagram from a to b; the kernel matches it to a's socket
+                    assertTrue(forger.send(a.localAddress, b.localAddress, ByteArray(1200), 1200, 1000), "the forged message sent")
+                }
+                kotlinx.coroutines.delay(200) // the loopback ICMP is processed in a softirq, not within the raw send
+                val out = batchOf(ByteArray(1200) { 3 }, to = b.localAddress)
+                assertEquals(1, a.send(out), "the send was refused")
+                val inb = PacketBatch(1)
+                withTimeout(5.seconds) { while (b.receive(inb) == 0) continue }
+                assertEquals(1200, inb.length(0))
+                out.close()
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
             }
         }
 
