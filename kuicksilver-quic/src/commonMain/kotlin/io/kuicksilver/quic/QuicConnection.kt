@@ -54,6 +54,13 @@ public interface QuicConnection : AutoCloseable {
     /** The connection's paths; the first is the one it was established on (RFC 9000 section 9). */
     public val paths: List<QuicPath>
 
+    /**
+     * This connection's diagnostics handle: the [ConnectionInfo] its endpoint's [ConnectionListener] hears, with the paths and
+     * the connection IDs on them ([ConnectionInfo.paths]). Null for an implementation outside this library.
+     */
+    @ExperimentalKuicksilverApi
+    public val info: ConnectionInfo? get() = null
+
     /** Validation results and path changes, ours and the peer's (RFC 9000 section 9). A hot flow without replay: collect it before calling [migrate] or [QuicPath.probe] to see their events. */
     public val pathEvents: Flow<PathEvent>
 

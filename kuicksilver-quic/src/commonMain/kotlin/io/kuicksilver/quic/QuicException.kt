@@ -30,6 +30,15 @@ public enum class TimeoutKind {
     Handshake,
 }
 
+/**
+ * [this] copy of [original] with the original's suppressed exceptions: what a layer above attached (the HTTP/3 failure a
+ * client engine adds to the thrown one, its call diagnostics) survives the copy coroutines make to keep the receiving stack.
+ */
+internal fun <T : Throwable> T.withSuppressedOf(original: Throwable): T {
+    for (s in original.suppressedExceptions) if (s !== this) addSuppressed(s)
+    return this
+}
+
 private const val MAX_CODE: Long = (1L shl 62) - 1
 
 private fun checkCode(code: Long): Long {
@@ -80,7 +89,8 @@ public sealed class QuicException(
             }
 
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): TransportClosed = TransportClosed(code, frameType, reason, wire, initiator, cause)
+            override fun createCopy(): TransportClosed =
+                TransportClosed(code, frameType, reason, wire, initiator, cause).withSuppressedOf(this)
         }
 
         /**
@@ -100,7 +110,7 @@ public sealed class QuicException(
             }
 
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): ApplicationClosed = ApplicationClosed(code, reason, initiator)
+            override fun createCopy(): ApplicationClosed = ApplicationClosed(code, reason, initiator).withSuppressedOf(this)
         }
 
         /**
@@ -114,7 +124,7 @@ public sealed class QuicException(
             public val duration: Duration,
         ) : ConnectionLost("$kind timeout after $duration") {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): Timeout = Timeout(kind, duration)
+            override fun createCopy(): Timeout = Timeout(kind, duration).withSuppressedOf(this)
         }
 
         /**
@@ -135,19 +145,19 @@ public sealed class QuicException(
                 }}, we support ${supported.map { "0x" + it.toUInt().toString(16) }}",
             ) {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): VersionNegotiation = VersionNegotiation(offered, supported)
+            override fun createCopy(): VersionNegotiation = VersionNegotiation(offered, supported).withSuppressedOf(this)
         }
 
         /** The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2). */
         public class NoViablePath : ConnectionLost("no viable path") {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): NoViablePath = NoViablePath()
+            override fun createCopy(): NoViablePath = NoViablePath().withSuppressedOf(this)
         }
 
         /** A Stateless Reset from the peer (RFC 9000 section 10.3): it lost its state; the connection drains without a CONNECTION_CLOSE. */
         public class StatelessReset : ConnectionLost("stateless reset received") {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): StatelessReset = StatelessReset()
+            override fun createCopy(): StatelessReset = StatelessReset().withSuppressedOf(this)
         }
 
         /**
@@ -158,7 +168,7 @@ public sealed class QuicException(
         @ExperimentalKuicksilverApi
         public class ZeroRttRejected : ConnectionLost("0-RTT rejected") {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): ZeroRttRejected = ZeroRttRejected()
+            override fun createCopy(): ZeroRttRejected = ZeroRttRejected().withSuppressedOf(this)
         }
 
         /** A bug or an unexpected failure inside the stack: the connection is dropped silently (no CONNECTION_CLOSE leaves, the peer sees an idle timeout) and the cause is kept for the report. */
@@ -167,7 +177,7 @@ public sealed class QuicException(
             cause: Throwable? = null,
         ) : ConnectionLost(message, cause) {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): Internal = Internal(message ?: "", cause)
+            override fun createCopy(): Internal = Internal(message ?: "", cause).withSuppressedOf(this)
         }
     }
 
@@ -193,7 +203,7 @@ public sealed class QuicException(
             }
 
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): Reset = Reset(streamId, code, initiator)
+            override fun createCopy(): Reset = Reset(streamId, code, initiator).withSuppressedOf(this)
         }
 
         /**
@@ -214,7 +224,7 @@ public sealed class QuicException(
             }
 
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): Stopped = Stopped(streamId, code, initiator)
+            override fun createCopy(): Stopped = Stopped(streamId, code, initiator).withSuppressedOf(this)
         }
 
         /**
@@ -229,7 +239,7 @@ public sealed class QuicException(
             public val streamId: Long,
         ) : StreamError("stream $streamId reset: the server rejected 0-RTT") {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): EarlyDataRejected = EarlyDataRejected(streamId)
+            override fun createCopy(): EarlyDataRejected = EarlyDataRejected(streamId).withSuppressedOf(this)
         }
     }
 
@@ -245,7 +255,7 @@ public sealed class QuicException(
         public val max: Int,
     ) : QuicException("datagram of $size bytes exceeds the maximum of $max") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): DatagramTooLarge = DatagramTooLarge(size, max)
+        override fun createCopy(): DatagramTooLarge = DatagramTooLarge(size, max).withSuppressedOf(this)
     }
 
     /**
@@ -257,12 +267,12 @@ public sealed class QuicException(
         public val reason: DatagramUnsupportedReason,
     ) : QuicException("datagrams unsupported: $reason") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): DatagramUnsupported = DatagramUnsupported(reason)
+        override fun createCopy(): DatagramUnsupported = DatagramUnsupported(reason).withSuppressedOf(this)
     }
 
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */
     public class EndpointClosing : QuicException("endpoint is closing") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): EndpointClosing = EndpointClosing()
+        override fun createCopy(): EndpointClosing = EndpointClosing().withSuppressedOf(this)
     }
 }

@@ -211,6 +211,13 @@ internal class Path(
     /** Server: the sequence number of the ID of ours the client's latest 1-RTT packet on this path carried; -1 before one. */
     var lastRxDcidSeq: Long = -1L
 
+    /**
+     * Client: the ID of ours the server's latest 1-RTT packet on this path carried and its sequence number (-1 before one), for
+     * the diagnostics of `ConnectionInfo.paths` only: no decision of the client rests on it.
+     */
+    var clientRxCid: io.kuicksilver.quic.wire.ConnectionId? = null
+    var clientRxCidSeq: Long = -1L
+
     /** Server: this active path failed a validation once while its peer address was validated elsewhere, too long ago, and validates again. */
     var revalidatedForStaleAddress: Boolean = false
 

@@ -32,6 +32,10 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.localCidBySeq
+import io.kuicksilver.quic.core.localCidSeqOn
+import io.kuicksilver.quic.core.remoteCidOn
+import io.kuicksilver.quic.core.remoteCidSeqOn
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.tls.Certificate
@@ -134,8 +138,104 @@ internal class ConnectionRuntime(
     internal val role = core.role
 
     /** What a [io.kuicksilver.quic.ConnectionListener] and the logger know this connection by: its original DCID in hex (its qlog name). */
-    internal val info: io.kuicksilver.quic.ConnectionInfo =
-        io.kuicksilver.quic.ConnectionInfo(core.odcid.toString(), role, this) { core.remoteAddress }
+    @OptIn(ExperimentalKuicksilverApi::class)
+    override val info: io.kuicksilver.quic.ConnectionInfo =
+        io.kuicksilver.quic.ConnectionInfo(
+            core.odcid.toString(),
+            role,
+            this,
+            { core.remoteAddress },
+            { pathInfos },
+            { pathChangeCount },
+        )
+
+    // ---- path diagnostics (ConnectionInfo.paths) ----
+
+    /** The paths as last published by the loop, the active one first; replaced as a whole, read from any thread. */
+    @Volatile private var pathInfos: List<io.kuicksilver.quic.PathInfo> = emptyList()
+
+    /** Path changes so far ([ConnectionInfo.pathChanges][io.kuicksilver.quic.ConnectionInfo.pathChanges]); written on the loop. */
+    @Volatile private var pathChangeCount = 0
+
+    /** Set once the listener heard `onOpened`: `onPathsUpdated` never comes before it. Loop dispatcher only. */
+    internal var openedReported = false
+
+    /**
+     * What [pathInfos] was built from, per path (at most eight slots, the core keeps four): the path id, its state, whether it
+     * was active, its peer address (by identity: the core replaces the object when the address changes), the sequence of our
+     * ID seen on it and the peer ID it sends with (by identity). Compared at every drain without allocating; a difference
+     * rebuilds the list. Loop dispatcher only.
+     */
+    private val shownIds = IntArray(8)
+    private val shownStates = arrayOfNulls<PathState>(8)
+    private val shownActive = BooleanArray(8)
+    private val shownRemotes = arrayOfNulls<InetSocketAddress>(8)
+    private val shownLocalSeqs = LongArray(8)
+    private val shownRemoteCids = arrayOfNulls<io.kuicksilver.quic.wire.ConnectionId>(8)
+    private var shown = -1 // -1: nothing published yet
+
+    /** Publishes [pathInfos] anew when anything [shownIds] and its siblings record changed. Loop dispatcher only. */
+    private fun refreshPathInfos() {
+        val all = core.paths.all
+        val active = core.paths.active
+        var changed = shown != all.size || all.size > shownIds.size
+        if (!changed) {
+            for (i in 0 until all.size) { // by index: this runs at every drain, an iterator would be its only allocation
+                val p = all[i]
+                if (shownIds[i] != p.id.value || shownStates[i] != p.state || shownActive[i] != (p === active) ||
+                    shownRemotes[i] !== p.remote || shownLocalSeqs[i] != core.localCidSeqOn(p) ||
+                    shownRemoteCids[i] !== core.remoteCidOn(p)
+                ) {
+                    changed = true
+                    break
+                }
+            }
+        }
+        if (!changed) return
+        val n = minOf(all.size, shownIds.size)
+        for (i in 0 until n) {
+            val p = all[i]
+            shownIds[i] = p.id.value
+            shownStates[i] = p.state
+            shownActive[i] = p === active
+            shownRemotes[i] = p.remote
+            shownLocalSeqs[i] = core.localCidSeqOn(p)
+            shownRemoteCids[i] = core.remoteCidOn(p)
+        }
+        for (i in n until shownIds.size) {
+            shownStates[i] = null
+            shownRemotes[i] = null
+            shownRemoteCids[i] = null
+        }
+        shown = all.size
+        val list = ArrayList<io.kuicksilver.quic.PathInfo>(all.size)
+        for (i in 0 until all.size) if (all[i] === active) list += pathInfoOf(all[i], true)
+        for (i in 0 until all.size) if (all[i] !== active) list += pathInfoOf(all[i], false)
+        pathInfos = list
+        if (openedReported) loop.observer.pathsUpdated(this, list)
+    }
+
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun pathInfoOf(
+        p: io.kuicksilver.quic.core.Path,
+        active: Boolean,
+    ): io.kuicksilver.quic.PathInfo {
+        val localSeq = core.localCidSeqOn(p)
+        val localCid = core.localCidBySeq(localSeq)
+        val remoteCid = core.remoteCidOn(p)
+        val local = p.local ?: pathList.firstOrNull { it.id == p.id }?.localAddress ?: loop.localAddress
+        return io.kuicksilver.quic.PathInfo(
+            p.id,
+            local,
+            p.remote,
+            p.state,
+            active,
+            localCid?.toString(),
+            if (localCid == null) -1L else localSeq,
+            remoteCid?.toString(),
+            if (remoteCid == null) -1L else core.remoteCidSeqOn(p),
+        )
+    }
 
     /** The 0-RTT outcome went to the observer already (loop dispatcher only). */
     internal var zeroRttReported = false
@@ -333,6 +433,7 @@ internal class ConnectionRuntime(
 
             is ConnectionEvent.PathChanged -> {
                 activePathId = e.new
+                pathChangeCount++
                 val o = pathRuntime(e.old)
                 val n = pathRuntime(e.new)
                 o.stateFlow.value =
@@ -732,6 +833,7 @@ internal class ConnectionRuntime(
             if (store != null && key != null) for (t in tokens) loop.storeToken(store, key, t)
         }
         forgetDroppedRemotes()
+        refreshPathInfos()
     }
 
     /** Client: where NEW_TOKEN tokens of this connection go (`QuicClientConfig.tokenStore`) and under which key; null: dropped. */

@@ -3598,6 +3598,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicDslTest.serverBuildRejec
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicDslTest.serverDslKeepsTls
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicDslTest.validClientConfigBuilds
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.createCopyKeepsFieldsAndCause
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.createCopyKeepsTheSuppressed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.cryptoCodeIs0x0100PlusAlert
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.frameTypeIsNonNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.isKotlinxIoException
@@ -3698,6 +3699,12 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsC
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsCountAdmissionAndLimitRefusals
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.theListenerHearsTheLifecycleInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.zeroRttCountsOfferedAndAccepted
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aMigrationShowsTheNewPathWithFreshIds
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aReaderOnAnotherThreadSeesWholeLists
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aRotationShowsOnBothSides
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.negative_pathInfoToStringHasNoConnectionId
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathEventsAndListAgree
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathsShowTheIdsBothSidesUse
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.acceptStreamInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.clientOfAFailedConnectionIsResetAndItsFlushMayFail
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.closedCompletesWithApplicationClosedLocal

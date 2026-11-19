@@ -242,6 +242,8 @@ public final class io/kuicksilver/quic/ConnectionEvent$VerifyRequested : io/kuic
 public final class io/kuicksilver/quic/ConnectionInfo {
 	public final fun getConnection ()Lio/kuicksilver/quic/QuicConnection;
 	public final fun getId ()Ljava/lang/String;
+	public final fun getPathChanges ()I
+	public final fun getPaths ()Ljava/util/List;
 	public final fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
 	public fun toString ()Ljava/lang/String;
@@ -252,6 +254,7 @@ public abstract interface class io/kuicksilver/quic/ConnectionListener {
 	public fun onHandshakeCompleted (Lio/kuicksilver/quic/ConnectionInfo;)V
 	public fun onOpened (Lio/kuicksilver/quic/ConnectionInfo;)V
 	public fun onPathChanged (Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/PathEvent$Changed;)V
+	public fun onPathsUpdated (Lio/kuicksilver/quic/ConnectionInfo;Ljava/util/List;)V
 	public fun onZeroRtt (Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/ZeroRttOutcome;)V
 }
 
@@ -260,6 +263,7 @@ public final class io/kuicksilver/quic/ConnectionListener$DefaultImpls {
 	public static fun onHandshakeCompleted (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;)V
 	public static fun onOpened (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;)V
 	public static fun onPathChanged (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/PathEvent$Changed;)V
+	public static fun onPathsUpdated (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Ljava/util/List;)V
 	public static fun onZeroRtt (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/ZeroRttOutcome;)V
 }
 
@@ -757,6 +761,19 @@ public final class io/kuicksilver/quic/PathId$Companion {
 	public final fun getInitial-ako8JRA ()I
 }
 
+public final class io/kuicksilver/quic/PathInfo {
+	public final fun getActive ()Z
+	public final fun getId-ako8JRA ()I
+	public final fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getLocalConnectionId ()Ljava/lang/String;
+	public final fun getLocalConnectionIdSequence ()J
+	public final fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getRemoteConnectionId ()Ljava/lang/String;
+	public final fun getRemoteConnectionIdSequence ()J
+	public final fun getState ()Lio/kuicksilver/quic/PathState;
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class io/kuicksilver/quic/PathState : java/lang/Enum {
 	public static final field Closed Lio/kuicksilver/quic/PathState;
 	public static final field Failed Lio/kuicksilver/quic/PathState;
@@ -941,6 +958,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getCore ()Lio/kuicksilver/quic/ConnectionCore;
 	public abstract fun getDatagrams ()Lkotlinx/coroutines/flow/Flow;
 	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
+	public fun getInfo ()Lio/kuicksilver/quic/ConnectionInfo;
 	public fun getKeyExchangeGroup ()Ljava/lang/String;
 	public fun getLocalCertificates ()Ljava/util/List;
 	public abstract fun getMaxDatagramSize ()Lkotlinx/coroutines/flow/StateFlow;
@@ -970,6 +988,7 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun awaitHandshake (Lio/kuicksilver/quic/QuicConnection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
+	public static fun getInfo (Lio/kuicksilver/quic/QuicConnection;)Lio/kuicksilver/quic/ConnectionInfo;
 	public static fun getKeyExchangeGroup (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/String;
 	public static fun getLocalCertificates (Lio/kuicksilver/quic/QuicConnection;)Ljava/util/List;
 	public static fun getResetStreamAtEnabled (Lio/kuicksilver/quic/QuicConnection;)Z

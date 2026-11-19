@@ -69,6 +69,7 @@ internal class LoopObserver(
             ) { "${rt.role.name.lowercase()} connection ${rt.info.id} opened, peer ${rt.core.remoteAddress}" }
         }
         notify(rt, "onOpened") { onOpened(it) }
+        rt.openedReported = true
     }
 
     fun handshakeCompleted(rt: ConnectionRuntime) {
@@ -106,6 +107,14 @@ internal class LoopObserver(
             }
         }
         notify(rt, "onPathChanged") { onPathChanged(it, change) }
+    }
+
+    /** [rt]'s paths or the connection IDs on them changed ([ConnectionListener.onPathsUpdated]); never logged: the IDs are linkable. */
+    fun pathsUpdated(
+        rt: ConnectionRuntime,
+        paths: List<io.kuicksilver.quic.PathInfo>,
+    ) {
+        notify(rt, "onPathsUpdated") { onPathsUpdated(it, paths) }
     }
 
     /** [rt]'s qlog sink failed: tracing stopped for that connection, the connection goes on. */
