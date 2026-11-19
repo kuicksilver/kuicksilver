@@ -22,6 +22,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -509,6 +510,77 @@ class RapidResetTest {
                 assertTrue(withTimeout(10.seconds) { next.input.readAllBytes() }.isNotEmpty())
                 assertTrue(!server.closed.isCompleted)
                 server.close()
+            }
+        }
+
+    /**
+     * The response completes while its watch starts (the writer runs on another thread than the session's loop that starts
+     * the watch): the watch is cancelled all the same, by its starter, which reads respondedInFull after it stored the watch.
+     * The hook completes the response between the start and the store, the order in which responseComplete finds no watch.
+     */
+    @Test fun aResponseCompleteBeforeItsWatchIsStoredStillEndsTheWatch() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                var started: kotlinx.coroutines.Job? = null
+                server.session.stopWatchStartedForTest = { req, watch ->
+                    req.responseComplete() // as the writer's thread would, before the watch is stored
+                    started = watch
+                }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(10.seconds) { server.acceptRequest() } as ServerRequestImpl
+                awaitCondition("the watch's start") { started != null }
+                assertTrue(r.respondedInFull)
+                awaitCondition("the watch ending") { started!!.isCompleted }
+                assertTrue(started!!.isCancelled, "the starter cancelled the watch of a response complete before it was stored")
+                assertEquals(null, r.stopWatch)
+                server.close()
+            }
+        }
+
+    /**
+     * A stop that empties the reset budget while the response's FIN is being handed over: the watch closes the connection
+     * with H3_EXCESSIVE_LOAD, and the response completing meanwhile cancels the watch. That cancel must not cut the close
+     * short: fail had completed `closed` and was inside the transport's close, and the CONNECTION_CLOSE was never sent (the
+     * client learnt of the end only from its idle timeout). The hooks hold the writer before its FIN until the stop spent
+     * the last token, and fail before the transport's close until the response is complete.
+     */
+    @Test fun negative_aStopThatEmptiesTheBudgetAsTheResponseCompletesStillClosesTheConnection() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val session = server.session
+                session.glitchClock = { 0L }
+                kotlinx.coroutines.withContext(session.dispatcher) { session.spendResetBudgetForTest(1000) } // nothing left
+                val atFin = CompletableDeferred<Unit>()
+                val releaseFin = CompletableDeferred<Unit>()
+                session.beforeResponseFinForTest = {
+                    atFin.complete(Unit)
+                    releaseFin.await()
+                }
+                var request: ServerRequestImpl? = null
+                session.beforeFailTransportCloseForTest = {
+                    releaseFin.complete(Unit) // the writer hands its FIN over and completes the response, which cancels the watch
+                    awaitCondition("the complete response") { request!!.respondedInFull }
+                }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(10.seconds) { server.acceptRequest() } as ServerRequestImpl
+                request = r
+                launch { runCatching { r.respond(200).finish() } }
+                withTimeout(10.seconds) { atFin.await() }
+                st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                val code = withTimeoutOrNull(10.seconds) { peerSawClose(c) }
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, code, "the client got the CONNECTION_CLOSE")
             }
         }
 

@@ -5,7 +5,7 @@ kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCo
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22	const val WT_MAX_SESSIONS_DRAFT14: Long = 0x14e9cd29
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:25	const val ENABLE_WEBTRANSPORT_DRAFT02: Long = 0x2b603742
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:407	throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
-kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:766	add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:773	add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:776	if (version != WtVersion.Draft16) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13	internal enum class WtVersion {
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:39	fun offeredIn(settings: Map<Long, Long>): Set<WtVersion> =

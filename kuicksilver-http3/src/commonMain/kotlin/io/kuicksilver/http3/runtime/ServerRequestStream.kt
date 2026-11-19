@@ -342,14 +342,20 @@ private suspend fun H3Session.handleArmedRequestStream(
                         try {
                             countClientStop(req)
                         } catch (e: H3ProtocolError) {
-                            fail(e.code, e.message ?: "")
+                            // not cancellable: the complete response cancels this watch, and once fail completed `closed` it
+                            // must still send the CONNECTION_CLOSE (a cancel inside quic.close dropped it)
+                            withContext(NonCancellable) { fail(e.code, e.message ?: "") }
                         }
                     }
                 }
+            stopWatchStartedForTest?.invoke(req, watch)
             req.stopWatch = watch
             // the response may complete on the writer's thread meanwhile: it sets respondedInFull before it reads stopWatch, this
             // sets stopWatch before it reads respondedInFull, so one of the two cancels the watch
-            if (req.respondedInFull) watch.cancel()
+            if (req.respondedInFull) {
+                watch.cancel()
+                req.stopWatch = null
+            }
         }
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
@@ -647,6 +653,7 @@ internal class ServerRequestImpl(
         if (!tunnel) {
             respondedInFull = true
             stopWatch?.cancel() // nothing left to abandon: a stop from now on is free ([H3Session.countClientStop])
+            stopWatch = null
         }
         if (tunnel) {
             sendEnded = true
