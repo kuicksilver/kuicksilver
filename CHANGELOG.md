@@ -1422,10 +1422,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection is still closed as idle. A connection whose head has started (any of its bytes read) now holds the stop
   until that head is complete, or for at most the remaining request-head deadline (`requestHeaderTimeoutSeconds`, then
   408) or the stop's grace period, whichever ends first.
+- Ktor server, HTTP/1.1 (and h2c on a `WithHttp11` port): a connection accepted just before the server stopped, whose
+  first request was still on its way, was closed at once without an answer, and its client could not tell whether a
+  non-idempotent request had been processed (RFC 9112 section 9.3.1). A connection that has received nothing yet now gets
+  until 2 s after its acceptance for its first byte (within the request-head deadline and the grace period), and that
+  request is answered with `Connection: close`; a keep-alive connection idle between requests still closes at once
+  (`StopFirstRequestJvmTest`). A silent new connection can so hold a stop for up to 2 s.
 - Ktor server, HTTP/1.1: a pipelined request the engine had already read when a handler before it failed could still be
   processed: the wait for its head ends on the failure as on the server's stop, and a head already read was handed on.
-  After a failed response (or a stopped response writer) no later request is processed (RFC 9112 section 9.3.2)
-  (`H1PipelineSelectRaceTest.negative_aHeadBufferedWhenAHandlerFailedIsNotProcessed`).
+  After a failed response (or a stopped response writer) no later request is processed (RFC 9112 section 9.3.2), and a
+  head that has started is read no further: the connection ends after the responses before it, not at the request-head
+  deadline (`H1PipelineSelectRaceTest.negative_aHeadBufferedWhenAHandlerFailedIsNotProcessed`,
+  `negative_aPartialHeadWhenAHandlerFailedIsReadNoFurther`).
 - QUIC client, 0-RTT: a stream sent and reset in 0-RTT before the server answered kept its runtime wrapper (its channels
   and its ticker, which every poll of the connection wakes) after an acceptance until the server acknowledged the reset,
   and until the connection ended when it never did. Its final size stands at the acceptance, and the wrapper now goes

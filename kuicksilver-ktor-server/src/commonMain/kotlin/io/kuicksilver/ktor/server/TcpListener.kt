@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.server.h1.H1Address
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.NEW_CONNECTION_FIRST_BYTE
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
@@ -457,7 +458,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             // one that started is waited for as a head that started
                                             h2c == H2cMode.Only ||
                                                 withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
-                                                    i.startsWithH2PrefaceUnless(draining, configuration.h2cPrefaceCheckForTest)
+                                                    i.startsWithH2PrefaceUnless(
+                                                        draining,
+                                                        accepted + NEW_CONNECTION_FIRST_BYTE,
+                                                        configuration.h2cPrefaceCheckForTest,
+                                                    )
                                                 } == true
                                         } catch (e: Throwable) {
                                             if (e is CancellationException) {
@@ -508,6 +513,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         draining = draining,
                                         sendTimeout = sendTimeout,
+                                        newConnectionUntil = accepted + NEW_CONNECTION_FIRST_BYTE,
                                     ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc, proxy) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close

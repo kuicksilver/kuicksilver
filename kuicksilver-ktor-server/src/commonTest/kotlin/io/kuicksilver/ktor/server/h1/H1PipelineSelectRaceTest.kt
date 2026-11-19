@@ -166,6 +166,42 @@ class H1PipelineSelectRaceTest {
         }
 
     /**
+     * A handler fails while the next head is only partly in, and the writer is still busy with an earlier response (so it
+     * has not ended the connection yet): the pipeline reads no further request, so it stops reading that head at once,
+     * instead of reading it on until the request-head deadline (an hour here). The wait for the head's first byte is held,
+     * so the failure is the side that ends it. Seen from the client: what it sends after the failure stays unread. Before,
+     * the partial head was read on, taking those bytes.
+     */
+    @OptIn(InternalAPI::class)
+    @Test
+    fun negative_aPartialHeadWhenAHandlerFailedIsReadNoFurther() =
+        runTest {
+            val failGate = CompletableDeferred<Unit>()
+            val c =
+                pipeline(null) { request ->
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")
+                    output.flush()
+                    endsConnection?.complete(false) // the head is out: the pipeline reads on
+                    if (request.uri.toString() == "/slow") awaitCancellation() // the writer stays on this response
+                    failGate.await()
+                    error("the handler failed")
+                }
+            requestStartForTest = { if (it === c.toServer && handled.size >= 2) awaitCancellation() }
+            c.send("GET /slow HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            c.send("GET /fail HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            c.send("GET /third HTTP/1.1\r\nHo") // part of a head
+            runCurrent()
+            failGate.complete(Unit)
+            runCurrent()
+            c.send("st: s\r\n")
+            runCurrent()
+            assertEquals(listOf("/slow", "/fail"), handled)
+            assertTrue(!c.toServer.readBuffer.exhausted(), "the partial head was read on after the handler failed")
+        }
+
+    /**
      * The socket's input as a socket that is slow to hand over: its wait for bytes never returns, while the bytes that came
      * sit in its buffer, as when the stop cancels a wait whose bytes arrived but whose resumption had not run yet.
      */

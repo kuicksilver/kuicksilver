@@ -12,6 +12,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.TimeMark
 
 /**
  * HTTP/2 over cleartext TCP ("h2c", RFC 9113 section 3.3: prior knowledge, no ALPN, no TLS) on a plain connector
@@ -117,8 +120,10 @@ internal suspend fun ByteReadChannel.h2PrefaceAtOnce(): Boolean {
 }
 
 /**
- * [startsWithH2Preface], except that a connection that has sent nothing when [stop] completes is not waited for: false
- * then, and HTTP/1.1 closes it as idle at once. A connection that has sent its first octet is a request head that started
+ * [startsWithH2Preface], except that a connection that has sent nothing when [stop] completes is waited for only until
+ * [firstOctetBy] (a new connection's first request may be on its way; the engine's NEW_CONNECTION_FIRST_BYTE after its
+ * acceptance): false then, and HTTP/1.1, whose own wait for a new connection's first byte has the same end, closes it as
+ * idle. A connection that has sent its first octet is a request head that started
  * (HTTP/1.1 would wait for the rest of it too), so the check goes on to its end, within the caller's bound (the
  * request-head deadline; the stop's grace period cancels it): a whole preface is HTTP/2 (RFC 9113 section 3.3: prior
  * knowledge), whose connection serves what came with it under the graceful GOAWAY (section 6.8), never an HTTP/1.1 answer
@@ -129,6 +134,7 @@ internal suspend fun ByteReadChannel.h2PrefaceAtOnce(): Boolean {
  */
 internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(
     stop: Job,
+    firstOctetBy: TimeMark? = null,
     checkForTest: (suspend (ByteReadChannel, Job) -> Unit)? = null,
 ): Boolean =
     coroutineScope {
@@ -147,6 +153,11 @@ internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(
                         check.await()
                     } else {
                         check.cancelAndJoin()
+                        // a new connection's first octet may still be on its way: it gets until firstOctetBy, as HTTP/1.1
+                        // gives a new connection's first request (awaitContent takes no octet; one that came as the bound
+                        // fired is looked at again)
+                        val left = firstOctetBy?.let { -it.elapsedNow() } ?: Duration.ZERO
+                        if (left > Duration.ZERO) withTimeoutOrNull(left) { awaitContent(1) }
                         hasAtOnce(1) && startsWithH2Preface()
                     }
                 }

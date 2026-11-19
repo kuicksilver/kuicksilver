@@ -3451,6 +3451,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineS
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadBufferedWhenAHandlerFailedIsNotProcessed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadInTheSocketsBufferAsTheServerStoppedIsAnswered
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadThatArrivedAsTheServerStoppedIsAnswered
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aPartialHeadWhenAHandlerFailedIsReadNoFurther
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.headStartedBeforeTheStopIsServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.idleKeepAliveConnectionClosesAtStop
@@ -3587,6 +3588,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkCli
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.SslConnectorBridgeTest.enabledProtocolsMapToVersions
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.SslConnectorBridgeTest.enabledProtocolsWithTls12ServeTls12Clients
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.SslConnectorBridgeTest.keyStoreTranslatesToIdentity
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.StopFirstRequestJvmTest.negative_aFirstRequestThatComesJustAfterTheStopBeganIsAnswered
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.StopWithPooledClientsJvmTest.idlePooledConnectionDoesNotHoldTheStop
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.StopWithPooledClientsJvmTest.justAnsweredConnectionDoesNotHoldTheStop
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.UnreadBodyLingerJvmTest.negative_clientWritingItsWholeBodyGetsTheResponse
