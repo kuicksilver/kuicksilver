@@ -310,7 +310,7 @@ internal class H1Pool(
      * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
      * FIN. Bounded by [ORDERLY_CLOSE_TIMEOUT]; past it, and when the engine is closed meanwhile, the connection is closed
      * hard. Runs in [closers], never in the caller. With [dropInput] (an HTTP/1.1 connection, which nobody reads once it
-     * closes) what the server still sends is read and dropped ([TlsConnection.cancelInput]): the wait for its close_notify
+     * closes, and an HTTP/2 one, whose read loop has stopped with the connection) what the server still sends is read and dropped ([TlsConnection.cancelInput]): the wait for its close_notify
      * then lasts while it sends, not while nobody reads (a response refused after its head, its body still coming, held
      * each such close to the bound). The session still reads its records, so a ticket is still taken.
      */
@@ -1652,7 +1652,9 @@ internal class H1Pool(
                                     },
                                     // the last GOAWAY is in tls.output: it goes out, then close_notify (RFC 9113 sections
                                     // 5.4.1 and 6.8, RFC 9846 section 6.1)
-                                    closeTransportGracefully = { closeOrderly(tls, rawOut, tcp) },
+                                    // the read loop has stopped (the connection is closed): what the server still
+                                    // sends is read and dropped, so its close_notify is not held behind it
+                                    closeTransportGracefully = { closeOrderly(tls, rawOut, tcp, dropInput = true) },
                                     onChange = { h2.bump(key) },
                                     // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error
                                     // (Section 5.4.1) of type PROTOCOL_ERROR"; the TLS layer ends the input of an h2 connection

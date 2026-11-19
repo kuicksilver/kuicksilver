@@ -1423,7 +1423,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   can erase the client's close_notify before the server reads it. Both now read and drop what still comes until the
   server's close_notify (`TlsConnection.cancelInput`, internal), and a session ticket that comes meanwhile is still taken
   (`ClientOrderlyCloseTest.negative_aRefusedResponseDoesNotHoldTheOrderlyClose`,
-  `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`).
+  `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`). The same for HTTP/2: a connection that ended (a connection
+  error, a missed health PING, a local failure) while the server still sent DATA waited for its close_notify behind it,
+  its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

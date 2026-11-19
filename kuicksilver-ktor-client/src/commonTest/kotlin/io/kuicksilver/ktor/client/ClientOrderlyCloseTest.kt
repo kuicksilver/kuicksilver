@@ -421,6 +421,50 @@ class ClientOrderlyCloseTest {
             }
         }
 
+    /**
+     * An HTTP/2 connection the client ends after a connection error (DATA on stream 0, RFC 9113 section 6.1) while the
+     * server goes on sending more than every buffer on the way holds: the client's orderly close (GOAWAY, then
+     * close_notify, its bound stretched to 30 s) reads and drops what still comes until the server's close_notify. Before,
+     * the read loop had stopped with the closed connection, nothing read the session's input, and the close waited for
+     * the server's close_notify behind it until the bound.
+     */
+    @Test fun negative_anH2CloseDoesNotWaitBehindDataNobodyReads() =
+        clientTest {
+            val took = CompletableDeferred<kotlin.time.Duration>()
+            val sent = CompletableDeferred<Boolean>()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
+                sent.complete(
+                    runCatching {
+                        input.readByteArray(24)
+                        output.writeFully(frame(4, 0, 0))
+                        output.flush()
+                        while (true) {
+                            val head = input.readByteArray(9)
+                            val len =
+                                ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or
+                                    (head[2].toInt() and 0xff)
+                            input.readByteArray(len)
+                            if (head[3].toInt() == 1) break // the request's HEADERS
+                        }
+                        output.writeFully(frame(0, 0, 0, "x".encodeToByteArray())) // a connection error: the client closes
+                        val data = frame(0, 0, 1, ByteArray(16 * 1024))
+                        repeat(1024) { output.writeFully(data) } // 16 MiB the client will not read
+                        output.flushAndClose() // then the server's close_notify
+                    }.isSuccess,
+                )
+                withTimeoutOrNull(60.seconds) { took.await() }
+            }) { port ->
+                testClient().use { c ->
+                    engine(c).h1.orderlyCloseTimeoutForTest = 30.seconds
+                    engine(c).h1.orderlyCloseTookForTest = { took.complete(it) }
+                    assertTrue(runCatching { c.get("https://127.0.0.1:$port/") }.isFailure, "the connection error failed the call")
+                    val t = withTimeout(60.seconds) { took.await() }
+                    assertTrue(t < 10.seconds, "the HTTP/2 orderly close took $t behind DATA nobody reads")
+                    assertTrue(withTimeout(10.seconds) { sent.await() }, "the server's writes went through, not cut by a reset")
+                }
+            }
+        }
+
     /** RFC 9113 section 5.4.1: a connection error found by the client is sent as GOAWAY before the connection closes. */
     @Test fun negative_h2ConnectionErrorReachesTheServerAsGoAway() =
         clientTest {
