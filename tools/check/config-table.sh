@@ -14,7 +14,10 @@
 # A spec line of kind `keys` checks configuration-file keys instead (`<heading> | <source> | <key prefix> | keys`): every string
 # literal `"kuicksilver.<...>"` of the source is a key it reads and must be named in backticks somewhere in the document; the keys
 # under the prefix must each have a row in that heading's table (first cell the key in backticks, a Since version), and a row
-# there naming a key under the prefix that the source does not read is stale.
+# there naming a key under the prefix that the source does not read is stale. A key under the prefix must also be passed to a
+# call other than listOf/setOf (a key listed but never parsed). Keys are found as whole string literals only: a literal that
+# starts like a key and goes on with a template (`"kuicksilver.quic.$name"`) or ends with a dot is refused, since a key built at
+# run time could not be checked.
 # Needs python3 (and git, for the Since check). Parses the Kotlin source with regular expressions and brace counting
 # only: a default it cannot reduce is only compared as text, an option without an inline default is only looked up.
 # Usage: tools/check/config-table.sh [root]   (exit 1 and one line per finding as `file:line: message`)
@@ -256,6 +259,11 @@ def check_keys(section, src, prefix):
         keys.setdefault(m.group(1), code.count("\n", 0, m.start()) + 1)
     if not keys:
         fail(src, "no `kuicksilver.*` key literal found (tools/check/config-table.spec)"); return
+    for m in re.finditer(r'"(kuicksilver\.[A-Za-z0-9_.]*(?:\$|\.(?=")))', code):
+        fail(f"{src}:{code.count(chr(10), 0, m.start()) + 1}", f"`{m.group(1)}...` builds a key at run time: write each key whole, so it can be checked")
+    parsed = set()
+    for m in re.finditer(r'\b(\w+)\(\s*"(kuicksilver\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)"', code):
+        if m.group(1) not in ("listOf", "setOf", "arrayOf", "mutableListOf", "mutableSetOf"): parsed.add(m.group(2))
     for key, line in sorted(keys.items()):
         total += 1
         if "`" + key + "`" not in DOC_TEXT:
@@ -269,6 +277,8 @@ def check_keys(section, src, prefix):
         if mm.group(1).startswith(prefix + ".") and mm.group(1) not in keys:
             fail(f"{doc_rel}:{no}", f"row `{mm.group(1)}` of `{section}` is no key {src} reads (stale?)")
     for key in sorted(under):
+        if key not in parsed:
+            fail(f"{src}:{keys[key]}", f"key `{key}` is listed but never passed to a call that reads it")
         if key not in rows:
             fail(f"{src}:{keys[key]}", f"key `{key}` has no row in section `{section}` of {doc_rel}"); continue
         no, c, hdr = rows[key]
