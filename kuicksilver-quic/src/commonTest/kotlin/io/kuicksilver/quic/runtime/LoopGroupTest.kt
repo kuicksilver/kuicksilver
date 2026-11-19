@@ -38,6 +38,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
@@ -526,12 +527,14 @@ class LoopGroupTest {
     private class HoldIo(
         private val inner: MemoryDatagramIo,
         private val held: Int,
+        /** Also held until this is true: the other loop's Initials arrived too (both loops admit theirs at once). */
+        private val alsoUntil: () -> Boolean = { true },
     ) : DatagramIo by inner {
         private var released = false
 
         override suspend fun receive(into: PacketBatch): Int {
             if (released) return inner.receive(into)
-            while (inner.received < held) delay(5)
+            while (inner.received < held || !alsoUntil()) delay(5)
             released = true
             var n = 0
             repeat(held) { n += inner.receive(into) }
@@ -560,6 +563,7 @@ class LoopGroupTest {
         acceptQueue: Int,
         perLoop: Int,
         clientReceiveDelay: kotlin.time.Duration = kotlin.time.Duration.ZERO,
+        releaseTogether: Boolean = false,
         afterBurst: suspend (LoopGroup, MemoryNetwork) -> Unit = { _, _ -> },
     ): Pair<List<Any?>, Int> =
         kotlinx.coroutines.coroutineScope {
@@ -573,7 +577,9 @@ class LoopGroupTest {
                         loops = 2
                         this.acceptQueue = acceptQueue
                     }.build()
-            val group = LoopGroup.create(cfg, listOf(HoldIo(net.open(serverAddr), perLoop), HoldIo(net.open(otherAddr), perLoop)))
+            val sockets = listOf(net.open(serverAddr), net.open(otherAddr))
+            val together = { !releaseTogether || sockets.all { it.received >= perLoop } }
+            val group = LoopGroup.create(cfg, sockets.map { HoldIo(it, perLoop, together) })
             val clients =
                 (1..2 * perLoop).map { i ->
                     val io = net.open(InetSocketAddress("10.0.1.$i", 1000 + i))
@@ -650,16 +656,24 @@ class LoopGroupTest {
     /**
      * The same burst with clients that read 100 ms late: a connection refused at its handshake's completion was marked
      * handed off on the server (the accept queue was full) before its client learnt the refusal, and the burst read the
-     * outcomes then, with that client still open (an iosSimulatorArm64 run on the hosted macOS runner: 3 of 4 refused)
+     * outcomes then, with that client still open (an iosSimulatorArm64 run on the hosted macOS runner: 3 of 4 refused).
+     * Both loops admit all their Initials before any handshake can complete (the clients answer 100 ms late), so the excess
+     * is refused at completion, the path in question, never only statelessly at the Initial.
      */
     @Test fun burstWithLateReadingClientsCountsEveryRefusal() =
         runBlocking {
             withTimeout(30.seconds) {
-                val (outcomes, waiting) = burst(acceptQueue = 4, perLoop = 4, clientReceiveDelay = 100.milliseconds)
+                var overflows = -1L
+                val (outcomes, waiting) =
+                    burst(acceptQueue = 4, perLoop = 4, clientReceiveDelay = 100.milliseconds, releaseTogether = true) { g, _ ->
+                        overflows = (0..1).sumOf { i -> g.loopForTest(i).let { l -> withContext(l.dispatcher) { l.acceptOverflows } } }
+                    }
                 val refused = outcomes.filterIsInstance<QuicException.ConnectionLost.TransportClosed>()
                 assertEquals(4, waiting, "connections waiting for accept() across both loops")
                 assertEquals(4, refused.size, "outcomes: $outcomes")
                 assertTrue(refused.all { it.code == TransportError.CONNECTION_REFUSED }, "refusals: $refused")
+                // the path this test is about: refusals at the handshake's completion, not only stateless ones at the Initial
+                assertTrue(overflows > 0, "refusals at completion, both loops: $overflows")
             }
         }
 
