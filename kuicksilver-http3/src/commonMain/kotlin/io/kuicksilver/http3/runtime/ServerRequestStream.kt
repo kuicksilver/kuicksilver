@@ -638,7 +638,7 @@ internal class ServerRequestImpl(
             status = 200,
             localHeaders = headers,
             isClient = false,
-            onReset = { session.scope.launch { done() } },
+            onReset = { session.afterEnd.launch { done() } }, // as in reset(): also once the connection is gone
             datagramsAllowed = datagramChannel != null,
         )
     }
@@ -910,7 +910,9 @@ internal class ServerRequestImpl(
     override fun reset(code: Long) {
         st.reset(code)
         st.stopSending(code)
-        session.scope.launch { done() }
+        // on the session's dispatcher, in afterEnd: a launch into the session's scope after the connection ended never runs,
+        // and the request stayed registered
+        session.afterEnd.launch { done() }
         applicationDone()
     }
 }

@@ -11,6 +11,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -28,16 +29,43 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 /** What reads and writes of a request see when the connection ends under them. */
 class ConnectionEndTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * Waits until the session's coroutines are cancelled (the connection's end reached them). A wait that must succeed:
+     * its bound only turns a hang into a failure that says what it waited for, well inside the test's own.
+     */
+    private suspend fun awaitCoroutinesCancelled(s: H3Session) {
+        withTimeoutOrNull(20.seconds) { while (!s.job.isCancelled) kotlinx.coroutines.yield() }
+            ?: fail("the session's coroutines were not cancelled once the connection ended")
+    }
+
+    /** What of the server's requests [s] still keeps: requests, datagram channels, WebTransport sessions; null when nothing. */
+    private suspend fun registered(s: H3Session): String? =
+        withContext(s.dispatcher) {
+            buildList {
+                if (s.activeServerRequests.isNotEmpty()) add("requests ${s.activeServerRequests.keys}")
+                if (s.datagrams.registeredCount > 0) add("${s.datagrams.registeredCount} datagram channel(s)")
+                if (s.wtSessions.isNotEmpty()) add("WebTransport sessions ${s.wtSessions.keys}")
+            }.joinToString().ifEmpty { null }
+        }
+
+    /** Waits until [s] keeps nothing of its requests ([registered]); a wait that must succeed, as [awaitCoroutinesCancelled]. */
+    private suspend fun awaitNothingRegistered(s: H3Session) {
+        withTimeoutOrNull(20.seconds) { while (registered(s) != null) kotlinx.coroutines.yield() }
+            ?: fail("the server still keeps ${registered(s)} after the connection ended")
+    }
 
     /** Holds the server's datagrams, then delivers them back to back: the client processes them all before it reads. */
     private class Held(
@@ -466,16 +494,57 @@ class ConnectionEndTest {
                 p.client.close()
                 withTimeout(5.seconds) { p.server.closed.await() }
                 // the order behind the bug: the session's coroutines, the waiting pump among them, are cancelled before the write
-                while (!s.job.isCancelled) kotlinx.coroutines.yield()
+                awaitCoroutinesCancelled(s)
                 val answer =
                     runCatching {
                         w.output.writeFully("GET ok".encodeToByteArray())
                         w.finish()
                     }
                 assertTrue(answer.isFailure, "the answer on a lost connection failed: $answer")
-                // a wait that must succeed: bounded by the test's own timeout, not a short one of its own
-                while (withContext(s.dispatcher) { s.activeServerRequests.isNotEmpty() }) kotlinx.coroutines.yield()
+                awaitNothingRegistered(s)
                 response.join()
+            }
+        }
+
+    /**
+     * The handler resets its request once the connection ended, before it answered: the request ends with the reset. Its
+     * end was launched into the session's scope, gone with the connection, so it never ran and the request stayed
+     * registered.
+     */
+    @Test fun requestResetAfterTheConnectionEndedLeavesNoRequest() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val response = async { runCatching { p.client.request(get()) } }
+                val req = withTimeout(5.seconds) { p.server.acceptRequest() }
+                val s = p.server.session
+                p.client.close()
+                withTimeout(5.seconds) { p.server.closed.await() }
+                awaitCoroutinesCancelled(s)
+                runCatching { req.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                awaitNothingRegistered(s)
+                response.join()
+            }
+        }
+
+    /**
+     * The same for an extended CONNECT whose tunnel the server already ended its way (FIN sent): the connection ends while
+     * the client's direction is open, then the handler resets the tunnel. The exchange ends with the reset, its datagram
+     * channel included; that end was launched into the session's scope, gone with the connection.
+     */
+    @Test fun tunnelResetAfterTheConnectionEndedLeavesNothing() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val tunnel = async { runCatching { p.client.connect(connectReq(), "echo") } }
+                val st = withTimeout(5.seconds) { p.server.acceptRequest() }.acceptConnect()
+                st.output.flushAndClose()
+                val s = p.server.session
+                assertTrue(withContext(s.dispatcher) { s.datagrams.registeredCount } > 0, "the tunnel has a datagram channel")
+                p.client.close()
+                withTimeout(5.seconds) { p.server.closed.await() }
+                awaitCoroutinesCancelled(s)
+                runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                awaitNothingRegistered(s)
+                tunnel.join()
             }
         }
 
