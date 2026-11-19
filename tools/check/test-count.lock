@@ -3716,6 +3716,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aReaderOnAn
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.aRotationShowsOnBothSides
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.negative_pathInfoToStringHasNoConnectionId
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathEventsAndListAgree
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathsAreThereFromOnOpened
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathInfoTest.pathsShowTheIdsBothSidesUse
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.acceptStreamInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.clientOfAFailedConnectionIsResetAndItsFlushMayFail

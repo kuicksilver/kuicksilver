@@ -283,6 +283,13 @@ internal class ConnectionRuntime(
     @Volatile private var pathList: List<PathRuntime> =
         listOf(PathRuntime(this, loop, PathId.Initial, loop.localAddress, null, core.remoteAddress))
     private val pathEventFlow = MutableSharedFlow<PathEvent>(extraBufferCapacity = 64)
+
+    init {
+        // the first list from the start (made on the loop, which creates the runtime): the path the connection opens on,
+        // with the handshake's connection IDs; the listener hears only later lists, from onOpened on
+        refreshPathInfos()
+    }
+
     override val paths: List<QuicPath> get() = pathList.filter { it.stateFlow.value != PathState.Closed }
     override val pathEvents: Flow<PathEvent> get() = pathEventFlow
 

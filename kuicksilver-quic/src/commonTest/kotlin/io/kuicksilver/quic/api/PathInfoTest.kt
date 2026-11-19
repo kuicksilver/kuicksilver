@@ -272,6 +272,40 @@ class PathInfoTest {
             }
         }
 
+    /**
+     * The list is there from the connection's creation: inside onOpened (before any drain of the connection) the client
+     * sees its first path with its handshake ID (sequence 0) and the random ID it sends to before the server's Initial
+     * (sequence -1).
+     */
+    @Test fun pathsAreThereFromOnOpened() =
+        runBlocking {
+            val atOpen = AtomicReference<List<PathInfo>?>(null)
+            val listener =
+                object : ConnectionListener {
+                    override fun onOpened(connection: ConnectionInfo) {
+                        atOpen.store(connection.paths)
+                    }
+                }
+            ApiPair.open(clientListener = listener).use { p ->
+                withTimeout(30.seconds) {
+                    val (c, s) = p.connect()
+                    val first = assertNotNull(atOpen.load()).single()
+                    assertTrue(first.active)
+                    assertEquals(PathId.Initial, first.id)
+                    assertEquals(0L, first.localConnectionIdSequence)
+                    assertNotNull(first.localConnectionId)
+                    assertEquals(-1L, first.remoteConnectionIdSequence, "the client's own random ID, not one of the server's")
+                    assertNotNull(first.remoteConnectionId)
+                    // once the server answered, its handshake ID (sequence 0) replaces it
+                    exchange(c, s)
+                    val (now, _) = agreed(c, s)
+                    assertNotEquals(first.remoteConnectionId, now.remoteConnectionId)
+                    assertTrue(now.remoteConnectionIdSequence >= 0, "$now")
+                    c.close()
+                }
+            }
+        }
+
     @Test fun negative_pathInfoToStringHasNoConnectionId() =
         runBlocking {
             ApiPair.open().use { p ->

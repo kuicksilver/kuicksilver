@@ -96,6 +96,13 @@ public class ConnectionInfo internal constructor(
      * as the endpoint loop last published them: readable from any thread without a lock, and built only when something
      * on them changed ([ConnectionListener.onPathsUpdated]), so reading it costs nothing. After the connection closed it
      * keeps the last list. The IDs are linkable identifiers: see [PathInfo].
+     *
+     * It is never empty: from the connection's creation (before [ConnectionListener.onOpened]) it holds the path the
+     * connection opens on, with the handshake's IDs. Those change as the handshake goes: a client first sends to the
+     * random ID it chose itself (`remoteConnectionIdSequence` -1) until the server's first Initial gives the server's own
+     * (sequence 0); our side shows our handshake ID (sequence 0) until the peer's first 1-RTT packet shows which of our
+     * IDs it uses; from then on the IDs are the ones 1-RTT packets carry, and they rotate (by us every 10 000 packets, by
+     * the peer as it likes) and move with migrations.
      */
     public val paths: List<PathInfo> get() = pathsNow()
 
