@@ -1280,11 +1280,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- HTTP/3 server: a request whose response was open when the connection was lost, its writer waiting for content, stayed
-  registered on the connection for as long as the connection object lived: the writer, cancelled with the connection,
-  ended without ending the request, and a handler whose write then failed never called `finish`. The request now ends
-  with its writer. Pinned by `ConnectionEndTest.responseOpenWhenTheConnectionEndsLeavesNoRequest` (seen as
-  `EarlyDataTest.earlyRequestEndsWhenTheConnectionIsLostBeforeTheAnswer` failing on Windows).
+- HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
+  open, which on a live connection also held off the GOAWAY idle close:
+  - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the
+    connection, ended without ending the request, and the handler's next write or `finish` failed before the response
+    was marked complete. The request now ends with its writer
+    (`ConnectionEndTest.responseOpenWhenTheConnectionEndsLeavesNoRequest`; seen as
+    `EarlyDataTest.earlyRequestEndsWhenTheConnectionIsLostBeforeTheAnswer` failing on Windows);
+  - a request the handler reset after the connection ended: its end was launched into the connection's finished scope
+    and never ran (`requestResetAfterTheConnectionEndedLeavesNoRequest`);
+  - a request the handler never answered (a failed body read, a throw before `respond`, a handler its engine
+    cancelled): every request still registered now ends once the connection's coroutines are gone, and a later
+    `respond`, `acceptConnect` or `acceptWebTransport` fails with the connection's error instead of "request is
+    finished" (`requestNeverAnsweredEndsWithTheConnection`);
+  - a handler cancelled inside `finish` while the content was still being handed over: neither FIN nor reset was sent,
+    and the client's body read waited for good. The response is now abandoned with `H3_REQUEST_CANCELLED` (RFC 9114
+    section 4.1.1) and the request ends (`finishCancelledWhileThePumpHandsOverAbandonsTheResponse`).
 - Ktor server, HTTP/1.1: a request whose first bytes arrived just as the server began to stop could be dropped: the wait
   for the next request head raced the stop, and when the stop won, the connection closed over the head without reading
   or answering it (and a close over unread input may reset the connection). The stop's side now ends the wait and looks

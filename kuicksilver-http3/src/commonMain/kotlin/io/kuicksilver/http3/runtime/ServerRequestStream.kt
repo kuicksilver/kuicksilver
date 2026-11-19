@@ -499,7 +499,7 @@ internal class ServerRequestImpl(
      */
     fun connectionEnded() {
         endedWithConnection = true
-        applicationDone()
+        applicationDone() // for symmetry with every other end: the stream credit of a connection that is gone means nothing
         done()
     }
 
@@ -1019,6 +1019,8 @@ internal class ResponseWriterImpl(
         if (request != null) {
             pump.invokeOnCompletion { e ->
                 if (e == null) return@invokeOnCompletion
+                // no effect on a connection that is gone (its stream credit no longer matters): kept so that every end of
+                // the request also ends it for the application, as the pump's own failure path does
                 request.applicationDone()
                 session.afterEnd.launch { request.done() }
             }
