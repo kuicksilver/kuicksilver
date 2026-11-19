@@ -103,9 +103,10 @@ class H1PipelineSelectRaceTest {
         }
 
     /**
-     * The stop completed before the pipeline's first wait for a head, with a whole request already in the socket's buffer
-     * (a connection accepted as the server stops, or handed over by the h2c preface check the stop won): the request is
-     * read and answered, and the connection ends after it. Before, the wait saw its own empty buffer and the completed
+     * The stop completed before the pipeline's first wait for a head, with a whole request already in the channel the
+     * pipeline reads (bytes ktor took from the socket, not yet moved into the pipeline's own buffer: a connection accepted
+     * as the server stops, or handed over by the h2c preface check the stop won): the request is read and answered, and
+     * the connection ends after it. Before, the wait saw its own empty buffer and the completed
      * stop, and closed the connection over the request without an answer.
      */
     @Test fun negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered() =
@@ -130,6 +131,38 @@ class H1PipelineSelectRaceTest {
             val got = fromServer.readBuffer().readString()
             assertTrue(got.endsWith("first"), "the request already in the socket's buffer was not answered: '$got'")
             assertEquals(listOf("/first"), handled)
+        }
+
+    /**
+     * The wait for the next head also ends when a handler fails (no later request is processed then, RFC 9112 section
+     * 9.3.2), and a head the input already holds is read all the same: it is not processed. Here the wait for it is held
+     * once its bytes are in, so the failure is the side that ends the wait. Before, the head was read and its handler
+     * launched after the failure.
+     */
+    @Test fun negative_aHeadBufferedWhenAHandlerFailedIsNotProcessed() =
+        runTest {
+            val failGate = CompletableDeferred<Unit>()
+            val c =
+                pipeline(null) { request ->
+                    if (request.uri.toString() == "/fail") {
+                        output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")
+                        output.flush()
+                        endsConnection?.complete(false) // the head is out: the pipeline reads on
+                        failGate.await()
+                        error("the handler failed")
+                    }
+                    respond("second")
+                }
+            // the wait for the head after /fail is held: only the failure can end it
+            requestStartForTest = { if (it === c.toServer && handled.isNotEmpty()) awaitCancellation() }
+            c.send("GET /fail HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            c.send("GET /second HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            assertEquals(listOf("/fail"), handled, "the second head was processed before the failure")
+            failGate.complete(Unit)
+            runCurrent()
+            assertEquals(listOf("/fail"), handled, "a request read after a handler failed was processed")
         }
 
     /**

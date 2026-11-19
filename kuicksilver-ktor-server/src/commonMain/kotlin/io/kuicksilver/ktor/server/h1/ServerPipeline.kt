@@ -475,6 +475,13 @@ internal fun CoroutineScope.startH1Pipeline(
                         break
                     } ?: break
                 headBudget = headerTimeout
+                // the wait for a head ends on any stop of the reading (the server's stop, the writer stopped, a failed
+                // response), and a head the input already held is read all the same: only the server's stop lets it be
+                // processed. After a failed response or a stopped writer no later request is (RFC 9112 section 9.3.2)
+                if (responseFailed.isCompleted || writerStopped.isCompleted) {
+                    request.release()
+                    break
+                }
 
                 val fields = requestFields(request, input.keptFieldValues, HttpProtocolVersion.parse(request.version))
                 // faulty framing: 400 and close before anything of the request is handed on (RFC 9112 sections 6.1, 6.3)
@@ -717,15 +724,17 @@ private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS", "TRACE")
  * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser
  * reports), false when [draining] completes first and nothing is there to read. A byte that arrives as [draining]
  * completes is a head that started: true, whichever side the race picked ([HeadLimitedInput.hasInput] after the wait
- * ended). A stop that completed before the wait began is the same: bytes already in the socket's buffer (a connection
- * accepted as the server stopped, or handed over by the h2c preface check) are a head that started, read and answered.
+ * ended). A stop that completed before the wait began is the same: bytes ktor has already read from the socket (a
+ * connection accepted as the server stopped, or handed over by the h2c preface check) are a head that started, read and
+ * answered.
  */
 @OptIn(InternalAPI::class)
 private suspend fun awaitRequestStart(
     input: HeadLimitedInput,
     draining: Job,
 ): Boolean {
-    // the pipeline's own buffer and the socket's: no other coroutine reads the input here, so hasInput may look at both
+    // the pipeline's own buffer and its source channel's (what ktor has already read from the socket; bytes the socket
+    // still holds are not seen): no other coroutine reads the input here, so hasInput may look at both
     if (input.hasInput() || input.isClosedForRead) return true
     if (draining.isCompleted) return false
     return coroutineScope {

@@ -1413,11 +1413,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   or answering it (and a close over unread input may reset the connection). The stop's side now ends the wait and looks
   at the input again: a head that has started to arrive is read and answered with `Connection: close`, as the stop
   promised ([Ktor guide](docs/guide/ktor.md)); only a connection with nothing to read closes at once.
-- Ktor server, HTTP/1.1: a request already in a connection's socket buffer when the stop had completed before the
+- Ktor server, HTTP/1.1: a request the engine had already read from the socket when the stop had completed before the
   pipeline's first wait for a head (a connection accepted as the server stopped, or one an h2c `WithHttp11` preface check
   handed to HTTP/1.1 as the stop won it) was closed unanswered: that wait looked only at the pipeline's own, still empty,
-  buffer. It now looks at the socket's too, so such a request is read and answered with `Connection: close`
-  (`H1PipelineSelectRaceTest.negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered`).
+  buffer. It now looks at the channel it reads from too, so such a request is read and answered with `Connection:
+  close` (`H1PipelineSelectRaceTest.negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered`).
+  Bytes still in the kernel's socket buffer, or a TLS record not yet decrypted, when the stop begins are not seen: such a
+  connection is still closed as idle. A connection whose head has started (any of its bytes read) now holds the stop
+  until that head is complete, or for at most the remaining request-head deadline (`requestHeaderTimeoutSeconds`, then
+  408) or the stop's grace period, whichever ends first.
+- Ktor server, HTTP/1.1: a pipelined request the engine had already read when a handler before it failed could still be
+  processed: the wait for its head ends on the failure as on the server's stop, and a head already read was handed on.
+  After a failed response (or a stopped response writer) no later request is processed (RFC 9112 section 9.3.2)
+  (`H1PipelineSelectRaceTest.negative_aHeadBufferedWhenAHandlerFailedIsNotProcessed`).
 - QUIC client, 0-RTT: a stream sent and reset in 0-RTT before the server answered kept its runtime wrapper (its channels
   and its ticker, which every poll of the connection wakes) after an acceptance until the server acknowledged the reset,
   and until the connection ended when it never did. Its final size stands at the acceptance, and the wrapper now goes
