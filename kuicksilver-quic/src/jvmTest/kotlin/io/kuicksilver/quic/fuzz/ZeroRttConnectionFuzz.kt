@@ -65,7 +65,8 @@ import kotlin.time.Duration.Companion.seconds
  * times the server's flow-control limits and more streams, so the client's 0-RTT can break the server's real limits
  * (section 17.2.3: "A server SHOULD treat a violation of remembered limits ... as a connection error"); [HIGHER] the
  * ticket remembers a quarter of the flow-control limits and fewer streams, so the accepting server's new parameters are
- * higher, and the client must still keep to the remembered ones until the handshake completes (section 7.4.1); [MTU] both
+ * higher, and the client must still keep to the remembered ones until the handshake completes (section 7.4.1; with
+ * [OVERRUN] too, OVERRUN takes precedence and HIGHER changes nothing); [MTU] both
  * sockets set DF and three bytes follow the flags, `[start][link][remembered]`: both sides' `initialUdpPayloadSize` is
  * 1200 + 5 x `(start & 63)` (bit 6: `pmtud` off; bit 7: `maxSendUdpPayloadSize` set to the start as well), every datagram above
  * 1200 + `link` (255: none) vanishes on its way, each direction, and the ticket remembers a `max_udp_payload_size` of
@@ -499,7 +500,9 @@ internal class ZeroRttConnectionFuzz(
             )
         if (lowered) tp.activeConnectionIdLimit += 5
         if (rememberedMax > 0) tp.maxUdpPayloadSize = rememberedMax.toLong()
-        if (flags and ZeroRttProgram.HIGHER != 0) {
+        // OVERRUN takes precedence: applied after HIGHER it only restored the server's own values (a quarter times four, fewer
+        // streams plus four), and the accepting server was then not below the remembered limits at all
+        if (flags and ZeroRttProgram.HIGHER != 0 && !overrun) {
             tp.initialMaxData /= 4
             tp.initialMaxStreamDataBidiLocal /= 4
             tp.initialMaxStreamDataBidiRemote /= 4
