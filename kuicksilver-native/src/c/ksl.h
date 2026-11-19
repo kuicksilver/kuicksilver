@@ -505,19 +505,27 @@ int ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_le
 uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
 /* datagrams ksl_udp_send lost to EMSGSIZE (larger than the path MTU the kernel knows, with DF), every platform; *last_size: the
             length of the latest one */
-/* --- A UDP socket ksl did not open (additive under ABI 7): DF in probe mode on the caller's descriptor (the JVM's portable socket) --- */
-#define KSL_FD_DF_V4 1 /* granted: IP_MTU_DISCOVER = IP_PMTUDISC_PROBE (on an AF_INET6 socket: its v4-mapped half) */
-#define KSL_FD_DF_V6 2 /* granted: IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE (+ IPV6_DONTFRAG) on an AF_INET6 socket */
+/* --- A UDP socket ksl did not open (additive under ABI 7): DF on the caller's descriptor (the JVM's portable socket) --- */
+#define KSL_FD_DF_V4                                                                                                   \
+    1 /* IPv4 half (an AF_INET6 socket: its v4-mapped traffic) in probe mode: IP_MTU_DISCOVER = PROBE */
+#define KSL_FD_DF_V6 2    /* IPv6 half in probe mode: IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE (+ IPV6_DONTFRAG) */
+#define KSL_FD_DF_INET6 4 /* the socket is AF_INET6: it has both halves */
+#define KSL_FD_DF_V4_DO                                                                                                \
+    8 /* IPv4 half: probe refused, DF in DO mode (Linux IP_PMTUDISC_DO; Windows IP_DONTFRAGMENT alone) */
+#define KSL_FD_DF_V6_DO                                                                                                \
+    16 /* IPv6 half: probe refused, DF in DO mode (Linux IPV6_PMTUDISC_DO; Windows IPV6_DONTFRAG alone) */
 int ksl_udp_fd_df_probe(int64_t fd);
-/* sets on fd (a POSIX descriptor; a SOCKET on Windows) what KSL_UDP_DF sets on ksl_udp_open's sockets: DF in probe mode, so the
-            kernel neither fragments a datagram nor sizes it from a path MTU an ICMP message could forge (quic-go CVE-2024-53259),
-            replacing a mode set before (the JDK's IP_DONTFRAGMENT is IP_PMTUDISC_DO). Returns the KSL_FD_DF_* bits granted: both
-            for an AF_INET6 socket, V4 for an AF_INET one; 0 where the system has no probe mode (Apple, older Windows) or refused
-            it; KSL_ERROR when fd is no IPv4 or IPv6 socket. Linux, Android and Windows */
+/* DF on every datagram of fd (a POSIX descriptor; a SOCKET on Windows), as KSL_UDP_DF on ksl_udp_open's sockets: per half, probe
+            mode where the system takes it (the kernel neither fragments a datagram nor sizes it from a path MTU an ICMP message could
+            forge: quic-go CVE-2024-53259), else DO mode (never fragmented either, but a send above a cached path MTU is refused with
+            EMSGSIZE / WSAEMSGSIZE: the caller treats that as a failed path). It replaces a mode set before (the JDK's IP_DONTFRAGMENT is
+            DO). Returns the KSL_FD_DF_* bits of the result: KSL_FD_DF_INET6 for an AF_INET6 socket, and per half V4 or V4_DO, V6 or
+            V6_DO; a half with neither bit has no DF (the system refused both modes); 0 on Apple (no modes: the caller sets IP_DONTFRAG)
+            and other platforms; KSL_ERROR when fd is no IPv4 or IPv6 socket. Linux, Android and Windows */
 int ksl_udp_fd_df_mode(int64_t fd, int family);
-/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 2 = DO, 1 = WANT; Windows 1 = DO,
-            2 = DONT); -1 when it cannot be read or on
-            Apple (no PMTUDISC modes). For tests and diagnostics */
+/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 0 = DONT, 1 = WANT, 2 = DO;
+            Windows 0 = NOT_SET, 1 = DO, 2 = DONT); -1 when it cannot be read or on Apple (no PMTUDISC modes). For tests and
+            diagnostics; fd must be open */
 /* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
    send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
    granted flags (GSO, ECN, DF, PKTINFO) and the local address as they stand: create clones before the socket sends, or from its

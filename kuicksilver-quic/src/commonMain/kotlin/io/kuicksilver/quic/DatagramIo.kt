@@ -39,7 +39,11 @@ public enum class IoPreference {
     /** The `ksl` socket with batching, GSO/GRO, ECN and DF where the platform has it (Linux, Android; Apple without GSO/GRO; Windows with USO/URO where granted); the portable one elsewhere. */
     Accelerated,
 
-    /** Always the portable socket: NIO on the JVM, `ktor-network` on Native. */
+    /**
+     * Always the portable socket: NIO on the JVM, `ktor-network` on Native. On the JVM it still loads `ksl` (once per
+     * process), to put the socket's DF in probe mode (RFC 9000 sections 14 and 14.2.1); without the library it opens all
+     * the same, with the JDK's `IP_DONTFRAGMENT`.
+     */
     Portable,
 }
 

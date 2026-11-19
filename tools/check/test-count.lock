@@ -3552,6 +3552,7 @@ kuicksilver-native/src/mingwTest	io.kuicksilver.native.WinsockReadyTest.winsockI
 kuicksilver-native/src/nativeTest	io.kuicksilver.native.KslAvailabilityNativeTest.abiMismatchIsReportedWithoutThrowing
 kuicksilver-native/src/nativeTest	io.kuicksilver.native.KslAvailabilityNativeTest.staticLibraryIsAvailable
 kuicksilver-quic/src/androidDeviceTest	io.kuicksilver.quic.AndroidServerTest.serverOnDeviceServesLoopbackClient
+kuicksilver-quic/src/androidDeviceTest	io.kuicksilver.quic.DfProbeAndroidTest.portableSocketIsInProbeModeOnBothHalves
 kuicksilver-quic/src/androidDeviceTest	io.kuicksilver.quic.NetworkMigrationAndroidTest.bindingToTheActiveNetworkSucceeds
 kuicksilver-quic/src/androidDeviceTest	io.kuicksilver.quic.NetworkMigrationAndroidTest.defaultNetworksStartsWithTheDefaultAndReleasesItsCallback
 kuicksilver-quic/src/androidDeviceTest	io.kuicksilver.quic.NetworkMigrationAndroidTest.followDefaultNetworkSample
@@ -3714,6 +3715,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsC
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsCountAdmissionAndLimitRefusals
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.theListenerHearsTheLifecycleInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.zeroRttCountsOfferedAndAccepted
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.aRefusalAbove1200IsALostDatagram
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalAtOrBelow1200EndsTheClientConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalOnTheServersSocketEndsThatConnectionOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.acceptStreamInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.clientOfAFailedConnectionIsResetAndItsFlushMayFail
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.closedCompletesWithApplicationClosedLocal
@@ -5352,9 +5356,10 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.MultiLoopTest.zeroRttTicketsSer
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.closeRacingStartNeverLeavesItRunning
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.concurrentStartRunsOnce
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocksReceive
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfChoicePerProbeOutcome
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.emptyDatagramDoesNotStopReceive
-kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.jdkDontFragmentOnlyWithoutProbeModeOutsideLinuxAndWindows
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.loopbackSendReceive
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.messageTooLongPerPlatform
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioClearsTosAfterValidationFailure
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioSetsDontFragmentWherePossible
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioSetsIpTosEct0

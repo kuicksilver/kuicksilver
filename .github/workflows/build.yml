@@ -289,6 +289,7 @@ jobs:
           printf '%s\n' "$out"
           [ "$rc" = 0 ] || exit "$rc"
           grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out" || { echo "udp_recverr_ptb_parsed did not run (SKIP)"; exit 1; }
+          grep -q 'udp_fd_df_probe_forged_ptb: OK' <<< "$out" || { echo "udp_fd_df_probe_forged_ptb did not run (SKIP)"; exit 1; }
       - name: 'docker: jvm ${{ matrix.target }} (.so + tests)'
         run: bash tools/ci/docker-jvm.sh ${{ matrix.classifier }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

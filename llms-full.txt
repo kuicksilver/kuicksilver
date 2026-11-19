@@ -532,10 +532,10 @@ size; probes are not congestion controlled and their loss is not a congestion si
 packets, or two PTOs in a row while sending above 1200, mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF where the platform
-allows it (RFC 9000 section 14: "MUST be set if possible"; probe mode on Linux, Android and Windows, through `ksl` on the
-JVM, never the JDK's `IP_DONTFRAGMENT` there, which is the DO mode a forged ICMP message turns into refused sends; the
-JDK's option on Apple) but reports no DF capability,
+dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket always sets DF (RFC 9000
+section 14), in probe mode where the system takes it (Linux, Android, Windows; through `ksl` on the JVM), else in DO
+mode, where a forged ICMP message can make the system refuse sends to the peer: such a refusal of a datagram of at most
+1200 bytes ends the connection with `NoViablePath` (an HTTP/3 client falls back to TCP). It reports no DF capability,
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 

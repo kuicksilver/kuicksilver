@@ -10,8 +10,10 @@ import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.NonSuspendingSend
+import io.kuicksilver.quic.PATH_MTU_FLOOR
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
+import io.kuicksilver.quic.PathMtuRefusedException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
@@ -103,7 +105,9 @@ private inline fun EndpointLoop.sendOrLoseWith(
                 // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
                 if (rt != null && target is NonSuspendingSend) {
                     val tooBig = target.takeEmsgsize()
-                    if (tooBig > 0) {
+                    if (tooBig in 1..PATH_MTU_FLOOR) {
+                        rt.onPathMtuRefused(tooBig) // DF in DO mode (probe refused) met a cached path MTU below QUIC's floor
+                    } else if (tooBig > 0) {
                         rt.core.onEmsgsize(tooBig)
                         core.markDirty(rt.core)
                     }
@@ -114,6 +118,10 @@ private inline fun EndpointLoop.sendOrLoseWith(
             } catch (e: CancellationException) {
                 ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
                 sendFailures++
+                batch.count
+            } catch (e: PathMtuRefusedException) {
+                sendFailures++
+                if (rt != null && e.size <= PATH_MTU_FLOOR) rt.onPathMtuRefused(e.size)
                 batch.count
             } catch (e: SocketDefunctException) {
                 sendFailures++

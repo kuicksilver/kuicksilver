@@ -19,6 +19,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramPolicy
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.PathFailureReason
@@ -34,6 +35,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
+import io.kuicksilver.quic.emit
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
@@ -295,6 +297,22 @@ internal class ConnectionRuntime(
             core.silentClose(QuicException.ConnectionLost.NoViablePath())
             drainEvents()
         }
+    }
+
+    /**
+     * The system refused one of this connection's datagrams of [size] bytes (at most 1200) as above the path MTU it cached
+     * ([io.kuicksilver.quic.PathMtuRefusedException]): the path cannot carry QUIC, and in DO mode every later datagram meets
+     * the same refusal, so the connection ends at once with [QuicException.ConnectionLost.NoViablePath] (an HTTP/3 client
+     * falls back to TCP) instead of losing datagrams until the idle timeout. Loop dispatcher only.
+     */
+    internal fun onPathMtuRefused(size: Int) {
+        if (finished) return
+        loop.observer.logger.emit(LogLevel.Warn) {
+            "a $size-byte datagram refused as above the path MTU the system cached (EMSGSIZE: DF in DO mode after an ICMP message " +
+                "claiming less than 1200); closing the connection: no viable path"
+        }
+        core.silentClose(QuicException.ConnectionLost.NoViablePath())
+        drainEvents()
     }
 
     /** Loop dispatcher only; never called for the active path. */

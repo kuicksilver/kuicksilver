@@ -565,8 +565,12 @@ void run_udp_win(void) {
         printf("udp(win): ksl_udp_fd_df_probe granted %d (DO taken first: %d, IP_MTU_DISCOVER now %d)\n", g, took_do,
                ksl_udp_fd_df_mode((int64_t)s4, 4));
         CHECK(g >= 0, "a socket: not KSL_ERROR");
+        CHECK(!(g & KSL_FD_DF_INET6), "AF_INET: one half");
+        CHECK((g & KSL_FD_DF_V4) != 0 || (g & KSL_FD_DF_V4_DO) != 0,
+              "DF always: probe mode, else DO (IP_DONTFRAGMENT)");
         if (g & KSL_FD_DF_V4)
             CHECK(ksl_udp_fd_df_mode((int64_t)s4, 4) == 3, "probe mode read back");
+        CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR, "no socket: KSL_ERROR");
         CHECK(ksl_udp_df_bit_for_test((int)s4) == 1, "IP_DONTFRAGMENT set");
         closesocket(s4);
     }

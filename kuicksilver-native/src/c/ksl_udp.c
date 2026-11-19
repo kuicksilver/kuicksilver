@@ -572,12 +572,19 @@ int ksl_udp_fd_df_probe(int64_t fd64) {
 #ifdef __APPLE__ /* Darwin has only the DF bit (ksl_udp_open): no probe mode to set */
     return 0;
 #else
-    int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE, one = 1, granted = 0;
-    /* on AF_INET6: the v4-mapped half, which IPV6_MTU_DISCOVER does not cover */
+    int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE, d4 = IP_PMTUDISC_DO, d6 = IPV6_PMTUDISC_DO, one = 1,
+        granted = 0;
+    /* on AF_INET6: the v4-mapped half, which IPV6_MTU_DISCOVER does not cover; DO where probe mode is refused (DF always) */
     if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) == 0)
         granted |= KSL_FD_DF_V4;
-    if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0) {
-        granted |= KSL_FD_DF_V6;
+    else if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &d4, sizeof d4) == 0)
+        granted |= KSL_FD_DF_V4_DO;
+    if (family == AF_INET6) {
+        granted |= KSL_FD_DF_INET6;
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0)
+            granted |= KSL_FD_DF_V6;
+        else if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &d6, sizeof d6) == 0)
+            granted |= KSL_FD_DF_V6_DO;
         setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one);
     }
     return granted;

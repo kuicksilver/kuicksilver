@@ -1179,16 +1179,24 @@ int ksl_udp_fd_df_probe(int64_t fd) {
     struct sockaddr_storage ss;
     int l = (int)sizeof ss, yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
     memset(&ss, 0, sizeof ss);
-    if (fd < 0 || getsockname(s, (struct sockaddr *)&ss, &l) != 0 ||
+    if (fd < 0 || (uint64_t)fd > (uint64_t)UINTPTR_MAX || getsockname(s, (struct sockaddr *)&ss, &l) != 0 ||
         (ss.ss_family != AF_INET && ss.ss_family != AF_INET6))
         return KSL_ERROR;
-    setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes); /* on AF_INET6: the v4-mapped half */
+    /* DF always: IP_DONTFRAGMENT / IPV6_DONTFRAG first, as ksl_udp_open does; then PROBE where the system takes it (some Windows 11
+       builds and older Windows refuse IP_MTU_DISCOVER: the DF bit alone then works as DO, a send above a cached path MTU refused) */
+    int df4 = setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
+              0; /* on AF_INET6: the v4-mapped half */
     if (setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
         granted |= KSL_FD_DF_V4;
+    else if (df4)
+        granted |= KSL_FD_DF_V4_DO;
     if (ss.ss_family == AF_INET6) {
-        setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes);
+        granted |= KSL_FD_DF_INET6;
+        int df6 = setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
         if (setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
             granted |= KSL_FD_DF_V6;
+        else if (df6)
+            granted |= KSL_FD_DF_V6_DO;
     }
     return granted;
 }

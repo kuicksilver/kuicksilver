@@ -119,13 +119,13 @@ class NioDatagramIoTest {
     /**
      * RFC 9000 section 14 ("UDP datagrams MUST NOT be fragmented at the IP layer. In IPv4, the Don't Fragment (DF) bit MUST be
      * set if possible") and section 14.2.1 (an endpoint "MUST ignore an ICMP message that claims the PMTU has decreased below
-     * QUIC's smallest allowed maximum datagram size"): on Linux the portable socket is in probe mode (`IP_PMTUDISC_PROBE`, and
-     * `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and never in the JDK's `IP_DONTFRAGMENT`, which is
-     * `IP_PMTUDISC_DO` there; Windows the same where the system takes PROBE, and never the JDK's option (DO there too).
-     * Apple has no probe mode: the JDK's option is set where the JDK has it (19 and later). Its datagrams stay within 1200
-     * bytes, so PMTUD stays off (`df` capability false). The forged-ICMP attack itself is `test_udp.c`
-     * `udp_fd_df_probe_forged_ptb` (Linux: a raw socket in a user and network namespace of its own); on Windows it cannot be
-     * reproduced over loopback, which ignores the cached path MTU (checked on a Windows 11 VM against a real peer instead).
+     * QUIC's smallest allowed maximum datagram size"): DF always. On Linux every half of the portable socket is in probe mode
+     * (`IP_PMTUDISC_PROBE`, and `IPV6_PMTUDISC_PROBE` on a dual-stack socket), set through `ksl`, and the JDK's
+     * `IP_DONTFRAGMENT` (DO mode there) is not added; on Windows probe mode where the system takes it, else DO; Apple has no
+     * modes: the JDK's option (JDK 19 and later). Datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
+     * false). The forged-ICMP attack itself is `test_udp.c` `udp_fd_df_probe_forged_ptb` (Linux: a raw socket in a user and
+     * network namespace of its own); on Windows it cannot be reproduced over loopback, which ignores the cached path MTU
+     * (checked on a Windows 11 VM against a real peer instead).
      */
     @Test fun nioSetsDontFragmentWherePossible() =
         runBlocking {
@@ -133,7 +133,8 @@ class NioDatagramIoTest {
             try {
                 a as NioDatagramIo
                 val os = (System.getProperty("os.name") ?: "").lowercase()
-                val granted = a.dfProbeGranted
+                val bits = a.dfProbeGranted
+                val jdk19 = Runtime.version().feature() >= 19
                 when {
                     os.startsWith("linux") -> {
                         assertTrue(
@@ -141,21 +142,20 @@ class NioDatagramIoTest {
                                 .isAvailable(),
                             "the Linux test needs ksl",
                         )
-                        assertTrue(granted and 1 != 0, "probe mode on the IPv4 side: $granted")
+                        assertTrue(probeComplete(bits), "probe mode on every half: $bits")
                         assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE, not DO")
-                        if (granted and 2 != 0) assertEquals(3, a.dfModeForTest(6), "IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE")
-                        assertEquals(if (Runtime.version().feature() >= 19) false else null, a.dontFragmentForTest())
+                        if (bits and DF_INET6 != 0) assertEquals(3, a.dfModeForTest(6), "IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE")
+                        assertEquals(if (jdk19) false else null, a.dontFragmentForTest(), "the JDK's DO mode not added")
                     }
 
                     os.startsWith("mac") -> {
-                        assertEquals(0, granted, "Darwin has no probe mode")
-                        assertEquals(if (Runtime.version().feature() >= 19) true else null, a.dontFragmentForTest())
+                        assertEquals(0, bits, "Darwin has no modes")
+                        assertEquals(if (jdk19) true else null, a.dontFragmentForTest())
                     }
 
-                    // Windows: probe mode where the system takes it; never the JDK's option (IP_PMTUDISC_DO)
                     os.startsWith("windows") -> {
-                        if (granted != 0) assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE")
-                        assertEquals(if (Runtime.version().feature() >= 19) false else null, a.dontFragmentForTest())
+                        assertTrue(dfComplete(bits), "DF on every half, probe or DO: $bits")
+                        if (bits and DF_V4 != 0) assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE")
                     }
                 }
                 assertFalse(a.capabilities.value.df)
@@ -174,19 +174,38 @@ class NioDatagramIoTest {
         }
 
     /**
-     * The mode choice per OS and probe outcome: the JDK's `IP_DONTFRAGMENT` (`IP_PMTUDISC_DO` on Linux and Windows) only where
-     * probe mode was not granted and the system is neither Linux (Android reports Linux) nor Windows.
+     * The DF choice from the [dfProbe] bits: the JDK's `IP_DONTFRAGMENT` (DO on Linux and Windows, IP_DONTFRAG on Apple) only
+     * where nothing put DF on the half it covers (an AF_INET socket's only half; an AF_INET6 socket's IPv6 half), so DF is
+     * always on; probe mode on every half is what meets section 14.2.1.
      */
-    @Test fun jdkDontFragmentOnlyWithoutProbeModeOutsideLinuxAndWindows() {
-        val choose = NioDatagramIo.Companion::usesJdkDontFragment
-        for (os in listOf("Linux", "Windows 11", "Windows Server 2025")) {
-            assertFalse(choose(os, 0), "$os without probe mode (no ksl): the system's default, not DO")
-            assertFalse(choose(os, 1), "$os with probe mode")
-            assertFalse(choose(os, 3), "$os with probe mode on both halves")
-        }
-        assertTrue(choose("Mac OS X", 0), "Apple: IP_DONTFRAG, no modes")
-        assertFalse(choose("Mac OS X", 1), "probe mode granted wins anywhere")
-        assertTrue(choose("FreeBSD", 0), "another system without probe mode")
+    @Test fun dfChoicePerProbeOutcome() {
+        val jdk = NioDatagramIo.Companion::usesJdkDontFragment
+        assertTrue(jdk(-1), "no ksl (or no descriptor): the JDK's option")
+        assertTrue(jdk(0), "Apple, or every mode refused: the JDK's option")
+        assertFalse(jdk(DF_V4), "AF_INET in probe mode")
+        assertFalse(jdk(DF_V4_DO), "AF_INET in DO mode through ksl")
+        assertFalse(jdk(DF_INET6 or DF_V4 or DF_V6), "dual-stack, both halves in probe mode")
+        assertTrue(jdk(DF_INET6 or DF_V4), "dual-stack, the IPv6 half without DF: the JDK's option covers it")
+        assertFalse(jdk(DF_INET6 or DF_V4 or DF_V6_DO), "dual-stack, the IPv6 half in DO mode")
+        assertFalse(jdk(DF_INET6 or DF_V6), "the JDK's option would not reach the IPv4 half anyway (it sets IPV6_MTU_DISCOVER)")
+        assertTrue(probeComplete(DF_V4) && probeComplete(DF_INET6 or DF_V4 or DF_V6))
+        assertFalse(probeComplete(DF_INET6 or DF_V4), "dual-stack with only the V4 bit: not complete")
+        assertFalse(probeComplete(DF_V4_DO) || probeComplete(0) || probeComplete(-1))
+        assertTrue(dfComplete(DF_V4_DO) && dfComplete(DF_INET6 or DF_V4 or DF_V6_DO))
+        assertFalse(dfComplete(DF_INET6 or DF_V4))
+    }
+
+    /** EMSGSIZE as the JDK reports it on Linux, Android and Windows; anything else is not a path MTU refusal. */
+    @Test fun messageTooLongPerPlatform() {
+        val tooLong = NioDatagramIo.Companion::isMessageTooLong
+        assertTrue(tooLong(java.net.SocketException("Message too long")), "Linux")
+        assertTrue(tooLong(java.net.SocketException("sendto failed: EMSGSIZE (Message too long)")), "Android")
+        assertTrue(
+            tooLong(java.net.SocketException("sendto: The message is larger than the maximum supported by the underlying transport")),
+            "Windows (net_util_md.c)",
+        )
+        assertFalse(tooLong(java.net.SocketException("Network is unreachable")))
+        assertFalse(tooLong(java.net.SocketException()))
     }
 
     @Test fun nioClearsTosAfterValidationFailure() =

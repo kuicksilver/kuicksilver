@@ -142,7 +142,7 @@ docker_ctests() { # <platform> <image> <target>: the ksl C tests in a Linux cont
   local out rc
   out=$(KSL_DOCKER_OPTS="--security-opt seccomp=unconfined" bash tools/ci/docker-run.sh "$1" "$2" "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh $3" 2>&1); rc=$?
   printf '%s\n' "$out"
-  if grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out"; then mkdir -p build/ci; touch "build/ci/recverr-ran-$3"; fi
+  if grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out" && grep -q 'udp_fd_df_probe_forged_ptb: OK' <<< "$out"; then mkdir -p build/ci; touch "build/ci/recverr-ran-$3"; fi
   return "$rc"
 }
 win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does not set its exit code, so it is read here
@@ -284,7 +284,7 @@ if [ "$skip_docker" = 0 ]; then
 [ "$mode" = list ] || [ "$dry" = 1 ] || rm -f build/ci/recverr-ran-*   # the markers of this run only
 step --pre linux-x64 "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
 step --pre linux-arm64 "docker: c-tests linux-arm64"              docker_ctests linux/arm64 kuicksilver-openssl-linux-arm64 linux-arm64
-step --after "docker: c-tests linux-x64" --after "docker: c-tests linux-arm64" "docker: Linux ICMP error-queue tests ran" bash -c 'ls build/ci/recverr-ran-* >/dev/null 2>&1 || { echo "udp_recverr_ptb_parsed skipped on every Linux runner"; exit 1; }'
+step --after "docker: c-tests linux-x64" --after "docker: c-tests linux-arm64" "docker: Linux ICMP error-queue tests ran" bash -c 'ls build/ci/recverr-ran-* >/dev/null 2>&1 || { echo "udp_recverr_ptb_parsed or udp_fd_df_probe_forged_ptb skipped on every Linux runner"; exit 1; }'
 # shellcheck disable=SC2086
 step --needs "native: link linux/mingw tests" --pre linux-x64 "docker: test.kexe linux-x64 (all modules)"  bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
 # shellcheck disable=SC2086

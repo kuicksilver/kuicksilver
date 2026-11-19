@@ -768,8 +768,8 @@ static int fd_probe_child(void) {
     if (setsockopt(b, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof off) != 0 ||
         setsockopt(b, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &d6, sizeof d6) != 0)
         return 14;
-    if (ksl_udp_fd_df_probe(b) != (KSL_FD_DF_V4 | KSL_FD_DF_V6) || ksl_udp_fd_df_mode(b, 4) != IP_PMTUDISC_PROBE ||
-        ksl_udp_fd_df_mode(b, 6) != IPV6_PMTUDISC_PROBE)
+    if (ksl_udp_fd_df_probe(b) != (KSL_FD_DF_V4 | KSL_FD_DF_V6 | KSL_FD_DF_INET6) ||
+        ksl_udp_fd_df_mode(b, 4) != IP_PMTUDISC_PROBE || ksl_udp_fd_df_mode(b, 6) != IPV6_PMTUDISC_PROBE)
         return 15;
     struct sockaddr_in6 m;
     memset(&m, 0, sizeof m);
@@ -1621,7 +1621,8 @@ void run_udp(void) {
         {
             int s4 = socket(AF_INET, SOCK_DGRAM, 0), s6 = socket(AF_INET6, SOCK_DGRAM, 0);
             CHECK(s4 >= 0, "an AF_INET socket");
-            CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR, "no descriptor: KSL_ERROR");
+            CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR && ksl_udp_fd_df_probe((int64_t)INT32_MAX + 1) == KSL_ERROR,
+                  "no descriptor: KSL_ERROR");
 #ifdef __APPLE__
             CHECK(ksl_udp_fd_df_probe(s4) == 0 && ksl_udp_fd_df_mode(s4, 4) == -1, "Darwin: no probe mode");
 #else
@@ -1631,7 +1632,8 @@ void run_udp(void) {
                   "DO first, as the JDK leaves it");
             CHECK(ksl_udp_fd_df_probe(s4) == KSL_FD_DF_V4 && ksl_udp_fd_df_mode(s4, 4) == 3, "AF_INET: probe mode");
             if (s6 >= 0) {
-                CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_V4 | KSL_FD_DF_V6), "AF_INET6: both halves");
+                CHECK(ksl_udp_fd_df_probe(s6) == (KSL_FD_DF_V4 | KSL_FD_DF_V6 | KSL_FD_DF_INET6),
+                      "AF_INET6: both halves");
                 CHECK(ksl_udp_fd_df_mode(s6, 4) == 3 && ksl_udp_fd_df_mode(s6, 6) == 3,
                       "AF_INET6: probe mode read back");
             }

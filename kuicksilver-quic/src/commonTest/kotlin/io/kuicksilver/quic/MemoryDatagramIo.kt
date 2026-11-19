@@ -234,8 +234,19 @@ internal class MemoryDatagramIo internal constructor(
         return trySend(batch)
     }
 
+    /** Fault injection on sends only (receive goes on): the next [sendFailuresLeft] sends throw it, then it clears. */
+    @kotlin.concurrent.Volatile
+    var sendFailure: Throwable? = null
+
+    @kotlin.concurrent.Volatile
+    var sendFailuresLeft: Int = Int.MAX_VALUE
+
     override fun trySend(batch: PacketBatch): Int {
         failure?.let { throw it }
+        sendFailure?.let {
+            if (--sendFailuresLeft <= 0) sendFailure = null
+            throw it
+        }
         for (i in 0 until batch.count) {
             net.deliver(localAddress, batch.address(i) ?: continue, batch.buffer(i).toByteArray(batch.length(i)))
             sent++
