@@ -25,7 +25,7 @@ public object KslFdSocket {
      */
     public fun dfProbe(fd: Long): Int = KslNative.udpFdDfProbe(fd)
 
-    /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of [fd]: 3 PROBE, 2 DO, 1 WANT; -1 when unreadable or on Apple. */
+    /** `IP_MTU_DISCOVER` ([family] 4) or `IPV6_MTU_DISCOVER` (6) of [fd]: 3 PROBE (Linux 2 DO, 1 WANT; Windows 1 DO); -1 unreadable or Apple. */
     public fun dfMode(
         fd: Long,
         family: Int,

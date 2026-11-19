@@ -515,7 +515,8 @@ int ksl_udp_fd_df_probe(int64_t fd);
             for an AF_INET6 socket, V4 for an AF_INET one; 0 where the system has no probe mode (Apple, older Windows) or refused
             it; KSL_ERROR when fd is no IPv4 or IPv6 socket. Linux, Android and Windows */
 int ksl_udp_fd_df_mode(int64_t fd, int family);
-/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE, 2 = DO, 1 = WANT); -1 when it cannot be read or on
+/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 2 = DO, 1 = WANT; Windows 1 = DO,
+            2 = DONT); -1 when it cannot be read or on
             Apple (no PMTUDISC modes). For tests and diagnostics */
 /* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
    send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
