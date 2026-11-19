@@ -29,6 +29,12 @@ import kotlin.time.Duration.Companion.seconds
  * is dropped whole, never forwarded cut. The portable sockets (NIO on the JVM, ktor-network on Kotlin/Native) truncate a
  * datagram to their slot; the proxy's slot is one byte longer than the link carries, so a cut one is recognised. HTTP/3
  * datagrams are off, so a payload of any size would reach the client as a DATAGRAM capsule.
+ *
+ * The oversized datagram must still leave the target's socket: that socket sets DF (RFC 9000 section 14), so a send larger
+ * than the path MTU the kernel knows fails with EMSGSIZE ("Message too long") instead of being fragmented; the Linux
+ * containers of the local matrix refused 1600 bytes so. The proxy therefore runs at the smallest link MTU it accepts (1280)
+ * and the target sends [OVERSIZED] bytes: above that MTU, yet within any path of at least an Ethernet MTU (1500 - 20 - 8
+ * bytes of IPv4 and UDP headers = 1472), and far below the 65507-byte UDP maximum.
  */
 class PortableTruncationTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -52,6 +58,7 @@ class PortableTruncationTest {
                 ProxyRig(pair) { _ ->
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
+                        linkMtu = LINK_MTU,
                         socketFactory = { DatagramIo.open(loopback, IoPreference.Portable).also { proxySocket.complete(it) } },
                     )
                 }
@@ -61,7 +68,7 @@ class PortableTruncationTest {
                     val t = r.pair.client.connectUdp(template, "127.0.0.1", target.localAddress.port)
                     val to = InetSocketAddress("127.0.0.1", withTimeout(5.seconds) { proxySocket.await() }.localAddress.port)
                     PacketBatch(1, 2048).use { b ->
-                        for (size in listOf(1600, 5)) {
+                        for (size in listOf(OVERSIZED, 5)) {
                             b.count = 0
                             b.buffer(0).copyFrom(ByteArray(size) { 7 }, 0, 0, size)
                             b.setLength(0, size)
@@ -69,7 +76,7 @@ class PortableTruncationTest {
                             target.send(b)
                         }
                     }
-                    // the 5-byte one arrives; the 1600-byte one was dropped whole, not cut to the link's 1500
+                    // the 5-byte one arrives; the oversized one was dropped whole, not cut to the link's 1280
                     assertEquals(5, withTimeout(10.seconds) { t.payloads.first() }.size)
                     assertEquals(1, rig.proxy.stats.droppedTooLargeFromTarget)
                     t.close()
@@ -78,4 +85,11 @@ class PortableTruncationTest {
                 target.close()
             }
         }
+
+    private companion object {
+        const val LINK_MTU = 1280
+
+        /** Above [LINK_MTU] (and the proxy's receive slot of `LINK_MTU + 1`), within a 1500-byte loopback with DF set. */
+        const val OVERSIZED = 1400
+    }
 }
