@@ -59,13 +59,19 @@ class KtorDatagramIoTest {
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val diag = HandleDiagnostics("refused binds")
                 val before = openDescriptors()
+                diag.mark("before")
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                assertEquals(0, refusedSelectorsRunning(), "a refused portable bind returned before its selector ended")
+                diag.mark("after 20 portable")
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+                diag.mark("after 20 default")
                 // a refused bind returns once its selector's loop has ended and closed its pipe (KtorDatagramIo.open)
                 val leaked = openDescriptors() - before
-                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+                diag.report(leaked < 10) { "40 refused binds left $leaked descriptors open" }
             } finally {
                 held.close()
             }
@@ -93,13 +99,23 @@ class KtorDatagramIoTest {
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val diag = HandleDiagnostics("refused binds under busy dispatchers")
                 val initial = settledDescriptors()
+                diag.mark("initial")
                 refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured round holds
                 val before = settledDescriptors()
+                diag.mark("before (after the first round, settled)")
                 var whileHeld: Int? = null
-                refusedBindsWhileThreadsAreHeld(taken) { whileHeld = openDescriptors() }
+                refusedBindsWhileThreadsAreHeld(taken) {
+                    whileHeld = openDescriptors()
+                    diag.mark("while held (the binds returned before the threads were let go)")
+                    // a bind returned while no selector loop could run: its own must have ended all the same
+                    assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+                }
                 val after = whileHeld ?: settledDescriptors()
-                assertTrue(after - before < 10, "40 refused binds left ${after - before} descriptors open")
+                if (whileHeld == null) diag.mark("after (the binds waited for the threads, settled)")
+                assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+                diag.report(after - before < 10) { "40 refused binds left ${after - before} descriptors open" }
                 if (!handlesCountThreads) {
                     assertTrue(after - initial < 10, "80 refused binds left ${after - initial} descriptors open")
                 }
@@ -107,6 +123,50 @@ class KtorDatagramIoTest {
                 held.close()
             }
         }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun refusedSelectorsRunning(): Int = KtorDatagramIo.refusedSelectorsRunning.load()
+
+    /**
+     * What the handle count was made of at each [mark], by kind ([handleBreakdown]): on Windows, where the count is every
+     * handle of the process, a failure says which object types grew (threads and their events, or the sockets and events of a
+     * selector) and what is left after a further 5 s, and every run prints it, so a passing run shows the margin.
+     */
+    private class HandleDiagnostics(
+        private val what: String,
+    ) {
+        private val marks = ArrayList<Pair<String, Map<String, Int>>>()
+
+        fun mark(label: String) {
+            marks += label to handleBreakdown()
+        }
+
+        suspend fun report(
+            ok: Boolean,
+            message: () -> String,
+        ) {
+            if (!ok) {
+                delay(5_000) // a late end: what settles only after the binds' own wait is not theirs
+                mark("5 s later")
+            }
+            val text = describe()
+            if (handlesCountThreads) println("KtorDatagramIoTest diagnostics, $what:\n$text")
+            assertTrue(ok, "${message()}\n$text")
+        }
+
+        private fun describe(): String {
+            val first = marks.first().second
+            return marks.joinToString("\n") { (label, m) ->
+                val kinds = (first.keys + m.keys).sorted()
+                val change =
+                    kinds.mapNotNull { k ->
+                        val d = (m[k] ?: 0) - (first[k] ?: 0)
+                        if (d != 0) "$k ${if (d > 0) "+" else ""}$d" else null
+                    }
+                "  $label: total ${m.values.sum()}; vs ${marks.first().first}: ${change.joinToString().ifEmpty { "no change" }}"
+            }
+        }
+    }
 
     /**
      * The count once it has stopped moving: read every 50 ms until five reads in a row agree, at most for 10 s (then the
@@ -194,8 +254,8 @@ class KtorDatagramIoTest {
         }
 
     private fun openDescriptors(): Int = openHandleCount()
-
-    /** Whether [openDescriptors] counts every handle of the process, threads among them (Windows), not descriptors alone. */
-    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
-    private val handlesCountThreads: Boolean = kotlin.native.Platform.osFamily == kotlin.native.OsFamily.WINDOWS
 }
+
+/** Whether [openHandleCount] counts every handle of the process, threads among them (Windows), not descriptors alone. */
+@OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+private val handlesCountThreads: Boolean = kotlin.native.Platform.osFamily == kotlin.native.OsFamily.WINDOWS

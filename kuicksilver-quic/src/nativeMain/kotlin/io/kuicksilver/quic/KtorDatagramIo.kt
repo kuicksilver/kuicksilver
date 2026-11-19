@@ -23,6 +23,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -185,6 +187,13 @@ internal class KtorDatagramIo private constructor(
         /** How long a refused bind waits for its selector's loop to end (and close its wakeup pipe). */
         private val SELECTOR_CLOSE_WAIT = 5.seconds
 
+        /**
+         * The selectors of refused binds whose job has not completed yet (their loop has not ended): a refused bind returns
+         * once its own has, so a test reads 0 between binds on every platform, whatever the OS counts as a handle.
+         */
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        internal val refusedSelectorsRunning = kotlin.concurrent.atomics.AtomicInt(0)
+
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val ip = local.ipBytes()
             if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(unsupportedIpv6(local))
@@ -197,6 +206,10 @@ internal class KtorDatagramIo private constructor(
                     aSocket(selector).udp().bind(local)
                 } catch (e: Throwable) {
                     // a refused bind (port taken) must not keep its selection thread and pipe
+                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                    refusedSelectorsRunning.incrementAndFetch()
+                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                    selectorJob.invokeOnCompletion { refusedSelectorsRunning.decrementAndFetch() }
                     selector.close()
                     selectorJob.complete()
                     // bounded: a starved Dispatchers.IO must not hold a refused bind for good; past it the loop still
