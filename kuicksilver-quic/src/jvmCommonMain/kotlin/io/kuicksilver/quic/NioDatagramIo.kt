@@ -211,25 +211,11 @@ internal class NioDatagramIo private constructor(
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
         /**
-         * The JDK on Linux maps `IP_DONTFRAGMENT` to `IP_MTU_DISCOVER` = `IP_PMTUDISC_DO` (`IPV6_MTU_DISCOVER` on a
-         * dual-stack socket). In that mode the kernel refuses with EMSGSIZE every send above the path MTU it has cached, and
-         * one ICMP Fragmentation Needed, forged or not, lowers that cache for the destination to as little as 552 bytes for
-         * ten minutes: every 1200-byte datagram to the peer would then fail (quic-go CVE-2024-53259; RFC 9000 section 14.2.1
-         * "MUST ignore an ICMP message that claims the PMTU has decreased below QUIC's smallest allowed maximum datagram
-         * size"). The JDK has no `IP_PMTUDISC_PROBE`, which the accelerated socket uses, so on Linux the option stays off:
-         * the kernel's default mode (`IP_PMTUDISC_WANT`) already sets DF on every IPv4 datagram within the path MTU it knows,
-         * and fragments locally, instead of refusing, only one above a cached MTU that an ICMP message lowered.
-         */
-        internal val linuxKernel: Boolean = "linux" in System.getProperty("os.name", "").lowercase()
-
-        /**
          * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". Where the runtime has the option
-         * it is set (both families), except on Linux, whose default mode sets DF already ([linuxKernel]); this socket's
-         * datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false). A platform that refuses it keeps the
-         * socket as it was.
+         * it is set (both families); this socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
+         * false). A platform that refuses it keeps the socket as it was.
          */
         private fun setDontFragment(ch: DatagramChannel) {
-            if (linuxKernel) return
             val opt = dontFragmentOption() ?: return
             try {
                 if (opt in ch.supportedOptions()) ch.setOption(opt, true)

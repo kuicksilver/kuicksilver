@@ -2504,10 +2504,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   undo.
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
   bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
-  be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off. On Linux the socket keeps the
-  kernel's default mode, which sets DF on every datagram within the path MTU it knows: the JDK's option is
-  `IP_PMTUDISC_DO` there, in which one forged ICMP Fragmentation Needed made the kernel refuse every larger send to that
-  address for ten minutes (quic-go CVE-2024-53259).
+  be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).
