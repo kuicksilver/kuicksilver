@@ -1285,6 +1285,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   cancels before it ran. Every channel still registered now closes once the connection's coroutines are gone, so a reader
   of the tunnel's datagrams sees the end (`ConnectionEndTest.clientTunnelDatagramChannelEndsWithTheConnection`; found by
   the leak sentinel).
+- Ktor client: a closed client still waited for a QUIC setup that had lost its race to TCP (it goes on in the background
+  to fill the pool or to mark the alternative broken) until that setup's own bound, up to the connect timeout, before it
+  released its endpoint and connections. `close()` now cancels such setups at once: no call waits for them, and a closed
+  engine cannot use what they make. Requests still running are left to finish, as Ktor's `close()` promises
+  (`ClientEarlyDataTest.closeCancelsAQuicSetupThatLostTheRace`; found by the leak sentinel).
 - TLS over TCP (`Socket.tls`, `Socket.tlsServer`): a socket that ended kept its job, and the pumps under it, for good when
   the application had stopped reading (the relay waited for room in the application's channel) or, for an abort, kept its
   write channel open without writing (the pump waited for its next bytes). The descriptor was closed; the coroutines

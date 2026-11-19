@@ -2339,6 +2339,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtor
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.kuicksilverClientWithKtorServerExtensionH3
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.negative_compressedInvalidUtf8ThroughKtorsExtensionClosesWith1007
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.negative_invalidUtf8CompressedByKtorsExtensionIsNotSent
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.closeCancelsAQuicSetupThatLostTheRace
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.earlyConnectionDoesNotWinTheRaceOnAnUnconfirmedNetwork
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.postWaitingForAFailedHandshakeFallsBack
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.reconnectResumesWith0Rtt
