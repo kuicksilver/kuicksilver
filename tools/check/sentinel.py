@@ -11,9 +11,11 @@
              (a leak a pending fix removes names its branch or commit)
   per-class  the test class <target> is checked once after all its tests instead of after each; <kinds> is `-`
 
-Findings: a malformed line, an unknown mode or kind, a reason of fewer than eight words, a target class no test source set declares (in its package, a test method not declared in that file),
-a line twice; and the ratchet: against the merge base with main (`KSL_LEAK_ALLOW_BASE` names another revision), a line
-the base did not have, or a line whose kinds grew. The list only shrinks; the first file is taken as it is.
+Findings: a module with tests whose build script applies neither kuicksilver.kmp nor kuicksilver.leak-sentinel (its
+tests would run without the sentinel); a malformed line, an unknown mode or kind, a reason of fewer than eight words, a target class no test source set declares (in its package, a test method not declared in that file),
+a line twice; and the ratchet: against the merge bases with main and with origin/main (each that has the file;
+`KSL_LEAK_ALLOW_BASE` names one revision instead), a line the base did not have, or a line whose kinds grew. The list
+only shrinks; a first file, which no base has, is taken as it is.
 
 Not checked: whether an entry is still needed (a leak that depends on an event order is not seen on every run): the
 change that fixes it removes the line. Usage: sentinel.py [root]
@@ -27,7 +29,8 @@ sys.dont_write_bytecode = True
 
 ALLOW = "tools/check/sentinel.allow"
 NATIVE_KINDS = {"ksl.ssl", "ksl.key", "ksl.session", "ksl.udp", "ksl.wake"}
-OPENED = re.compile(r'(?:LeakRegistry\.open|trackLeak)\(\s*"([a-zA-Z0-9.]+)"')
+OPENED = re.compile(r'(?:LeakRegistry\.open|trackLeak)\((.*)')  # the kinds: the string literals after the call on its line
+KIND = re.compile(r'"([a-zA-Z0-9.]+)"')
 
 
 def parse(text):
@@ -56,11 +59,29 @@ def source_files(root, test):
                         yield os.path.join(d, f)
 
 
+def unwired(root):
+    """Modules with tests whose build script applies neither kuicksilver.kmp nor kuicksilver.leak-sentinel: their tests
+    would run without the sentinel, and nothing would say so."""
+    out = []
+    for top in sorted(os.listdir(root)):
+        src, script = os.path.join(root, top, "src"), os.path.join(root, top, "build.gradle.kts")
+        if not top.startswith("kuicksilver-") or not os.path.isdir(src) or not os.path.isfile(script):
+            continue
+        has_tests = any(f.endswith(".kt") for sset in os.listdir(src) if sset.endswith("Test")
+                        for _, _, files in os.walk(os.path.join(src, sset)) for f in files)
+        with open(script, encoding="utf-8") as fh:
+            text = fh.read()
+        if has_tests and 'id("kuicksilver.kmp")' not in text and 'id("kuicksilver.leak-sentinel")' not in text:
+            out.append(top)
+    return out
+
+
 def known_kinds(root):
     kinds = set(NATIVE_KINDS)
     for p in source_files(root, test=False):
         with open(p, encoding="utf-8") as fh:
-            kinds.update(OPENED.findall(fh.read()))
+            for arg in OPENED.findall(fh.read()):
+                kinds.update(KIND.findall(arg))
     return kinds
 
 
@@ -89,15 +110,20 @@ def resolve(target, classes):
     return f"no test source set declares the class {target}"
 
 
-def base_text(root):
+def base_texts(root):
+    """The allowlist at each base it is ratcheted against: KSL_LEAK_ALLOW_BASE when set, else the merge bases with main and
+    with origin/main, both when both exist (a local main left behind must not let lines in that origin/main forbids).
+    Bases without the file are left out; none left means the first list, taken as it is."""
     def git(*a):
         return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
-    base = os.environ.get("KSL_LEAK_ALLOW_BASE") or git("merge-base", "HEAD", "main").stdout.strip() or \
-        git("merge-base", "HEAD", "origin/main").stdout.strip()
-    if not base:
-        return None
-    r = git("show", f"{base}:{ALLOW}")
-    return r.stdout if r.returncode == 0 else None
+    named = os.environ.get("KSL_LEAK_ALLOW_BASE")
+    revs = [named] if named else [git("merge-base", "HEAD", ref).stdout.strip() for ref in ("main", "origin/main")]
+    out = []
+    for rev in dict.fromkeys(r for r in revs if r):
+        r = git("show", f"{rev}:{ALLOW}")
+        if r.returncode == 0:
+            out.append((rev, r.stdout))
+    return out
 
 
 def main():
@@ -133,8 +159,9 @@ def main():
         if key in seen:
             findings.append(f"{where}: {mode} {target} is listed twice (line {seen[key]})")
         seen[key] = n
-    base = base_text(root)
-    if base is not None:
+    for top in unwired(root):
+        findings.append(f"{top}/build.gradle.kts: has tests, and applies neither kuicksilver.kmp nor kuicksilver.leak-sentinel")
+    for rev, base in base_texts(root):
         before = {(f[0], f[1]): {k.strip() for k in f[2].split(",")} for _, _, f in parse(base) if f}
         for n, _, f in entries:
             if not f:
@@ -142,9 +169,9 @@ def main():
             had = before.get((f[0], f[1]))
             now = {k.strip() for k in f[2].split(",")}
             if had is None:
-                findings.append(f"{ALLOW}:{n}: {f[0]} {f[1]} is new: the list only shrinks (fix the leak, or close what the test opened)")
+                findings.append(f"{ALLOW}:{n}: {f[0]} {f[1]} is new against {rev[:12]}: the list only shrinks (fix the leak, or close what the test opened)")
             elif not now <= had:
-                findings.append(f"{ALLOW}:{n}: {f[0]} {f[1]} gained {', '.join(sorted(now - had))}: the list only shrinks")
+                findings.append(f"{ALLOW}:{n}: {f[0]} {f[1]} gained {', '.join(sorted(now - had))} against {rev[:12]}: the list only shrinks")
     for x in findings:
         print(x)
     print(f"sentinel: {len(entries)} entr{'y' if len(entries) == 1 else 'ies'}, {len(findings)} finding(s)")

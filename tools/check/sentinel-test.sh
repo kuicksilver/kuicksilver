@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Negative controls of tools/check/sentinel.py on a scratch repository. Pass: an allow entry of a known kind, one naming
-# a test of the class, a per-class entry, the first allowlist (no base has one), an
-# entry the base had, an entry whose kinds shrank. Fail, each named: a line without four fields, an unknown mode, an
-# unknown kind, a per-class entry with kinds, a short reason, a class or a test no test source declares, a line twice; against the base: a new line, a line whose kinds grew.
+# Negative controls of tools/check/sentinel.py on a scratch repository. Fail: a module with tests whose build script
+# applies no sentinel (passes once it applies kuicksilver.leak-sentinel). Pass: an allow entry of a known kind (also one of
+# the literals a conditional argument opens), one naming a test of the class, a per-class entry, the first allowlist (no
+# base has one), an entry the base had, an entry whose kinds shrank (also against origin/main). Fail, each named: a line
+# without four fields, an unknown mode, an unknown kind, a per-class entry with kinds, a short reason, a class or a test
+# no test source declares, a line twice; against the base: a new line, a line whose kinds grew; against origin/main when
+# the local main lacks the list: a new line.
 # Usage: sentinel-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,8 +15,9 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0
 mkdir -p "$r/tools/check" "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/kuicksilver-x/src/commonMain/kotlin/x"
 git -C "$r" init -q -b work; git -C "$r" config user.email t@example.invalid; git -C "$r" config user.name t
-printf 'package x\nclass Owner { val id = LeakRegistry.open("x.thing"); fun s() = sock.trackLeak("x.socket") }\n' \
+printf 'package x\nclass Owner { val id = LeakRegistry.open("x.thing"); fun s() = sock.trackLeak(if (a) "x.accepted" else "x.socket") }\n' \
   > "$r/kuicksilver-x/src/commonMain/kotlin/x/Owner.kt"
+printf 'plugins { id("kuicksilver.kmp") }\n' > "$r/kuicksilver-x/build.gradle.kts"
 printf 'package x\n\nclass ATest {\n    @Test fun leaks() = Unit\n}\n' > "$r/kuicksilver-x/src/commonTest/kotlin/x/ATest.kt"
 R="leaks until the fix on k10/some-branch lands in main"
 allow() { printf '# header\n' > "$r/tools/check/sentinel.allow"; printf '%s\n' "$@" >> "$r/tools/check/sentinel.allow"; }
@@ -23,7 +27,7 @@ expect() { # <0|1> <what> <pattern>
   else echo "FAIL: $2 (exit $got, want $1 and '$3')"; sed 's/^/  | /' "$tmp/out.txt"; rc=1; fi
 }
 git -C "$r" add -A; git -C "$r" commit -qm base; git -C "$r" branch -q main
-allow "allow | x.ATest | x.thing, ksl.ssl | $R" "allow | x.ATest.leaks | x.socket | $R" \
+allow "allow | x.ATest | x.thing, ksl.ssl | $R" "allow | x.ATest.leaks | x.socket, x.accepted | $R" \
   "per-class | x.ATest | - | its tests share one server that the class closes after all"
 expect 0 "known kinds, a test of the class, a per-class entry, the first list" "3 entries, 0 finding(s)"
 allow "allow | x.ATest | x.thing"
@@ -49,7 +53,20 @@ expect 0 "an entry the base had" "1 entry, 0 finding(s)"
 allow "allow | x.ATest | x.thing | $R"
 expect 0 "an entry whose kinds shrank" "1 entry, 0 finding(s)"
 allow "allow | x.ATest | x.thing, ksl.ssl | $R" "allow | x.ATest.leaks | x.socket | $R"
-expect 1 "a new line" "allow x.ATest.leaks is new: the list only shrinks"
+expect 1 "a new line" "allow x.ATest.leaks is new against"
 allow "allow | x.ATest | x.thing, ksl.ssl, ksl.key | $R"
-expect 1 "a line whose kinds grew" "gained ksl.key: the list only shrinks"
+expect 1 "a line whose kinds grew" "gained ksl.key against"
+# a local main left behind (without the list) does not let a line in that origin/main forbids
+BASE=""
+git -C "$r" update-ref refs/remotes/origin/main "$(git -C "$r" rev-parse HEAD)"
+allow "allow | x.ATest | x.thing, ksl.ssl | $R" "allow | x.ATest.leaks | x.socket | $R"
+expect 1 "a new line against origin/main when the local main lacks the list" "allow x.ATest.leaks is new against"
+allow "allow | x.ATest | x.thing | $R"
+expect 0 "an entry that shrank against origin/main" "1 entry, 0 finding(s)"
+# a module with tests that runs them without the sentinel
+mkdir -p "$r/kuicksilver-y/src/jvmTest/kotlin/y"; printf 'package y\nclass YTest\n' > "$r/kuicksilver-y/src/jvmTest/kotlin/y/YTest.kt"
+printf 'plugins { id("org.jetbrains.kotlin.multiplatform") }\n' > "$r/kuicksilver-y/build.gradle.kts"
+expect 1 "a module with tests that does not apply the sentinel" "kuicksilver-y/build.gradle.kts: has tests, and applies neither"
+printf 'plugins { id("org.jetbrains.kotlin.multiplatform"); id("kuicksilver.leak-sentinel") }\n' > "$r/kuicksilver-y/build.gradle.kts"
+expect 0 "the same module with the sentinel's plugin" "1 entry, 0 finding(s)"
 exit $rc
