@@ -9,6 +9,8 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.selector.SelectorManager
@@ -16,11 +18,13 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.ktor.client.h1.TcpProgress
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
@@ -149,7 +153,7 @@ class ClientConnectionDiagnosticsTest {
                     assertFalse(q.reused, "the call's own new connection")
                     // the handle the connection listener heard: one connection, joined by identity and by its id
                     val handle = heard.handles.load().single()
-                    assertSame(handle, q.info)
+                    assertEquals(handle.id, q.connectionId)
                     val path = assertNotNull(q.path)
                     assertTrue(path.active)
                     assertEquals(port, q.remoteAddress?.port)
@@ -164,7 +168,7 @@ class ClientConnectionDiagnosticsTest {
                     // the next call takes the same connection
                     val q2 = assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection)
                     assertTrue(q2.reused)
-                    assertSame(handle, q2.info)
+                    assertEquals(handle.id, q2.connectionId)
                 }
             } finally {
                 server.stop(100, 500)
@@ -374,7 +378,7 @@ class ClientConnectionDiagnosticsTest {
                     assertEquals(8, all.map { assertNotNull(it) }.toSet().size, "one object per call")
                     for (d in all) {
                         val q = assertIs<QuicConnectionSnapshot>(d!!.connection)
-                        assertSame(first.info, q.info)
+                        assertEquals(first.connectionId, q.connectionId)
                         assertTrue(q.reused)
                     }
                 }
@@ -678,9 +682,171 @@ class ClientConnectionDiagnosticsTest {
                         assertEquals(ConnectStage.QuicHandshake, f.stage)
                         assertEquals(QuicHandshakeProgress.HandshakeStarted, f.quicProgress)
                         val id = assertNotNull(f.connectionId)
-                        assertTrue(id != ok.info?.id, "the failure names the other origin's connection")
+                        assertTrue(id != ok.connectionId, "the failure names the other origin's connection")
                         withTimeout(10.seconds) { while (id !in closedByTls.load()) kotlinx.coroutines.yield() }
                     }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Attack on the carrier: two HTTP/3 calls on one connection, one waiting for its response, one reading its body, and
+     * the connection ends under both. The failure of the first carries its own diagnostics; the second, which reads the
+     * connection's one failure from its body, and the connection listener's `onClosed` reason see none of them.
+     */
+    @Test fun aConnectionFailureCarriesNoOtherCallsDiagnostics() =
+        h3Test {
+            val held = CompletableDeferred<Unit>()
+            val streaming = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(module = {
+                    routing {
+                        get("/hold") {
+                            held.complete(Unit)
+                            release.await()
+                            call.respondText("late")
+                        }
+                        get("/stream") {
+                            call.respondBytesWriter {
+                                writeFully(ByteArray(1024))
+                                flush()
+                                streaming.complete(Unit)
+                                release.await()
+                            }
+                        }
+                    }
+                })
+            val reasons = AtomicReference(emptyList<QuicException.ConnectionLost>())
+            val quic =
+                object : ConnectionListener {
+                    override fun onClosed(
+                        connection: ConnectionInfo,
+                        reason: QuicException.ConnectionLost,
+                    ) {
+                        reasons.update { it + reason }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { connectionListener = quic } }).use { c ->
+                    coroutineScope {
+                        // the body is read on only after the other call failed (and its diagnostics went wherever they went)
+                        val aFailed = CompletableDeferred<Unit>()
+                        val body =
+                            async {
+                                c.prepareGet("https://127.0.0.1:$port/stream").execute { r ->
+                                    val ch = r.bodyAsChannel()
+                                    val b = ByteArray(4096)
+                                    var got = 0
+                                    while (got < 1024) got += ch.readAvailable(b, 0, b.size).coerceAtLeast(0)
+                                    aFailed.await()
+                                    runCatching { while (ch.readAvailable(b, 0, b.size) >= 0) continue }.exceptionOrNull() ?: ch.closedCause
+                                }
+                            }
+                        withTimeout(10.seconds) { streaming.await() }
+                        val waiting = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
+                        withTimeout(10.seconds) { held.await() }
+                        (c.engine as KuicksilverEngine)
+                            .h3
+                            .connectionsForTest()
+                            .single()
+                            .quic
+                            .close(0x101, "test kills the connection")
+                        val aErr = assertNotNull(withTimeout(10.seconds) { waiting.await() }, "the waiting call failed")
+                        val dA = assertNotNull(aErr.kuicksilverDiagnostics, "its own failure carries its diagnostics: $aErr")
+                        assertEquals(Transport.Quic, dA.transport)
+                        aFailed.complete(Unit)
+                        val bErr = assertNotNull(withTimeout(10.seconds) { body.await() }, "the body read failed")
+                        assertNull(bErr.kuicksilverDiagnostics, "the body's failure is the connection's: $bErr")
+                        // the attack needs the one instance: the body's failure is (or wraps) the one the other call got
+                        val shared = generateSequence(bErr) { it.cause }.toList()
+                        assertTrue(shared.any { it::class == aErr::class }, "$shared")
+                        withTimeout(10.seconds) { while (reasons.load().isEmpty()) kotlinx.coroutines.yield() }
+                        for (r in reasons.load()) {
+                            assertNull(r.kuicksilverDiagnostics, "onClosed's reason")
+                            assertTrue(r.suppressedExceptions.none { it is FailureDiagnostics }, "$r")
+                        }
+                    }
+                }
+            } finally {
+                release.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The carrier never goes onto a connection's shared failure: two calls failing with one connection-scoped instance
+     * each throw their own copy (same type) carrying their own diagnostics, and the instance itself, which other streams
+     * and the connection listener get, and any later copy of it, carry none. A per-call failure is carried as it is.
+     */
+    @Test fun negative_aSharedConnectionFailureNeverCarriesACallsDiagnostics() {
+        val shared =
+            listOf<Throwable>(
+                QuicException.ConnectionLost.ApplicationClosed(0x101, "", io.kuicksilver.quic.Initiator.Local),
+                io.kuicksilver.http3.Http3Exception
+                    .Protocol(0x101, io.kuicksilver.quic.Initiator.Local, null),
+            )
+        for (x in shared) {
+            val a = ProtocolDiagnostics().also { it.transport = Transport.Quic }
+            val b = ProtocolDiagnostics().also { it.transport = Transport.Quic }
+            val ta = settleFailure(a, x)
+            val tb = settleFailure(b, x)
+            assertTrue(ta !== x && tb !== x && ta !== tb, "each call throws its own copy")
+            assertEquals(x::class, ta::class)
+            assertSame(a, ta.kuicksilverDiagnostics)
+            assertSame(b, tb.kuicksilverDiagnostics)
+            assertNull(x.kuicksilverDiagnostics, "the shared instance: $x")
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            assertNull((x as kotlinx.coroutines.CopyableThrowable<*>).createCopy()?.kuicksilverDiagnostics, "a later copy of it")
+        }
+        val own = kotlinx.io.IOException("this call's own")
+        val d = ProtocolDiagnostics()
+        assertSame(own, settleFailure(d, own))
+        assertSame(d, own.kuicksilverDiagnostics)
+    }
+
+    /**
+     * What a TCP connect timeout reports, by what the setup was doing: the addresses being connected to, the step on the
+     * connected socket, the lookup; nothing once the connection is set up (a plain connection, after TLS: an HTTP/2
+     * preface or a health PING are no step of the setup).
+     */
+    @Test fun aTcpConnectTimeoutReportsOnlyWhatTheSetupWasDoing() {
+        val timeout = IllegalStateException("timeout")
+        val a = InetSocketAddress("192.0.2.1", 443)
+        assertEquals(emptyList<ConnectFailure>(), TcpProgress().timedOut(timeout), "nothing started")
+        val lookup = TcpProgress().apply { stage = ConnectStage.NameLookup }
+        assertEquals(listOf(ConnectStage.NameLookup to null), lookup.timedOut(timeout).map { it.stage to it.address })
+        lookup.trying(a, proxy = false)
+        assertEquals(listOf(ConnectStage.TcpConnect to a), lookup.timedOut(timeout).map { it.stage to it.address })
+        val tls = TcpProgress().apply { connected(a, ConnectStage.TlsHandshake) }
+        assertEquals(listOf(ConnectStage.TlsHandshake to a), tls.timedOut(timeout).map { it.stage to it.address })
+        tls.stage = null // TLS done: what follows is no step of the setup
+        assertEquals(emptyList<ConnectFailure>(), tls.timedOut(timeout))
+        val plain = TcpProgress().apply { connected(a, null) }
+        assertEquals(emptyList<ConnectFailure>(), plain.timedOut(timeout))
+    }
+
+    /**
+     * The first call on a new HTTP/3 connection claims it as new even when it fails before its exchange: its failure's
+     * snapshot says new, and the next call says reused.
+     */
+    @Test fun aCallFailingBeforeItsExchangeStillClaimsTheNewConnection() =
+        h3Test {
+            val (server, port) = testServer(module = okServer())
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.h3.afterAcquireForTest = {
+                        engine.h3.afterAcquireForTest = null
+                        throw IllegalStateException("fails after acquiring, before the exchange")
+                    }
+                    val e = assertFailsWith<IllegalStateException> { c.get("https://127.0.0.1:$port/") }
+                    assertFalse(assertIs<QuicConnectionSnapshot>(e.kuicksilverDiagnostics?.connection).reused, "the new connection")
+                    assertTrue(
+                        assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection).reused,
+                    )
                 }
             } finally {
                 server.stop(100, 500)

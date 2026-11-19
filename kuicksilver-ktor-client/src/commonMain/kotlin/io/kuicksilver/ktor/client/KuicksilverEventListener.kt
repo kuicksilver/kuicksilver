@@ -53,9 +53,17 @@ public abstract class KuicksilverEventListener {
      * A connection setup for [request] failed ([ConnectFailure]): a TCP connect to one address, a proxy handshake, a TLS
      * handshake over TCP (`protocolSelected` only comes once a TCP connection is up, so this is where a failed one shows,
      * with its address), or a QUIC handshake with one address. Once per failed attempt, also when another attempt or the
-     * other transport then served the call; never for an attempt the engine cancelled (a lost race, the connect timeout).
-     * The same failures are in [ProtocolDiagnostics.connectFailures]. May run concurrently with the call's other events, on
-     * another thread (the address and transport races).
+     * other transport then served the call; never for an attempt the engine cancelled because another one won (the address
+     * race, the HTTP/3 and TCP race). The connect timeout is reported: once per attempt it cut short, at its step, with the
+     * call's `ConnectTimeoutException` as the cause, or once at what the time went to before any address was tried
+     * ([ConnectStage.NameLookup], [ConnectStage.PoolWait], [ConnectStage.H2DialWait]). The same failures are in
+     * [ProtocolDiagnostics.connectFailures]. May run concurrently with the call's other events, on another thread (the
+     * address and transport races).
+     *
+     * With `http3 { earlyData }` a connection is handed out before its handshake completed; a handshake that fails after
+     * that is reported when it fails, which can be after [callEnd] or [callFailed]: the request's attributes then no longer
+     * hold the call's diagnostics, though the [ProtocolDiagnostics] object, where the application kept it (from the
+     * response, or the exception), still gains the failure.
      */
     public open fun connectFailed(
         request: HttpRequestData,

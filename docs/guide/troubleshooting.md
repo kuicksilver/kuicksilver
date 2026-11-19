@@ -607,8 +607,9 @@ was tried (`PoolWait`: raise `maxConnectionsPerRoute`, or find the calls holding
 (`protocol_version`) is a server without TLS 1.3 (allow TLS 1.2 on the client with `tls = { versions =
 TlsVersions.Tls12And13 }` if you must reach it); `TcpConnect` failures for every address mean nothing listens there or a
 firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).
-It is null for an exception that ended several calls at once (a QUIC connection's failure); `callFailed` then has the
-request's own diagnostics in its attributes.
+It is null on a connection's failure met while reading a response body (the instance every request on the connection
+gets carries no call's diagnostics) and on a cancellation; `callFailed` has the request's own diagnostics in its
+attributes.
 
 ### `H3Only` requests time out
 

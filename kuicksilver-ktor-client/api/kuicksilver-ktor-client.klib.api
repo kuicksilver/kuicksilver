@@ -520,8 +520,8 @@ final class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException {
 }
 
 final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/QuicConnectionSnapshot|null[0]
-    final val info // io.kuicksilver.ktor.client/QuicConnectionSnapshot.info|{}info[0]
-        final fun <get-info>(): io.kuicksilver.quic/ConnectionInfo? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.info.<get-info>|<get-info>(){}[0]
+    final val connectionId // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId|{}connectionId[0]
+        final fun <get-connectionId>(): kotlin/String? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId.<get-connectionId>|<get-connectionId>(){}[0]
     final val localAddress // io.kuicksilver.ktor.client/QuicConnectionSnapshot.localAddress|{}localAddress[0]
         final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
     final val minRtt // io.kuicksilver.ktor.client/QuicConnectionSnapshot.minRtt|{}minRtt[0]

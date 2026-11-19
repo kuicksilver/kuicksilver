@@ -2210,14 +2210,17 @@ call over HTTP/3 and a `TcpConnectionSnapshot` for HTTP/2 and HTTP/1.1, both wit
 `localAddress` and `remoteAddress` (the proxy's through one) and whether the call `reused` a connection that was open
 before it. `transport` on the diagnostics themselves says `Quic` or `Tcp`.
 
-- `QuicConnectionSnapshot` has the connection's handle `info`, the same `ConnectionInfo` the `http3 { connectionListener }`
-  hears (its `id` names the connection for its whole life, its `paths` and `connection.stats` stay live); the active
+- `QuicConnectionSnapshot` names the connection by its `connectionId`, the `ConnectionInfo.id` the
+  `http3 { connectionListener }` hears (the connection's name for its whole life, and of its qlog trace); the active
   `path` and all `paths` with the connection IDs on each ([QUIC: Observability](quic.md#observability)); `smoothedRtt`,
   `minRtt` and `rttVariation`; and `pathChanges`, the moves to another path (migrations, NAT rebindings, the server's
-  preferred address) between the moment this call took the connection and the snapshot. It is taken when the response
-  head arrives and again when the call ends — when its body was read or the response released, which is after
-  `execute { }` returned or `bodyAsText()` read it all — so a call read afterwards shows the RTT of its end and every
-  move during its download. Calls that share a connection share its moves: one during two calls counts for both.
+  preferred address) between the moment this call took the connection and the snapshot. It is plain data, no handle:
+  neither a response nor an exception that carries the diagnostics keeps the connection in memory (for the live
+  connection, join `connectionId` with what the listener hears). From the response head until the call ends, each read
+  of `connection` takes a snapshot of the live connection; when the call ends — its body read or the response released,
+  which is after `execute { }` returned or `bodyAsText()` read it all — one last snapshot is taken and kept, so a call
+  read afterwards shows the RTT of its end and every move during its download. Calls that share a connection share its
+  moves: one during two calls counts for both.
 - `TcpConnectionSnapshot` has the `alpn` the server chose, whether the connection is `secure` and goes `viaProxy`.
 
 ```kotlin
@@ -2230,13 +2233,15 @@ val d =
     }
 val c = d?.connection
 if (c is QuicConnectionSnapshot) {
-    println("HTTP/3 ${c.info?.id}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves")
+    println("HTTP/3 ${c.connectionId}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves")
 } else if (c is TcpConnectionSnapshot) {
     println("${c.protocol} to ${c.remoteAddress} (${c.alpn}), reused=${c.reused}")
 }
 ```
 
-The snapshots cost one object each when they are taken (and, for HTTP/3, one statistics read), nothing per packet. The
+What it costs per call, nothing per packet: an HTTP/3 call keeps one small handle while it runs and makes one snapshot
+at its end (a statistics read and two objects), plus one per read of `connection` during the call; a TCP call makes one
+snapshot per connection it is sent on; a TCP setup that dials tracks its progress in one more object. The
 connection IDs in `path` are linkable identifiers: show them in your own app's diagnostic screens, but do not send them
 elsewhere (see `PathInfo`); the snapshots' `toString()` leaves them out, and the engine never logs them.
 
@@ -2290,9 +2295,11 @@ The engine attaches the diagnostics to the exception as a suppressed `FailureDia
 TlsHandshake` — with types and stages only, never a URL, host, address or connection ID; on the JVM and Android it has no
 stack of its own, so a printed stack trace gains that one line. Ktor's request timeout (`HttpTimeout`) cancels the call
 with its `HttpRequestTimeoutException`, the exception Ktor then throws, and that one carries the diagnostics. A call the
-application cancels carries none, and one exception can end several calls at once — a QUIC connection's failure reaches
-every request on it — and then names none of them (`kuicksilverDiagnostics` is null): `callFailed` has the request's own
-diagnostics in both cases.
+application cancels carries none; `callFailed` has the request's own diagnostics then. A connection's failure reaches
+every request on the connection, and the connection listener, as one instance: the engine never puts a call's
+diagnostics on that instance. A call that fails with it in the engine throws its own copy (same type, fields and cause)
+carrying its diagnostics; a call that meets it later, reading its response body, gets the instance itself, which carries
+none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
 
 ### Graceful stop
 

@@ -462,7 +462,7 @@ public final class io/kuicksilver/ktor/client/ProxyResolvers {
 }
 
 public final class io/kuicksilver/ktor/client/QuicConnectionSnapshot : io/kuicksilver/ktor/client/ConnectionSnapshot {
-	public final fun getInfo ()Lio/kuicksilver/quic/ConnectionInfo;
+	public final fun getConnectionId ()Ljava/lang/String;
 	public fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getMinRtt-UwyO8pc ()J
 	public final fun getPath ()Lio/kuicksilver/quic/PathInfo;

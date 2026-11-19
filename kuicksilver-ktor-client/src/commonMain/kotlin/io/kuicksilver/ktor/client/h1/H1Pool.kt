@@ -658,8 +658,12 @@ internal class H1Pool(
         var conn: H1Connection? = null
         var stream: H2Conn? = null
         var reused = false
-        // what a new connection's setup is doing, for the report of a connect timeout
-        val progress = TcpProgress()
+
+        // what the request waits for (no allocation: a reused connection needs none of it), and, once a new connection is
+        // set up, what its setup is doing: for the report of a connect timeout
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        var waitingFor: io.kuicksilver.ktor.client.ConnectStage? = null
+        var progress: TcpProgress? = null
         // the connect timeout's start: a new HTTP/2 connection's wait for the server's SETTINGS gets what is left of it
         val connectStarted =
             kotlin.time.TimeSource.Monotonic
@@ -713,9 +717,9 @@ internal class H1Pool(
                                     return@attempt
                                 }
                             }
-                            progress.stage = io.kuicksilver.ktor.client.ConnectStage.PoolWait
+                            waitingFor = io.kuicksilver.ktor.client.ConnectStage.PoolWait
                             val got = acquireOrChange(key, signal, seen)
-                            progress.stage = null
+                            waitingFor = null
                             if (got === CHANGED) continue
                             if (got is H1Connection) {
                                 conn = got
@@ -729,9 +733,9 @@ internal class H1Pool(
                             beforeDialForTest?.invoke()
                             if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
                                 pool.releasePermit(key)
-                                progress.stage = io.kuicksilver.ktor.client.ConnectStage.H2DialWait
+                                waitingFor = io.kuicksilver.ktor.client.ConnectStage.H2DialWait
                                 signal.first { it > seen }
-                                progress.stage = null
+                                waitingFor = null
                                 continue
                             }
                             val dialer = offerH2 && signal != null
@@ -746,7 +750,7 @@ internal class H1Pool(
                                         dns,
                                         offerH2,
                                         connectStarted,
-                                        progress,
+                                        TcpProgress().also { progress = it },
                                     ).also {
                                         pool.adopt(it)
                                     }
@@ -820,7 +824,22 @@ internal class H1Pool(
                 stream?.client?.unreserve()
                 if (e is TimeoutCancellationException) {
                     val timeout = ConnectTimeoutException(data, e)
-                    for (f in progress.timedOut(timeout)) events.connectFailed(data, f)
+                    val wait = waitingFor
+                    val failures =
+                        if (wait != null) {
+                            listOf(
+                                io.kuicksilver.ktor.client.ConnectFailure(
+                                    io.kuicksilver.ktor.client.Transport.Tcp,
+                                    wait,
+                                    null,
+                                    proxy != null,
+                                    timeout,
+                                ),
+                            )
+                        } else {
+                            progress?.timedOut(timeout).orEmpty() // nothing pending (a health PING, an HTTP/2 preface): no report
+                        }
+                    for (f in failures) events.connectFailed(data, f)
                     throw timeout
                 }
             }
@@ -2010,8 +2029,8 @@ internal class TcpProgress {
 
     /**
      * The connect timeout ended the setup with [timeout]: one per address still being connected to, else one for the step
-     * on the connected socket (its address), else one for what the time went to before an address was tried (the lookup, a
-     * pool slot, another request's HTTP/2 connect).
+     * on the connected socket (its address), else one for the name lookup before an address was tried; none once the
+     * connection is set up (what the timeout then cut, an HTTP/2 preface or a health PING, is no step of the setup).
      */
     fun timedOut(timeout: Throwable): List<io.kuicksilver.ktor.client.ConnectFailure> {
         val step = stage
@@ -2022,8 +2041,11 @@ internal class TcpProgress {
         val reports =
             when {
                 trying.isNotEmpty() && (step == null || waiting) -> trying.map { io.kuicksilver.ktor.client.ConnectStage.TcpConnect to it }
+
                 step != null -> listOf(step to if (waiting) null else address)
-                else -> listOf(io.kuicksilver.ktor.client.ConnectStage.TcpConnect to null)
+
+                // set up (a plain connection, or after TLS: an HTTP/2 preface, SETTINGS): no step of the setup failed
+                else -> emptyList()
             }
         return reports.map { (st, a) ->
             io.kuicksilver.ktor.client

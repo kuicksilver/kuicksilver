@@ -328,11 +328,10 @@ class ClientMigrationTest {
                         // the call's end replaces the head's snapshot (its job completes as execute returns)
                         val end = withTimeout(10.seconds) { replaced(d, head) }
                         assertEquals(1, end.pathChanges)
-                        assertSame(head.info, end.info, "the same connection")
+                        assertEquals(head.connectionId, end.connectionId, "the same connection")
                         assertNotEquals(head.path?.id, end.path?.id)
                         assertNotEquals(head.localAddress, end.localAddress)
                         assertNotEquals(head.path?.remoteConnectionId, end.path?.remoteConnectionId, "a new path, a new ID (RFC 9000 9.5)")
-                        assertEquals(1, end.info?.pathChanges)
                         // the next call on the connection: no change of its own
                         val next =
                             assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/small").kuicksilverDiagnostics?.connection)

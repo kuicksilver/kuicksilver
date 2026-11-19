@@ -66,9 +66,30 @@ public class ProtocolDiagnostics internal constructor() {
      * connection whose TLS handshake failed included); null for a failure before any connection (every address refused, a
      * QUIC handshake that never completed: see [connectFailures]). An HTTP/3 call's is replaced once its response ended.
      */
+    public var connection: ConnectionSnapshot?
+        // during an HTTP/3 call, from its response head to its end, each read takes a snapshot of the live connection;
+        // the one taken at the end stays (and no handle to the connection is kept after it)
+        get() = liveQuic?.let { l -> runCatching { quicSnapshot(l.conn, l.reused, l.startChanges) }.getOrNull() } ?: settled
+        internal set(value) {
+            settled = value
+            liveQuic = null
+        }
+
     @kotlin.concurrent.Volatile
-    public var connection: ConnectionSnapshot? = null
-        internal set
+    private var settled: ConnectionSnapshot? = null
+
+    /** The HTTP/3 connection a running call is on, from its response head to its end: [connection] reads it when asked. */
+    internal class LiveQuic(
+        val conn: io.kuicksilver.quic.QuicConnection,
+        val reused: Boolean,
+        val startChanges: Int,
+    )
+
+    @kotlin.concurrent.Volatile
+    internal var liveQuic: LiveQuic? = null
+
+    /** The transport of [connection] without building a snapshot. */
+    internal val connectionTransport: Transport? get() = if (liveQuic != null) Transport.Quic else settled?.transport
 
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private val failures = kotlin.concurrent.atomics.AtomicReference(emptyList<ConnectFailure>())

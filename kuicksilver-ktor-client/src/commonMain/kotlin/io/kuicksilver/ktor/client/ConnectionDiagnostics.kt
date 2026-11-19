@@ -7,8 +7,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.PathInfo
-import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 
@@ -50,9 +48,13 @@ public sealed class ConnectionSnapshot {
  * failure) and again when its response ended, the body read or abandoned. The second replaces the first in
  * [ProtocolDiagnostics.connection], so a call read after its body finished shows the connection as it was then.
  *
- * @property info The connection's diagnostics handle, the one `http3 { connectionListener }` hears: its [ConnectionInfo.id]
- *   names it (stable for the connection's life), and its `paths` and `connection.stats` are live. Null only for a connection
- *   outside this library.
+ * Plain data only: it names the connection ([connectionId]) but holds no handle to it, so neither a response nor a failed
+ * call's exception that carries the diagnostics keeps the connection (its buffers, its endpoint) in memory. For the live
+ * connection, join [connectionId] with what `http3 { connectionListener }` hears.
+ *
+ * @property connectionId The connection's [ConnectionInfo.id] (the original destination connection ID in hex, stable for
+ *   its life, the name of its qlog trace): what `http3 { connectionListener }` and [ConnectFailure.connectionId] call it.
+ *   Null only for a connection outside this library.
  * @property path The active path at the snapshot, with the connection IDs on it (linkable identifiers: see [PathInfo]).
  * @property paths Every path at the snapshot, the active one first.
  * @property smoothedRtt The active path's smoothed RTT at the snapshot (RFC 9002 section 5.3).
@@ -65,7 +67,7 @@ public sealed class ConnectionSnapshot {
 @ExperimentalKuicksilverApi
 public class QuicConnectionSnapshot internal constructor(
     override val reused: Boolean,
-    public val info: ConnectionInfo?,
+    public val connectionId: String?,
     public val path: PathInfo?,
     public val paths: List<PathInfo>,
     public val smoothedRtt: Duration,
@@ -195,9 +197,13 @@ internal const val MAX_CONNECT_FAILURES = 16
  * The [ProtocolDiagnostics] of the call that failed with this exception, or one of its causes (docs/guide/ktor.md, "Why
  * did this call fail?"): [ProtocolDiagnostics.transport] says whether the failure came over QUIC or TCP,
  * [ProtocolDiagnostics.h3Failure] what HTTP/3's failure was when TCP came after it, [ProtocolDiagnostics.connectFailures]
- * which setups failed and where. Null for an exception no Kuicksilver engine call threw, a cancellation, and an exception
- * that ended several calls at once (one connection's failure shared by its requests: the engine cannot tell whose it would
- * be, so none says; read the request's diagnostics in [KuicksilverEventListener.callFailed] then).
+ * which setups failed and where. Null for an exception no Kuicksilver engine call threw and for a cancellation.
+ *
+ * A connection's failure (a QUIC connection's end, an HTTP/3 or HTTP/2 connection error) is one instance for every request
+ * on the connection and for the connection listener: the engine never puts a call's diagnostics on it. A call that fails
+ * with it in the engine throws its own copy (same type, fields and cause) that carries them; the instance itself, which a
+ * call reading its response body or `onClosed` gets, carries none. An HTTP/2 connection's close cannot be copied: such a
+ * call throws the instance, without them. [KuicksilverEventListener.callFailed] has the request's own diagnostics always.
  *
  * The engine attaches it as a suppressed exception (`FailureDiagnostics`) whose message is one line: the transport that
  * failed, HTTP/3's failure by its type and reason, the stages of the setups that failed, the attempts — never a URL, a
@@ -217,7 +223,8 @@ public val Throwable.kuicksilverDiagnostics: ProtocolDiagnostics?
         var e: Throwable? = this
         var depth = 0
         while (e != null && depth++ < 16) {
-            val carrier = withCarrierLock { e.suppressedExceptions.firstNotNullOfOrNull { it as? FailureDiagnostics } }
+            val now: Throwable = e
+            val carrier = withCarrierLock(now) { now.suppressedExceptions.firstNotNullOfOrNull { it as? FailureDiagnostics } }
             if (carrier != null) return if (carrier.shared) null else carrier.diagnostics
             e = e.cause
         }
@@ -249,8 +256,8 @@ internal fun attachDiagnostics(
     e: Throwable,
     d: ProtocolDiagnostics,
 ) {
-    if (e is CancellationException) return // the caller looks for the cause Ktor throws (failedDiagnostics)
-    withCarrierLock {
+    if (e is CancellationException) return // the caller looks for the cause Ktor throws (settleFailure)
+    withCarrierLock(e) {
         val existing = e.suppressedExceptions.firstNotNullOfOrNull { it as? FailureDiagnostics }
         when {
             existing == null -> e.addSuppressed(FailureDiagnostics(d))
@@ -259,21 +266,15 @@ internal fun attachDiagnostics(
     }
 }
 
-/** One lock for every carrier: a suppressed list is not thread-safe on Kotlin/Native, and failures are rare. */
-@OptIn(ExperimentalAtomicApi::class)
-private val carrierLock = AtomicInt(0)
-
-@OptIn(ExperimentalAtomicApi::class)
-private inline fun <T> withCarrierLock(block: () -> T): T {
-    while (!carrierLock.compareAndSet(0, 1)) {
-        // held for a list scan only
-    }
-    try {
-        return block()
-    } finally {
-        carrierLock.store(0)
-    }
-}
+/**
+ * Runs [block] (a scan or change of [e]'s suppressed exceptions) under the lock that guards them: on the JVM and Android
+ * [e]'s own monitor, the one `addSuppressed` and `getSuppressed` take; on Kotlin/Native, whose suppressed list is not
+ * thread-safe, one process-wide mutex (failures are rare, and the block is a short list scan).
+ */
+internal expect fun <T> withCarrierLock(
+    e: Throwable,
+    block: () -> T,
+): T
 
 /**
  * A snapshot of the HTTP/3 connection [conn] for a call that took it when its [ConnectionInfo.pathChanges] was
@@ -291,7 +292,7 @@ internal fun quicSnapshot(
     val stats = conn.stats
     return QuicConnectionSnapshot(
         reused,
-        info,
+        info?.id,
         paths.firstOrNull(),
         paths,
         stats.smoothedRtt,
@@ -304,3 +305,69 @@ internal fun quicSnapshot(
 /** [this] as a socket address, the IP as a literal (no name lookup). */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal fun io.kuicksilver.ktor.network.TcpAddress.toInet(): InetSocketAddress = InetSocketAddress(hostText, port)
+
+/**
+ * Whether [t] is a whole connection's failure, one instance for every stream on it and for the connection listener: a
+ * QUIC connection's end, an HTTP/3 connection error (a protocol error without a stream, QPACK, SETTINGS), an HTTP/2
+ * connection's close. A call's diagnostics never go onto such an instance, only onto a copy of the call's own.
+ */
+internal fun isConnectionScoped(t: Throwable): Boolean =
+    t is io.kuicksilver.quic.QuicException.ConnectionLost ||
+        (t is io.kuicksilver.http3.Http3Exception.Protocol && t.streamId == null) ||
+        t is io.kuicksilver.http3.Http3Exception.Qpack ||
+        t is io.kuicksilver.http3.Http3Exception.Settings ||
+        t is io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed
+
+/**
+ * Settles [d] for a call that failed with [e] and returns what the call throws: [e] carrying [d]
+ * ([kuicksilverDiagnostics]); for a connection's failure, which every stream of the connection (and the connection
+ * listener) gets as one instance, this call's own copy carrying [d] (the type, fields and cause stay), or [e] carrying
+ * nothing when it cannot be copied. The connection kept is the one of the transport the failure came from, the protocol
+ * that of the last attempt.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+internal fun settleFailure(
+    d: ProtocolDiagnostics,
+    e: Throwable,
+): Throwable {
+    // a cancellation carries nothing; Ktor's request timeout cancels the call with its HttpRequestTimeoutException as
+    // the cause, the exception Ktor then throws: that one carries the diagnostics
+    val carrier =
+        if (e is CancellationException) {
+            generateSequence(e.cause) {
+                it.cause
+            }.take(8).firstOrNull { it !is CancellationException }
+        } else {
+            e
+        }
+    if (carrier == null) return e
+    d.failed = true
+    val t = d.transport
+    val c = d.connection
+    if (c != null && c.transport != t) d.connection = null // a connection of the side that did not fail last
+    d.protocol =
+        when (t) {
+            Transport.Quic -> HttpProtocolVersion.HTTP_3_0
+            Transport.Tcp -> d.connection?.protocol ?: HttpProtocolVersion.HTTP_1_1
+            null -> d.protocol
+        }
+    if (isConnectionScoped(carrier)) {
+        // never on the shared instance: another call reading its body, or an onClosed listener, would see this call's
+        val own = if (carrier === e) (e as? kotlinx.coroutines.CopyableThrowable<*>)?.createCopy() else null
+        if (own == null) return e
+        attachDiagnostics(own, d)
+        return own
+    }
+    attachDiagnostics(carrier, d)
+    // coroutines' stack-trace recovery (debug builds) hands the engine a copy whose cause is the original exception of
+    // the same type, and copies that original again on the way to the application, dropping the first copy: the
+    // original carries them too, unless it is a connection's shared failure
+    var original: Throwable = carrier
+    while (true) {
+        val c = original.cause ?: break
+        if (c::class != original::class || c === original) break
+        original = c
+    }
+    if (original !== carrier && !isConnectionScoped(original)) attachDiagnostics(original, d)
+    return e
+}

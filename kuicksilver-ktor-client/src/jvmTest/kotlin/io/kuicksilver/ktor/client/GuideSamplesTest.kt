@@ -100,7 +100,7 @@ class GuideSamplesTest {
                     val c = d?.connection
                     if (c is QuicConnectionSnapshot) {
                         println(
-                            "HTTP/3 ${c.info?.id}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves",
+                            "HTTP/3 ${c.connectionId}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves",
                         )
                     } else if (c is TcpConnectionSnapshot) {
                         println("${c.protocol} to ${c.remoteAddress} (${c.alpn}), reused=${c.reused}")

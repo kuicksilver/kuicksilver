@@ -1268,7 +1268,9 @@ internal class H3Pool(
         // the connection this very call creates tells the attempt its handle (by identity, not by address: two setups to
         // one address from different origins never mix up)
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-        return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.compareAndSet(null, it) }) {
+        // the latest wins: should one connect call ever create a second connection (a retry inside it), the failure is the
+        // last one's
+        return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
             connectAttempt(t, ep, remote, data, wt)
         }
     }
@@ -1598,7 +1600,9 @@ internal class H3Pool(
             // the path changes before the call took the connection are not the call's (a volatile read, no allocation)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val startChanges = conn.quic.info?.pathChanges ?: 0
-            var reused = true
+            // lock-free, at once: the first call to take a connection this pool set up claims it as new, also when it then
+            // fails before its exchange (the next call is on a reused connection either way)
+            val reused = !entry.claimNew()
             try {
                 afterAcquireForTest?.invoke()
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
@@ -1614,8 +1618,6 @@ internal class H3Pool(
                     }
                 }
                 // inside the try: a cancellation while taking the lock must still release the entry's count
-                // lock-free: the first call to take a connection this pool set up claims it as new
-                reused = !entry.claimNew()
                 if (events.enabled) {
                     events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
                     reported = true
@@ -1640,22 +1642,24 @@ internal class H3Pool(
                     } else {
                         null
                     }
-                // the connection as the response head found it, and again once the response ended (its RTT and the path
-                // changes over the whole call): both made only then
+                // from the response head to the call's end the diagnostics read the live connection when asked (no snapshot
+                // unless read); at the end one snapshot is made and kept, and the handle dropped
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                diagnostics?.connection =
-                    io.kuicksilver.ktor.client
-                        .quicSnapshot(conn.quic, reused, startChanges)
+                diagnostics?.liveQuic =
+                    io.kuicksilver.ktor.client.ProtocolDiagnostics
+                        .LiveQuic(conn.quic, reused, startChanges)
 
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 fun ended() {
                     entry.release(clock())
-                    // a completion handler must not throw: a snapshot that fails leaves the head's
-                    if (diagnostics != null && diagnostics.connection?.transport == io.kuicksilver.ktor.client.Transport.Quic) {
-                        runCatching {
-                            io.kuicksilver.ktor.client
-                                .quicSnapshot(conn.quic, reused, startChanges)
-                        }.onSuccess { diagnostics.connection = it }
+                    // a completion handler must not throw; a fallback or a 421's TCP repeat has replaced the live one already
+                    val live = diagnostics?.liveQuic
+                    if (diagnostics != null && live != null && live.conn === conn.quic) {
+                        diagnostics.connection =
+                            runCatching {
+                                io.kuicksilver.ktor.client
+                                    .quicSnapshot(conn.quic, reused, startChanges)
+                            }.getOrNull()
                     }
                 }
                 val job = callContext[Job]

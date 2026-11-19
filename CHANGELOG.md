@@ -24,10 +24,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   IDs the server's packets carry with one comparison per 1-RTT packet. Connection IDs are linkable identifiers: the
   library never logs them and `PathInfo.toString()` leaves them out.
 - Ktor client: which connection served a call (experimental, `docs/guide/ktor.md`, "Which connection served this
-  call?"). `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot` (the `ConnectionInfo` handle the
-  `connectionListener` hears, the active path with its connection IDs, every path, the smoothed and minimum RTT and their
-  variation, and the path changes during the call) or a `TcpConnectionSnapshot` (protocol, addresses, ALPN, proxy, reuse);
-  an HTTP/3 call's is taken at the response head and again when the call ends. `ProtocolDiagnostics.transport` says
+  call?"). `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot` (the connection's `connectionId`, the
+  `ConnectionInfo.id` the `connectionListener` hears, the active path with its connection IDs, every path, the smoothed
+  and minimum RTT and their variation, and the path changes during the call: plain data, no handle that would keep the
+  connection in memory) or a `TcpConnectionSnapshot` (protocol, addresses, ALPN, proxy, reuse); an HTTP/3 call's is read
+  live during the call and kept as one snapshot from its end. `ProtocolDiagnostics.transport` says
   `Quic` or `Tcp`.
 - Ktor client: which transport a failed call came from (experimental, `docs/guide/ktor.md`, "Why did this call fail?").
   `Throwable.kuicksilverDiagnostics` returns the failed call's `ProtocolDiagnostics` (on the exception or a cause): its
