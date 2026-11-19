@@ -195,6 +195,11 @@ internal fun H3Session.drains(
  */
 internal fun H3Session.onTransportClosed(e: QuicException.ConnectionLost) {
     if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
+    // a server request whose handler never answered (it failed before respond, or its engine cancelled it) has nothing
+    // left that would end it: it ends once the session's coroutines are gone, its readers included. Its handler may
+    // still run (it runs in the application's or the engine's scope, not the session's): it can no longer answer, and
+    // done() leaves the request's body and trailers alone, so what of the body had arrived stays readable
+    if (isServer) job.invokeOnCompletion { afterEnd.launch { endServerRequestsLeft() } }
     val draining = drainers.exchange(emptyList()).filter { it.job.isActive }
     if (draining.isEmpty()) {
         job.cancel()
@@ -264,4 +269,12 @@ internal fun H3Session.onCancelled(
     cleanup: (Throwable) -> Unit,
 ) {
     job.invokeOnCompletion { e -> if (e != null) cleanup(if (closed.isCompleted) closed.getCompleted() else e) }
+}
+
+/**
+ * The connection is gone and so are the session's coroutines: every server request still registered ends. Its handler
+ * may still be running (see [onTransportClosed]); it only loses the ability to answer. Session dispatcher only.
+ */
+internal fun H3Session.endServerRequestsLeft() {
+    for (r in activeServerRequests.values.toList()) r.connectionEnded()
 }
