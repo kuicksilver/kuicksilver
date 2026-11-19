@@ -734,7 +734,38 @@ class EngineMainTest {
             assertTrue("certificateChain" in e.message.orEmpty(), e.message)
         }
 
-    /** A TLS 1.3 handshake of the JDK's client offering only [group] (its named groups) with the server on [port]; null when it worked. */
+    /**
+     * A TLS 1.3 handshake of a client offering only [group] with the server on [port]; null when it worked. The JDK's client
+     * where it can name its groups per socket (SSLParameters.setNamedGroups, JDK 20), else (the JDK 17 run of CI's
+     * jdk-compat job) Kuicksilver's own TCP client with that group alone.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun handshakeFails(
+        port: Int,
+        group: String,
+    ): Throwable? {
+        if (Runtime.version().feature() >= 20) return jdkHandshakeFails(port, group)
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            return runCatching {
+                val config =
+                    io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                        alpn = listOf("http/1.1")
+                        serverName = "server.test"
+                        trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                        keyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups(listOf(group))
+                    }
+                io.kuicksilver.ktor.network
+                    .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    .tls(config)
+                    .close()
+            }.exceptionOrNull()
+        } finally {
+            selector.close()
+        }
+    }
+
+    /** [handshakeFails] with the JDK's client, which offers only [group] (its named groups; JDK 20 and later). */
     private suspend fun jdkHandshakeFails(
         port: Int,
         group: String,
@@ -777,8 +808,12 @@ class EngineMainTest {
                         .resolvedConnectors()
                         .first()
                         .port
-                assertEquals(null, jdkHandshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
-                assertTrue(jdkHandshakeFails(port, "x25519") is javax.net.ssl.SSLException, "a client of x25519 alone is refused")
+                assertEquals(null, handshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
+                val refused = handshakeFails(port, "x25519")
+                assertTrue(
+                    if (Runtime.version().feature() >= 20) refused is javax.net.ssl.SSLException else refused != null,
+                    "a client of x25519 alone is refused: $refused",
+                )
             } finally {
                 server.stop(100, 500)
             }
