@@ -52,6 +52,7 @@ kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/Happy
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsTest.kt	13
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/IdleSelectorCloseTest.kt	5
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/SocketAddressAfterCloseTest.kt	3
+kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/TlsSocketCloseTest.kt	1
 kuicksilver-ktor-network/src/jvmCommonTest/kotlin/io/kuicksilver/ktor/network/DescriptorClosed.jvmCommon.kt	1
 kuicksilver-ktor-network/src/jvmTest/kotlin/io/kuicksilver/ktor/network/ReleaseCoalescingTest.kt	2
 kuicksilver-ktor-network/src/jvmTest/kotlin/io/kuicksilver/ktor/network/TcpWriterTest.kt	4

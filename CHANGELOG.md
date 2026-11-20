@@ -1621,6 +1621,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
   sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
   502 comes only when none opened (also when the other family lacked DF).
+- Android and Linux on AArch64: `libksl` died with SIGILL while it loaded (and the app's process with it) on a kernel
+  that reports SVE2 without SVE, as an Android emulator on Apple M4 does (SME, no SVE; kernels without Linux's fix
+  "arm64: Filter out SVE hwcaps when FEAT_SVE isn't implemented"): OpenSSL's CPU detection, run as the library loads,
+  executed an SVE instruction to probe the vector length. The bundled OpenSSL carries a tenth patch (`patch_10`,
+  `openssl-4.1.0-armcap-sve2-without-sve.patch`; owner decision 2026-11-21, ADR-0019), upstream's fix carried verbatim
+  (openssl/openssl@cb5f5d00e4, pull request #33481; openssl-4.1 658a1c947b) and dropped with 4.1.1: the probe runs
+  only when SVE is reported too. Seen as every device test crashing on the local gate's API 34 emulator.
 - CONNECT-UDP proxy: a payload the tunnel's socket refused as too large for the path or link (EMSGSIZE or WSAEMSGSIZE:
   an interface or route toward the target with a smaller MTU, or, on a socket in DO mode only, an ICMP Packet Too Big,
   genuine or forged, that lowered the kernel's cached path MTU) ended the whole tunnel as a failed socket (reset and
@@ -1686,7 +1693,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`). The same for HTTP/2: a connection that ended (a connection
   error, a missed health PING, a local failure) while the server still sent DATA waited for its close_notify behind it,
   its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`). A closing TLS
-  socket now drops its input the same way, instead of reading it out.
+  socket now drops its input the same way, instead of reading it out. On a client the drop is bounded: past 256 KiB
+  the session stops reading and the connection closes under the rest (the kernel resets it, and the server's writes
+  fail), so a response abandoned or timed out mid-body is not downloaded for as long as the close waits; as first
+  merged it was read at line rate for up to the 1 s bound, and a server could write a whole 1 GiB response nobody read
+  (engine interop's `ClientToNettyH1Test.requestTimeoutMidBody`;
+  `ClientOrderlyCloseTest.negative_anAbandonedLargeResponseIsCutPastTheDropBound`,
+  `negative_aRefusedLargeResponseIsCutPastTheDropBound`, `TlsCancelInputTest`,
+  `TlsSocketCloseTest.negative_aClientCloseCutsAResponseFarBeyondItsDropBound`). A server's drop has no such bound: a
+  reset there could erase its last response before a slow client read it, so it drops until the client's close_notify
+  or FIN, and whoever accepted the socket bounds the close
+  (`TlsSocketCloseTest.aServerCloseStillDeliversTheLastResponseToASlowUploadingClient`).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

@@ -40,11 +40,11 @@ ctv() { awk -v t="[$1]" -v k="$2" '$0 == t { f = 1; next } /^\[/ { f = 0 } f && 
 for lib in zlib brotli; do mkdir -p "$work/src/$lib-$(ctv $lib version)"; ctv $lib sha256 > "$work/src/$lib-$(ctv $lib version)/.ksl-unpacked-sha256"; done
 mkdir -p "$work/src/brotli-$(ctv brotli version)/c/enc" "$work/src/brotli-$(ctv brotli version)/c/dec"   # build.sh puts ksl's brotli files there (compression.mk)
 echo '#define OPENSSL_VERSION_STR "stub"' > "$src/include/openssl/opensslv.h"
-# the files the carried patches (gradle/openssl.toml: patch, patch_2 ... patch_9) change, as stubs they apply to exactly:
+# the files the carried patches (gradle/openssl.toml: patch, patch_2 ... patch_10) change, as stubs they apply to exactly:
 # build.sh always runs apply-patch.pl, which wants every context and removed line at the line its hunk names. Each stub
 # holds the lines the patches read, in order (a later patch reads the result of the ones before), and filler elsewhere
 patches=(); pids=""   # the patch files in order, and the words they add to the target line (build.sh: patch_id)
-for n in "" _2 _3 _4 _5 _6 _7 _8 _9; do
+for n in "" _2 _3 _4 _5 _6 _7 _8 _9 _10; do
   pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$root/gradle/openssl.toml"); [ -z "$pf" ] || patches+=("$root/$pf")
   ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$root/gradle/openssl.toml")
   [ -z "$ps" ] || pids="$pids patch${n//_/-}-sha256=$(printf %s "$ps" | cut -c1-16)"

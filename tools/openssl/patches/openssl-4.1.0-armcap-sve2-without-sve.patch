@@ -1,0 +1,35 @@
+OpenSSL 4.1.0: SIGILL while loading on AArch64 Linux that reports SVE2 without SVE (Android emulators on Apple M4)
+
+Upstream code: the crypto/armcap.c change of OpenSSL commit openssl/openssl@cb5f5d00e4 (pull request #33481), verbatim, as
+merged to master on 2026-11-04 and to openssl-4.1 as openssl/openssl@658a1c947b. The changed lines are upstream's; the
+hunk's line numbers and its first context line differ, as the openssl-4.1 branch has the Neoverse N3/V3 lines above it
+that 4.1.0 lacks: upstream's context ends the MIDR list with ARM_CPU_PART_V3, 4.1.0's with NVIDIA_CPU_PART_OLYMPUS. The tenth patch carried under ADR-0019
+(docs/adr/0019-openssl-4-and-ech.md), applied after openssl-4.1.0-ech-alpn-padding.patch; pinned by its SHA-256 in
+gradle/openssl.toml as patch_10, applied by tools/openssl/apply-patch.pl to the verified tarball, and dropped with OpenSSL
+4.1.1, the first release that has the commit.
+
+The bug: OPENSSL_cpuid_setup(), a constructor of libcrypto (and so of libksl, which links it), calls
+_armv8_sve_get_vl_bytes(), which executes the SVE instruction cntb, whenever the kernel reports HWCAP2_SVE2. Linux
+kernels without linux@064737920bdb ("arm64: Filter out SVE hwcaps when FEAT_SVE isn't implemented") report HWCAP2_SVE2
+without HWCAP_SVE on a CPU with SME but no SVE, such as a guest on Apple M4: the Android 14 emulator's /proc/cpuinfo
+there lists sve2, svei8mm and svebf16 and the sme features, but not sve. The library then dies with SIGILL in its
+constructor while System.loadLibrary loads it, and the app's process with it. The fix probes the vector length only
+when both ARMV8_SVE and ARMV9_SVE2 are set; ARMV9_SVE2_POLY1305 is set only inside that block, and the ChaCha20 SVE
+path already checks ARMV8_SVE first, so no SVE code runs without SVE.
+
+--- a/crypto/armcap.c
++++ b/crypto/armcap.c
+@@ -461,7 +461,12 @@
+             || MIDR_IS_CPU_MODEL(OPENSSL_arm_midr, ARM_CPU_IMP_NVIDIA, NVIDIA_CPU_PART_OLYMPUS)))
+         OPENSSL_armcap_P |= ARMV8_HAVE_SHA3_AND_WORTH_USING;
+ 
+-    if (OPENSSL_armcap_P & ARMV9_SVE2) {
++    /*
++     * _armv8_sve_get_vl_bytes() executes an SVE instruction. Some kernels and
++     * hypervisors report SVE2 without SVE (e.g. guests on Apple M4, which has
++     * SME but no SVE), so require both before probing the vector length.
++     */
++    if ((OPENSSL_armcap_P & ARMV8_SVE) && (OPENSSL_armcap_P & ARMV9_SVE2)) {
+         uint64_t vl_bytes = _armv8_sve_get_vl_bytes();
+ 
+         if (vl_bytes > 16 && (vl_bytes & (vl_bytes - 1)) == 0) {

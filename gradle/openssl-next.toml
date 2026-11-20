@@ -48,3 +48,8 @@ patch_8_sha256 = "f0abcb89c18e2504bf7ee4d2fd2df99d9e41341ed56cc453488a7d847948e8
 # client's application profiles (RFC 9849 section 6.1.3). Kuicksilver's own code; dropped with the first release that offers it.
 patch_9 = "tools/openssl/patches/openssl-4.1.0-ech-alpn-padding.patch"
 patch_9_sha256 = "981c4db4cf8bf36cdda9d55501983278e3c1816c7ea1bc2662099a8144923ad9"
+# The tenth carried patch (ADR-0019): libcrypto's constructor probes the SVE vector length only when the kernel reports SVE as
+# well as SVE2; a kernel that reports SVE2 alone (an Android emulator on Apple M4: SME, no SVE) made it die with SIGILL while
+# loading. Upstream code (commit openssl/openssl@cb5f5d00e4, on the openssl-4.1 branch as 658a1c947b); dropped with 4.1.1.
+patch_10 = "tools/openssl/patches/openssl-4.1.0-armcap-sve2-without-sve.patch"
+patch_10_sha256 = "544fe772aa31496dda0d459d10982ff859f94c3fd384763dab7978535d5ae2dc"

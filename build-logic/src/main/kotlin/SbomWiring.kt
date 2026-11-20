@@ -34,7 +34,7 @@ fun Project.registerCyclonedxSbom(description: String, platformConstraints: List
         opensslVersion.set(tomlValue("version"))
         opensslSha256.set(tomlValue("sha256"))
         opensslPatch.set(toml.map { t ->
-            (listOf("patch") + (2..9).map { "patch_$it" }).mapNotNull { k ->
+            (listOf("patch") + (2..10).map { "patch_$it" }).mapNotNull { k ->
                 val path = Regex("^$k = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
                 val sha = Regex("^${k}_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
                 if (path != null && sha != null) "$path sha256:$sha" else null
