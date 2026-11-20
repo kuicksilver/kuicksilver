@@ -25,11 +25,24 @@ class LeakSentinelRunnerBuilder : RunnerBuilder() {
     override fun runnerForClass(testClass: Class<*>): Runner? =
         if (!testClass.isAnnotationPresent(org.junit.runner.RunWith::class.java) &&
             !testClass.isAnnotationPresent(org.junit.Ignore::class.java) && // left to JUnit's own builder, which skips it
-            testClass.methods.any { it.isAnnotationPresent(org.junit.Test::class.java) }
+            hasTestMethods(testClass)
         ) {
             SentinelRunner(testClass)
         } else {
             null
+        }
+
+    /**
+     * AndroidJUnitRunner hands this builder every class of the test APK, the libraries' too. On Android API 24 and 25 the
+     * methods of a class whose signatures name a type the device lacks cannot be listed (`kotlin.io.path.PathsKt` names
+     * `java.nio.file.Path`, which arrived in API 26: NoClassDefFoundError); such a class is no test class, and the next
+     * builder skips it as androidx's own does ("Failed to scan methods ... skipping").
+     */
+    private fun hasTestMethods(testClass: Class<*>): Boolean =
+        try {
+            testClass.methods.any { it.isAnnotationPresent(org.junit.Test::class.java) }
+        } catch (_: LinkageError) {
+            false
         }
 
     private class SentinelRunner(
