@@ -110,8 +110,9 @@ public enum class EchStatus {
 /**
  * One Encrypted Client Hello key of a server: the PEM `openssl ech -public_name <name>` writes, a PKCS#8 `PRIVATE KEY`
  * block followed by the `ECHCONFIG` block of its ECHConfigList (publish that block's base64 in the HTTPS record's `ech`
- * parameter). [inRetryConfigs][EchKey.inRetryConfigs]: whether a server that rejects ECH sends this key's configuration in `retry_configs` (RFC
- * 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt clients that still hold it.
+ * parameter). [inRetryConfigs][EchKey.inRetryConfigs]: whether a server that rejects ECH sends this key's configuration
+ * in `retry_configs` (RFC 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt
+ * clients that still hold it.
  *
  * Prefer the `ByteArray` and `CharArray` constructors: the array given is zeroed at once, the key keeps its own copy only
  * until an [EchServerKeys] (or its [EchServerKeys.rotate]) has read it into native memory, then zeroes that copy too, so
@@ -150,7 +151,7 @@ public class EchKey private constructor(
     }
 
     /**
-     * Gives back `pem`, taken by [takePem] for a set that then failed to build, so the key can be used again; a `String`
+     * Gives back [pem], taken by [takePem] for a set that then failed to build, so the key can be used again; a `String`
      * key's copy is zeroed instead.
      */
     internal fun putBack(pem: ByteArray) {
@@ -389,10 +390,10 @@ internal class EchVerifyName(
 )
 
 /**
- * What a server certificate is checked against on [ssl] now, read where the handshake pauses for it: [reference], or after
- * an ECH rejection the configuration's `public_name` (RFC 9849 section 6.1.7), which the paused path (platform verifiers,
- * a custom verifier, pins) must check. Whether ECH was accepted or rejected comes from the session's ECH outcome, never from
- * comparing names: an origin may be named like the `public_name`.
+ * What a server certificate is checked against on [ssl] now, read where the handshake pauses for it: [reference], or
+ * after an ECH rejection the configuration's `public_name` (RFC 9849 section 6.1.7), which the paused path (platform
+ * verifiers, a custom verifier, pins) must check. Whether ECH was accepted or rejected comes from the session's ECH
+ * outcome, never from comparing names: an origin may be named like the `public_name`.
  */
 internal fun verifyNameOf(
     ssl: Long,

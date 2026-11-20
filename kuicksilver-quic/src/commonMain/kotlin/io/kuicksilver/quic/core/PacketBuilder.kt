@@ -69,9 +69,9 @@ internal class PacketBuilder(
     private var pmtuProbe = false
 
     /**
-     * The packets of the datagram being built (the first [inDatagramCount]), which [stampDatagram] gives the datagram's size once
-     * it is complete. An array, not an `ArrayList`: one object less per connection (IdleFootprintTest); one packet per number
-     * space fits, more grow it.
+     * The packets of the datagram being built (the first [inDatagramCount]), which [stampDatagram] gives the datagram's
+     * size once it is complete. An array, not an `ArrayList`: one object less per connection (IdleFootprintTest); one
+     * packet per number space fits, more grow it.
      */
     private var inDatagram = arrayOfNulls<SentPacket>(4)
     private var inDatagramCount = 0

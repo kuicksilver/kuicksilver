@@ -173,15 +173,16 @@ public class H3BodyConsumed(
 ) : IllegalStateException(message, cause)
 
 /**
- * An HTTP/3 request's connection stalled (docs/guide/ktor.md, "Stalled HTTP/3 connections"; `http3 { stallDetection }`):
- * the path stopped carrying packets — [probeTimeouts] probe timeouts in a row went unanswered (RFC 9002 section 6.2) and
- * nothing came back from the server for [silence], or, while the request waited on a 0-RTT connection, nothing came back
- * at all — as on a network that cuts UDP flows. The engine drained the connection and marked the HTTP/3 alternative broken
- * (RFC 7838 section 2.4). A request that may be repeated (an idempotent method, RFC 9110 section 9.2.2, a body that can be
- * sent again, no response yet) goes over TCP instead and never shows this exception, only `FallbackReason.QuicStalled`;
- * one that may not, and the read of a response body that was under way, wait up to `stallAbandonAfter` for the path to
- * come back and then fail with it, instead of at the connection's idle timeout (RFC 9000 section 10.1). [cause][QuicStalledException.cause] is what
- * the request itself saw when the connection was closed, if anything.
+ * An HTTP/3 request's connection stalled (docs/guide/ktor.md, "Stalled HTTP/3 connections"; `http3 { stallDetection
+ * }`): the path stopped carrying packets — [probeTimeouts] probe timeouts in a row went unanswered (RFC 9002 section
+ * 6.2) and nothing came back from the server for [silence], or, while the request waited on a 0-RTT connection, nothing
+ * came back at all — as on a network that cuts UDP flows. The engine drained the connection and marked the HTTP/3
+ * alternative broken (RFC 7838 section 2.4). A request that may be repeated (an idempotent method, RFC 9110 section
+ * 9.2.2, a body that can be sent again, no response yet) goes over TCP instead and never shows this exception, only
+ * `FallbackReason.QuicStalled`; one that may not, and the read of a response body that was under way, wait up to
+ * `stallAbandonAfter` for the path to come back and then fail with it, instead of at the connection's idle timeout (RFC
+ * 9000 section 10.1). [cause][QuicStalledException.cause] is what the request itself saw when the connection was
+ * closed, if anything.
  */
 @io.kuicksilver.annotations.ExperimentalKuicksilverApi
 public class QuicStalledException internal constructor(
