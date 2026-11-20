@@ -8,4 +8,4 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086
-docker run --rm $uflag ${KSL_DOCKER_OPTS:-} -e HOME=/tmp -e KUICKSILVER_LEAK_STRICT --platform "$1" -v "$root:/w" -w /w "$2" bash -c "$3"
+docker run --rm $uflag ${KSL_DOCKER_OPTS:-} -e HOME=/tmp -e KUICKSILVER_LEAK_STRICT -e KUICKSILVER_LEAK_SITES -e KUICKSILVER_LEAK_WAIT_MS -e KUICKSILVER_LEAK_SLOW_MS --platform "$1" -v "$root:/w" -w /w "$2" bash -c "$3"
