@@ -119,6 +119,10 @@ internal fun rawFrames(bytes: ByteArray): List<Pair<Long, ByteArray>> {
 /**
  * An Extended CONNECT for [protocol] on [path], with [extra] fields, sent raw on a new stream of [quic]: no client-side
  * checks, so a request the Kuicksilver client refuses to send can reach the server. The stream stays open.
+ *
+ * The write sends the request itself (a stream's output flushes on every write). No flush follows: the server may already
+ * have answered a malformed request with its 400 and a STOP_SENDING (H3_MESSAGE_ERROR), and a flush after that stop fails
+ * with it although the request went out (seen on Windows in CI).
  */
 internal suspend fun rawExtendedConnect(
     quic: io.kuicksilver.quic.QuicConnection,
@@ -136,7 +140,6 @@ internal suspend fun rawExtendedConnect(
         )
     val st = quic.openBidi()
     st.output.writeFully(rawHeadersFrame(rawFieldSection(fields + extra)))
-    st.output.flush()
     return st
 }
 
