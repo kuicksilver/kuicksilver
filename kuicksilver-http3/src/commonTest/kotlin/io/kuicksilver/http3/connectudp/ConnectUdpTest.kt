@@ -92,14 +92,29 @@ internal class ProxyRig(
     val socketsOpened = AtomicInt(0)
     val socketsClosed = Channel<InetSocketAddress>(Channel.UNLIMITED)
 
-    /** The sockets the proxy opened, in order. */
-    val sockets = ArrayList<ClosingIo>()
+    /**
+     * The sockets the proxy opened, in order. Copied on write: tunnels set up together open theirs on several threads at
+     * once, and an ArrayList lost some of them (rigTakesSocketsOpenedTogether).
+     */
+    private val opened = kotlin.concurrent.atomics.AtomicReference<List<ClosingIo>>(emptyList())
+    val sockets: List<ClosingIo> get() = opened.load()
     val proxy =
         UdpProxy(
             configure { _ ->
-                socketsOpened.incrementAndFetch()
-                val io = pair.quic.net.open(InetSocketAddress("10.0.0.2", nextPort.incrementAndFetch()))
-                ClosingIo(io) { socketsClosed.trySend(io.localAddress) }.also { sockets += it }
+                try {
+                    socketsOpened.incrementAndFetch()
+                    val io = pair.quic.net.open(InetSocketAddress("10.0.0.2", nextPort.incrementAndFetch()))
+                    ClosingIo(io) { socketsClosed.trySend(io.localAddress) }.also { s ->
+                        while (true) {
+                            val now = opened.load()
+                            if (opened.compareAndSet(now, now + s)) break
+                        }
+                    }
+                } catch (e: Throwable) {
+                    // the proxy answers a failed socket 502 proxy_internal_error and keeps the cause: [close] reports it
+                    failures.trySend(e)
+                    throw e
+                }
             },
         ).also {
             // tests send no ICMP: as root (the local matrix's containers) the real probe opens a raw socket, and a real Packet
@@ -1168,7 +1183,17 @@ class ConnectUdpTest {
                 }
             rig.use { r ->
                 val p = r.pair
-                val slow = List(SystemResolver.MAX_PER_CLIENT) { async { p.client.connectUdp(template, "slow$it.example", 5000) } }
+                val slow =
+                    List(SystemResolver.MAX_PER_CLIENT) {
+                        async {
+                            try {
+                                p.client.connectUdp(template, "slow$it.example", 5000)
+                            } catch (e: Http3Exception.ConnectRejected) {
+                                // which refusal it was (the proxy-status names it): a 502 here once in CI said only "502"
+                                throw AssertionError("slow$it.example was refused ${e.status}: ${e.headers}", e)
+                            }
+                        }
+                    }
                 repeat(SystemResolver.MAX_PER_CLIENT) { withTimeout(5.seconds) { started.receive() } }
                 val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "one-more.example", 5000) }
                 assertEquals(503, e.status)
@@ -1202,6 +1227,45 @@ class ConnectUdpTest {
             } finally {
                 gate2.complete(Unit)
                 SystemResolver.lookupForTest = null
+            }
+        }
+
+    /**
+     * The proxy opens tunnel sockets on several threads at once (negative_oneClientCannotTakeEveryLookup releases four
+     * lookups together): the rig records every socket it opened, and the in-memory network reaches each one.
+     */
+    @Test fun rigTakesSocketsOpenedTogether() =
+        h3Test {
+            repeat(20) {
+                val rig = rig()
+                rig.use {
+                    val n = 64
+                    val go = CompletableDeferred<Unit>()
+                    val opening =
+                        List(n) {
+                            async(Dispatchers.Default) {
+                                go.await()
+                                rig.proxy.impl.config
+                                    .socketFactory(InetSocketAddress("0.0.0.0", 0)) as ClosingIo
+                            }
+                        }
+                    go.complete(Unit)
+                    val opened = opening.map { it.await() }
+                    assertEquals(n, rig.socketsOpened.load())
+                    assertEquals(opened.toSet(), rig.sockets.toSet(), "every socket the proxy opened is recorded once")
+                    assertEquals(n, rig.sockets.size)
+                    for (io in opened) {
+                        rig.pair.quic.net
+                            .deliver(echoAt, io.localAddress, byteArrayOf(1))
+                        assertTrue(
+                            io.io.inbox
+                                .tryReceive()
+                                .isSuccess,
+                            "${io.localAddress} is on the network",
+                        )
+                    }
+                    opened.forEach { it.close() }
+                }
             }
         }
 
