@@ -1392,6 +1392,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- CONNECT-UDP proxy: `UdpProxyStats.packetTooBig` stayed `NotProbed` after the first tunnel opened, contrary to its
+  documentation ("as probed at its first tunnel"): the raw ICMP privilege was probed only at the first payload dropped as
+  too large for the client, after that drop was counted, so a reader that saw the drop could still find `NotProbed` (a
+  flaky `ConnectUdpTest` on the Android 7.0 emulator in CI). The proxy probes again at its first tunnel, before the
+  tunnel's 2xx.
 - HTTP/3 client: a request that failed before its body was sent left the body alone, so a coroutine writing it waited
   forever: the connection ended while the request's HEADERS were flushed (a flaky `ConnectionEndTest` on macOS CI), it
   had already ended, the request was refused as malformed, or its caller gave up while it waited for stream credit. Only

@@ -417,6 +417,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.noUdpGoesToTheTargetBeforeTheAnswer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromASpecificBindLeavesFromTheSocketsAddress
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromAnIpv4MappedBindIsSentAsIpv4
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigIsProbedAtTheFirstTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigToAnIpv4MappedTargetIsIpv4
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes

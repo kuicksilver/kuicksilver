@@ -22,6 +22,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.MemoryIo
+import io.kuicksilver.http3.PacketTooBigStatus
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.UdpProxyConfig
 import io.kuicksilver.http3.UdpProxyResolver
@@ -1200,6 +1201,36 @@ class ConnectUdpTest {
             } finally {
                 gate2.complete(Unit)
                 SystemResolver.lookupForTest = null
+            }
+        }
+
+    /**
+     * UdpProxyStats.packetTooBig is "as probed at its first tunnel": once a tunnel is open the status says whether Packet
+     * Too Big applies, before any payload was dropped, and the probe runs once. It ran only at the first dropped payload,
+     * after that drop was counted, so a reader that saw the drop could still find NotProbed (android (24) in CI).
+     */
+    @Test fun packetTooBigIsProbedAtTheFirstTunnel() =
+        h3Test {
+            for (privileged in listOf(false, true)) {
+                val rig = rig()
+                var probes = 0
+                rig.proxy.impl.probeForTest = {
+                    probes++
+                    io.kuicksilver.quic.PacketTooBigSender
+                        .Probe(privileged, "test")
+                }
+                rig.use { r ->
+                    assertEquals(PacketTooBigStatus.NotProbed, rig.proxy.stats.packetTooBig)
+                    val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                    val expected = if (privileged) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable
+                    assertEquals(expected, rig.proxy.stats.packetTooBig)
+                    val second = r.pair.client.connectUdp(template, "192.0.2.51", 5000)
+                    assertEquals(expected, rig.proxy.stats.packetTooBig)
+                    assertEquals(1, probes, "one probe for the proxy")
+                    assertEquals(0, rig.proxy.stats.droppedTooLargeForClient)
+                    second.close()
+                    t.close()
+                }
             }
         }
 
