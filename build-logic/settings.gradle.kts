@@ -6,23 +6,53 @@
 // would be the Plugin Portal alone, behind its redirect to Central.
 pluginManagement {
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+                includeGroupByRegex("com\\.android(\\..*)?")
+                includeGroupByRegex("com\\.google\\..*")
+            }
+        }
         mavenCentral()
-        gradlePluginPortal()
-        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
-            name = "MavenCentralMirror"
-            mavenContent { releasesOnly() }
+        exclusiveContent {
+            forRepository { gradlePluginPortal() }
+            filter {
+                includeModule("org.jmailen.gradle", "kotlinter-gradle")
+                includeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                includeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+            }
+        }
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
         }
     }
 }
 dependencyResolutionManagement {
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+                includeGroupByRegex("com\\.android(\\..*)?")
+                includeGroupByRegex("com\\.google\\..*")
+            }
+        }
         mavenCentral()
-        gradlePluginPortal()
-        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
-            name = "MavenCentralMirror"
-            mavenContent { releasesOnly() }
+        exclusiveContent {
+            forRepository { gradlePluginPortal() }
+            filter {
+                includeModule("org.jmailen.gradle", "kotlinter-gradle")
+                includeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                includeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+            }
+        }
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
         }
     }
     versionCatalogs { create("libs") { from(files("../gradle/libs.versions.toml")) } }

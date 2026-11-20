@@ -51,8 +51,9 @@ Gradle checks every plugin and dependency it resolves against `gradle/verificati
 PGP signature by a key trusted for that publisher's group (the keys are in `gradle/verification-keyring.keys`, so no key
 server is needed), or a SHA-256 for artifacts that are not signed or whose key no key server has. An artifact that
 matches neither fails the build, the release included. The same holds for every repository: Google's mirror of Maven
-Central, last in `settings.gradle.kts` and `build-logic/settings.gradle.kts`, is asked only for a module the others did
-not have (Central answers 404 for files it has now and then) and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
+Central, last in `settings.gradle.kts` and `build-logic/settings.gradle.kts` in CI (`kuicksilver.centralMirror=true`),
+is asked for a module the others did not have (Central answers 404 for files it has now and then) and for version
+listings, and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
 pull requests too), update the file in the same pull request and review its diff:
 
 ```sh
@@ -76,7 +77,10 @@ with the gate's step `check: dependency verification (every configuration)`:
 `./gradlew --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue
 :build-logic:ksResolveAll ksResolveAll` resolves every configuration with verification on and fails on any gap.
 Review new `<trusted-key>` entries (the key belongs to the group's publisher: compare its fingerprint with the one the
-project publishes) and every new `<ignored-key>` (its artifacts then fall back to a checksum). Never set
+project publishes) and every new `<ignored-key>` (its artifacts then fall back to a checksum). The file sets
+`<key-servers enabled="false"/>`: a build never fetches a key, it uses the keyring only. An update that brings a new
+publisher's key needs that line removed for the update run (put it back before the commit); otherwise the key is
+written as an `<ignored-key>`. Never set
 `--dependency-verification lenient` or `off` in a script or a properties file. If a build fails with "Dependency
 verification failed", do not regenerate blindly: find out why the artifact changed first. Gradle writes a report under
 `build/reports/dependency-verification/`.

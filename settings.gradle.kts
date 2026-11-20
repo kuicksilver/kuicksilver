@@ -2,31 +2,58 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Repositories. Maven Central answers 404 for files it has now and then (CI runs 44630132347, 44657561143, 44674970605);
-// Gradle takes a 404 as "not there" and asks the next repository, so Google's mirror of Central comes last, for a module
-// the others did not find: on the happy path it is never asked. It changes no trust: every file still has to match
-// gradle/verification-metadata.xml (signature or SHA-256). Central comes before the Gradle Plugin Portal, which answers
-// for Central's modules with a redirect there, one more hop that can fail; the portal keeps the plugins only it has.
+// Gradle takes a 404 as "not there" and asks the next repository, so in CI (kuicksilver.centralMirror=true, set by
+// .github/actions/setup) Google's mirror of Central comes last, for a module the others did not find. A version range
+// lists the versions of every repository, so for one (kotlin-build-tools-impl in build-logic) the mirror is asked on
+// every resolution and must be reachable: CI's runners reach it, a machine behind a filter may not, so builds elsewhere
+// leave it out. It changes no trust: every file still has to match gradle/verification-metadata.xml (signature or
+// SHA-256). Central comes before the Gradle Plugin Portal, which answers
+// for Central's modules with a redirect there, one more hop that can fail; the portal is asked only for the plugins
+// only it has (exclusiveContent), Google's repository only for the Android and Google groups.
 // build-logic/settings.gradle.kts has the same lists. A missing file of a module that was found (a jar) is asked for only
 // where its metadata came from: tools/ci/gradlew-retry.sh retries that in CI.
 pluginManagement {
     includeBuild("build-logic")
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+                includeGroupByRegex("com\\.android(\\..*)?")
+                includeGroupByRegex("com\\.google\\..*")
+            }
+        }
         mavenCentral()
-        gradlePluginPortal()
-        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
-            name = "MavenCentralMirror"
-            mavenContent { releasesOnly() }
+        exclusiveContent {
+            forRepository { gradlePluginPortal() }
+            filter {
+                includeModule("org.jmailen.gradle", "kotlinter-gradle")
+                includeModule("org.jetbrains.kotlinx", "kotlinx-benchmark-plugin")
+                includeGroupByRegex("org\\.gradle\\.kotlin(\\..*)?")
+            }
+        }
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
         }
     }
 }
 dependencyResolutionManagement {
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+                includeGroupByRegex("com\\.android(\\..*)?")
+                includeGroupByRegex("com\\.google\\..*")
+            }
+        }
         mavenCentral()
-        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
-            name = "MavenCentralMirror"
-            mavenContent { releasesOnly() }
+        if (providers.gradleProperty("kuicksilver.centralMirror").orNull == "true") {
+            maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+                name = "MavenCentralMirror"
+                mavenContent { releasesOnly() }
+            }
         }
     }
 }

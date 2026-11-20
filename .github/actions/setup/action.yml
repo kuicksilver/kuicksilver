@@ -36,7 +36,8 @@ runs:
       run: |
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
-        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+        # and the mirror of Maven Central as the last repository (settings.gradle.kts)
+        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
     - name: Gradle plugin class path (a dependency not found is asked for once more, past the cached miss)
       shell: bash
       run: |
