@@ -514,6 +514,26 @@ static void own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
         ERR_pop_to_mark();
     }
 }
+/* A client's session takes the server name this connection sent when the server did not acknowledge it. RFC 9846 section 4.7.1 binds
+   resumption to "the SNI value ... used in the original session", the client's; RFC 6066 section 3 leaves the acknowledgment to a
+   server that used the name ("MAY"), and OpenSSL's client records the name only from it (extensions_clnt.c,
+   tls_parse_stoc_server_name), so a session from a server that did not (an OpenSSL server without a servername callback: the interop
+   servers of ngtcp2, quiche and msquic) had none: ksl_ssl_set_session refused it under its own name, and would have offered it
+   without one. The name sent is SSL_get_servername's (TLS 1.3: the connection's, the inner one under an accepted ECH). The session
+   offered is shared with other holders and named already (ksl_ssl_set_session). If the name cannot be set (no memory), the session
+   allows no 0-RTT and keeps no name: a client with a name refuses it, as before. */
+static void own_hostname(ksl_ssl *s, SSL_SESSION *sess) {
+    if (!s->done || sess == s->offered_session || s->owner->role != KSL_CLIENT ||
+        SSL_SESSION_get0_hostname(sess) != NULL)
+        return;
+    const char *sent = SSL_get_servername(s->ssl, TLSEXT_NAMETYPE_host_name);
+    if (sent == NULL)
+        return;
+    ERR_set_mark();
+    if (SSL_SESSION_set1_hostname(sess, sent) != 1)
+        (void)SSL_SESSION_set_max_early_data(sess, 0);
+    ERR_pop_to_mark();
+}
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error();
@@ -521,6 +541,7 @@ ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
         SSL_SESSION *t = s->new_sessions[0];
         memmove(s->new_sessions, s->new_sessions + 1, (size_t)--s->new_sessions_n * sizeof *s->new_sessions);
         own_alpn(s, t);
+        own_hostname(s, t);
         stamp_session(s, t);
         ksl_live_add(KSL_LIVE_SESSION, 1);
         return (ksl_session *)t;
@@ -532,6 +553,7 @@ ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     }
     if (sess) {
         own_alpn(s, sess);
+        own_hostname(s, sess);
         stamp_session(s, sess);
         ksl_live_add(KSL_LIVE_SESSION, 1);
     }
