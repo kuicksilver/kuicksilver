@@ -37,6 +37,19 @@ runs:
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
         printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+    - name: Gradle build logic (a failed download is retried once, past the cached miss)
+      shell: bash
+      run: |
+        # Maven Central and the Gradle Plugin Portal answer 404 for an existing file now and then (jdk-compat (17) once could
+        # not find jose4j-0.9.6.jar). Gradle records a missing artifact in the Gradle user home for 24 hours
+        # (DefaultCachePolicy), and setup-gradle saves that home after a failed build too, so the job's next runs would
+        # restore the record and fail the same way. The build logic's class paths, which every Gradle step needs first, are
+        # resolved here; a failure is retried once with --refresh-dependencies, which ignores the record.
+        ./gradlew --max-workers=2 -q -p build-logic jar || {
+          echo "::warning::build-logic did not resolve; retrying once with --refresh-dependencies"
+          sleep 20
+          ./gradlew --max-workers=2 -q -p build-logic --refresh-dependencies jar
+        }
     - name: Pinned Xcode
       if: inputs.xcode == 'true'
       shell: bash
