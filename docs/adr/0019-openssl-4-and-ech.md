@@ -202,6 +202,15 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **Size** (macOS arm64, the JNI library of the JVM artifact, `-Os`, stripped as released): 2,544,072 bytes on 3.5.9,
   2,809,416 on 4.1.0 (+265,344, +10.4 %); `libcrypto.a` 5,170,512 → 5,539,528 (+7.1 %), `libssl.a` 804,048 → 926,824
   (+15.3 %). The size gates are measured again on the matrix; their limits change only by decision.
+- **Android size gate, decided 2026-11-21 (approved by the owner).** The arm64-v8a `libksl.so` of the AAR grew from
+  3,136,784 bytes (main, 3.5.9) to 3,487,568 (4.1.0 with ECH, the carried patches and `ksl`'s ECH code) and failed the
+  3,200,000 limit; armeabi-v7a 2,452,436 → 2,649,380, x86_64 3,991,440 → 4,219,328. The link maps put most of it on
+  OpenSSL 4 itself (generated parameter decoders, the AES-CBC-HMAC-SHA ETM ciphers with their armv8 assembly, which no
+  Configure option removes); ECH and HPKE in OpenSSL add about 38,000 bytes, `ksl`'s own C about 11,000; no debug
+  information or symbol table is shipped. `configure-flags.txt` turns off the three KDFs 4.x adds that nothing uses
+  (`no-ikev2kdf`, `no-snmpkdf`, `no-srtpkdf`), which brings the libraries to 3,473,712 (arm64-v8a), 2,637,372
+  (armeabi-v7a) and 4,205,360 (x86_64). `tools/check/size.sh` now fails above 3,550,000 and warns above a target of
+  3,500,000 (was 3,200,000 and 2,900,000), in `tools/ci/local-matrix.sh` and the CI android job alike.
 
 ### The carried patch for bug B
 

@@ -208,7 +208,7 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
-export SIZE_LIMIT="${SIZE_LIMIT:-3200000}"
+export SIZE_LIMIT="${SIZE_LIMIT:-3550000}"
 export KUICKSILVER_LEAK_STRICT="${KUICKSILVER_LEAK_STRICT:-1}" # a slow teardown fails its test, as in CI (docs/process.md)
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
