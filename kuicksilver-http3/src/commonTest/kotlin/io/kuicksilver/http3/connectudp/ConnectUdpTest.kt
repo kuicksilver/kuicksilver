@@ -1257,13 +1257,17 @@ class ConnectUdpTest {
             }
             rig.use {
                 val first = async(Dispatchers.Default) { rig.proxy.impl.packetTooBigAvailable() }
-                awaitCondition("the first probe") { probes.load() == 1 }
-                val second = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { rig.proxy.impl.packetTooBigAvailable() }
-                assertEquals(1, probes.load(), "the second caller probed while the first probe ran")
-                assertFalse(second.isCompleted, "the second caller waits for the first probe")
-                release.store(true)
+                try {
+                    awaitCondition("the first probe") { probes.load() == 1 }
+                    val second = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { rig.proxy.impl.packetTooBigAvailable() }
+                    assertEquals(1, probes.load(), "the second caller probed while the first probe ran")
+                    assertFalse(second.isCompleted, "the second caller waits for the first probe")
+                    release.store(true)
+                    assertTrue(withTimeout(10.seconds) { second.await() })
+                } finally {
+                    release.store(true) // a failed assertion must not leave the first probe spinning
+                }
                 assertTrue(withTimeout(10.seconds) { first.await() })
-                assertTrue(withTimeout(10.seconds) { second.await() })
                 assertEquals(1, probes.load())
                 assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
             }
