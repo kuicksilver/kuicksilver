@@ -577,6 +577,12 @@ public class ConnectionCore internal constructor(
         }
     }
 
+    /**
+     * Application data (STREAM or DATAGRAM frames in 1-RTT) went out after the handshake was confirmed, on any path: a DPLPMTUD search
+     * for a new address of this connection need not wait for it (Pmtud.waitsForData, RFC 8899 section 4.3).
+     */
+    internal var applicationDataSinceConfirmed: Boolean = false
+
     /** The peer's transport parameters as they arrived, stored with tickets (client). */
     internal var peerTpEncoded: ByteArray? = null
     internal var earlyAccepted: Boolean? = null

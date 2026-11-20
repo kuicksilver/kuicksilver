@@ -497,22 +497,45 @@ static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) {
    ssl_session_dup), and records the negotiated protocol only in a new session (extensions_clnt.c, tls_parse_stoc_alpn); OpenSSL 4.1
    fixes it (PR 32401). Left so, the ticket of an hq-interop resumption of an h3 ticket says h3: the client offers 0-RTT for h3 and
    aborts with illegal_parameter when the server, right by the ticket's own connection, accepts it under hq-interop (extensions.c,
-   final_early_data). The session offered is shared with other holders and keeps its own connection's protocol. If the protocol
-   cannot be set (no memory), the ticket still resumes but allows no 0-RTT: its ALPN is unknown. */
-static void own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
+   final_early_data). The session offered is shared with other holders and keeps its own connection's protocol. 0 when the protocol
+   cannot be set (no memory): the caller hands the session out to nobody (ksl_ssl_get1_session), so nothing writes it again while a
+   holder reads it. */
+static int own_alpn(ksl_ssl *s, SSL_SESSION *sess) {
     if (!s->done || sess == s->offered_session)
-        return;
+        return 1;
     const unsigned char *a = NULL, *had = NULL;
     unsigned al = 0;
     size_t hl = 0;
     SSL_get0_alpn_selected(s->ssl, &a, &al);
     SSL_SESSION_get0_alpn_selected(sess, &had, &hl);
+    int ok = 1;
     if (al != hl || (al && memcmp(a, had, al) != 0)) {
         ERR_set_mark();
-        if (SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) != 1)
-            (void)SSL_SESSION_set_max_early_data(sess, 0);
+        ok = SSL_SESSION_set1_alpn_selected(sess, al ? a : NULL, al) == 1;
         ERR_pop_to_mark();
     }
+    return ok;
+}
+/* A client's session takes the server name this connection sent when the server did not acknowledge it. RFC 9846 section 4.7.1 binds
+   resumption to "the SNI value ... used in the original session", the client's; RFC 6066 section 3 leaves the acknowledgment to a
+   server that used the name ("MAY"), and OpenSSL's client records the name only from it (extensions_clnt.c,
+   tls_parse_stoc_server_name), so a session from a server that did not (an OpenSSL server without a servername callback: the interop
+   servers of ngtcp2, quiche and msquic) had none: ksl_ssl_set_session refused it under its own name, and would have offered it
+   without one. The name sent is SSL_get_servername's (TLS 1.3: the connection's, the inner one under an accepted ECH). The session
+   offered is shared with other holders and named already (ksl_ssl_set_session). RFC 9846 section 4.3.11: "Clients, however, SHOULD
+   store the SNI with the PSK to fulfill the requirements of Section 4.7.1". 0 when the name cannot be set (no memory): the caller hands the session out to nobody, so it is never
+   named later while a holder reads it, nor offered without its name. */
+static int own_hostname(ksl_ssl *s, SSL_SESSION *sess) {
+    if (!s->done || sess == s->offered_session || s->owner->role != KSL_CLIENT ||
+        SSL_SESSION_get0_hostname(sess) != NULL)
+        return 1;
+    const char *sent = SSL_get_servername(s->ssl, TLSEXT_NAMETYPE_host_name);
+    if (sent == NULL)
+        return 1;
+    ERR_set_mark();
+    int ok = SSL_SESSION_set1_hostname(sess, sent) == 1;
+    ERR_pop_to_mark();
+    return ok;
 }
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
@@ -520,7 +543,11 @@ ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     if (s->new_sessions_n) { /* TCP client: the tickets in the order they came (ksl_ctx.c new_session_cb), then the current session */
         SSL_SESSION *t = s->new_sessions[0];
         memmove(s->new_sessions, s->new_sessions + 1, (size_t)--s->new_sessions_n * sizeof *s->new_sessions);
-        own_alpn(s, t);
+        if (!own_alpn(s, t) ||
+            !own_hostname(s, t)) { /* no memory: this ticket goes to nobody (own_alpn, own_hostname) */
+            SSL_SESSION_free(t);
+            return NULL;
+        }
         stamp_session(s, t);
         ksl_live_add(KSL_LIVE_SESSION, 1);
         return (ksl_session *)t;
@@ -530,12 +557,29 @@ ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
         SSL_SESSION_free(sess);
         sess = NULL;
     }
+    if (sess && (!own_alpn(s, sess) || !own_hostname(s, sess))) { /* no memory: the session goes to nobody */
+        SSL_SESSION_free(sess);
+        sess = NULL;
+    }
     if (sess) {
-        own_alpn(s, sess);
         stamp_session(s, sess);
         ksl_live_add(KSL_LIVE_SESSION, 1);
     }
     return (ksl_session *)sess;
+}
+/* RFC 9846 section 4.7.1: "Clients MUST only resume if the new SNI value is valid for the server certificate presented in the original
+   session". The handshake checked the certificate against the verify name (KSL_SET_VERIFY_NAME), which is the SNI unless the caller
+   set another one (a front or a proxy name, TlsConfig.serverName): that SNI was then never checked against the certificate, so it is
+   checked here, against the session's leaf and with the verification's host flags. Without verification (KSL_VERIFY_NONE) there is
+   no certificate judgment to rest on, and the check is left to the caller. */
+static int sni_valid_for_session(ksl_ssl *s, SSL_SESSION *sess, const char *sni) {
+    const char *vh = s->verify_ip ? NULL : ksl_verify_host(s);
+    if (vh && OPENSSL_strcasecmp(vh, sni) == 0)
+        return 1;
+    X509 *leaf = SSL_SESSION_get0_peer(sess);
+    if (leaf == NULL)
+        return 0;
+    return ksl_match_name(leaf, sni, NULL, s->verify_flags);
 }
 int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     ERR_clear_error();
@@ -556,6 +600,11 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
                    *now = SSL_get_servername(s->ssl, TLSEXT_NAMETYPE_host_name);
         if ((was == NULL) != (now == NULL) || (was && OPENSSL_strcasecmp(was, now) != 0)) {
             ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: a session of another server name is not resumed");
+            return KSL_ERROR;
+        }
+        if (now && s->verify_mode != KSL_VERIFY_NONE && !sni_valid_for_session(s, (SSL_SESSION *)session, now)) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG,
+                              "ksl: a session is not resumed under a server name its certificate is not valid for");
             return KSL_ERROR;
         }
     }

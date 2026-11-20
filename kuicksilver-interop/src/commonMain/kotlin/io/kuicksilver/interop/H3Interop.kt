@@ -28,6 +28,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -36,6 +38,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import kotlin.concurrent.atomics.AtomicInt
@@ -50,7 +53,7 @@ import kotlin.time.Duration.Companion.seconds
  * `www` (`content-length` set), 404 otherwise; IPv4 and, when the host has it, IPv6 on the same port like [HqInteropServer].
  */
 @OptIn(ExperimentalAtomicApi::class)
-internal class H3InteropServer private constructor(private val endpoints: List<Http3Endpoint>, private val www: String) : AutoCloseable {
+internal class H3InteropServer private constructor(private val endpoints: List<Http3Endpoint>, private val www: String) : InteropServer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val accepted = AtomicInt(0)
     val port: Int get() = endpoints[0].localAddress.port
@@ -74,6 +77,7 @@ internal class H3InteropServer private constructor(private val endpoints: List<H
         w.output.writeFully(bytes, 0, bytes.size); w.finish()
     }
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
+    override suspend fun closeAndJoin() { scope.cancel(); for (ep in endpoints) ep.closeAndJoin() }
 
     companion object {
         suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }): H3InteropServer {
@@ -104,7 +108,13 @@ internal object H3InteropClient {
                 val ok = coroutineScope { requests.map { url -> async { fetch(conn, authority, Url.parse(url).path, downloads) } }.awaitAll().all { it } }
                 conn.close(); ok
             }
-        } finally { endpoint.close() }
+        } finally {
+            // the process exits right after this returns (exitWith): close() only starts the endpoint's close on its loop, and the
+            // qlog traces, which buffer until closed, were then never written (empty client qlogs in the interop runs). Waiting for
+            // the close completes them; NonCancellable, so a timed-out or failed download completes them too, and bounded as the
+            // server's stop is (STOP_GRACE): a close that hangs costs the traces, not the cell
+            withContext(NonCancellable) { withTimeoutOrNull(STOP_GRACE) { endpoint.closeAndJoin() } ?: Files.log("the endpoint did not close within $STOP_GRACE") }
+        }
     }
     private suspend fun fetch(conn: Http3Connection, authority: String, path: String, downloads: String): Boolean {
         val resp = conn.request(http3Request("GET", authority, path))

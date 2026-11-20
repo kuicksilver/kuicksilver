@@ -135,9 +135,20 @@ internal fun ConnectionCore.acceptPacketTooBig(
  * A new DPLPMTUD search for a path now at [start] bytes. Probes already sent, by a search it replaces, are not its own: their late
  * acknowledgments concern the old address or the old capabilities and must not raise the new search's size.
  */
-internal fun ConnectionCore.newPmtud(start: Int): Pmtud {
+internal fun ConnectionCore.newPmtud(
+    start: Int,
+    waitForData: Boolean = !applicationDataSinceConfirmed,
+): Pmtud {
     val upper = pmtudUpperBound()
-    return Pmtud(upperBound = upper, start = minOf(start, upper), sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
+    return Pmtud(
+        upperBound = upper,
+        start = minOf(start, upper),
+        sentAfterPn = loss.space(SpaceId.Application).nextPn - 1,
+        // every search waits for the connection's first application data after confirmation (RFC 8899 section 4.3,
+        // Pmtud.waitsForData): the first one, made during the handshake, and one made later for new capabilities, a new socket or a
+        // new address while the connection has sent none (a download-only client that migrates does not start probing)
+        waitForData = waitForData,
+    )
 }
 
 /** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */
@@ -362,7 +373,7 @@ private fun ConnectionCore.resetForNewIp(
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
     setMtu(p, 1200)
-    if (p.pmtud != null) p.pmtud = newPmtud(1200)
+    p.pmtud?.let { p.pmtud = newPmtud(1200) }
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
     // about the new one (a bleaching middlebox there, or none)
     p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
@@ -639,7 +650,11 @@ private fun ConnectionCore.initPathOnSocket(
 ) {
     p.caps = socketCaps[socketKey(p.socket, p.remote)] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
-    if (p.caps.df && runsPmtud && p.pmtud == null) p.pmtud = newPmtud(p.mtu)
+    // the search for a new address waits for application data unless the connection already sent some after confirmation
+    // (Pmtud.waitsForData: a download-only client that moves sends no probes from there either)
+    if (p.caps.df && runsPmtud && p.pmtud == null) {
+        p.pmtud = newPmtud(p.mtu)
+    }
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */

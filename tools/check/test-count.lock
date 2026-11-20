@@ -1301,19 +1301,23 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtDeadlineRaceTe
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.loopbackServersAreReachedFromLoopback
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.negative_lookalikesAreNotLoopback
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.otherServersAreReachedFromTheWildcardOfTheirFamily
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.aStoppedServerWritesItsQlogTraces
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientClosesEveryQlogTraceBeforeItReturns
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientDownloadsAllRequestsOnOneConnection
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientExits1WhenTheConnectionIsLost
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientExits1WhenTheConnectionIsLostBeforeTheRequestIsWritten
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.everySupportedTestcaseConfigures
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3CaseDownloadsOverH3
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3ClientClosesEveryQlogTraceBeforeItReturns
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3IsASupportedTestcase
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.ipv6CaseBindsDualStack
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.keylogWrittenWhenEnvSet
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.keyupdateTestcaseInitiatesUpdate
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.lostConnectionIsFoundInTheCauseChain
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.multiconnectUsesOneConnectionPerRequest
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.negative_aStuckCloseDoesNotHoldTheStop
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.onlyResumptionAndZeroRttPlansEnableEarlyData
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.resumptionCaseResumesTheFirstConnectionsTicket
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.retryCaseServerSendsRetry
@@ -1324,6 +1328,8 @@ kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.serverStrea
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unknownTestcaseExits127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unsupportedCasesExit127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.zerorttCaseSendsTheRemainingRequestsIn0Rtt
+kuicksilver-interop/src/nativeTest	io.kuicksilver.interop.StopSignalNativeTest.negative_anIgnoredSigintStaysIgnored
+kuicksilver-interop/src/nativeTest	io.kuicksilver.interop.StopSignalNativeTest.sigtermRequestsTheStopAndASecondSignalIsTheDefault
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.CleartextPolicyAndroidTest.cleartextRefusedByTheNetworkSecurityConfigurationNeverConnects
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.ClientMigrationAndroidTest.followsDefaultNetworkOnEmulator
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.ClientMigrationAndroidTest.withoutMigrationOnEmulator
@@ -4699,7 +4705,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negativ
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.aPacketTooBigAboutACoalescedDatagramIsAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_aClientZeroRttStartAboveTheLinkFallsBackAlthoughEveryPacketIsSmall
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_aServerStartAboveTheLinkFallsBackOnAResumedHandshake
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_oneRttDataBeforeHandshakeDoneThenNothingSendsNoProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_randomStartsWithResumptionAndZeroRttNeverBreakTheHandshake
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_zeroRttDataThenAcknowledgementsOnlySendsNoProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartResumptionTest.negative_zeroRttStaysWithinTheRememberedMaxUdpPayloadSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.negative_aClientStartThePathCannotCarryFallsBackTo1200DuringTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.negative_aMoveToANarrowerRouteFallsBackAndANewAddressStartsAt1200
@@ -4719,6 +4727,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.pmtudSea
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.theClientsInitialIsPaddedToTheConfiguredStart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.theServersFirstFlightUsesItsConfiguredStart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.withPmtudOffTheStartIsTheCeiling
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.aMigrationToANewSocketKeepsTheWaitForData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.atMostThreeLostProbesPerSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.blackHoleFallsBackTo1200AndPauses60s
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.ccNotifiedOnMtuChange
@@ -4735,6 +4744,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_forg
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_icmpPtbIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_losingDfDropsTheMtuTo1200
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_lossesOfPacketsLargerThanTheSizeInUseAreNoBlackHole
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_noProbeBeforeApplicationDataAfterConfirmation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_ptbAboveTheMtuWithZeroLengthIdsDoesNotCapTheSearch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_ptbBelowQuicMinimumIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_ptbBelowTheMtuWithZeroLengthIdsIsIgnored
@@ -4787,6 +4797,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.ne
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.preferredAddressValidatedAfterTheMigrationMovesTheActivePath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.sameFamilyOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.statelessResetFromThePreferredAddressUnderValidationIsDetected
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.theMoveToThePreferredAddressKeepsTheSearchsWaitForData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.userMigrationAbandonsPendingPreferredProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.withoutAnIdleTimeoutAnIdIsKeptForTheFallback
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeContentTest.probesResendDataBehindPingOnlyPackets

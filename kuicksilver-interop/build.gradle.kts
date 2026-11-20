@@ -12,10 +12,11 @@ kotlin {
     jvmToolchain(21)
     compilerOptions { allWarningsAsErrors.set(providers.gradleProperty("kuicksilver.warningsAsErrors").map { it.toBoolean() }.orElse(true)) }   // as in the kmp convention plugin (same -Pkuicksilver.warningsAsErrors switch)
     jvm()
-    linuxX64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
-    linuxArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
+    // stopsignal.def: the SIGTERM/SIGINT handler in C (src/nativeInterop/cinterop, StopSignal.native.kt)
+    linuxX64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" }; compilations.getByName("main").cinterops.create("stopsignal") }
+    linuxArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" }; compilations.getByName("main").cinterops.create("stopsignal") }
     // not in an image: a local server or client on a Mac, for profiling with `sample` or Instruments (docs/benchmarks.md, "Profiling")
-    macosArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
+    macosArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" }; compilations.getByName("main").cinterops.create("stopsignal") }
     sourceSets {
         all { languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }   // internal tooling: uses the library's experimental API directly
         commonMain.dependencies { implementation(project(":kuicksilver-quic")); implementation(project(":kuicksilver-http3")) }

@@ -140,6 +140,67 @@ class PmtudStartResumptionTest {
         return sizes
     }
 
+    /**
+     * RFC 8899 sections 4.3 and 5.1.1 (Pmtud.waitsForData): a client that sent its request in 0-RTT and afterwards only acknowledges
+     * the answer (the interop runner's zerortt case) sends no probe: 0-RTT data goes before the handshake is confirmed, so it does
+     * not begin the search. The server, which sends, still searches.
+     */
+    @Test fun negative_zeroRttDataThenAcknowledgementsOnlySendsNoProbe() {
+        val serverQuic = quic()
+        val t = ticket(serverQuic)
+        val p = resumed(t, quic(), serverQuic, link = 1500)
+        p.use { _ ->
+            val sizes = clientSizes(p)
+            assertTrue(p.runUntil { p.client.state == io.kuicksilver.quic.ConnectionState.Confirmed }, "confirmed: ${p.client.state}")
+            val s = p.server!!
+            val id = s.openStream(bidi = false)
+            val body = ByteArray(200_000)
+            var w = 0
+            val done =
+                p.runUntil(limit = 20.seconds) {
+                    if (w < body.size) {
+                        val n = minOf(16384, body.size - w)
+                        w += s.writeStream(id, body, w, n, w + n == body.size)
+                    }
+                    w == body.size && s.stats.bytesInFlight == 0L
+                }
+            assertTrue(done, "the download is acknowledged")
+            p.runUntil(limit = 5.seconds) { false }
+            assertTrue(
+                sizes.drop(1).none { it > 1200 },
+                "the client probed after 0-RTT data and acknowledgements: ${sizes.filter { it > 1200 }}",
+            )
+            assertEquals(1200, p.client.stats.pathMtu)
+            assertTrue(s.stats.pathMtu > 1200, "the sending server searched: ${s.stats.pathMtu}")
+        }
+    }
+
+    /**
+     * The other gap before confirmation: 1-RTT data the client sends once its handshake completed but before HANDSHAKE_DONE arrived
+     * (state Established) does not begin the search either; confirmation is the reference point (docs/spec/rfc/8899.md). A client
+     * that sends nothing more afterwards sends no probe; its next application data would begin the search.
+     */
+    @Test fun negative_oneRttDataBeforeHandshakeDoneThenNothingSendsNoProbe() {
+        val serverQuic = quic()
+        val t = ticket(serverQuic)
+        val p = resumed(t, quic(), serverQuic, link = 1500, zeroRtt = false)
+        p.use { _ ->
+            val sizes = clientSizes(p)
+            assertTrue(p.runUntil { p.client.state == io.kuicksilver.quic.ConnectionState.Established }, "established: ${p.client.state}")
+            val id = p.client.openStream(bidi = true)
+            val req = ByteArray(100) { 'y'.code.toByte() }
+            p.client.writeStream(id, req, 0, req.size, fin = true)
+            assertTrue(p.runUntil { p.client.state == io.kuicksilver.quic.ConnectionState.Confirmed }, "confirmed: ${p.client.state}")
+            p.runUntil(limit = 5.seconds) { false }
+            assertTrue(sizes.none { it > 1200 }, "the client probed after data sent before confirmation: ${sizes.filter { it > 1200 }}")
+            assertTrue(
+                p.client.paths.active.pmtud!!
+                    .waitsForData,
+                "the search still waits for data",
+            )
+        }
+    }
+
     @Test fun negative_aClientZeroRttStartAboveTheLinkFallsBackAlthoughEveryPacketIsSmall() {
         // every datagram coalesces an Initial (with the ticket) and a padded 0-RTT packet: no single packet above 1200
         val serverQuic = quic()

@@ -339,7 +339,7 @@ ordinary coalescing and not a shim.
 **Standard text.** RFC 9000 §19.8: a STREAM frame's FIN "marks the end of the stream"; nothing requires it to travel with
 the data.
 
-**Where.** `kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient.kt:113` (`request`).
+**Where.** `kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient.kt:122` (`request`).
 
 **On by default.** Interop images only; not in any published artifact.
 

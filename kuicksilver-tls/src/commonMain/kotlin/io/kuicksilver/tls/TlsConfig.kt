@@ -282,6 +282,11 @@ public class TlsConfig private constructor(
          * Client: the host name sent as SNI and, unless [TrustConfig.ExpectedName] replaces it, the reference identifier the
          * certificate must match (RFC 9525); an IP literal is matched but never sent as SNI (RFC 6066 section 3). Default null;
          * a client needs it or an ExpectedName. Validated by [HostName.normalize] in [build]. Servers ignore it.
+         *
+         * With an [TrustConfig.ExpectedName] other than this name (an SNI override: a front or a proxy name), a session is resumed
+         * only if the certificate of its full handshake also names this server name; otherwise every handshake is a full one
+         * (RFC 9846 section 4.7.1: "Clients MUST only resume if the new SNI value is valid for the server certificate presented in
+         * the original session").
          */
         public var serverName: String? = null
 

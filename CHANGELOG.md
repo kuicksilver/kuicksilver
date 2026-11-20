@@ -1036,6 +1036,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
+  frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
+  "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
+  full-size probe; a sender searches as before, and a begun search runs to its end.
+- QUIC Interop Runner endpoint: the client waits for its endpoint's close before it exits, so its qlog traces, which are
+  buffered until a connection is released, are complete (they were often empty files). The server, which the runner stops
+  with SIGTERM, closes and joins its endpoints first (at most 3 s; a JVM shutdown hook, a signal handler on Native), so its
+  traces are complete too.
 - The bundled OpenSSL moves from 3.5.9 (the 3.5 LTS branch) to **4.1.0**, and to the 4.2 LTS branch once it is released
   (ADR-0019): Encrypted Client Hello needs OpenSSL 4. The pin keeps its form (version, tarball SHA-256 and signing key,
   verified before every build); `configure-flags.txt` drops the four options 4.0 removed (`no-engine`, `no-atexit`,
@@ -1790,7 +1798,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   "SHOULD only resume if the SNI value matches the one used in the original session"; DNS names compare
   case-insensitively): `QuicTlsSession.resume` returns false and the handshake is a full one. The session cache never
   offered one, but a ticket handed to `resume` for another name with 0-RTT failed the handshake in OpenSSL ("inconsistent
-  early data sni"); a name that differs only in case resumes without 0-RTT for the same reason.
+  early data sni"); a name that differs only in case resumes without 0-RTT for the same reason. A session's name is the
+  one the client sent, also when the server did not acknowledge it (RFC 6066 section 3 leaves that to a server that used
+  the name; OpenSSL's client records the name only from the acknowledgment), so sessions from such servers (ngtcp2,
+  quiche and msquic in the interop runner) resume, with 0-RTT, under their own name. A session made under a server name
+  other than the verify name (`TlsConfig.serverName`) resumes only when its certificate also names that server name
+  (RFC 9846 section 4.7.1: "Clients MUST only resume if the new SNI value is valid for the server certificate presented in
+  the original session"); before, the server name itself was never checked against the certificate.
 
 - WebTransport flow control: a stream stopped (`stopSending`, or its input cancelled) right as it was accepted, before
   its reader had run, never gave its bytes back as session credit (draft-ietf-webtrans-http3-16 section 5.6), so a

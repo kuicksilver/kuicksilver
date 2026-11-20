@@ -93,6 +93,60 @@ class PmtudTest {
         }
     }
 
+    /**
+     * RFC 8899 sections 4.3 and 5.1.1: "A PL MAY inhibit sending probe packets when no application data has been sent since the
+     * previous probe packet". A connection's first search begins with its first application data after the handshake was confirmed:
+     * a client that only downloads, or idles or closes after its handshake, sends no full-size probe (the interop runner's zerortt
+     * case counted three of them, 3.8 KB, against the client's 1-RTT budget, int37). The data that follows begins the search, which
+     * still raises the size, and the server that sends the download searches on its own.
+     */
+    @Test fun negative_noProbeBeforeApplicationDataAfterConfirmation() {
+        val (p, c) = pair()
+        p.use { _ ->
+            assertTrue(!p.runUntil(5.seconds) { probesTo(p).isNotEmpty() }, "an idle client probed: ${probesTo(p)}")
+            val s = p.server.connections().single()
+            download(p, s) // the client only acknowledges
+            assertTrue(probesTo(p).isEmpty(), "a downloading client probed: ${probesTo(p)}")
+            assertEquals(1200, c.stats.pathMtu)
+            assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu == 1452 }, "the sender searched: server mtu ${s.stats.pathMtu}")
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "its data began the client's search: mtu ${c.stats.pathMtu}")
+        }
+    }
+
+    /**
+     * RFC 8899 section 4.3 (Pmtud.waitsForData), an application's migration to a new socket (ConnectionRuntime.openPath: addPath,
+     * then the socket's capabilities): the new path's search waits for application data unless the connection already sent some
+     * after confirmation. A download-only client that migrates sends no probe from the new socket; one that sent data probes there at
+     * once.
+     */
+    @Test fun aMigrationToANewSocketKeepsTheWaitForData() {
+        for (sent in listOf(false, true)) {
+            val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+            p.use { _ ->
+                val s = p.server.connections().single()
+                if (sent) clientSends(p, c, s) else download(p, s, 50_000)
+                val other = InetSocketAddress("10.0.0.7", 40000)
+                val pid = c.addPath(p.serverAddr, p.now)
+                c.setPathCapabilities(pid, df)
+                p.clientSocketSources[pid] = other
+                p.clientListens += other
+                c.probePath(pid, p.now)
+                assertTrue(p.runUntil(5.seconds) { c.pathState(pid) == PathState.Validated }, "second path validated")
+                c.switchPath(pid, p.now)
+                val before = p.clientDatagramSizes.size
+                p.runUntil(5.seconds) { false }
+                val probes = p.clientDatagramSizes.drop(before).filter { it > 1200 }
+                if (sent) {
+                    assertTrue(probes.isNotEmpty(), "a client that sent data probes from the new socket at once")
+                } else {
+                    assertTrue(probes.isEmpty(), "a download-only client probed from the new socket: $probes")
+                    assertTrue(c.path.pmtud!!.awaitingData, "the new socket's search waits for data")
+                }
+            }
+        }
+    }
+
     /** The client sends a little on a new stream, from wherever [EndpointPair.clientSource] now says, until the server has it. */
     private fun clientSends(
         p: EndpointPair,
@@ -600,6 +654,10 @@ class PmtudTest {
         above: Int,
     ): Int {
         var seen = 0
+        // a search waits for the connection's first application data after confirmation (Pmtud.waitsForData): some goes first
+        val id = c.openStream(true)
+        c.writeStream(id, ByteArray(100), 0, 100, true)
+        assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L }, "the data is acknowledged")
         p.filterToServer = { _, b ->
             if (seen == 0 && b.size > above && c.path.pmtud?.probeInFlightForTest == b.size) seen = b.size
             true

@@ -18,7 +18,10 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Files
@@ -29,6 +32,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class HqInteropTest {
@@ -196,6 +200,66 @@ class HqInteropTest {
             assertEquals(1, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "http3", "REQUESTS" to "https://127.0.0.1:${srv.port}/missing.bin", "DOWNLOADS" to downloads.path)), "a missing file fails the case")
             assertEquals(404, srv.lastStatusFor("missing.bin"), "a missing file is a 404, not a reset")
         }
+    }
+    // the runner's endpoint exits right after the download (exitWith): a trace the endpoint closes only after that (QuicEndpoint.close
+    // starts the close on the loop and returns) never reached its file, which buffers until it is closed (empty client qlogs in the
+    // int37 interop runs). The trace's close is held until the test saw it begin while the download had not returned yet: a client
+    // that returns without waiting for the close is caught by either check
+    private class HeldClosingSink : io.kuicksilver.quic.QlogSink {
+        val opened = java.util.concurrent.atomic.AtomicInteger(); val closed = java.util.concurrent.atomic.AtomicInteger()
+        val closing = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        override fun open(odcidHex: String, role: TlsRole): io.kuicksilver.quic.QlogTrace {
+            opened.incrementAndGet()
+            return object : io.kuicksilver.quic.QlogTrace {
+                override fun write(record: String) {}
+                override fun close() { closing.countDown(); release.await(30, java.util.concurrent.TimeUnit.SECONDS); closed.incrementAndGet() }
+            }
+        }
+    }
+    private suspend fun assertClosesItsTracesBeforeReturning(download: suspend (HeldClosingSink) -> Boolean) = coroutineScope {
+        val sink = HeldClosingSink()
+        val result = async(Dispatchers.Default) { download(sink).also { assertTrue(it, "downloaded") }; sink.closed.get() }
+        assertTrue(runInterruptible(Dispatchers.IO) { sink.closing.await(30, java.util.concurrent.TimeUnit.SECONDS) }, "the trace's close began")
+        assertTrue(!result.isCompleted, "the client returned while its trace was still being closed")
+        sink.release.countDown()
+        assertEquals(1, result.await(), "the trace is closed (its file complete) when the client returns")
+        assertEquals(1, sink.opened.get())
+    }
+    @Test fun clientClosesEveryQlogTraceBeforeItReturns() = runBlocking {
+        val root = www("q.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
+            assertClosesItsTracesBeforeReturning { sink -> HqInteropClient.download(listOf("https://127.0.0.1:${srv.port}/q.bin"), downloads.path, Testcases.client("transfer")!!, InteropTrust.config(emptyMap()), null, sink) }
+        }
+    }
+    @Test fun http3ClientClosesEveryQlogTraceBeforeItReturns() = runBlocking {
+        val root = www("q3.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        H3InteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
+            assertClosesItsTracesBeforeReturning { sink -> H3InteropClient.download(listOf("https://127.0.0.1:${srv.port}/q3.bin"), downloads.path, Testcases.client("http3")!!, InteropTrust.config(emptyMap()), null, sink) }
+        }
+    }
+    // the runner stops the server container with SIGTERM (installStopSignal): the server then closes and joins its endpoints, so the
+    // qlog traces of its connections are closed and written; before, the process ended with them open and the files were empty
+    @Test fun aStoppedServerWritesItsQlogTraces() = runBlocking {
+        val root = www("s.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        val qlogDir = Files.createTempDirectory("qlog").toFile()
+        val srv = HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1, qlog = io.kuicksilver.quic.qlog.DirectoryQlogSink(qlogDir.path))
+        val stop = CompletableDeferred<Unit>()
+        val serving = async { serveUntilStopped(srv, stop) }
+        assertTrue(HqInteropClient.download(listOf("https://127.0.0.1:${srv.port}/s.bin"), downloads.path, Testcases.client("transfer")!!, InteropTrust.config(emptyMap()), null, null))
+        stop.complete(Unit)
+        assertTrue(serving.await(), "the endpoints closed within the grace period")
+        val traces = qlogDir.listFiles()!!.filter { it.name.contains("_server_") }
+        assertEquals(1, traces.size, "one server trace: ${qlogDir.list()!!.toList()}")
+        assertTrue(traces.single().length() > 0, "the server's trace was written")
+    }
+    @Test fun negative_aStuckCloseDoesNotHoldTheStop() = runBlocking {
+        var closed = false
+        val stuck = object : InteropServer { override suspend fun closeAndJoin() { kotlinx.coroutines.awaitCancellation() }; override fun close() { closed = true } }
+        var joined = true
+        val took = kotlin.time.measureTime { joined = serveUntilStopped(stuck, CompletableDeferred(Unit), grace = 200.milliseconds) }
+        assertTrue(!joined, "a close that never ends is abandoned")
+        assertTrue(took < 2.seconds, "within the grace period: $took")
+        assertTrue(closed, "the endpoints are still closed, without waiting")
     }
     @Test fun http3IsASupportedTestcase() { assertTrue("http3" in Testcases.supported); assertTrue(Testcases.client("http3")!!.http3); assertTrue(Testcases.server("http3")!!.http3); assertTrue(!Testcases.client("transfer")!!.http3) }
 

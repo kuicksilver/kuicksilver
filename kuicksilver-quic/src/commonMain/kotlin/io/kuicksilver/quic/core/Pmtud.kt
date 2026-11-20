@@ -55,6 +55,8 @@ internal class Pmtud(
      * one replaced (to an address the path no longer has, or before its capabilities changed), and their acknowledgments change nothing.
      */
     sentAfterPn: Long = -1L,
+    /** The search begins only with application data sent after the handshake was confirmed ([waitsForData]). */
+    waitForData: Boolean = false,
 ) {
     var upperBound: Int = upperBound
         private set
@@ -130,6 +132,31 @@ internal class Pmtud(
 
     /** Until when Packet Too Big messages are not processed (RFC 8899 section 8 robustness mode); [TimeMark.NEVER]: they are. */
     private var ptbSuspendedUntil: TimeMark = TimeMark.NEVER
+
+    /**
+     * Application data (STREAM or DATAGRAM frames in 1-RTT, sent once the handshake was confirmed) went out on this path
+     * ([onApplicationDataSent]), or the search did not have to wait for it (a search made after confirmation: one that replaces
+     * another for new capabilities or a new address). RFC 8899 sections 4.3 and 5.1.1: "A PL MAY inhibit sending probe packets
+     * when no application data has been sent since the previous probe packet"; before the first probe the reference is the
+     * confirmation of the handshake, from which on probes can go (RFC 9000 section 14.3: they are 1-RTT packets). A connection
+     * that only acknowledges, or goes idle or closes after its handshake (a client that sent its requests in 0-RTT or with its
+     * Finished, then downloads), so sends no full-size probe it has no use for: each takes an RTT of the congestion window and is
+     * bytes on the wire (the interop runner's zerortt case counts them against the client). Once begun, the search runs to its
+     * end, and repeats after 600 s, as before. The probe of the old size after a Packet Too Big drop never waits: it decides
+     * whether that drop stands.
+     */
+    private var dataSent = !waitForData
+
+    /** A datagram with application data went out on this path after the handshake was confirmed (the caller checks both). */
+    fun onApplicationDataSent() {
+        dataSent = true
+    }
+
+    /** This search still waits for application data sent after confirmation (tests; [waitsForData] is the probe gate). */
+    val awaitingData: Boolean get() = !dataSent
+
+    /** No probe is due yet: the search waits for application data sent after confirmation ([dataSent]). */
+    val waitsForData: Boolean get() = !dataSent && ptbFrom == 0
 
     internal val probeInFlightForTest: Int get() = if (probeInFlight) probeSize else 0
     internal val confirmingForTest: Int get() = ptbFrom

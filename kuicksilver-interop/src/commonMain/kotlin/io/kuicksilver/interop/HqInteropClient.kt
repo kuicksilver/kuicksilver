@@ -22,9 +22,12 @@ import io.kuicksilver.tls.tlsConfig
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import kotlin.time.Duration.Companion.seconds
@@ -84,7 +87,13 @@ internal object HqInteropClient {
                     conn.close(0, "done"); ok
                 }
             }
-        } finally { endpoint.close() }
+        } finally {
+            // the process exits right after this returns (exitWith): close() only starts the endpoint's close on its loop, and the
+            // qlog traces, which buffer until closed, were then never written (empty client qlogs in the interop runs). Waiting for
+            // the close completes them; NonCancellable, so a timed-out or failed download completes them too, and bounded as the
+            // server's stop is (STOP_GRACE): a close that hangs costs the traces, not the cell
+            withContext(NonCancellable) { withTimeoutOrNull(STOP_GRACE) { endpoint.closeAndJoin() } ?: Files.log("the endpoint did not close within $STOP_GRACE") }
+        }
     }
     /**
      * Runs between `connectEarly` and the `zerortt` case's 0-RTT requests (tests: force the client to write only after the

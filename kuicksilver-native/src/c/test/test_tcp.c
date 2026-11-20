@@ -799,6 +799,57 @@ static void test_resumption(void) {
     END();
 }
 
+/* A TCP client's sessions from a server that does not acknowledge server_name (RFC 6066 section 3: "MAY"): OpenSSL's client records
+   a session's name only from the acknowledgment, so ksl names it after the SNI it sent (own_hostname), for the TLS 1.3 tickets kept
+   by new_session_cb as for a TLS 1.2 session; without the name the session was refused under its own name and offered without one. */
+static ksl_session *client_session_after(ksl_ssl *c);
+static void test_session_of_server_without_sni_ack(void) {
+    SECTION("tcp_session_of_a_server_that_did_not_acknowledge_sni_resumes");
+    uint8_t keys[80];
+    for (int i = 0; i < 80; i++)
+        keys[i] = (uint8_t)(i * 11 + 5);
+    for (int v = 0; v < 2; v++) {
+        const char *ver = v ? "TLS 1.2" : "TLS 1.3";
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        if (v) {
+            ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+            ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+            ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        }
+        ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+        ksl_ctx_set_ticket_keys(sc, keys, 1);
+        {
+            /* the server context's SSL_CTX, without the callback: OpenSSL then never acknowledges the name */
+            ksl_ssl *probe = ksl_ssl_new(sc, KSL_MODE_TCP);
+            SSL_CTX_set_tlsext_servername_callback(SSL_get_SSL_CTX(ksl_ssl_raw_for_test(probe)), NULL);
+            ksl_ssl_free(probe);
+        }
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, ver);
+        ksl_session *sess = v ? ksl_ssl_get1_session(c) : client_session_after(c);
+        const char *name = sess ? SSL_SESSION_get0_hostname((SSL_SESSION *)sess) : NULL;
+        CHECK(name != NULL && strcmp(name, "server.test") == 0, "the session is named after the SNI the client sent");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        c = tcp_client(cc, "server.test");
+        s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(sess != NULL && ksl_ssl_set_session(c, sess) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK,
+              "a fresh client resumes it under that name");
+        uint8_t re = 0;
+        size_t n;
+        CHECK(ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &re, 1, &n) == KSL_OK && re == 1, "the server resumed it");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        c = tcp_client(cc, NULL);
+        CHECK(sess != NULL && ksl_ssl_set_session(c, sess) == KSL_ERROR, "negative: not offered without a name");
+        ksl_ssl_free(c);
+        ksl_session_free(sess);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    END();
+}
+
 typedef struct {
     ksl_ctx *override;
     int alert;
@@ -1411,11 +1462,11 @@ static int on_vhost(ksl_ssl *s, int rc, void *arg) {
     ksl_client_hello ch;
     ksl_ctx *pick = NULL;
     if (ksl_ssl_client_hello(s, &ch) == KSL_OK && ch.sni) {
-        if (ch.sni_len == 6 && !memcmp(ch.sni, "a.test", 6))
+        if (ch.sni_len == 11 && !memcmp(ch.sni, "a.wild.test", 11))
             pick = v->a;
-        else if (ch.sni_len == 6 && !memcmp(ch.sni, "B.TEST", 6))
+        else if (ch.sni_len == 11 && !memcmp(ch.sni, "SERVER.TEST", 11))
             pick = v->b; /* host names compare case-insensitively */
-        else if (ch.sni_len == 6 && !memcmp(ch.sni, "b.test", 6))
+        else if (ch.sni_len == 11 && !memcmp(ch.sni, "server.test", 11))
             pick = v->b;
     }
     return ksl_ssl_sni_resume(s, pick, pick ? 0 : 112) == KSL_OK;
@@ -1440,6 +1491,8 @@ static void test_ticket_bound_to_server_name(void) {
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *base = server_ctx("server-other-ca");
     ksl_ctx *a = server_ctx("server"),
             *b = server_ctx("server-other-key"); /* both valid for the client's reference name server.test */
+    /* the two names are ones the certificates also name (a: *.wild.test, b: server.test): a client resumes only under an SNI the
+       session's certificate is valid for (RFC 9846 section 4.7.1, ksl_ssl_set_session) */
     ksl_ctx *srv[3] = {base, a, b};
     for (int k = 0; k < 3; k++) {
         ksl_ctx_set_ticket_keys(srv[k], keys, 1);
@@ -1451,40 +1504,41 @@ static void test_ticket_bound_to_server_name(void) {
     vhosts v = {a, b};
     uint8_t reused = 9;
     size_t n;
-    ksl_ssl *c = tcp_client(cc, "a.test"), *s = ksl_ssl_new(base, KSL_MODE_TCP);
-    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && leaf_is(c, "server"), "full handshake with a.test");
+    ksl_ssl *c = tcp_client(cc, "a.wild.test"), *s = ksl_ssl_new(base, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && leaf_is(c, "server"), "full handshake with a.wild.test");
     ksl_session *sess = client_session_after(c);
-    CHECK(sess != NULL, "a.test issued a ticket");
+    CHECK(sess != NULL, "a.wild.test issued a ticket");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
-    /* the ticket of a.test offered with the server name b.test: ksl's client refuses that (RFC 9846 section 4.7.1), another client
+    /* the ticket of a.wild.test offered with the server name server.test (b): ksl's client refuses that (RFC 9846 section 4.7.1), another client
        may do it, so the session goes in through OpenSSL directly */
-    c = tcp_client(cc, "b.test");
+    c = tcp_client(cc, "server.test");
     s = ksl_ssl_new(base, KSL_MODE_TCP);
-    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "ksl's client does not offer a.test's ticket to b.test");
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR,
+          "ksl's client does not offer a.wild.test's ticket to server.test (b)");
     SSL_set_session(ksl_ssl_raw_for_test(c), (SSL_SESSION *)sess);
-    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK, "handshake with b.test");
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK, "handshake with server.test (b)");
     CHECK(ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0,
-          "negative: a.test's ticket does not resume under b.test (RFC 6066 section 3)");
+          "negative: a.wild.test's ticket does not resume under server.test (b) (RFC 6066 section 3)");
     CHECK(ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0,
           "negative: the client sees a full handshake");
-    CHECK(leaf_is(c, "server-other-key"), "b.test's certificate is presented");
+    CHECK(leaf_is(c, "server-other-key"), "server.test (b)'s certificate is presented");
     ksl_session *sess_b = client_session_after(c);
-    CHECK(sess_b != NULL, "the full handshake issued b.test its own ticket");
+    CHECK(sess_b != NULL, "the full handshake issued server.test (b) its own ticket");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     /* controls: each ticket resumes under its own name (case-insensitively) */
-    c = tcp_client(cc, "a.test");
+    c = tcp_client(cc, "a.wild.test");
     s = ksl_ssl_new(base, KSL_MODE_TCP);
     ksl_ssl_set_session(c, sess);
     CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK &&
               reused == 1,
-          "control: a.test's ticket resumes under a.test");
+          "control: a.wild.test's ticket resumes under a.wild.test");
     ksl_session *renewed = client_session_after(c);
     CHECK(renewed != NULL, "the resumption renewed the ticket");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
-    c = tcp_client(cc, "a.test");
+    c = tcp_client(cc, "a.wild.test");
     s = ksl_ssl_new(base, KSL_MODE_TCP);
     ksl_ssl_set_session(c, renewed);
     CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK &&
@@ -1492,22 +1546,22 @@ static void test_ticket_bound_to_server_name(void) {
           "control: the renewed ticket keeps the name and resumes");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
-    c = tcp_client(cc, "B.TEST");
+    c = tcp_client(cc, "SERVER.TEST");
     s = ksl_ssl_new(base, KSL_MODE_TCP);
     ksl_ssl_set_session(c, sess_b);
     CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK &&
               reused == 1,
-          "control: b.test's ticket resumes under B.TEST");
+          "control: server.test (b)'s ticket resumes under SERVER.TEST");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     /* no server name at all is a different name too */
     c = tcp_client(cc, NULL);
     s = ksl_ssl_new(a, KSL_MODE_TCP);
-    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "ksl's client does not offer a.test's ticket without SNI");
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "ksl's client does not offer a.wild.test's ticket without SNI");
     SSL_set_session(ksl_ssl_raw_for_test(c), (SSL_SESSION *)sess);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK &&
               reused == 0,
-          "negative: a.test's ticket does not resume without SNI");
+          "negative: a.wild.test's ticket does not resume without SNI");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     ksl_session_free(sess);
@@ -3009,6 +3063,7 @@ void run_tcp(void) {
     test_client_verification_still_refuses();
     test_client_alert_after_server_hello_is_encrypted();
     test_resumption();
+    test_session_of_server_without_sni_ack();
     test_no_early_data_over_tcp();
     test_resumption_bounded();
     test_ticket_lifetime_clamped();
