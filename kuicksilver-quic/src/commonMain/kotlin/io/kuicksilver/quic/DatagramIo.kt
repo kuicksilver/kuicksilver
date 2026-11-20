@@ -107,10 +107,23 @@ internal suspend fun openDatagramIo(
     local: InetSocketAddress,
     prefer: IoPreference,
     logger: KuicksilverLogger,
-): DatagramIo =
-    (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local, logger = logger) else null) ?: openPortableDatagramIo(local)
+): DatagramIo {
+    var refused: Throwable? = null
+    if (prefer == IoPreference.Accelerated) {
+        KslDatagramIo.open(local, logger = logger, refused = { refused = it })?.let { return it }
+    }
+    return openPortableDatagramIo(local, refused)
+}
 
-internal expect suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo
+/**
+ * The portable socket on [local]. [acceleratedRefusal] is why the accelerated socket was not opened, null when it was not
+ * tried or gave no reason: where the portable socket cannot carry QUIC (Kotlin/Native), a refused bind (the port in use)
+ * is thrown as it is, as the portable socket's own bind would fail elsewhere.
+ */
+internal expect suspend fun openPortableDatagramIo(
+    local: InetSocketAddress,
+    acceleratedRefusal: Throwable?,
+): DatagramIo
 
 /** One line to standard error: what [KuicksilverLogger.Stderr], the default logger, writes. */
 internal expect fun printWarning(line: String)

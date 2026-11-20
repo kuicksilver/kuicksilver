@@ -388,13 +388,15 @@ internal class KslDatagramIo private constructor(
          * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
          * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose loopback probe failed
          * ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable socket, said once per process to
-         * [logger] at [LogLevel.Warn]. [configure] sees the bound socket's descriptor before any datagram (Android binds it
-         * to a network); if it throws, the socket is closed.
+         * [logger] at [LogLevel.Warn]; [refused] gets that refusal (a refused bind is a `kotlinx.io.IOException`). [configure]
+         * sees the bound socket's descriptor before any datagram (Android binds it to a network); if it throws, the socket is
+         * closed.
          */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
             logger: KuicksilverLogger = KuicksilverLogger.Stderr,
+            refused: (Throwable) -> Unit = {},
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             val unsupported = unsupportedReason()
@@ -414,6 +416,7 @@ internal class KslDatagramIo private constructor(
                     KslUdpSocket.open(addr, flags)
                 } else {
                     socketOpener(addr, flags) { e ->
+                        refused(e)
                         warnFallback(logger) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
                     } ?: return null
                 }
