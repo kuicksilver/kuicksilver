@@ -2,7 +2,9 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Runs ./gradlew with the given arguments, and once more with --refresh-dependencies only when the run failed because a
-# repository answered "not found" (or Gradle could not GET or HEAD a file) for a dependency, and no test failed.
+# repository answered "not found" (or Gradle could not GET or HEAD a file) for a dependency, no test failed and no file
+# failed dependency verification: a refreshed run downloads again, and a tampered file must fail the step, never get a
+# second download that might pass.
 #
 # Maven Central answers 404 for files it has (runs 44630132347, 44657561143, 44674970605: jose4j-0.9.6.jar,
 # kotlin-stdlib 2.4.0 behind the Gradle Plugin Portal's redirect, ktor-server-core 3.6.1, kotlin-scripting-compiler-
@@ -12,21 +14,33 @@
 # 24 hours in the Gradle user home (DefaultCachePolicy), which setup-gradle saves at the end of the job, failed or not, and
 # the next jobs restore. --refresh-dependencies ignores that record and asks again (it re-checks every cached module and
 # file with a request, so it is the retry, never the first run). A run with a failing test is never repeated: a test
-# failure fails the step, also when a download failed in the same run.
+# failure fails the step, also when a download failed in the same run; so does a verification failure (with --continue a
+# step can have both).
 #
 # Usage: tools/ci/gradlew-retry.sh [gradle args...] (from the root of the build, which has ./gradlew; KSL_GRADLEW names
-# another wrapper, KSL_GRADLE_RETRY_DELAY the seconds before the retry, default 30)
+# another wrapper, KSL_GRADLE_RETRY_DELAY the seconds before the retry, default 30; KSL_GRADLE_RETRY_QUIET=1 shows the
+# first run's output only when it failed)
 set -uo pipefail
 gradlew=${KSL_GRADLEW:-./gradlew}
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
-"$gradlew" "$@" 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
+if [ "${KSL_GRADLE_RETRY_QUIET:-0}" = 1 ]; then
+  "$gradlew" "$@" > "$log" 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] || cat "$log"
+else
+  "$gradlew" "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+fi
 [ "$rc" -eq 0 ] && exit 0
 # "Could not find io.ktor:ktor-server-core:3.6.1." (a module), "Could not find jose4j-0.9.6.jar
-# (org.bitbucket.b_c:jose4j:0.9.6)." (a file of a module), "Could not GET 'https://...'" (after Gradle's own retries)
-if grep -Eq "Could not find [^ ]+:[^ ]+:[^ ]+[.][[:space:]]*$|Could not find [^ ]+ \([^ ]+:[^ ]+:[^ ]+\)[.][[:space:]]*$|Could not (GET|HEAD) '" "$log" &&
-  ! grep -q "There were failing tests" "$log"; then
+# (org.bitbucket.b_c:jose4j:0.9.6)." (a file of a module), "Could not find any matches for g:n:1.+" (a version list),
+# "Plugin [id: 'x', version: '1'] was not found" (a plugin marker), "Could not GET 'https://...'" (after Gradle's own
+# retries)
+missing="Could not find [^ ]+:[^ ]+:[^ ]+[.][[:space:]]*$|Could not find [^ ]+ \([^ ]+:[^ ]+:[^ ]+\)[.][[:space:]]*$"
+missing+="|Could not find any matches for |Plugin \[id: .*\] was not found|Could not (GET|HEAD) '"
+if grep -Eq "$missing" "$log" && ! grep -q "There were failing tests" "$log" &&
+  ! grep -q "Dependency verification failed" "$log"; then
   echo "::warning::a dependency was not found or could not be downloaded; running once more with --refresh-dependencies"
   sleep "${KSL_GRADLE_RETRY_DELAY:-30}"
   "$gradlew" --refresh-dependencies "$@"

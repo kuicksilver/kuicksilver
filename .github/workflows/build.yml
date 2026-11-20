@@ -55,8 +55,8 @@ defaults:
   run:
     shell: bash
 env:
-  # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test failed) runs once more
-  # with --refresh-dependencies (tools/ci/gradlew-retry.sh)
+  # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test and no dependency
+  # verification failed) runs once more with --refresh-dependencies (tools/ci/gradlew-retry.sh)
   G: bash tools/ci/gradlew-retry.sh --stacktrace
 
 jobs:
@@ -201,11 +201,11 @@ jobs:
       - uses: ./.github/actions/setup
       - name: 'lint: ktlint'
         # kotlinter's lintKotlin only parses sources: no Kotlin/Native toolchain, OpenSSL or NDK is needed
-        run: ./gradlew --max-workers=2 lintKotlin
+        run: $G --max-workers=2 lintKotlin
       - name: 'check: dependency verification (every configuration)'
         # resolves every configuration of every project with verification on: an artifact gradle/verification-metadata.xml does
         # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification")
-        run: ./gradlew --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll
+        run: $G --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll
 
   openssl-docker:
     # The container-built OpenSSL targets, shared with the other jobs as artifacts (they reuse them through

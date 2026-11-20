@@ -49,7 +49,7 @@ runs:
         # gradle/verification-metadata.xml, in the daemon the later steps reuse. gradlew-retry.sh runs it once more with
         # --refresh-dependencies after a dependency was not found, as $G does for every later Gradle step. Every job that
         # uses this action runs Gradle.
-        bash tools/ci/gradlew-retry.sh --max-workers=2 -q help
+        KSL_GRADLE_RETRY_QUIET=1 bash tools/ci/gradlew-retry.sh --max-workers=2 -q help
     - name: Pinned Xcode
       if: inputs.xcode == 'true'
       shell: bash

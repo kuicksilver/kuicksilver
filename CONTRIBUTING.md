@@ -50,7 +50,9 @@ disable the signature check.
 Gradle checks every plugin and dependency it resolves against `gradle/verification-metadata.xml` (threat model 3.11): a
 PGP signature by a key trusted for that publisher's group (the keys are in `gradle/verification-keyring.keys`, so no key
 server is needed), or a SHA-256 for artifacts that are not signed or whose key no key server has. An artifact that
-matches neither fails the build, the release included. When a dependency, a plugin or a toolchain pin changes (Renovate
+matches neither fails the build, the release included. The same holds for every repository: Google's mirror of Maven
+Central, last in `settings.gradle.kts` and `build-logic/settings.gradle.kts`, is asked only for a module the others did
+not have (Central answers 404 for files it has now and then) and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
 pull requests too), update the file in the same pull request and review its diff:
 
 ```sh
