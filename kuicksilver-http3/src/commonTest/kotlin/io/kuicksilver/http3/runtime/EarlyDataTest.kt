@@ -153,6 +153,16 @@ class EarlyDataTest {
             c.close()
         }
 
+        /**
+         * Drops the server's datagrams to the client until [until] holds: neither side can complete the handshake before the
+         * server has seen what the client sent in 0-RTT, however slowly the machine runs (a 50 ms delay alone let a loaded
+         * one finish the handshake first: the request then met a complete handshake, or went in 1-RTT). The server's probe
+         * timeout sends its flight again once [until] holds.
+         */
+        fun holdServerFlightUntil(until: () -> Boolean) {
+            net.drop = { from, to, _ -> from == b.localAddress && to == a.localAddress && !until() }
+        }
+
         /** A connection with the fixture's client settings, in 0-RTT when a ticket allows. */
         suspend fun connectEarly(): Http3Connection =
             client.connectEarly(server.localAddress, H3Fixtures.client(), settings = clientSettings)
@@ -1114,6 +1124,7 @@ class EarlyDataTest {
                     f.start()
                     f.warmUp()
                     f.net.delay = 50.milliseconds // a round trip the 0-RTT request can beat
+                    f.holdServerFlightUntil { f.last != null } // and beats, on a loaded machine too
                     val c: Http3Connection = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
                     assertTrue(!c.quic.isHandshakeComplete, "connectEarly returned before the handshake")
                     val r = c.request(f.get(early = true))
@@ -1156,6 +1167,7 @@ class EarlyDataTest {
                     f.start()
                     f.warmUp()
                     f.net.delay = 50.milliseconds
+                    f.holdServerFlightUntil { f.heldEarly >= 1 } // the POST reaches the gate before the handshake completes
                     val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
                     assertTrue(!c.quic.isHandshakeComplete, "connectEarly returned before the handshake")
                     c.session.testSendUnsafeEarly = true // a client that ignores RFC 8470: POST in 0-RTT
@@ -1175,6 +1187,7 @@ class EarlyDataTest {
                     assertEquals(1, f.executions.load())
                     c.close()
 
+                    f.net.drop = null
                     // The replay, stopped by the HTTP/3 gate alone: an attacker on the path keeps a client's datagrams from the
                     // server and sends copies from its own address, so the replay register sees the ticket for the first time
                     // and admits it; the server's answers go to the attacker, who cannot complete the handshake.
@@ -1278,6 +1291,7 @@ class EarlyDataTest {
                     f.start()
                     f.warmUp()
                     f.net.delay = 50.milliseconds
+                    f.holdServerFlightUntil { f.heldEarly >= 1 } // the CONNECT goes in 0-RTT and reaches the gate before the handshake
                     val c = f.connectEarly()
                     val st = earlyWebTransportConnect(c)
                     assertEquals(
