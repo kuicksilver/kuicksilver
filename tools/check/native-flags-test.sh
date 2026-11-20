@@ -2,7 +2,8 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of the builder's compiler and flags in the native build scripts (docs/guide/building.md):
-#   1. tools/openssl/build.sh, against a stub OpenSSL source tree and a stub make (no compiler runs): CPPFLAGS, CFLAGS and
+#   1. tools/openssl/build.sh, against a stub OpenSSL source tree (with stubs of the files the pinned patches change, which
+#      apply-patch.pl then patches for real) and a stub make (no compiler runs): CPPFLAGS, CFLAGS and
 #      LDFLAGS reach Configure as options after the project's own, in that order, and never through its environment
 #      (where Configure would put them in place of the target's flags); configure-target.txt, provenance.txt and
 #      --print-target name them; the cache key tells builds with and without them apart; Configure's own options, words
@@ -39,6 +40,65 @@ ctv() { awk -v t="[$1]" -v k="$2" '$0 == t { f = 1; next } /^\[/ { f = 0 } f && 
 for lib in zlib brotli; do mkdir -p "$work/src/$lib-$(ctv $lib version)"; ctv $lib sha256 > "$work/src/$lib-$(ctv $lib version)/.ksl-unpacked-sha256"; done
 mkdir -p "$work/src/brotli-$(ctv brotli version)/c/enc" "$work/src/brotli-$(ctv brotli version)/c/dec"   # build.sh puts ksl's brotli files there (compression.mk)
 echo '#define OPENSSL_VERSION_STR "stub"' > "$src/include/openssl/opensslv.h"
+# the files the carried patches (gradle/openssl.toml: patch, patch_2 ... patch_9) change, as stubs they apply to exactly:
+# build.sh always runs apply-patch.pl, which wants every context and removed line at the line its hunk names. Each stub
+# holds the lines the patches read, in order (a later patch reads the result of the ones before), and filler elsewhere
+patches=(); pids=""   # the patch files in order, and the words they add to the target line (build.sh: patch_id)
+for n in "" _2 _3 _4 _5 _6 _7 _8 _9; do
+  pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$root/gradle/openssl.toml"); [ -z "$pf" ] || patches+=("$root/$pf")
+  ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$root/gradle/openssl.toml")
+  [ -z "$ps" ] || pids="$pids patch${n//_/-}-sha256=$(printf %s "$ps" | cut -c1-16)"
+done
+stubbed=$(python3 -I - "$src" ${patches[@]+"${patches[@]}"} <<'PY'
+import re, sys
+tree, patches = sys.argv[1], sys.argv[2:]
+orig, state, need = {}, {}, {}   # per file: original line by index; the current lines ('o', index) or ('n', text); length
+N = 1 << 17
+for patch in patches:
+    lines = open(patch, encoding="latin-1").read().splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and not lines[i].startswith("--- "):
+        i += 1
+    while i < len(lines):
+        path = lines[i][6:].strip()
+        i += 2
+        o = orig.setdefault(path, {})
+        st = state.setdefault(path, [("o", k) for k in range(N)])
+        out, at = [], 0
+        while i < len(lines) and lines[i].startswith("@@ "):
+            os_, oc, ns, nc = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", lines[i]).groups()
+            os_, oc, nc = int(os_), int(oc or 1), int(nc or 1)
+            i += 1
+            start = os_ if oc == 0 else os_ - 1
+            if start > 0 and st[start - 1][0] == "o":   # the line before must exist (an insertion after it)
+                need[path] = max(need.get(path, 0), st[start - 1][1] + 1)
+            out += st[at:start]
+            pos, so, sn = start, 0, 0
+            while so < oc or sn < nc:
+                tag, text = lines[i][0], lines[i][1:]
+                i += 1
+                if tag in " -":
+                    kind, v = st[pos]
+                    if kind == "o":
+                        if o.setdefault(v, text) != text: sys.exit(f"{path}: patches disagree on line {v + 1}")
+                        need[path] = max(need.get(path, 0), v + 1)
+                    elif v != text:
+                        sys.exit(f"{path}: a patch reads a line an earlier one wrote otherwise")
+                    if tag == " ": out.append(st[pos])
+                    pos += 1; so += 1; sn += tag == " "
+                else:
+                    out.append(("n", text)); sn += 1
+            at = pos
+        state[path] = out + st[at:]
+import os
+for path, o in orig.items():
+    f = os.path.join(tree, path)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    with open(f, "w", encoding="latin-1") as h:
+        h.writelines(o.get(k, f"/* stub line {k + 1} */\n") for k in range(need.get(path, 0)))
+print(len(orig))
+PY
+)
 cat > "$src/Configure" <<'EOF'
 #!/bin/sh
 # records what OpenSSL's Configure would get: its arguments and its environment
@@ -70,7 +130,8 @@ rm -f "$log".*; out=$(ossl "$tmp/o1"); rc=$?
 check "openssl: builds without the builder's flags" "$([ $rc = 0 ] && grep -q '^built linux-x64' <<< "$out" && echo 0 || echo 1)" "$out"
 check "openssl: without them Configure ends with the project's flags" "$([ "$(tail -1 "$log.args")" = -fno-common ] && echo 0 || echo 1)" "last: $(tail -1 "$log.args")"
 t1=$(portable < "$tmp/o1/linux-x64/configure-target.txt")
-check "openssl: configure-target.txt without them is unchanged" "$([ "$t1" = "linux-x86_64 -Os" ] && echo 0 || echo 1)" "$t1"
+check "openssl: configure-target.txt without them is unchanged" "$([ "$t1" = "linux-x86_64 -Os$pids" ] && echo 0 || echo 1)" "$t1"
+check "openssl: the carried patches applied to the stub tree" "$([ "${stubbed:-0}" -gt 0 ] || [ ${#patches[@]} = 0 ]; echo $?)" "stubs: ${stubbed:-none}"
 
 rm -f "$log".*; out=$(ossl "$tmp/o2" CPPFLAGS="$F_CPP" CFLAGS="$F_C" LDFLAGS="$F_LD"); rc=$?
 check "openssl: builds with the builder's flags, not from the cache of a build without them" \
@@ -84,7 +145,7 @@ check "negative_configureEnvironmentHasNoBuilderFlags" \
   "$([ -s "$log.env" ] && ! grep -qE '^(CPPFLAGS|CFLAGS|CXXFLAGS|LDFLAGS|LDLIBS)=' "$log.env" && echo 0 || echo 1)" "$(grep -E '^(CPPFLAGS|CFLAGS|LDFLAGS)=' "$log.env")"
 t2=$(portable < "$tmp/o2/linux-x64/configure-target.txt")
 check "openssl: configure-target.txt names the builder's flags and the word that stands for them" \
-  "$(grep -qE "^linux-x86_64 -Os $F_CPP $F_C $F_LD builder-flags-sha256=[0-9a-f]{16}\$" <<< "$t2" && echo 0 || echo 1)" "$t2"
+  "$(grep -qE "^linux-x86_64 -Os $F_CPP $F_C $F_LD builder-flags-sha256=[0-9a-f]{16}$pids\$" <<< "$t2" && echo 0 || echo 1)" "$t2"
 check "openssl: provenance.txt names them" "$(grep -qxF "target $t2" "$tmp/o2/linux-x64/provenance.txt" && echo 0 || echo 1)"
 pt=$(CPPFLAGS="$F_CPP" CFLAGS="$F_C" LDFLAGS="$F_LD" bash "$root/tools/openssl/build.sh" --print-target linux-x64)
 check "openssl: --print-target says what was configured, with the flags" "$([ "$pt" = "$t2" ] && echo 0 || echo 1)" "'$pt' vs '$t2'"
@@ -196,7 +257,10 @@ if sdk=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null) && [ -n "$sdk" ]; then
 fi
 # Perl runs OpenSSL's build: PERL5OPT reaches it (control), and a release-like build has it unset (the helper, then a build)
 out=$(ossl "$tmp/o-perl" KSL_OPENSSL_FRESH=1 PERL5OPT=-MKslNoSuchModule); rc=$?
-check "control: PERL5OPT reaches the OpenSSL build (it fails with it)" "$([ $rc != 0 ] && grep -q KslNoSuchModule <<< "$out" && echo 0 || echo 1)" "exit $rc"
+# with carried patches the first Perl to run is shasum (a Perl script on macOS) checking their hashes, whose error build.sh
+# reports as an unreadable file; without, Configure's own
+check "control: PERL5OPT reaches the OpenSSL build (it fails with it)" \
+  "$([ $rc != 0 ] && grep -qE 'KslNoSuchModule|has SHA-256 <unreadable>' <<< "$out" && echo 0 || echo 1)" "exit $rc: $out"
 out=$( export PERL5OPT=-MKslNoSuchModule PERL5LIB=/nonexistent CROSS_SYSROOT=/nonexistent; . "$root/tools/clean-build-env.sh"; ksl_clean_build_env; ossl "$tmp/o-perl-clean" KSL_OPENSSL_FRESH=1); rc=$?
 check "negative_cleanBuildEnvStopsPerl5opt" "$([ $rc = 0 ] && grep -q '^built linux-x64' <<< "$out" && echo 0 || echo 1)" "exit $rc: $out"
 first_line() { grep -n -m1 -E "$2" "$1" | cut -d: -f1; }
