@@ -42,6 +42,7 @@ import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
+import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.HeldTransportEnd
@@ -52,6 +53,7 @@ import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.isTransientRefusal
@@ -63,6 +65,7 @@ import io.kuicksilver.ktor.client.proxyTlsConfigFor
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
+import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.TcpAddress
@@ -110,6 +113,8 @@ internal class H3Target(
     val originHost: String,
     val host: String,
     val port: Int,
+    /** The ECH of an HTTPS record's endpoint (RFC 9848), shared with its TCP side; null: the origin's. Not in [key]. */
+    val ech: EchRoute? = null,
     /** The CONNECT-UDP proxy the connection runs through ([H3Pool.connectThroughUdpProxy]), or null for a direct one. */
     @property:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val udpProxy: io.kuicksilver.ktor.client.ConnectUdpProxy? = null,
@@ -320,6 +325,9 @@ internal class H3Pool(
      * [closeSessions] after the endpoints.
      */
     private val tickets = io.kuicksilver.tls.SessionCache()
+
+    /** The number of session tickets the pool holds (tests: a 0-RTT test waits for its ticket before it drops the connection). */
+    internal suspend fun ticketsForTest(): Int = tickets.size()
 
     /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -911,7 +919,7 @@ internal class H3Pool(
         val left = -deadline.elapsedNow().inWholeMilliseconds
         if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
         ensureOpen()
-        val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
+        val route = dns.echRoute(originHost) { config.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
@@ -922,7 +930,10 @@ internal class H3Pool(
                 made =
                     raceQuic(originHost, port, dns, failures) { remote ->
                         val (ep, to) = endpointFor(remote)
-                        ep.connect(to, tls, q, wtSettings)
+                        // ECH (RFC 9849), retried once on a new connection after a rejection (section 6.1.6)
+                        withEchRetry(
+                            route,
+                        ) { offer -> ep.connect(to, config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3), offer), q, wtSettings) }
                     }
             }
         } catch (e: TimeoutCancellationException) {
@@ -1258,11 +1269,15 @@ internal class H3Pool(
     /** A setup whose race made no connection within the connect timeout. */
     private class SetupTimedOut : Exception("no QUIC connection within the connect timeout")
 
+    /** Test hook: requests sent in 0-RTT on a connection whose ECH was rejected, and sent again ([execute]). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val echEarlyRetriesForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
     /** Test hook: callers that waited for a setup another caller started. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
 
-    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun connectionEntryOnce(
         t: H3Target,
         data: HttpRequestData,
@@ -1270,6 +1285,7 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
+        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
         // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
         if (t.udpProxy == null) shareSameAddress(t, dns, wt)
         val (e, connect) =
@@ -1312,7 +1328,7 @@ internal class H3Pool(
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
                         if (t.udpProxy != null) {
-                            connectThroughUdpProxy(t, dns, failures)
+                            connectThroughUdpProxy(t, dns, failures, route)
                         } else {
                             raceQuic(t.host, t.port, dns, failures, { won, a ->
                                 attempts.update { it + (won to Destination.of(a)) }
@@ -1320,7 +1336,7 @@ internal class H3Pool(
                                 val a = QuicAttemptProgress(destination)
                                 started.update { it + a }
                                 try {
-                                    quicAttempt(t, a, data, wt).also { c -> if (!wt) reportEarlyHandshake(c, a, data) }
+                                    quicAttempt(t, a, data, wt, route).also { c -> if (!wt) reportEarlyHandshake(c, a, data) }
                                 } catch (x: CancellationException) {
                                     a.cancelled = true // a lost race or the connect timeout; only the timeout is reported (below)
                                     throw x
@@ -1416,6 +1432,7 @@ internal class H3Pool(
         t: H3Target,
         dns: RequestDns,
         failures: MutableList<Throwable>,
+        route: EchRoute,
     ): Http3Connection {
         val p = t.udpProxy!!
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
@@ -1455,13 +1472,17 @@ internal class H3Pool(
                 )
             inner = ep
             val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
+            // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
+            // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
             val c =
-                ep.connect(
-                    tunnel.remoteAddress,
-                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                    tunnelled,
-                    config.http3.settings,
-                )
+                withEchRetry(route) { offer ->
+                    ep.connect(
+                        tunnel.remoteAddress,
+                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
+                        tunnelled,
+                        config.http3.settings,
+                    )
+                }
             c.closed.invokeOnCompletion {
                 ep.close()
                 outer.close()
@@ -1502,6 +1523,7 @@ internal class H3Pool(
         a: QuicAttemptProgress,
         data: HttpRequestData,
         wt: Boolean,
+        route: EchRoute,
     ): Http3Connection {
         val (ep, remote) = endpointFor(a.destination)
         // the connection this very call creates tells the attempt its handle (by identity, not by address: two setups to
@@ -1510,7 +1532,10 @@ internal class H3Pool(
         // the latest wins: should one connect call ever create a second connection (a retry inside it), the failure is the
         // last one's
         return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
-            connectAttempt(t, ep, remote, data, wt)
+            // ECH (RFC 9849): the endpoint's configuration (RFC 9848) or the origin's; a rejection is retried once on a new
+            // connection to the same address with the retry configurations, or without ECH when the server sent none
+            // (section 6.1.6)
+            withEchRetry(route) { offer -> connectAttempt(t, ep, remote, data, wt, route, offer) }
         }
     }
 
@@ -1521,27 +1546,27 @@ internal class H3Pool(
         remote: InetSocketAddress,
         data: HttpRequestData,
         wt: Boolean,
-    ): Http3Connection =
-        if (wt) {
+        route: EchRoute,
+        offer: EchRoute.Offer,
+    ): Http3Connection {
+        val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
+        return if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
-            ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
+            ep.connect(remote, tls, quic, wtSettings)
         } else if (config.http3.earlyData) {
             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
-            // the handshake timer (a request sent early then fails, and falls back, at that time)
-            ep.connectEarly(
-                remote,
-                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                quicWithin(data.connectTimeoutMillis(config)),
-                config.http3.settings,
-            )
+            // the handshake timer (a request sent early then fails, and falls back, at that time).
+            // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
+            // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
+            // handshake fails with the rejection after this returned: the request's next connection
+            // (its fallback, or a retry) then offers the retry configurations
+            ep
+                .connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+                .also { c -> noteLateEchRejection(c, route, offer) }
         } else {
-            ep.connect(
-                remote,
-                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                quic,
-                config.http3.settings,
-            )
+            ep.connect(remote, tls, quic, config.http3.settings)
         }
+    }
 
     /**
      * [e], a failed handshake with the CONNECT-UDP proxy [p], as [io.kuicksilver.ktor.client.ProxyTlsException] around the
@@ -1660,6 +1685,28 @@ internal class H3Pool(
             }
         c.closed.invokeOnCompletion { job.cancel() }
     }
+
+    /**
+     * A 0-RTT connection [c] that offered [offer] and whose handshake fails later with an ECH rejection: [route] takes the
+     * rejection, so the request's next connection offers the retry's configuration (RFC 9849 section 6.1.6).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun noteLateEchRejection(
+        c: Http3Connection,
+        route: EchRoute,
+        offer: EchRoute.Offer,
+    ) {
+        if (offer.list == null) return
+        if (offer.retry) retryOffered.update { it + c }
+        c.closed.invokeOnCompletion { failure ->
+            if (failure == null) echRejectionIn(c.closed.getCompleted())?.let { route.rejected(offer, it) }
+            retryOffered.update { it - c }
+        }
+    }
+
+    /** The 0-RTT connections whose ECH offer was a retry's (RFC 9849 section 6.1.6): a rejection there sends nothing again. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
 
     /**
      * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
@@ -1897,6 +1944,7 @@ internal class H3Pool(
         watchStall: Boolean = false,
     ): HttpResponseData {
         var attempts = 0
+        var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val watched = watchStall && config.http3.stallDetection && !data.attributes.contains(WEBSOCKETS_KEY)
@@ -2049,6 +2097,22 @@ internal class H3Pool(
                 val named = e is io.kuicksilver.ktor.client.QuicStalledException || e.cause is io.kuicksilver.ktor.client.QuicStalledException
                 if (stall != null && e !is CancellationException && !named) {
                     throw if (e is H3NotSent) H3NotSent(stall.exception(e.cause)) else stall.exception(e)
+                }
+                // a 0-RTT connection whose ECH the server rejected: the server handshook on the outer ClientHello and ignored
+                // the early data (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10), and the client aborted before any
+                // 1-RTT data, so the request was not processed. It goes once more, on a new connection that offers the
+                // retry configurations (or none when the server sent none, section 6.1.6); a second rejection is the failure
+                val echRejected = echRejectionIn(e)
+                if (echRejected != null &&
+                    resendsAfterEarlyEchRejection(echRetried, conn.quic.isHandshakeComplete, conn in retryOffered.load())
+                ) {
+                    echRetried = true
+                    echEarlyRetriesForTest.addAndFetch(1)
+                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+                    route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
+                    lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
+                    events.emit("retry") { retry(data, attempts + 2, e) }
+                    continue
                 }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
@@ -2571,3 +2635,14 @@ internal class QuicAttemptProgress(
             info.load()?.id,
         )
 }
+
+/**
+ * Whether a request on a 0-RTT connection whose ECH the server rejected goes once more (the server ignored its early data,
+ * RFC 9849 section 6.1, rule 7): only before the handshake completed, only once per request, and never when that
+ * connection already offered a retry's configuration (section 6.1.6: one retry; a third connection would offer it again).
+ */
+internal fun resendsAfterEarlyEchRejection(
+    alreadyResent: Boolean,
+    handshakeComplete: Boolean,
+    offeredRetry: Boolean,
+): Boolean = !alreadyResent && !handshakeComplete && !offeredRetry

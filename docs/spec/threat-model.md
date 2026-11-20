@@ -1143,6 +1143,92 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
 - **Mitigations:** OpenSSL's certificate list bound, `max_cert_list` (100 KiB, which ksl keeps), bounds a plain Certificate, a CompressedCertificate and its announced `uncompressed_length` alike, so a larger announcement is `bad_certificate` before anything is decompressed; the decoder writes into exactly the announced length and any other output is `bad_certificate` (RFC 8879 sections 4 and 5). brotli 1.2.1 sizes its ring buffer by the meta-block length the stream declares, so 68 bytes made it allocate 16.8 MiB whatever the announced length: the one-shot decoder OpenSSL calls is `ksl`'s (`tools/openssl/brotli/ksl_decompress.c`, upstream's renamed), whose allocations are capped at 3 times the announced length plus 256 KiB (at most about 556 KiB under the bound); zlib's inflate allocates its fixed state and 32 KiB window; an algorithm that was not offered is `illegal_parameter`; the decompressed message goes through the same parser and verifier as a plain one. A server session that staples an OCSP response sends its Certificate uncompressed (`ksl_ocsp.c`), since the chain compressed when the context was built holds no response. Certificate chains carry no secret and record compression stays off (`SSL_OP_NO_COMPRESSION`, OpenSSL's security level; RFC 9325 section 3.3), so there is no CRIME-style oracle. The codecs are pinned and verified releases (3.11), watched like OpenSSL (SECURITY.md); zstd, a third codec, is not built. Compression cost: a server compresses its chain once per context, and builds one per identity and per `sniSelector` answer, so a peer cycling server names could make it compress per handshake; OpenSSL compresses with brotli at quality 11 (8.6 ms for the 13.7 KB test chain, 2.7 ms for an RSA-2048 leaf and intermediate on an M-series Mac), so `ksl`'s one-shot encoder caps it at 9 (`ksl_compress.c`: 0.30 ms and 0.08 ms, 6 % and 1.7 % more bytes), below the cost of the handshake's own signature.
 - **Verification:** C `negative_certcomp_brotli_memory_bounded` (the 68-byte brotli stream that declares a 16 MiB meta-block: a peak of about 19 KB against the budget, not 16.8 MiB), `negative_certcomp_malformed_compressed_certificate` (the same stream in a handshake, zlib and brotli bombs of 1 MiB of zeros, `uncompressed_length` off by one, 0, above the bound and 2^24-1, garbage data, an algorithm not offered, a compressed certificate to a side that did not offer the extension), `negative_certcomp_malformed_client_certificate`, `negative_certcomp_client_hello_extension`, `negative_certcomp_tls12_no_certificate_or_record_compression`; `CertificateCompressionTest.negative_decompressionBombIsBadCertificate`, `.negative_wrongUncompressedLengthIsBadCertificate`, `.negative_algorithmNotOfferedIsIllegalParameter`, `.negative_aStaplingSessionSendsItsCertificateUncompressed`.
 
+### 3.31 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20, CWE-757, CWE-834)
+
+- **Threats:** without ECH the server name of every connection is on the path in the clear (CWE-200, exposure to an
+  unauthorized actor). With ECH: an ECHConfigList from DNS or from a server's `retry_configs` is input from the network
+  that the client parses (CWE-20); an active attacker can strip or corrupt the extension to make the client fall back to
+  a plaintext ClientHello (a downgrade), answer as the client-facing server with a certificate for the inner name, or
+  feed `retry_configs` it chose so that the next connection goes to its key; a server's outer ClientHello comes from
+  anyone and is decrypted with the server's keys; a client that does not check the certificate against the
+  `public_name` after a rejection would take any certificate for that name as the origin's (CWE-295).
+- **Mitigations (`ksl`, ADR-0019):** every ECHConfigList, from DNS or a configuration and in a server's
+  `retry_configs`, passes `ksl`'s syntax check first: the list's length must match, every entry must fit, the list must
+  be at most 65,537 bytes, an ECHConfig of version 0xfe0d must be well formed to its last byte, and no extension type
+  may appear twice (§4, §4.2). A list that fails does not parse. Then OpenSSL reads each entry alone, and an entry of
+  another version, with an unsupported KEM, suite or mandatory extension, or a `public_name` that is no DNS name or
+  reads as IPv4, is ignored on its own (§4, §4.2, §6.1.7). For `retry_configs` this holds since the third carried
+  patch: OpenSSL 4.1.0 had dropped the whole list for one such entry, for a first entry of another version and for a list
+  past 1500 bytes. A rejected ECH is never a success. OpenSSL authenticates the outer handshake for the `public_name`
+  (`ksl_match_leaf` and the paused path take that name, `KSL_GET_VERIFY_NAME`) and ends it with `ech_required`, so
+  nothing of it reaches the application and its session tickets never arrive. `retry_configs` are reported only after
+  that authentication, and never after GREASE (§6.1.6, §6.2.1). The rejection is recorded when our `ech_required` goes
+  out, not read back from the last alert. Some outcomes the RFC makes failures are never reported as a rejection, so
+  there is no retry configuration and no "securely disabled": a server that resumes a session after rejecting
+  (§6.1.2), `retry_configs` that do not parse (§6.1.6), `retry_configs` on an accepted ECH (§5), and malformed ones after
+  GREASE (§6.2.1). Each fails the handshake with the alert the RFC names, over TCP and QUIC (the fifth and sixth carried patches;
+  `ksl`'s own checks stay as a second line). An ECH client offers TLS 1.3 only, so a server that
+  answers TLS 1.2 gets no connection. A server refuses an accepted inner ClientHello that offers TLS 1.2 or below, with
+  `illegal_parameter` (§7.1). The server's keys are replaced whole under a lock made with the context (rotation, also
+  the first set from several threads), and each session copies the set it starts with. GREASE ECH hides whether a
+  client has a configuration, takes a cipher suite at random per handshake, and has a real offer's payload length for
+  the same ClientHello (§6.2.1, the seventh carried patch). A server key set whose keys share a config_id is refused:
+  OpenSSL tries only the first key of a config_id, and a client of the other would be rejected (§4.1, §7.1). Keys are
+  loaded from PEM only: a store made by `OSSL_ECHSTORE_new_config` and used directly would decrypt no client
+  configured from DNS (bug L of ADR-0019). The
+  inner server name is padded by max(0, M − D) (§6.1.3, the fourth carried patch). OpenSSL 4.1.0 needs two upstream
+  patches for ECH after a HelloRetryRequest (QUIC's transport parameters; a rejection after one: bugs B and C of
+  ADR-0019). On a rejection no client certificate and no session ticket is exchanged (§6.1.7), because OpenSSL aborts
+  once the server's Finished is verified.
+- **Mitigations (`kuicksilver-tls`):** the origin's pins (`TrustConfig.Pinned`) are not applied to the `public_name`'s
+  certificate, which the base trust authenticates for that name; the connection only reports the rejection, and the retry
+  is held to the pins. Trust on first use takes no first contact from a rejection: a `public_name` without a stored key
+  fails it, so an attacker cannot plant retry configurations of its own through a TOFU client, nor a key in its store.
+- **Mitigations (Ktor client):** the `ech` SvcParam of an HTTPS record (CWE-20) is framing-checked by the SVCB codec
+  (length prefix equal to the value, each ECHConfig inside it), a malformed one rejecting the RRset (RFC 9460 §2.2),
+  before the TLS layer's own check; the SVCB codec's fuzz target covers it. Downgrade (CWE-757): with the records' ECH
+  the client sends no ClientHello before the resolution completed (RFC 9848 §5.3) and, when every endpoint has `ech`,
+  never falls back to a connection without it (§5.1): not to the origin, an appended AliasMode endpoint or an Alt-Svc
+  alternative without its own `ech`. Retries are bounded (CWE-834): one per endpoint and request, shared by the QUIC and
+  TCP sides, to the addresses already resolved (§6.1.6, no new lookup); a rejected retry fails the request, and retry
+  configurations are never stored. A 0-RTT request on a rejected connection was ignored by the server (§6.1 rule 7) and is
+  sent once more on the retry, never twice processed. Inside a proxy's tunnel (CONNECT, SOCKS5, CONNECT-UDP) the origin's ECH applies; the
+  TLS or QUIC hop to an `https://` or CONNECT-UDP proxy offers no configuration of the origin's, GREASE as configured, and
+  an ECH rejection on it is never taken for the origin's (`ClientEchTest.negative_proxyHopOffersNoEchConfiguration`,
+  `negative_aProxyHopRejectionIsNotTheOrigins`).
+- **Verification:** C `test_ech.c`: `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`,
+  `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`,
+  `negative_ech_rejected` (QUIC, TCP), `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`,
+  `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`,
+  `ech_rejected_after_hrr`, `ech_rejection_sends_no_client_certificate`, the `negative_ech_keys_*` and
+  `negative_ech_config_*` refusals, the syntax cases (`negative_ech_duplicate_extension`,
+  `negative_ech_trailing_bytes_in_contents`, `negative_ech_public_key_*`, `negative_ech_suites_*`,
+  `negative_ech_public_name_empty`), the outcomes (`negative_ech_rejection_kept_after_the_last_alert_changes`,
+  `negative_ech_rejected_with_psk`, `negative_ech_retry_configs_*`, `negative_ech_server_sends_truncated_retry_configs`,
+  `negative_ech_server_sends_duplicate_extension`, `negative_ech_accepted_with_retry_configs`,
+  `negative_ech_grease_malformed_retry_configs`, `ech_retry_list_with_*`, `ech_long_retry_list`; the TCP `ech_required`
+  is protected), the alerts on the wire (`ech_alerts_on_the_wire`: trailing bytes after a rejection and after GREASE,
+  `retry_configs` on an accepted ECH, a pre_shared_key after a rejection, over TCP and QUIC),
+  `negative_ech_keys_sharing_a_config_id`, `ech_grease_payload_length`, `negative_ech_inner_offers_tls12`,
+  `ech_grease_suites`, `ech_inner_name_padding`, and the accepted,
+  HelloRetryRequest, rotation (three threads under ThreadSanitizer), first key set (`ech_first_keys_threads`, four
+  threads on fresh contexts under ThreadSanitizer) and resumption cases; Kotlin: `tls.EchTest` (`pinsDoNotApplyToThePublicNameCertificate`,
+  `negative_pinnedRejectionStillNeedsTheBaseTrust`, `negative_tofuDoesNotTrustAPublicNameOnFirstContact`),
+  `ClientEchTest` (`negative_aRejectedRetryIsNotRetriedAgain`, `negative_echReliantRequestNeverFallsBackToTheOrigin`,
+  `negative_serverWithoutEchIsRetriedWithoutEch`, `earlyDataUnderARejectedEchIsSentAgainOnTheRetry`),
+  `ClientHttpsRecordTest.negative_echClientSendsNoClientHelloBeforeTheRecordsResolved`, `SvcbRecordTest`
+  (`negative_malformedEchValues`), `ServerEchTest`; fuzzing: the ksl harness's modes `0xfc` (the list check) and `0xfb`
+  (an ECH server's decryption of an attacker's ClientHello), and the SVCB codec's target (`SvcbFuzzTest`).
+- **Not covered:** the name of the origin is still visible in the plaintext DNS query for its HTTPS record unless DNS is
+  protected (RFC 9849 §10.2, "Unauthenticated and Plaintext DNS"; RFC 9848 §8), and so is an attacker's ability to block
+  that query and with it ECH (RFC 9848 §8: abandoning the request on a failed protected lookup, `Exchange(secure = true)`,
+  is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
+  client-facing server forwarding to a backend) is not implemented. On a rejection the client answers a CertificateRequest with an empty Certificate (§6.1.7, the eighth carried patch, upstream
+  issue https://github.com/openssl/openssl/issues/33831). The inner ALPN extension is padded to the longest of Kuicksilver's application
+  profiles (§6.1.3, the ninth carried patch), so the profile does not show in the payload length. Certificate validation under an accepted ECH stays offline on Windows, Apple and the JVM (§10.7: the JVM builds the path from
+  the presented certificates and validates it without revocation or AIA fetches), and a custom verifier is told the name is
+  hidden.
+
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
@@ -1191,6 +1277,9 @@ HTTPS proxies (§3.28):
 
 CONNECT-UDP (§3.29):
 17. `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`, `negative_invalidTargetValuesAndPathsAreRefused`, `negative_clientRefusesBeforeSending`, `negative_missingCapsuleProtocolFieldIsRefused`, `negative_unknownContextIdIsDroppedByTheProxy`, `negative_unknownContextIdIsDroppedByTheClient`, `negative_oversizedUdpPayloadAbortsTheStream`, `negative_payloadAboveTheLinkMtuIsDropped`, `negative_targetPayloadTooLargeForTheClientIsDropped`, `negative_datagramFromAnotherSourceIsDiscarded`, `negative_rateLimitDropsBeyondTheBurst`, `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`, `negative_clientResetFreesTheTunnel`, `negative_socketFailureClosesTheRequestStream`, `negative_dnsFailureAndTimeoutAreRefusedWithProxyStatus`, `negative_otherProtocolIsRefused` — `connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`; `negative_unknownContextSkippedWithoutBuffering`, `negative_oversizedContextZeroAbortsBeforeItsBytesArrive`, `negative_emptyOrTruncatedContextIdIsDropped` — `message.DatagramFilterParserTest`; `negative_templatesBreakingSection2AreRejected`, `negative_invalidTargetsAreRejectedByTheClient`, `negative_invalidTargetValuesAreInvalidNotMatched`, `negative_ambiguousServerTemplatesAreRejected` — `message.UdpUriTemplateTest`; `negative_defaultProxyRefusesLoopbackThroughTheRoute`, `negative_aRefusalBeforeTheRouteGoesOutAsItIs`, `negative_engineWithoutConnectUdpAnswers501`, `negative_otherRoutesTwoHundredIs501` — `ServerConnectUdpTest` (Ktor server); `negative_aRefusedTunnelNeverFallsBackToADirectConnection`, `negative_h1OnlyWithAConnectUdpProxyIsRefused` — `ClientConnectUdpProxyTest` (Ktor client)
+
+Encrypted Client Hello (§3.31):
+19. C (`test_ech.c`): `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`, `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`, `negative_ech_rejected`, `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`, `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`, `negative_ech_keys_without_retry`, `negative_ech_config_on_tls12_context`, `negative_ech_rejected_no_client_certificate` (a check of `ech_rejection_sends_no_client_certificate`), `negative_ech_list_empty`, `negative_ech_config_without_verification_refused`, `negative_ech_verify_name_fixed_after_the_handshake_started`, `negative_ech_retry_configs_supported_but_unusable`; Kotlin (`tls.EchTest`): `negative_malformedListsAreRefused`, `negative_configurationsInTheWrongPlaceAreRefused`, `negative_quicRejectedReportsRetryConfigs`, `negative_quicUnauthenticatedRejectionHasNoRetryConfigs`, `negative_quicServerWithoutEchIsSecurelyDisabled`, `negative_pinnedRejectionStillNeedsTheBaseTrust`, `negative_tofuDoesNotTrustAPublicNameOnFirstContact`; Ktor (`ClientEchTest`, `ClientHttpsRecordTest`, `SvcbRecordTest`, `ServerEchTest`): `negative_aRejectedRetryIsNotRetriedAgain`, `negative_serverWithoutEchIsRetriedWithoutEch`, `negative_echReliantRequestNeverFallsBackToTheOrigin`, `negative_hostConfigurationNeedsTls13Only`, `negative_echClientSendsNoClientHelloBeforeTheRecordsResolved`, `negative_malformedEchValues`, `negative_aPublicNameCertificateThatDoesNotCoverItFailsTheRejection`
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)
@@ -1275,6 +1364,7 @@ weakness appears in different protocols.
 | 3.28 | HTTPS proxies: the proxy's certificate and name, credentials in clear to an `http://` proxy | CWE-295, CWE-319, CWE-522 |
 | 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing; a raw ICMP socket; the client's TLS to the proxy | CWE-918, CWE-400, CWE-770, CWE-20; CWE-250, CWE-406; CWE-200, CWE-295 |
 | 3.30 | certificate decompression bombs and mismatched lengths; a compressed chain without its OCSP response | CWE-409, CWE-130, CWE-299 |
+| 3.31 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection, downgrade to no ECH, bounded retries | CWE-200, CWE-20, CWE-295, CWE-757, CWE-834 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and

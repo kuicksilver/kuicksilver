@@ -108,6 +108,9 @@ public sealed interface TrustConfig {
 
     /**
      * [base][TrustConfig.Pinned.base] trust AND one of [pins][TrustConfig.Pinned.pins] must match the validated chain within [scope][TrustConfig.Pinned.scope].
+     * The pins are the origin's: when a server rejects Encrypted Client Hello, the certificate it presents is checked by
+     * [base][TrustConfig.Pinned.base] for the configuration's `public_name` only (RFC 9849 section 6.1.7), since that
+     * connection only reports the rejection ([TlsException.EchRejected]); the retry is held to the pins.
      *
      * @property scope which certificates of the validated chain may match; default [PinScope.Leaf], the strictest.
      * @property base the trust that must accept the chain as well (AND, never OR: ADR-0011); default [Platform]. [Tofu],
@@ -143,7 +146,8 @@ public sealed interface TrustConfig {
      *
      * The chain is not validated against any CA: the first connection to a name trusts whatever key it meets, so an attacker
      * present at that moment is trusted from then on. The host name is still checked; a later key change fails with
-     * [VerifyReason.PinMismatch]. Clients only in v1.
+     * [VerifyReason.PinMismatch]. Clients only in v1. An Encrypted Client Hello rejection is no first contact: its
+     * `public_name` must have a stored key (from a direct connection to it), or the rejection fails ([TlsException.Verify]).
      *
      * @property store where the leaf SPKI hash of each name is kept.
      */
@@ -304,6 +308,39 @@ public fun interface CertificateVerifier {
         serverName: String?,
         role: TlsRole,
     ): VerifyResult
+
+    /**
+     * [verify] with what the connection knows about [serverName] ([VerificationContext]): the one Kuicksilver calls.
+     * Override it to tell a name an accepted Encrypted Client Hello hid, about which RFC 9849 section 10.7 asks for no
+     * network request (OCSP, CRL, a fetched intermediate), from the ECH `public_name` of a rejection; by default it is
+     * [verify] without the context.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun verify(
+        chain: List<Certificate>,
+        serverName: String?,
+        role: TlsRole,
+        context: VerificationContext,
+    ): VerifyResult = verify(chain, serverName, role)
+}
+
+/**
+ * What a connection knows about the name a [CertificateVerifier] checks.
+ *
+ * @property hiddenName [CertificateVerifier.verify]'s `serverName` is a name an accepted Encrypted Client Hello hid from the
+ *   path (RFC 9849): a verifier SHOULD make no network request about it during the validation (section 10.7: OCSP, CRL,
+ *   AIA fetches name the server to whoever sees them); answer from what is at hand or cached, as the platform verifiers do.
+ * @property echPublicName the server rejected the connection's ECH and `serverName` is the ECH configuration's
+ *   `public_name`, not the origin (section 6.1.7): accepting authenticates the rejection only, the connection carries no
+ *   data and is retried with the server's new configuration; the origin's pins do not apply here.
+ */
+@ExperimentalKuicksilverApi
+public class VerificationContext internal constructor(
+    public val hiddenName: Boolean,
+    public val echPublicName: Boolean,
+) {
+    /** For logs. */
+    override fun toString(): String = "VerificationContext(hiddenName=$hiddenName, echPublicName=$echPublicName)"
 }
 
 /** Storage for [TrustConfig.Tofu]. */

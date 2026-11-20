@@ -96,6 +96,28 @@ internal object KslNative {
         out: IntArray,
     ): ByteArray?
 
+    /**
+     * The usable ECHConfigs of [list] (null when none is kept); out[0] is a status: 0 the list parses, -1 it does not parse, -2
+     * memory ran out before it was read.
+     */
+    @JvmStatic external fun echConfigListCheck(
+        list: ByteArray,
+        out: IntArray,
+    ): ByteArray?
+
+    /** the handle, or 0 with msg[0] = why */
+    @JvmStatic external fun echKeysNew(
+        framed: ByteArray,
+        msg: Array<String?>,
+    ): Long
+
+    @JvmStatic external fun echKeysFree(keys: Long)
+
+    @JvmStatic external fun ctxSetEchKeys(
+        ctx: Long,
+        keys: Long,
+    ): Int
+
     @JvmStatic external fun ctxSetCrls(
         ctx: Long,
         crls: ByteArray,

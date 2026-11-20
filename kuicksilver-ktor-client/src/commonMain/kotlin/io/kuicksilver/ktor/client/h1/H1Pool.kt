@@ -28,6 +28,7 @@ import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
+import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
@@ -54,6 +55,7 @@ import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.toInet
+import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.abort
@@ -1638,6 +1640,7 @@ internal class H1Pool(
      * TCP, TLS to an `https://` proxy, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect
      * timeout, which bounds every step of a proxy's handshake too.
      */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun connect(
         data: HttpRequestData,
         url: Url,
@@ -1650,6 +1653,29 @@ internal class H1Pool(
             kotlin.time.TimeSource.Monotonic
                 .markNow(),
         progress: TcpProgress? = null,
+    ): PooledConnection {
+        if (!secure) return connectOnce(data, url, false, proxy, key, dns, h2Ok, connectStarted, progress, null)
+        // the origin's ECH (RFC 9849), also inside a proxy's tunnel; the TLS hop to an https proxy never offers it
+        // (proxyTlsConfigFor), and a rejection there is the proxy's (echRejectionIn stops at a ProxyTlsException).
+        // A rejection is retried once on a new connection with the server's retry configurations, or without ECH when it
+        // sent none (section 6.1.6), within the same connect timeout
+        val route = dns.echRoute(url.host) { config.ech.listFor(it) }
+        return withEchRetry(route) { offer -> connectOnce(data, url, true, proxy, key, dns, h2Ok, connectStarted, progress, offer) }
+    }
+
+    /** [connect] with the ECH [ech] offers (null for plain http). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectOnce(
+        data: HttpRequestData,
+        url: Url,
+        secure: Boolean,
+        proxy: ResolvedProxy?,
+        key: String,
+        dns: RequestDns,
+        h2Ok: Boolean,
+        connectStarted: kotlin.time.TimeMark,
+        progress: TcpProgress?,
+        ech: EchRoute.Offer?,
     ): PooledConnection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -1785,7 +1811,7 @@ internal class H1Pool(
                             TlsConnection.client(
                                 rawIn,
                                 rawOut,
-                                config.tlsConfigFor(url.host, alpn),
+                                config.tlsConfigFor(url.host, alpn, ech),
                                 callContextOrEmpty(),
                                 sessions,
                             )

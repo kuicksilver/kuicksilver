@@ -149,7 +149,7 @@ internal class HttpsRecordCache(
         /** About what [r] holds in memory: its strings, ALPN ids and hints, and [ENTRY_OVERHEAD]. */
         fun bytesOf(r: SvcbRecord): Long =
             ENTRY_OVERHEAD + r.target.length + r.owner.length + r.alpn.sumOf { it.length + 16L } +
-                r.ipv4Hints.size * (4 + 16L) + r.ipv6Hints.size * (16 + 16L)
+                r.ipv4Hints.size * (4 + 16L) + r.ipv6Hints.size * (16 + 16L) + (r.ech?.size ?: 0)
     }
 }
 
@@ -166,7 +166,16 @@ internal sealed interface HttpsResolution {
         val endpoints: List<HttpsEndpoint>,
         /** A/AAAA addresses of endpoint names that came with the answers (RFC 9460 section 5), 4 or 16 bytes each. */
         val addresses: Map<String, List<ByteArray>> = emptyMap(),
-    ) : HttpsResolution
+    ) : HttpsResolution {
+        /**
+         * RFC 9848 section 5.1: "ECH-capable, SVCB-optional clients MUST switch to SVCB-reliant connection establishment if
+         * SVCB resolution succeeded ... and all alternative endpoints have an "ech" SvcParam": the ServiceMode endpoints
+         * (not the one appended after AliasMode records, which has no SvcParams) are there and all carry one. Endpoints
+         * carry `ech` only for a client that offers ECH ([serviceEndpoints]), so this is false for any other.
+         */
+        val echReliant: Boolean
+            get() = endpoints.filter { !it.appended }.let { it.isNotEmpty() && it.all { e -> e.ech != null } }
+    }
 
     /**
      * Connect as if the service had no SVCB record: there is none, none usable, an AliasMode "." (ignored, section 12),
@@ -327,6 +336,8 @@ internal class HttpsRecords(
         supported: Set<String>,
         // the endpoint section 3 appends, as far as the chain got: for a resolution that is cut short (the extra wait)
         progress: AliasProgress = AliasProgress(),
+        // the client offers ECH (RFC 9848): endpoints keep their `ech`, and `mandatory=ech` is compatible
+        ech: Boolean = false,
         // a name the next query will ask for, whose A/AAAA may be looked up meanwhile (section 5, speculative queries)
         prefetch: (String) -> Unit = {},
     ): HttpsResolution {
@@ -349,7 +360,7 @@ internal class HttpsRecords(
             val alias = aliasTarget(rs, random)
             if (alias == null || !isHostName(alias)) {
                 // no AliasMode record, or one to "." (ignored): this RRset's ServiceMode records, if any (section 3, step 4)
-                val endpoints = if (alias == null) serviceEndpoints(rs, port, supported, random) else emptyList()
+                val endpoints = if (alias == null) serviceEndpoints(rs, port, supported, random, ech) else emptyList()
                 val all =
                     if (aliased) {
                         endpoints +
@@ -358,6 +369,7 @@ internal class HttpsRecords(
                                 port,
                                 quic = false,
                                 tcp = HTTPS_DEFAULT_ALPN in supported,
+                                appended = true,
                             )
                     } else {
                         endpoints
@@ -379,7 +391,8 @@ internal class HttpsRecords(
             }
             aliased = true
             name = alias
-            progress.endpoint = HttpsEndpoint(name, port, quic = false, tcp = HTTPS_DEFAULT_ALPN in supported).takeIf { it.tcp }
+            progress.endpoint =
+                HttpsEndpoint(name, port, quic = false, tcp = HTTPS_DEFAULT_ALPN in supported, appended = true).takeIf { it.tcp }
             // the alias target is the likely TargetName ("." in its ServiceMode records) and the appended endpoint's name
             if (name !in addresses) prefetch(name)
         }
@@ -395,12 +408,13 @@ internal class HttpsRecords(
         host: String,
         port: Int,
         supported: Set<String>,
+        ech: Boolean = false,
     ): Boolean? {
         val name = httpsQueryName(host, port)
         if (!DnsMessage.isAskable(name)) return false // as in [resolve]
         val rs = records(name) ?: return null
         val alias = aliasTarget(rs, random)
-        return if (alias != null) isHostName(alias) else serviceEndpoints(rs, port, supported, random).isNotEmpty()
+        return if (alias != null) isHostName(alias) else serviceEndpoints(rs, port, supported, random, ech).isNotEmpty()
     }
 
     companion object {

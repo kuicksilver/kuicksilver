@@ -1,0 +1,125 @@
+OpenSSL 4.1.0: the ECH client does not check the encrypted_client_hello extension of EncryptedExtensions
+
+Kuicksilver's own code, the fifth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-sni-padding.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_5, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
+report drafted 2026-11-19, to be filed). Applies to OpenSSL master at 4a5704abc6d2 on top of the patches before it (git apply; extensions_clnt.c is 99
+lines further down there).
+
+The bugs (tls_parse_stoc_ech, extensions_clnt.c; SSL_ech_get1_retry_config, ech_ssl_apis.c):
+- RFC 9849 section 5: "If the server sent this extension in response to the inner variant, then the client MUST abort
+  with an "unsupported_extension" alert." OpenSSL keeps retry_configs that arrive with an accepted ECH.
+- Sections 6.1.6 and 6.2.1: the client MUST check the extension "syntactically" and abort with "decode_error"
+  otherwise. OpenSSL checks only the list's 2-byte length: bytes after the list, ECHConfigs that do not frame, contents
+  of version 0xfe0d that do not parse to their last byte, or an extension type given twice (section 4.2) pass, and the
+  client sends ech_required instead (or, after GREASE, completes).
+- Section 6.2.1: after GREASE the client "MUST NOT save the retry_configs value"; SSL_ech_get1_retry_config handed it
+  out.
+
+The fix: in tls_parse_stoc_ech, at EncryptedExtensions, unsupported_extension when ECH was accepted, else decode_error
+unless the value is one ECHConfigList with nothing after it that passes the syntax check; SSL_ech_get1_retry_config
+returns none after GREASE.
+
+diff --git a/ssl/statem/extensions_clnt.c b/ssl/statem/extensions_clnt.c
+--- a/ssl/statem/extensions_clnt.c
++++ b/ssl/statem/extensions_clnt.c
+@@ -2842,7 +2842,55 @@
+ err:
+     return EXT_RETURN_FAIL;
+ }
++
++/*
++ * Is |list| (the contents of an ECHConfigList) syntactically valid (RFC 9849,
++ * sections 4 and 4.2)? Each ECHConfig must frame; one of our version must
++ * also parse as ECHConfigContents to its last octet, with no extension type
++ * twice. Whether we can use an ECHConfig (KEM, suites, mandatory extensions)
++ * is not checked here.
++ */
++static int ech_retry_configs_syntax_ok(const PACKET *list)
++{
++    PACKET l = *list, contents, pub, suites, name, exts, ext, rest;
++    unsigned int version, u, type, other;
+ 
++    if (PACKET_remaining(&l) == 0)
++        return 0;
++    while (PACKET_remaining(&l) > 0) {
++        if (!PACKET_get_net_2(&l, &version)
++            || !PACKET_get_length_prefixed_2(&l, &contents))
++            return 0;
++        if (version != OSSL_ECH_RFC9849_VERSION)
++            continue;
++        if (!PACKET_get_1(&contents, &u) /* config_id */
++            || !PACKET_get_net_2(&contents, &u) /* kem_id */
++            || !PACKET_get_length_prefixed_2(&contents, &pub)
++            || PACKET_remaining(&pub) == 0
++            || !PACKET_get_length_prefixed_2(&contents, &suites)
++            || PACKET_remaining(&suites) < 4
++            || PACKET_remaining(&suites) % 4 != 0
++            || !PACKET_get_1(&contents, &u) /* maximum_name_length */
++            || !PACKET_get_length_prefixed_1(&contents, &name)
++            || PACKET_remaining(&name) == 0
++            || !PACKET_get_length_prefixed_2(&contents, &exts)
++            || PACKET_remaining(&contents) != 0)
++            return 0;
++        while (PACKET_remaining(&exts) > 0) {
++            if (!PACKET_get_net_2(&exts, &type)
++                || !PACKET_get_length_prefixed_2(&exts, &ext))
++                return 0;
++            for (rest = exts; PACKET_remaining(&rest) > 0;) {
++                if (!PACKET_get_net_2(&rest, &other)
++                    || !PACKET_get_length_prefixed_2(&rest, &ext)
++                    || other == type)
++                    return 0;
++            }
++        }
++    }
++    return 1;
++}
++
+ /* if the server thinks we GREASE'd then we may get an ECHConfigList */
+ int tls_parse_stoc_ech(SSL_CONNECTION *s, PACKET *pkt, unsigned int context,
+     X509 *x, size_t chainidx)
+@@ -2866,11 +2914,24 @@
+             OSSL_ECH_SIGNAL_LEN);
+         return 1;
+     }
+-    /* otherwise we expect retry-configs */
+-    if (!PACKET_get_length_prefixed_2(pkt, &rcfgs_pkt)) {
+-        SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);
++    /*
++     * EncryptedExtensions: retry_configs are valid only when the server used
++     * ClientHelloOuter (RFC 9849, section 5)
++     */
++    if (s->ext.ech.success == 1) {
++        SSLfatal(s, SSL_AD_UNSUPPORTED_EXTENSION, SSL_R_BAD_EXTENSION);
+         return 0;
+     }
++    /*
++     * otherwise we expect retry-configs, which we check syntactically, after
++     * a rejection and after GREASE alike (RFC 9849, sections 6.1.6 and 6.2.1)
++     */
++    if (!PACKET_get_length_prefixed_2(pkt, &rcfgs_pkt)
++        || PACKET_remaining(pkt) != 0
++        || !ech_retry_configs_syntax_ok(&rcfgs_pkt)) {
++        SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_ECH_DECODE_ERROR);
++        return 0;
++    }
+     rval = PACKET_data(&rcfgs_pkt);
+     rlen = (unsigned int)PACKET_remaining(&rcfgs_pkt);
+     OPENSSL_free(s->ext.ech.returned);
+--- a/ssl/ech/ech_ssl_apis.c
++++ b/ssl/ech/ech_ssl_apis.c
+@@ -311,7 +311,12 @@
+         ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_INVALID_ARGUMENT);
+         return 0;
+     }
+-    if (s->ext.ech.returned == NULL) {
++    /*
++     * after GREASE the client MUST NOT save retry_configs (RFC 9849,
++     * section 6.2.1)
++     */
++    if (s->ext.ech.returned == NULL
++        || s->ext.ech.grease == OSSL_ECH_IS_GREASE) {
+         *ec = NULL;
+         *eclen = 0;
+         return 1;

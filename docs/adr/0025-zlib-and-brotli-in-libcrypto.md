@@ -11,7 +11,7 @@ Date: 2026-11-18. Status: accepted (owner decision 2026-11-18).
 
 TLS certificate compression ([RFC 8879](../spec/rfc/8879.md#certificate-compression)) is in 0.3.0: a compressed
 certificate chain keeps a server's first flight within QUIC's amplification limit (RFC 9000 section 8.1) for longer
-chains. OpenSSL 3.5 implements RFC 8879 (`SSL_CTX_set1_cert_comp_preference`, `SSL_CTX_compress_certs`, the
+chains. OpenSSL (3.5, and the 4.1 that 0.3.0 bundles, ADR-0019) implements RFC 8879 (`SSL_CTX_set1_cert_comp_preference`, `SSL_CTX_compress_certs`, the
 `compress_certificate` extension and the `CompressedCertificate` message), but only with its built-in codecs: there is no
 hook for an algorithm of the application's (BoringSSL has `SSL_CTX_add_cert_compression_alg`, OpenSSL has none). The
 bundled OpenSSL was built `no-comp`, without zlib, brotli or zstd, so every certificate compression function returned 0.

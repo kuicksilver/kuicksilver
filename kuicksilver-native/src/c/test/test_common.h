@@ -168,6 +168,7 @@ void run_tcp(void);
 void run_verify(void);
 void run_revocation(void);
 void run_groups(void);
+void run_ech(void);
 void run_udp(void);
 void run_icmp(void);
 void run_security(void);

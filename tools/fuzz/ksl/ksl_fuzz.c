@@ -22,6 +22,10 @@
         policy; cfg / 3 % 4: 0 no SNI pause, 1..3 a pause resumed with an override whose policy is that minus 1; cfg / 12 % 2:
         a server (and override) that takes only P-384, so a ClientHello with another key share draws a HelloRetryRequest and
         the records may carry a second one
+     0xfc  (the whole byte) an ECHConfigList (RFC 9849 section 4, as an HTTPS record's ech parameter carries it) for
+        ksl_ech_config_list_check: what it keeps parses again to itself, and is never longer than the input
+     0xfb  (the whole byte) a ClientHello to a server session with the ECH key of testdata/ech/ech-a.pem (and the SNI pause):
+        OpenSSL's ECH decryption and inner ClientHello checks, reached through ksl's server, on an attacker's outer ClientHello
      0xfa  (the whole byte, as 0xfe; 0xfc and 0xfb are ECH's) a server's Handshake-level CRYPTO (EncryptedExtensions, a Certificate or a
         CompressedCertificate of RFC 8879, CertificateVerify, Finished) to a client whose ClientHello a real server answered
         at the Initial level: the client offers certificate compression (brotli, zlib) and verifies nothing, so a
@@ -64,6 +68,7 @@ static uint8_t TICKET_KEYS[80];
 
 static ksl_ctx *server_comp_ctx; /* mode 0xfa: a server that compresses its chain (frozen) */
 static ksl_ctx *server_ctx, *server_sni_ctx, *server_early_ctx, *client_ctx, *server_registered_ctx, *server_default_ctx;
+static ksl_ctx *server_ech_ctx; /* mode 0xfb */
 /* mode 0xfd: TCP servers by [policy][pause][P-384 only], the SNI overrides by policy, and a TCP client for the seeds */
 static const uint8_t ALPN_X1[] = {2, 'x', '1'};
 static ksl_ctx *tcp_server_ctx[3][2][2], *tcp_override_ctx[3][2], *tcp_client_ctx;
@@ -119,7 +124,26 @@ static void init(void) {
     }
     tcp_client_ctx = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(tcp_client_ctx, ALPN_X1, sizeof ALPN_X1);
     ksl_ctx_set_option(tcp_client_ctx, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+    /* mode 0xfb: an ECH server (key A, in retry_configs) that pauses at the inner ClientHello */
+    server_ech_ctx = new_server(1, 0);
+    size_t el; uint8_t *pem = read_all("ech/ech-a.pem", &el), *keys = malloc(el + 5);
+    keys[0] = (uint8_t)((el + 1) >> 24); keys[1] = (uint8_t)((el + 1) >> 16); keys[2] = (uint8_t)((el + 1) >> 8); keys[3] = (uint8_t)(el + 1);
+    keys[4] = 1; memcpy(keys + 5, pem, el);
+    ksl_ech_keys *ek = ksl_ech_keys_new(keys, el + 5, NULL, 0);
+    if (!ek || ksl_ctx_set_ech_keys(server_ech_ctx, ek) != KSL_OK) abort();
+    ksl_ech_keys_free(ek); free(keys); free(pem);
     server_comp_ctx = new_server(0, 0); ksl_ctx_freeze(server_comp_ctx);
+}
+/* Mode 0xfc: the kept ECHConfigs parse again to themselves, and never exceed the input */
+static void ech_list(const uint8_t *p, size_t n) {
+    uint8_t *copy = malloc(n ? n : 1), *out = malloc(n + 1), *again = malloc(n + 1); memcpy(copy, p, n); /* ASan sees a read past n */
+    size_t ol = 0, al = 0;
+    int r = ksl_ech_config_list_check(copy, n, out, n + 1, &ol);
+    if (r == KSL_OK && ol > n) abort();
+    if (r == KSL_OK && ol > 0 && (ksl_ech_config_list_check(out, ol, again, n + 1, &al) != KSL_OK || al != ol || memcmp(out, again, ol))) abort();
+    size_t need = 0;
+    if (r == KSL_OK && ol > 2 && (ksl_ech_config_list_check(copy, n, out, ol - 1, &need) != KSL_ERROR || need != ol)) abort();
+    free(copy); free(out); free(again);
 }
 
 static void touch(const uint8_t *p, size_t n);
@@ -217,9 +241,10 @@ static void serve(ksl_ctx *ctx, const uint8_t *hello, size_t len, int early) {
     }
     uint8_t buf[64]; size_t l; ksl_ssl_get(s, KSL_GET_ALPN, buf, sizeof buf, &l);
     if (debug) {
-        uint8_t reused = 0, early = 0; size_t rl;
+        uint8_t reused = 0, early = 0, ech = 0; size_t rl;
         ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &rl); ksl_ssl_get(s, KSL_GET_EARLY_DATA, &early, 1, &rl);
-        fprintf(stderr, "served: reused %d early %d\n", reused, early);
+        ksl_ssl_get(s, KSL_GET_ECH_STATUS, &ech, 1, &rl);
+        fprintf(stderr, "served: reused %d early %d ech %d\n", reused, early, ech);
     }
     ksl_ssl_free(s);
 }
@@ -354,6 +379,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (n >= 1) serve_tcp(rest[0], rest + 1, n - 1);
         return 0;
     }
+    if (data[0] == 0xfc) { ech_list(rest, n); return 0; }
+    if (data[0] == 0xfb) { serve(server_ech_ctx, rest, n, 0); return 0; }
     if (data[0] == 0xfa) {
         serve_handshake_flight(rest, n);
         return 0;
@@ -435,6 +462,35 @@ int ksl_fuzz_write_seeds(const char *dir) {
     prog[pl++] = 1; prog[pl++] = 0x7f;
     prog[pl++] = 3;
     PUT("ticket-keys-program", 6, prog, pl);
+    /* modes 0xfc and 0xfb: the ECHConfigList of key A, alone and after an entry of another version, and the ClientHellos of a
+       client that offers ECH with it and of one that sends GREASE */
+    {
+        size_t el; uint8_t *pem = read_all("ech/ech-a.pem", &el), list[512]; size_t ll = 0;
+        const char *b = strstr((const char *)pem, "-----BEGIN ECHCONFIG-----"), *e = b ? strstr(b, "-----END") : NULL;
+        if (!b || !e) return 1;
+        b += strlen("-----BEGIN ECHCONFIG-----"); char b64[700]; size_t bl = 0;
+        for (const char *q = b; q < e && bl < sizeof b64 - 1; q++) if (*q != '\n' && *q != '\r') b64[bl++] = *q;
+        b64[bl] = 0; int dl = EVP_DecodeBlock(list, (const unsigned char *)b64, (int)bl);
+        while (bl > 0 && b64[bl - 1] == '=') { bl--; dl--; }
+        ll = (size_t)dl; free(pem);
+        PUT("ech-config-list", 0xfc, list, ll);
+        uint8_t two[600]; size_t tl = 2;
+        static const uint8_t OTHER[] = {0xfe, 0x0c, 0x00, 0x03, 1, 2, 3}; memcpy(two + tl, OTHER, sizeof OTHER); tl += sizeof OTHER;
+        memcpy(two + tl, list + 2, ll - 2); tl += ll - 2; two[0] = (uint8_t)((tl - 2) >> 8); two[1] = (uint8_t)(tl - 2);
+        PUT("ech-config-list-other-version", 0xfc, two, tl);
+        for (int grease = 0; grease < 2; grease++) {
+            ksl_ctx *cc = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(cc, ALPN_H3, sizeof ALPN_H3);
+            ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+            if (grease) ksl_ctx_set_option(cc, KSL_OPT_ECH_GREASE, 1);
+            ksl_ssl *ec = ksl_ssl_new(cc, KSL_MODE_QUIC);
+            ksl_ssl_set(ec, KSL_SET_SNI, (const uint8_t *)"server.test", 11);
+            if (!grease && ksl_ssl_set(ec, KSL_SET_ECH_CONFIG_LIST, list, ll) != KSL_OK) return 1;
+            ksl_quic_set_transport_params(ec, CLIENT_TP, sizeof CLIENT_TP); ksl_drive(ec);
+            uint8_t *ch = NULL; size_t chl = 0; drain(ec, KSL_LEVEL_INITIAL, &ch, &chl);
+            PUT(grease ? "ech-client-hello-grease" : "ech-client-hello", 0xfb, ch, chl);
+            free(ch); ksl_ssl_free(ec); ksl_ctx_free(cc);
+        }
+    }
     /* mode 0xfe: a NewSessionTicket with a nonce, a ticket and early_data 0xffffffff */
     static const uint8_t NST[] = {4, 0, 0, 0x1a, 0, 0, 0x1c, 0x20, 1, 2, 3, 4, 2, 0xaa, 0xbb, 0, 3, 1, 2, 3, 0, 8,
                                   0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};

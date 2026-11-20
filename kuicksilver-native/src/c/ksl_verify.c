@@ -58,7 +58,9 @@ static int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned
 }
 /* Name and purpose checks that the platform verifier may have skipped (JDK/Android never check the name). */
 static int ksl_match_leaf(ksl_ssl *s, X509 *leaf, int role_of_peer_is_server) {
-    if (role_of_peer_is_server && !ksl_match_name(leaf, s->verify_host, s->verify_ip, s->verify_flags))
+    /* the verify name, or after an ECH rejection the public_name OpenSSL checks too (RFC 9849 section 6.1.7; ksl_ech.c) */
+    if (role_of_peer_is_server &&
+        !ksl_match_name(leaf, s->verify_ip ? NULL : ksl_verify_host(s), s->verify_ip, s->verify_flags))
         return X509_V_ERR_HOSTNAME_MISMATCH;
     if (X509_check_purpose(leaf, role_of_peer_is_server ? X509_PURPOSE_SSL_SERVER : X509_PURPOSE_SSL_CLIENT, 0) != 1)
         return X509_V_ERR_INVALID_PURPOSE;
@@ -386,6 +388,10 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
        0x0303 too (section 4.3.1, App. E.5) */
     if (SSL_client_hello_get0_legacy_version(ssl) != TLS1_2_VERSION) {
         *al = SSL_AD_PROTOCOL_VERSION;
+        return SSL_CLIENT_HELLO_ERROR;
+    }
+    if (!ksl_ech_inner_versions_ok(ssl)) { /* RFC 9849 section 7.1 (ksl_ech.c) */
+        *al = SSL_AD_ILLEGAL_PARAMETER;
         return SSL_CLIENT_HELLO_ERROR;
     }
     int has_alpn =

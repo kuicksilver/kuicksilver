@@ -701,6 +701,23 @@ internal class PacketBuilder(
                 sp.release(p)
                 return 0
             }
+            // RFC 9849 sections 6.1.6 and 6.1.7: a rejected ECH's flight (an empty Certificate, the Finished) ahead of its
+            // ech_required, in the Initial and Handshake spaces it was written in; room for the close frame stays
+            if (c.closeAfterFlight && type != PacketType.OneRtt) {
+                val cs = c.cryptoStreams.send[level]
+                while (cs.hasPending) {
+                    val room = w.remaining - bare - FrameEncoder.cryptoOverhead(cs.nextOffset, w.remaining)
+                    if (room <= 0 || !cs.nextRange(room, range) || range.length == 0) break
+                    w.u8(0x06)
+                    w.varint(range.offset)
+                    w.varint(range.length.toLong())
+                    val tmp = if (range.length <= scratch.size) scratch else ByteArray(range.length)
+                    cs.copy(range.offset, tmp, 0, range.length)
+                    w.bytes(tmp, 0, range.length)
+                    frames.addCrypto(level, range.offset, range.length)
+                    cs.markSent(range.offset, range.length)
+                }
+            }
             var reasonLength = reason.size
             if (FrameEncoder.connectionCloseOverhead(app, code, close.frameType, reasonLength) > w.remaining) {
                 val room = w.remaining - bare // bare counts a 1-byte reason length; up to 63 bytes keep it

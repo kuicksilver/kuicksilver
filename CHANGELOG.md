@@ -80,6 +80,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`connectionId`, tied to the attempt by the connection its own `connect` created, not by address); a handshake
   that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Ktor's
   `HttpRequestTimeoutException` carries the diagnostics like any other failure.
+- TLS: Encrypted Client Hello (RFC 9849; experimental; in the Ktor engines too, see below).
+  Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
+  RFC 9848; unusable ECHConfigs are ignored one by one, and `build()` refuses a list with none usable, or any list in a
+  build without ECH, each with its own message), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
+  with the server's retry configurations after an authenticated rejection, the certificate checked against the
+  `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
+  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory; given as a `ByteArray` or
+  `CharArray` it is zeroed once read)
+  with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. During a rejection the certificate is checked for the
+  `public_name` by the base trust alone: the origin's pins (`TrustConfig.Pinned`) do not apply to it, and
+  `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).
+  Session tickets of connections with ECH and without it are cached apart, never offered on the other kind.
+  With ECH accepted, `TrustConfig.Platform` verifies offline (RFC 9849 section 10.7): Windows retrieves URLs and
+  revocation from its cache only, Apple turns off SecTrust's network fetches, and the JVM builds the path from the
+  presented certificates under the default anchors and checks it with a PKIX `CertPathValidator`, revocation off, so
+  neither an OCSP/CRL request nor an AIA fetch goes out whatever the process set. A `TrustConfig.Custom` verifier gets a
+  `VerificationContext` (`CertificateVerifier.verify` overload, experimental) with `hiddenName` and `echPublicName`.
+- Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
+  Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
+  on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by
+  default), over TCP and HTTP/3 and inside a proxy's tunnel; a `configLists` entry with nothing usable (or any, in a build
+  without ECH) fails the engine's creation. A rejection is retried once on a new connection with the
+  server's retry configurations, or without ECH when it sent none; a rejected retry fails the request
+  (`TlsException.EchRejected` in its causes). A 0-RTT request on a rejected connection is sent again on the retry. With the
+  records' ECH no ClientHello goes out before the records resolved (the request waits up to the connect timeout instead of
+  `httpsRecordExtraWait`), and a request whose endpoints all have `ech` never falls back to a connection without it. The
+  SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible when the value has a usable ECHConfig) and an ECH
+  rejection no longer marks an HTTP/3 alternative broken.
+- Ktor server: `KuicksilverTlsConnector.Builder.echKeys` (experimental) for TCP and HTTP/3, rotated with
+  `EchServerKeys.rotate`, and the `EngineMain` key `kuicksilver.tls.echKeys` (PEM files; docs/guide/ktor.md, "Encrypted
+  Client Hello on the server"). During a rejection the `sniSelector` is asked for the `public_name`.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
@@ -1002,6 +1033,101 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- The bundled OpenSSL moves from 3.5.9 (the 3.5 LTS branch) to **4.1.0**, and to the 4.2 LTS branch once it is released
+  (ADR-0019): Encrypted Client Hello needs OpenSSL 4. The pin keeps its form (version, tarball SHA-256 and signing key,
+  verified before every build); `configure-flags.txt` drops the four options 4.0 removed (`no-engine`, `no-atexit`,
+  `no-ssl3`, `no-ssl3-method`), and `tools/openssl/build.sh` rewrites the read-only `crypto/buildinf.h` that 4.x makes.
+  The native libraries grow by about 10 % (the macOS arm64 JNI library: 2,544,072 to 2,809,416 bytes). `Ksl.version()`
+  names OpenSSL 4.1.0. Building `ksl` against a system OpenSSL (Linux, `KSL_SYSTEM_OPENSSL`) still takes 3.5 to 3.x.
+- The bundled OpenSSL carries two patches on the 4.1.0 tarball, as an exception to "the upstream tarball only"
+  (ADR-0019): OpenSSL 4.1.0 fails Encrypted Client Hello with internal_error after a HelloRetryRequest whenever the
+  client has a custom extension of its own, which every QUIC client has (its transport parameters), and ends an ECH
+  rejection after a HelloRetryRequest with illegal_parameter instead of `ech_required` and the retry configurations. The
+  patches (`tools/openssl/patches/`) are pinned by their SHA-256 in `gradle/openssl.toml` (`patch`, `patch_2`), applied in
+  that order and exactly by `tools/openssl/build.sh` (`apply-patch.pl`: no fuzz, no offset, both or neither), part of the
+  build cache key, the target line and `provenance.txt`, listed in the release provenance and in the SBOM
+  (`kuicksilver:openssl:patch`), and each dropped with the first OpenSSL release that fixes its bug. Both patches are
+  upstream code: the first is the `ssl/statem/extensions.c` hunk of OpenSSL commit openssl/openssl@981f976bb0 (on the openssl-4.1 branch,
+  so it goes with 4.1.1), the second the `ssl/statem/statem_clnt.c` hunk of OpenSSL pull request #33233 (in review; it
+  goes with the first release that merges it). The second also aborts with illegal_parameter when a HelloRetryRequest
+  rejected ECH and the ServerHello then confirms it (RFC 9849 section 6.1.4: acceptance is decided by the server's first
+  message).
+- The bundled OpenSSL carries two more ECH patches of Kuicksilver's own (`patch_3`, `patch_4`; the pin profile now takes
+  up to `patch_9`, each after all the ones before it). `openssl-4.1.0-ech-retry-configs-raw.patch` makes
+  `SSL_ech_get1_retry_config` hand over the server's `retry_configs` once their framing holds. Before, one ECHConfig
+  OpenSSL could not use dropped the whole list, as did a first entry of another version and a list past 1500 bytes.
+  `openssl-4.1.0-ech-sni-padding.patch` pads the inner server name by max(0, M − D) (RFC 9849 section 6.1.3; 4.1.0
+  padded 9 bytes less). Upstream issues are to be filed.
+- The bundled OpenSSL carries three more ECH patches of Kuicksilver's own (`patch_5` to `patch_7`):
+  - `openssl-4.1.0-ech-ee-checks.patch`: the client checks the `encrypted_client_hello` of EncryptedExtensions:
+    `unsupported_extension` after an acceptance; `decode_error` for `retry_configs` that do not parse or have bytes
+    after the list, also after GREASE; nothing handed out after GREASE (RFC 9849 sections 5, 6.1.6, 6.2.1).
+  - `openssl-4.1.0-ech-psk-after-rejection.patch`: `illegal_parameter` for a pre_shared_key in the ServerHello after a
+    rejection (section 6.1.2).
+  - `openssl-4.1.0-ech-grease-length.patch`: a GREASE payload has the length a real offer of the same ClientHello would
+    have (section 6.2.1), not a random one.
+  - These alerts now go out over TCP too, before any `ech_required`.
+  - `tools/openssl/build.sh` refuses a pin key it does not read, such as `patch_10`.
+- The bundled OpenSSL carries an eighth ECH patch (`patch_8`, `openssl-4.1.0-ech-reject-client-flight.patch`, the fix
+  posted with upstream issue openssl/openssl#33831). On a rejection the client sent `ech_required` while it processed the
+  server's Finished, before its own flight. Now it answers a CertificateRequest with an empty Certificate and no
+  CertificateVerify (RFC 9849 section 6.1.7), sends its Finished, and then `ech_required` under the application keys
+  (section 6.1.6), as BoringSSL does. Over QUIC the transport sends that flight in the packets of the CONNECTION_CLOSE
+  (before, a failed TLS session's last CRYPTO was dropped). With middlebox compatibility mode the alert no longer leaves
+  in a plaintext record over TCP.
+- TLS, Encrypted Client Hello: a server key set whose keys share a config_id is refused (`TlsException.Config` from
+  `EchServerKeys`). OpenSSL tries only the first key of a config_id, so a client of the other would have been rejected.
+  Make one of the keys again.
+- TLS, Encrypted Client Hello, review of 2026-11-20:
+  - Retry configurations whose ECHConfigs are all of the supported version but none usable (an unknown KEM, say) were
+    reported as a rejection without retry configurations, which the Ktor client took for "securely disabled" and
+    retried with the name in the clear. RFC 9849 section 6.1.6 allows that only when no entry has a supported version:
+    the handshake now fails instead (`ksl`: `KSL_ECH_OFFERED`).
+  - `ksl` refuses ECH on a client session that verifies nothing (`KSL_VERIFY_NONE`), which reported unauthenticated
+    rejections and retry configurations; an empty ECHConfigList no longer parses (section 4); the verify name of an ECH
+    session cannot change once the handshake started; the ECH private key's bytes `ksl` decodes to read the config_id
+    are wiped.
+  - QUIC: the verifier off the connection's loop read the verify name from the native session, which the loop may
+    have freed by then (a handshake timeout, a close); the name is now taken on the loop when the handshake pauses.
+  - Ktor client: the TLS hop to an `https://` proxy offered the `tls` block's ECH configuration and sent GREASE
+    regardless of `ech.grease`, and a rejection on that hop was taken for the origin's (its retry configurations
+    offered to the origin). The proxy hop now offers none, GREASE as configured, and its rejection is a proxy failure.
+    The HTTP/3 connection inside a CONNECT-UDP tunnel offers the origin's ECH, with its one retry through the tunnel.
+  - `EchServerKeys` is `AutoCloseable`: `close()` frees its native set, which otherwise stayed for the life of the
+    process.
+- The bundled OpenSSL carries a ninth ECH patch (`patch_9`, `openssl-4.1.0-ech-alpn-padding.patch`), with
+  `KSL_OPT_ECH_ALPN_PAD` (16, ABI 7, additive) in `ksl`. RFC 9849 section 6.1.3 has a client pad its inner ALPN
+  extension "to the total size of the longest ALPN extension across all application profiles"; OpenSSL 4.1.0 padded the
+  server name only. Now every client context pads it to the longest of Kuicksilver's profiles (`h2` with `http/1.1`,
+  18 octets) or to its own list when that is longer, and a GREASE payload is sized alike. A connection offering `h3`
+  and one offering `h2` and `http/1.1` give one ECH payload length for every server name.
+- TLS, Encrypted Client Hello, second review of 2026-11-20:
+  - JVM, RFC 9849 section 10.7: under an accepted ECH the path is built from the presented certificates and checked with
+    a PKIX `CertPathValidator`; no AIA fetch of a missing intermediate goes out any more where the process set
+    `com.sun.security.enableAIAcaIssuers` (before, a process-wide switch the connection could not turn off).
+  - A rejection is told from an acceptance by the session's ECH outcome, not by comparing names: an origin named like
+    the configuration's `public_name` was verified as if ECH had been accepted (pins, offline, TOFU first contact).
+  - An `EchServerKeys` that fails to build gives its keys back unwiped; before, a bad key wiped the good ones taken
+    with it. The server engine closes the `EchServerKeys` it made from `kuicksilver.tls.echKeys` when it stops.
+  - Ktor client: `configLists` keys are compared as host names (case, a trailing dot, IPv6 brackets); before, a key in
+    another spelling sent GREASE with the name in the clear. Two keys for one host are refused. A 0-RTT request on a
+    rejected connection that was already the retry is no longer sent a third time.
+  - `ksl`: a key whose ECHCONFIG block holds several ECHConfigs has each config_id checked for uniqueness; running out
+    of memory while an ECHConfig is read is reported as such, never as "nothing usable"; `KSL_LIVE_ECH_KEYS` (ABI 7,
+    additive; `KSL_LIVE_COUNT` is 8) counts the key-set handles; the dead `ECH_GREASE` macro is gone.
+- TLS, Encrypted Client Hello (`ksl`). Each item is checked where OpenSSL 4.1 does not:
+  - An ECHConfigList whose 0xfe0d ECHConfig is malformed, for example by a trailing byte or an extension type given
+    twice, does not parse (RFC 9849 sections 4, 4.2).
+  - A rejection where the server resumed a session (section 6.1.2), or whose `retry_configs` do not parse (section
+    6.1.6), fails the handshake instead of reporting a rejection: no retry configurations, never "securely disabled".
+  - `retry_configs` on an accepted ECH (section 5), and malformed ones after GREASE (section 6.2.1), fail the session.
+  - These failures close with the alert the RFC names, over TCP and QUIC (patches 5 and 6 below).
+  - A server refuses an accepted inner ClientHello that offers TLS 1.2 or below, with `illegal_parameter` (section 7.1).
+  - GREASE takes a cipher suite at random per handshake.
+  - A server context's ECH key lock is made with the context. A first key set from several threads raced, and
+    ThreadSanitizer saw it.
+  - A lock failure answers `KSL_E_NO_MEMORY`.
+  - The JVM binding no longer reports a failed allocation as an ECHConfigList that does not parse.
 - Docs: the README is now one screen: what Kuicksilver is, the dependency lines, swapping the Ktor engine and one
   platform table, with everything else linked. The Install section and the module list moved to `docs/install.md`, the
   per-platform limits to `docs/stability.md` ("Limits per platform"), the interop numbers to `docs/how-we-verify.md`.
@@ -2910,6 +3036,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   sends such calls over TCP at once, with the new `FallbackReason.QuicUnavailable`; a server endpoint does not start; the
   Ktor server serves HTTP/1.1 and HTTP/2 only ("HTTP/3 is not served on port ..."), or HTTP/3 for one family without
   Alt-Svc for the other, and reports it in the new `KuicksilverApplicationEngine.http3Status`. There is no opt-out.
+- Certificate revocation on OpenSSL 4: an `AnchoredCa` whose root is an intermediate CA is checked against its issuer's
+  configured CRL again (OpenSSL 4 stops a partial chain's CRL checks below its trust anchor, where 3.5 checked the anchor
+  as well): an intermediate that the root's CRL revokes fails with `VerifyReason.Revoked` (alert 44), and a configured
+  CRL of an issuer that is not among the roots still fails closed (alert 51), as documented. A responder certificate
+  whose validity time does not parse is refused (OpenSSL's `X509_cmp_time` reported it as neither before nor after).
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import javax.net.ssl.SSLException
 
 /** JVM: an `SSLException` (itself an `IOException`), so Ktor and application code catching `SSLException` keep working. */
@@ -30,4 +31,16 @@ public actual sealed class TlsException actual constructor(
     public actual class Config actual constructor(
         message: String,
     ) : TlsException(message, null)
+
+    @ExperimentalKuicksilverApi
+    public actual class EchRejected actual constructor(
+        public actual val retryConfigs: EchConfigList?,
+    ) : TlsException(
+            if (retryConfigs != null) {
+                "the server rejected Encrypted Client Hello (ech_required); it sent retry configurations"
+            } else {
+                "the server rejected Encrypted Client Hello (ech_required) and sent no retry configurations"
+            },
+            null,
+        )
 }

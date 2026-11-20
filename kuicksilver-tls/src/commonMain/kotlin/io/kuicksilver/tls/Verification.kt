@@ -16,10 +16,18 @@ import kotlinx.coroutines.withContext
  * (where the platform supports it) the name are decided here; `ksl` re-checks the reference identifier afterwards.
  */
 internal expect object PlatformVerifier {
+    /**
+     * [offline]: the name is hidden by an accepted Encrypted Client Hello, so the verification must not reveal it through
+     * the network (RFC 9849 section 10.7: "clients SHOULD take steps to minimize or protect such requests during
+     * certificate validation"): no OCSP, CRL or AIA retrieval, only what the platform has cached (Windows: cache-only URL
+     * retrieval and revocation; Apple: `SecTrustSetNetworkFetchAllowed(false)`). The JDK's default trust manager and
+     * Android's make no such requests by default (see docs/guide/tls.md, "Encrypted Client Hello").
+     */
     suspend fun evaluate(
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
+        offline: Boolean = false,
     ): PlatformVerdict
 }
 
@@ -28,7 +36,8 @@ internal suspend fun PlatformVerifier.verify(
     chain: List<Certificate>,
     host: HostName,
     role: TlsRole,
-): VerifyResult = evaluate(chain, host, role).result
+    offline: Boolean = false,
+): VerifyResult = evaluate(chain, host, role, offline).result
 
 /**
  * What the platform verifier said. On a yes, [builtPath] is the path it built, leaf first and its trust anchor last (Android
@@ -100,6 +109,13 @@ internal fun platformDecides(trust: TrustConfig): Boolean {
     return base is TrustConfig.Platform || (base is TrustConfig.ExpectedName && base.base is TrustConfig.Platform)
 }
 
+/**
+ * Test hook: answers for the platform verifier of every [Verification] made without one of its own (the sessions'), so a
+ * test sees what a handshake asked of it, `offline` included.
+ */
+@kotlin.concurrent.Volatile
+internal var platformForTest: (suspend (List<Certificate>, HostName, TlsRole, Boolean) -> PlatformVerdict)? = null
+
 /** True where [TrustConfig.Platform] means "OpenSSL with the system certificate directory" (Linux), so no pause is needed. */
 internal expect val platformTrustViaOpenSsl: Boolean
 
@@ -109,9 +125,13 @@ internal expect val platformTrustViaOpenSsl: Boolean
  */
 internal class Verification(
     private val config: TlsConfig,
-    /** The platform verifier; tests put one in that says yes with a path of their choosing. */
-    private val platform: suspend (List<Certificate>, HostName, TlsRole) -> PlatformVerdict = { chain, host, role ->
-        withContext(Dispatchers.Default) { PlatformVerifier.evaluate(chain, host, role) }
+    /**
+     * The platform verifier ([PlatformVerifier.evaluate], the last argument its `offline`); tests put one in that says yes
+     * with a path of their choosing.
+     */
+    private val platform: suspend (List<Certificate>, HostName, TlsRole, Boolean) -> PlatformVerdict = { chain, host, role, offline ->
+        platformForTest?.invoke(chain, host, role, offline)
+            ?: withContext(Dispatchers.Default) { PlatformVerifier.evaluate(chain, host, role, offline) }
     },
 ) {
     private val trust get() = config.trust
@@ -119,6 +139,11 @@ internal class Verification(
     suspend fun verify(
         presented: List<Certificate>,
         reference: HostName,
+        // the certificate of an ECH rejection, checked for the configuration's public_name (RFC 9849 section 6.1.7)
+        echPublicName: Boolean = false,
+        // [reference] is hidden by ECH (accepted, or a ticket that resumes only under ECH): the platform fetches nothing
+        // over the network for it (RFC 9849 section 10.7, [PlatformVerifier.evaluate])
+        hiddenName: Boolean = false,
     ): VerifyResult {
         if (presented.isEmpty()) return VerifyResult.Rejected(VerifyReason.NoCertificate)
         val base =
@@ -129,17 +154,17 @@ internal class Verification(
         val baseResult =
             when (base) {
                 is TrustConfig.Platform -> {
-                    platformLevel(platform(presented, reference, config.role), presented)
+                    platformLevel(platform(presented, reference, config.role, hiddenName), presented)
                 }
 
                 is TrustConfig.ExpectedName -> {
                     when (val inner = base.base) {
                         is TrustConfig.Platform -> {
-                            platformLevel(platform(presented, reference, config.role), presented)
+                            platformLevel(platform(presented, reference, config.role, hiddenName), presented)
                         }
 
                         is TrustConfig.Custom -> {
-                            inner.verifier.verify(presented, reference.value, config.role)
+                            inner.verifier.verify(presented, reference.value, config.role, VerificationContext(hiddenName, echPublicName))
                         }
 
                         else -> {
@@ -151,11 +176,11 @@ internal class Verification(
                 }
 
                 is TrustConfig.Custom -> {
-                    base.verifier.verify(presented, reference.value, config.role)
+                    base.verifier.verify(presented, reference.value, config.role, VerificationContext(hiddenName, echPublicName))
                 }
 
                 is TrustConfig.Tofu -> {
-                    tofu(base.store, presented, reference)
+                    tofu(base.store, presented, reference, firstContact = !echPublicName)
                 }
 
                 is TrustConfig.AnchoredCa -> {
@@ -174,6 +199,10 @@ internal class Verification(
             }
         if (baseResult is VerifyResult.Rejected) return baseResult
         val validated = (baseResult as VerifyResult.Accepted).validatedChain.ifEmpty { presented }
+        // pins are the origin's keys (RFC 7469 section 2.6): an ECH rejection presents the public_name's certificate, which the
+        // base trust above authenticated for that name (RFC 9849 section 6.1.7). The connection only reports the rejection and
+        // its retry configurations; the retry is held to the pins against the origin's certificate
+        if (echPublicName) return VerifyResult.Accepted(validated)
         return pinCheck(validated)
     }
 
@@ -222,6 +251,9 @@ internal class Verification(
         store: TofuStore,
         presented: List<Certificate>,
         reference: HostName,
+        // false for an ECH rejection's public_name: no first contact is taken from a connection that is only used to report
+        // the rejection (RFC 9849 section 6.1.7), so an unknown public_name is not authenticated and nothing is stored
+        firstContact: Boolean = true,
     ): VerifyResult {
         // the name first (the shared matcher in ksl checks it again after this verdict): a certificate that does not name the
         // host is no first contact with it, and its key is never stored for it (curl #23475 class: Tofu validates no chain, and
@@ -235,6 +267,10 @@ internal class Verification(
         val leaf = presented[0].spkiSha256
         val known = store.get(reference.value)
         return when {
+            known == null && !firstContact -> {
+                VerifyResult.Rejected(VerifyReason.Custom("no pin known for the ECH public_name ${reference.value}"))
+            }
+
             known == null -> {
                 pendingTofu = PendingTofu(store, reference.value, leaf) // stored once the handshake completed (commitTrust)
                 VerifyResult.Accepted(presented)

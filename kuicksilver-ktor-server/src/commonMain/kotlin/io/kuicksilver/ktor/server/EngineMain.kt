@@ -32,6 +32,9 @@ import kotlin.time.Duration.Companion.seconds
  * `["X25519MLKEM768", "x25519", "secp256r1"]`, or one string of them separated by `:` or `,`; the default list when absent),
  * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
  * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
+ * `kuicksilver.tls.echKeys` (a list of PEM files of Encrypted Client Hello keys, each what `openssl ech` writes, every one
+ * of them sent in retry configurations; read once at startup, rotated in code with `EchServerKeys.rotate`, freed when the
+ * engine stops),
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
  * proxy, is a trusted gateway: no `421 Misdirected Request`),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
@@ -66,8 +69,8 @@ public object EngineMain {
      * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
      * `kuicksilver.tls.keyExchangeGroups` is not a list `KeyExchangeGroups` takes (an unknown name, a duplicate, an empty list)
      * or is set without the identity files,
-     * `kuicksilver.tls.ocspStapling` is set without the identity files, `kuicksilver.h2c` is not `off`, `withHttp11` or
-     * `only`, or is not `off` with the identity files (h2c needs the cleartext port), a boolean key is not
+     * `kuicksilver.tls.ocspStapling` or `kuicksilver.tls.echKeys` is set without the identity files, `kuicksilver.h2c` is not
+     * `off`, `withHttp11` or `only`, or is not `off` with the identity files (h2c needs the cleartext port), a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, a
      * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`, or a `kuicksilver.quic.*` key is not one of
@@ -77,7 +80,9 @@ public object EngineMain {
      * a private key. Throws `TlsException.Config` when a PEM file holds no certificate or a damaged one, the key does not
      * match the chain or is encrypted, and, with `kuicksilver.tls.reloadInterval`, when the leaf certificate has expired or is
      * not valid yet or no certificate of the client CA file is valid now, and when the `kuicksilver.tls.ocspStapling` file is
-     * empty or not a DER SEQUENCE (`kotlinx.io.IOException` when it cannot be read or is larger than 1 MiB).
+     * empty or not a DER SEQUENCE (`kotlinx.io.IOException` when it cannot be read or is larger than 1 MiB), and when an
+     * `kuicksilver.tls.echKeys` file is not an ECH key (`kotlinx.io.IOException` when it cannot be read or is larger than 1
+     * MiB).
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
@@ -122,6 +127,12 @@ public object EngineMain {
             @OptIn(ExperimentalKuicksilverApi::class)
             tlsOcspStapling = io.kuicksilver.tls.OcspStapling(readOcspResponseFile(ocspFile))
             tlsOcspFile = ocspFile
+        }
+        val echFiles = config.propertyOrNull("kuicksilver.tls.echKeys")?.let { pemFiles(it) }
+        require(echFiles == null || chain != null) { "kuicksilver.tls.echKeys needs kuicksilver.tls.certificateChain and privateKey" }
+        if (echFiles != null) {
+            @OptIn(ExperimentalKuicksilverApi::class)
+            tlsEchKeys = io.kuicksilver.tls.EchServerKeys(echFiles.map { readEchKeyFile(it) })
         }
         // before the identity: a refused client CA leaves no native key behind
         loadClientCa(config, chain != null, reload != null)
@@ -404,6 +415,30 @@ public object EngineMain {
             "tls12and13" -> TlsVersions.Tls12And13
             else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
         }
+
+    /** The files of `kuicksilver.tls.echKeys`: a list, or one value of paths separated by `,`. */
+    private fun pemFiles(value: ApplicationConfigValue): List<String> =
+        (
+            runCatching { value.getList() }.getOrNull()
+                ?: runCatching { value.getString() }.getOrNull()?.split(',')
+                ?: throw IllegalArgumentException("kuicksilver.tls.echKeys: a list of PEM files")
+        ).map { it.trim() }.filter { it.isNotEmpty() }.also {
+            require(it.isNotEmpty()) { "kuicksilver.tls.echKeys: at least one PEM file" }
+        }
+
+    /**
+     * An ECH key file (a private key and its ECHConfigList, 1 MiB at most) as an `EchKey`: the characters read go to it
+     * without a `String` being made, and are zeroed (the key zeroes its copy once `EchServerKeys` has read it).
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun readEchKeyFile(path: String): io.kuicksilver.tls.EchKey {
+        val chars = readPemKey(path)
+        try {
+            return io.kuicksilver.tls.EchKey(chars)
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
 
     /**
      * The names of `kuicksilver.tls.keyExchangeGroups`: a list, or one value (a `-P:` key, a `${?ENV}` substitution) of names

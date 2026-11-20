@@ -51,6 +51,39 @@ internal class KslContext private constructor(
      */
     val trustSnapshot: TrustConfig.AnchoredCa?,
 ) {
+    /**
+     * The version of [TlsConfig.echKeys] this server context decrypts with (0: none). [build] applies the set current then,
+     * before the context is shared; it only moves forward afterwards ([ensureEchKeys]).
+     */
+    private val echApplied = AtomicInt(0)
+
+    // held while one thread applies a newer set: the native set and [echApplied] change together, never interleaved; the
+    // others block on it (a rotation is rare and the native call short) instead of spinning
+    private val echApplying = BlockingLock()
+
+    /** The version of the ECH keys this context decrypts with (tests). */
+    internal val echAppliedVersion: Int get() = echApplied.load()
+
+    /**
+     * Server: gives this context the current set of [TlsConfig.echKeys] when a rotation replaced the one it has, before a
+     * session is made from it (ksl takes a new set on a frozen context). Racing callers apply one at a time, each the set
+     * current when it applies, so the native set is always the one of the version recorded, and that version never goes
+     * back: a session never decrypts with a set older than one it already used.
+     */
+    fun ensureEchKeys() {
+        val keys = config.echKeys ?: return
+        if (echApplied.load() >= keys.version) return
+        echApplying.withLock {
+            // the thread before may have applied the set wanted (or a newer one) meanwhile
+            if (echApplied.load() < keys.version) echApplied.store(keys.applyTo(handle))
+        }
+    }
+
+    /** [build]: records the version of the set it applied before the context was frozen. */
+    private fun echAppliedAtBuild(version: Int) {
+        echApplied.store(version)
+    }
+
     /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
     class Lease internal constructor(
         val ctx: KslContext,
@@ -300,8 +333,12 @@ internal class KslContext private constructor(
                     ) {
                         throw TlsException.Config("invalid TLS configuration: ${e.message}")
                     }
+                    // the server's ECH keys go in before the context is frozen and shared: no session is made without them, and
+                    // the first sessions do not race to give them (ensureEchKeys only follows rotations from here on)
+                    val echVersion = if (config.role == TlsRole.Server) config.echKeys?.applyTo(h) ?: 0 else 0
                     Ksl.ctxFreeze(h)
                     return KslContext(h, config, quic, chain.firstOrNull()?.let(::certificateTag), chain, quicTickets, earlyData, ca)
+                        .also { it.echAppliedAtBuild(echVersion) }
                 } catch (t: Throwable) {
                     Ksl.ctxFree(h)
                     throw t
@@ -341,6 +378,10 @@ internal class KslContext private constructor(
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             // the context starts with the default groups; build() checked that this OpenSSL provides the configured ones
             if (config.keyExchangeGroups != KeyExchangeGroups.Default) Ksl.ctxSetGroups(h, config.keyExchangeGroups.kslList(config.role))
+            // RFC 9849 section 6.2.1: a client without a configuration for this connection sends GREASE ECH
+            if (config.role == TlsRole.Client && config.echGrease) Ksl.ctxSetOption(h, KslConst.OPT_ECH_GREASE, 1)
+            // RFC 9849 section 6.1.3: the inner ALPN extension padded to the longest of the application profiles
+            if (config.role == TlsRole.Client && echInThisBuild) Ksl.ctxSetOption(h, KslConst.OPT_ECH_ALPN_PAD, echAlpnPadTarget(alpn))
             val chain =
                 if (snapshot != null) {
                     Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)

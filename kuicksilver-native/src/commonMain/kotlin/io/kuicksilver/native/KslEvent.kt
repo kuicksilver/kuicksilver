@@ -82,6 +82,55 @@ public object KslConst {
     /** Nothing is served over TCP: every ClientHello gets `no_application_protocol` (120). */
     public const val ALPN_POLICY_REFUSE: Int = 2
 
+    /**
+     * Client context: 1 = a session without an ECH configuration sends a GREASE `encrypted_client_hello` extension (RFC 9849
+     * section 6.2.1; ABI 7, additive). Default 0.
+     */
+    public const val OPT_ECH_GREASE: Int = 15
+
+    /**
+     * Client context: the size, with its 4-octet header, of the longest ALPN extension across the client's application
+     * profiles; ECH's inner ALPN extension (and a GREASE payload's length) pads up to it (RFC 9849 section 6.1.3; ABI 7,
+     * additive). Default 0, none.
+     */
+    public const val OPT_ECH_ALPN_PAD: Int = 16
+
+    /** 1 byte, `ECH_*`: the session's Encrypted Client Hello outcome, also after a failed handshake (ABI 7, additive). */
+    public const val GET_ECH_STATUS: Int = 15
+
+    /**
+     * Client: the ECHConfigList of the server's retry configurations after an authenticated rejection ([ECH_REJECTED]), only
+     * its usable ECHConfigs; 0 bytes otherwise, GREASE included (RFC 9849 sections 6.1.6 and 6.2.1; ABI 7, additive).
+     */
+    public const val GET_ECH_RETRY_CONFIGS: Int = 16
+
+    /**
+     * Client: the name the server certificate is checked against now: the verify name, or after an ECH rejection the
+     * ECHConfig's public_name (RFC 9849 section 6.1.7; ABI 7, additive). The paused path verifies this name.
+     */
+    public const val GET_VERIFY_NAME: Int = 17
+
+    /** Client, before the handshake, once: an ECHConfigList (RFC 9849 section 4), binary (ABI 7, additive). */
+    public const val SET_ECH_CONFIG_LIST: Int = 15
+
+    /** [GET_ECH_STATUS]: no ECH (none configured and no GREASE; a server saw none). */
+    public const val ECH_NONE: Int = 0
+
+    /** [GET_ECH_STATUS]: the server accepted ECH. */
+    public const val ECH_ACCEPTED: Int = 1
+
+    /** [GET_ECH_STATUS]: the client sent GREASE ECH. */
+    public const val ECH_GREASE: Int = 2
+
+    /**
+     * [GET_ECH_STATUS]: client: the server rejected ECH and the outer handshake was authenticated for the public_name; the
+     * client ended it with `ech_required` (121). Server: the ClientHello's ECH was not decrypted.
+     */
+    public const val ECH_REJECTED: Int = 3
+
+    /** [GET_ECH_STATUS]: client: offered, and neither accepted nor rejected with an authenticated outer handshake. */
+    public const val ECH_OFFERED: Int = 4
+
     /** [Ksl.ocspCheck] results (`KSL_OCSP_*`). */
     public const val OCSP_GOOD: Int = 0
     public const val OCSP_REVOKED: Int = 1
@@ -220,7 +269,10 @@ public object KslConst {
     public const val LIVE_SESSION: Int = 4
     public const val LIVE_UDP: Int = 5
     public const val LIVE_WAKE: Int = 6
-    public const val LIVE_COUNT: Int = 7
+
+    /** ECH key sets from `ksl_ech_keys_new` not yet freed (`KSL_LIVE_ECH_KEYS`, ABI 7, additive). */
+    public const val LIVE_ECH_KEYS: Int = 7
+    public const val LIVE_COUNT: Int = 8
     public const val UDP_GET_FD: Int = 1
     public const val UDP_GET_CAPS: Int = 2
     public const val UDP_GET_LOCAL: Int = 3

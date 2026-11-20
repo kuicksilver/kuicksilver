@@ -15,6 +15,7 @@ Http2Settings | kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/Htt
 Ktor client engine | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | KuicksilverEngineConfig | var
 HTTP/2 client options | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | Http2ClientConfig | var
 HTTP/3 client options | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | Http3ClientConfig | var
+ECH client options | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/Ech.kt | EchClientConfig | var
 Ktor server engine | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverApplicationEngine.kt | KuicksilverApplicationEngine.Configuration | var
 TLS connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverTlsConnector.kt | KuicksilverTlsConnector.Builder | var
 Plain connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverPlainConnector.kt | KuicksilverPlainConnector.Builder | var

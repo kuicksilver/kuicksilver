@@ -110,7 +110,10 @@ class SvcbResolutionTest {
                 )
             val r = assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 8443, all))
             assertEquals(
-                listOf(HttpsEndpoint("edge.example", 8443, true, true), HttpsEndpoint("cdn.example", 8443, quic = false, tcp = true)),
+                listOf(
+                    HttpsEndpoint("edge.example", 8443, true, true),
+                    HttpsEndpoint("cdn.example", 8443, quic = false, tcp = true, appended = true),
+                ),
                 r.endpoints,
             )
             assertEquals(listOf("_8443._https.a.example", "cdn.example"), asked)
@@ -120,7 +123,7 @@ class SvcbResolutionTest {
         runTest {
             val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "apex.example.net"))), backgroundScope)
             assertEquals(
-                listOf(HttpsEndpoint("apex.example.net", 443, quic = false, tcp = true)),
+                listOf(HttpsEndpoint("apex.example.net", 443, quic = false, tcp = true, appended = true)),
                 assertIs<HttpsResolution.Endpoints>(rs.resolve("a.example", 443, all)).endpoints,
             )
         }
@@ -240,7 +243,7 @@ class SvcbResolutionTest {
             // section 3: "whether successful or not", the processed AliasMode gives the final $QNAME as an endpoint
             val rs = resolver(mapOf("a.example" to listOf(rec("a.example", 0, "cdn.example")), "cdn.example" to null), backgroundScope)
             val r = assertIs<HttpsResolution.Failed>(rs.resolve("a.example", 443, all))
-            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true), r.aliasEndpoint)
+            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true, appended = true), r.aliasEndpoint)
         }
 
     @Test fun progressNamesTheAliasEndpointWhileTheChainRuns() =
@@ -255,7 +258,7 @@ class SvcbResolutionTest {
             val progress = AliasProgress()
             val job = backgroundScope.launch { rs.resolve("a.example", 443, all, progress = progress) }
             testScheduler.runCurrent()
-            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true), progress.endpoint)
+            assertEquals(HttpsEndpoint("cdn.example", 443, quic = false, tcp = true, appended = true), progress.endpoint)
             job.cancel()
             gate.complete(Unit)
         }

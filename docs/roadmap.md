@@ -189,7 +189,7 @@ what the peers really do, and is delivered whole or not at all.
   the traces are checked offline against the draft's definitions; opening them in qvis is still to do.
 - h3spec and the Autobahn WebSocket suite in the gate.
 - OpenSSL 4.1.x instead of the 3.5 LTS, and 4.2 LTS once it is released (planned by OpenSSL for April 2027): the 3.5
-  branch has no ECH ([ADR-0019](adr/0019-openssl-4-and-ech.md), decided 2026-11-18).
+  branch has no ECH ([ADR-0019](adr/0019-openssl-4-and-ech.md), decided 2026-11-18). Done: the pin is 4.1.0.
 - TLS Encrypted Client Hello ([RFC 9849](spec/rfc/9849.md#ech), and its HTTPS record parameter,
   [RFC 9848](spec/rfc/9848.md#ech-https-records)), decided 2026-11-18: a client that takes the configuration from the
   HTTPS record or the application and retries once with the server's retry configurations, GREASE ECH on by default,

@@ -74,7 +74,7 @@ static size_t signature_end(blob r) {
     size_t at = 0;
     if (sig) {
         const unsigned char *d = ASN1_STRING_get0_data(sig);
-        size_t n = (size_t)ASN1_STRING_length(sig);
+        size_t n = ASN1_STRING_get_length(sig);
         for (size_t i = 0; n && i + n <= r.len && !at; i++)
             if (!memcmp(r.buf + i, d, n))
                 at = i + n - 1;
@@ -232,10 +232,11 @@ static ksl_ctx *rv_server(const char *leaf, int tls12) {
     return c;
 }
 static const char *client_root = "rv-root"; /* the client's AnchoredCa */
+static const char *client_root2 = NULL;     /* a second root, or NULL */
 static ksl_ctx *rv_client(int revocation, int verify_mode, int tls12, const char *crl) {
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
-    blob r = framed(1, client_root);
+    blob r = client_root2 ? framed(2, client_root, client_root2) : framed(1, client_root);
     ksl_ctx_set_roots(c, r.buf, r.len);
     free(r.buf);
     if (crl) {
@@ -347,8 +348,14 @@ static void stapling_over(int mode, int tls12, const char *what) {
     /* a server that staples anyway: the client refuses */
     hs stale = {"rv-leaf", NULL, "ocsp-stale", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(stale, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_stale (RFC 6066 section 8: not satisfactory)");
-    hs mismatch = {"rv-leaf", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
-    EXPECT_FAIL(mismatch, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_mismatch: another certificate's response");
+    /* OpenSSL 3.6 and later staple a response only when it names the certificate by serial and issuer name hash (statem_srvr.c
+       ossl_get_ocsp_response): one for another serial never reaches the client, and one for the same serial under another issuer
+       key does, which the client refuses (RFC 6960 section 3.2, 1: the whole certID, issuer key hash included) */
+    hs foreign_forced = {"rv-leaf", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
+    EXPECT_PASS(foreign_forced, 0xff, "an OpenSSL server does not staple another serial's response");
+    hs mismatch = {"rv-leaf", NULL, "ocsp-other-issuer-key", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
+    EXPECT_FAIL(mismatch, X509_V_ERR_OCSP_VERIFY_FAILED,
+                "negative_client_mismatch: a response for the same serial under another issuer key");
     hs unauth = {"rv-leaf", NULL, "ocsp-unauthorized", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(unauth, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_unauthorized_responder");
     hs off = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_OFF, mode, tls12, 0};
@@ -490,7 +497,26 @@ static void test_crls(void) {
         "closed, decrypt_error)");
     if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CRL_SIGNATURE_FAILURE))
         printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    /* OpenSSL 4 no longer checks a trust anchor that is not self-signed (x509_vfy.c revocation_check_end); ksl does
+       (ksl_ocsp.c anchor_status): with both CAs among the roots the path ends at rv-mid, which rv-root's CRL revokes */
+    client_root2 = "rv-root";
+    o = handshake_with(&good, "crl-root-revokes-mid");
+    CHECK(o.rc == KSL_ERROR && !o.done && o.alert == 44 && o.x509 == X509_V_ERR_CERT_REVOKED,
+          "negative_crl_anchor_revoked: roots = [rv-mid, rv-root], rv-root's CRL revokes the anchor rv-mid");
+    if (!(o.rc == KSL_ERROR && o.x509 == X509_V_ERR_CERT_REVOKED))
+        printf("  got rc=%d done=%d alert=%d x509=%d\n", o.rc, o.done, o.alert, o.x509);
+    o = handshake_with(&good, "crl-root");
+    CHECK(o.done && o.rc != KSL_ERROR, "the same anchors with a CRL of rv-root that revokes nothing pass");
+    hs good_tcp = good;
+    good_tcp.mode = KSL_MODE_TCP;
+    o = handshake_with(&good_tcp, "crl-root-revokes-mid");
+    CHECK(o.rc == KSL_ERROR && o.alert == 44 && o.x509 == X509_V_ERR_CERT_REVOKED,
+          "negative_crl_anchor_revoked over TCP");
+    client_root2 = NULL;
     client_root = "rv-root";
+    o = handshake_with(&good, "crl-root-revokes-mid");
+    CHECK(o.rc == KSL_ERROR && o.alert == 44 && o.x509 == X509_V_ERR_CERT_REVOKED,
+          "negative_crl_intermediate_revoked: anchored at rv-root, rv-mid is on the path and revoked");
     o = handshake_with(&good, "crl-mid-impostor");
     CHECK(
         o.rc == KSL_ERROR && o.x509 == X509_V_ERR_UNABLE_TO_GET_CRL && o.alert == 48,

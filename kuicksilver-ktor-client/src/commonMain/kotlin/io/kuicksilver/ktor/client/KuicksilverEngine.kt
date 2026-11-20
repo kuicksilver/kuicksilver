@@ -104,7 +104,34 @@ internal class KuicksilverEngine(
         require(abandon >= MIN_STALL_SILENCE && abandon <= MAX_STALL_ABANDON) {
             "stallAbandonAfter must be 100 ms..10 min, was $abandon"
         }
+        // RFC 9849 section 6.1, rule 1: ECH is TLS 1.3 only, and a configuration given for a host must be offered
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        require(config.ech.configLists.isEmpty() || config.echCapable()) {
+            "ech.configLists needs TLS 1.3 only: the tls block allows TLS 1.2 (RFC 9849 section 6.1)"
+        }
+        // a list given for a host is offered or refused now: one without a usable ECHConfig, or any in a build without ECH,
+        // would otherwise send the host's name in the clear (with GREASE) on every connection
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        config.ech.configLists.keys.groupBy(::echHostKey).values.firstOrNull { it.size > 1 }?.let {
+            throw IllegalArgumentException("ech.configLists: ${it.joinToString()} name one host (${echHostKey(it.first())})")
+        }
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        for ((host, list) in config.ech.configLists) {
+            try {
+                io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                    config.tls(this)
+                    echConfigList = list
+                }
+            } catch (e: io.kuicksilver.tls.TlsException.Config) {
+                throw IllegalArgumentException("ech.configLists[\"$host\"]: ${e.message}", e)
+            }
+        }
     }
+
+    /** Whether connections offer the `ech` of the HTTPS records (RFC 9848; `ech.fromHttpsRecords`, TLS 1.3 only). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val echFromRecords: Boolean = config.ech.fromHttpsRecords && config.echCapable()
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
@@ -506,7 +533,7 @@ internal class KuicksilverEngine(
             }
             selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Proxy, d)
             return try {
-                h3.execute(H3Target(url.host, url.host, url.port, udp), data, callContext)
+                h3.execute(H3Target(url.host, url.host, url.port, udpProxy = udp), data, callContext)
             } catch (e: H3NotSent) {
                 throw e.cause ?: e
             }
@@ -1171,7 +1198,7 @@ internal class KuicksilverEngine(
         var decided: List<Boolean?>? = null
         withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false)) }
+                val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false), echFromRecords) }
                 val addresses = records.background { lookupQuietly(dns, url.host, url.port) }
                 select {
                     query.onJoin {}
@@ -1257,7 +1284,7 @@ internal class KuicksilverEngine(
         val supported = supportedAlpn(webSocket)
         val secure = config.http3.httpsRecords.isSecure()
         val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
-        val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority)
+        val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority, echFromRecords)
         // the addresses the answers carried for endpoint names: no follow-up query for them (section 5)
         for (r in listOf(origin, altResolution)) (r as? HttpsResolution.Endpoints)?.addresses?.forEach { (h, a) -> dns.seed(h, a) }
         if (origin is HttpsResolution.Failed && secure) {
@@ -1267,9 +1294,13 @@ internal class KuicksilverEngine(
                     "error or a timeout): the request is abandoned (RFC 9460 section 3.1)",
             )
         }
+        // RFC 9848 section 5.1: every endpoint has `ech`, so the request is SVCB-reliant: no connection without the records'
+        // ECH, neither the endpoint appended after AliasMode records (no SvcParams), nor the origin itself, nor an Alt-Svc
+        // alternative whose own records give no `ech` (section 6: consistent with ECH, and the name stays hidden)
+        val echReliant = origin is HttpsResolution.Endpoints && origin.echReliant
         val originEndpoints =
             when (origin) {
-                is HttpsResolution.Endpoints -> origin.endpoints
+                is HttpsResolution.Endpoints -> if (echReliant) origin.endpoints.filter { !it.appended } else origin.endpoints
 
                 // section 3: the AliasMode endpoint is appended "whether successful or not"
                 is HttpsResolution.Failed -> listOfNotNull(origin.aliasEndpoint)
@@ -1283,7 +1314,7 @@ internal class KuicksilverEngine(
             val asIs = listOf(HttpsEndpoint(altAuthority.first, altAuthority.second, quic = true, tcp = false))
             val altQuic =
                 when (altResolution) {
-                    is HttpsResolution.Endpoints -> altResolution.endpoints.filter { it.quic }
+                    is HttpsResolution.Endpoints -> altResolution.endpoints.filter { it.quic && (!echReliant || it.ech != null) }
 
                     HttpsResolution.None -> asIs
 
@@ -1293,13 +1324,18 @@ internal class KuicksilverEngine(
                     is HttpsResolution.Failed -> if (secure) emptyList() else altResolution.aliasEndpoint?.let { emptyList() } ?: asIs
                 }
             val firstTcp = originEndpoints.firstOrNull { it.tcp }
-            altQuic.forEachIndexed { i, e ->
-                attempts += Attempt(e, firstTcp.takeIf { i == 0 }, i == 0 && firstTcp == null, altSvc = true, fromRecords = false)
+            for ((i, e) in (if (echReliant) altQuic.filter { it.ech != null } else altQuic).withIndex()) {
+                val toOrigin = i == 0 && firstTcp == null && !echReliant
+                attempts += Attempt(e, firstTcp.takeIf { i == 0 }, toOrigin, altSvc = true, fromRecords = false)
             }
         }
         for (e in originEndpoints) attempts += Attempt(e.takeIf { it.quic }, e.takeIf { it.tcp }, false, altSvc = false, fromRecords = true)
         val triedQuic = HashSet<String>()
         val triedTcp = HashSet<String>()
+        // one ECH route per endpoint with `ech` (RFC 9848), shared by its QUIC and TCP sides: one retry for both
+        val echRoutes = EchRoutesOfEndpoints()
+
+        fun echOf(e: HttpsEndpoint?): EchRoute? = echRoutes.of(e)
         var misdirected = false
         var lastFailure: Throwable? = null
         for (a in attempts) {
@@ -1307,14 +1343,14 @@ internal class KuicksilverEngine(
             val h3t =
                 a.h3
                     ?.takeIf { "${it.host}:${it.port}" !in triedQuic }
-                    ?.let { H3Target(url.host, it.host, it.port) }
+                    ?.let { H3Target(url.host, it.host, it.port, echOf(it)) }
                     ?.takeIf { !webSocket || h3.canConnectProtocol(it) }
             val tcpKey = if (a.tcpToOrigin) "" else a.tcp?.let { "${it.host}:${it.port}" }
             val tcpDns =
                 when {
                     tcpKey == null || tcpKey in triedTcp -> null
                     a.tcpToOrigin -> dns
-                    else -> dns.connectTo(a.tcp!!.host, a.tcp.port)
+                    else -> dns.connectTo(a.tcp!!.host, a.tcp.port, echOf(a.tcp))
                 }
             if (h3t == null && tcpDns == null) continue
             if (h3t != null) triedQuic += "${h3t.host}:${h3t.port}"
@@ -1334,8 +1370,16 @@ internal class KuicksilverEngine(
                 lastFailure = e.cause
             }
         }
-        // the non-SVCB connection: the origin over TCP, unless an attempt above already was exactly that
+        // the non-SVCB connection: the origin over TCP, unless an attempt above already was exactly that; never for an
+        // SVCB-reliant request (RFC 9848 section 5.1, MUST: "fallback would negate the privacy benefits of ECH")
         if ("" in triedTcp) throw lastFailure ?: IllegalStateException("no endpoint of the HTTPS records could be reached")
+        if (echReliant) {
+            throw kotlinx.io.IOException(
+                "no endpoint of the HTTPS records of ${url.host} could be reached, and all of them have an ech parameter: the " +
+                    "request does not fall back to a connection without ECH (RFC 9848 section 5.1)",
+                lastFailure,
+            )
+        }
         val r =
             tcp(
                 data,
@@ -1491,6 +1535,9 @@ internal class KuicksilverEngine(
         secure: Boolean,
         // an Alt-Svc alt-authority to resolve as well (section 9.3)
         altAuthority: Pair<String, Int>?,
+        // the client offers ECH from the records (RFC 9848): their `ech` is kept, and no ClientHello goes out before the
+        // resolution completed (section 5.3, MUST), within the connect timeout
+        ech: Boolean = false,
     ): Pair<HttpsResolution, HttpsResolution> {
         // section 5: "clients SHOULD issue speculative A and/or AAAA queries in parallel with each SVCB query, based on a
         // predicted value of TargetName": an alias target, looked up into the request's resolution
@@ -1513,14 +1560,14 @@ internal class KuicksilverEngine(
         var resolved: Pair<HttpsResolution, HttpsResolution>? = null
         withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
-                val originJob = async { records.resolve(url.host, url.port, supported, originProgress, prefetch) }
+                val originJob = async { records.resolve(url.host, url.port, supported, originProgress, ech, prefetch) }
                 val altJob =
                     altAuthority?.let { (h, p) ->
                         // an alternative on the origin's own name and port is the same service: one resolution
                         if (httpsQueryName(h, p) == httpsQueryName(url.host, url.port)) {
                             originJob
                         } else {
-                            async { records.resolve(h, p, supported, altProgress, prefetch) }
+                            async { records.resolve(h, p, supported, altProgress, ech, prefetch) }
                         }
                     }
                 val https =
@@ -1532,7 +1579,7 @@ internal class KuicksilverEngine(
                     https.onJoin {}
                     addresses.onJoin {}
                 }
-                if (secure) {
+                if (secure || ech) {
                     https.join()
                 } else if (!https.isCompleted) {
                     withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
@@ -1701,10 +1748,27 @@ internal fun marksAlternativeBroken(e: Throwable): Boolean =
  */
 internal fun isTransientRefusal(e: Throwable): Boolean {
     val failure = if (e is H3NotSent) e.cause ?: e else e
+    // an ECH rejection (RFC 9849 section 6.1.6) says the configuration is out of date, not that QUIC does not work there
+    if (echRejectionIn(failure) != null) return true
     return failure is QuicException.ConnectionLost.TransportClosed &&
         failure.initiator == Initiator.Peer &&
         failure.code == TransportError.CONNECTION_REFUSED
 }
+
+/**
+ * The ECHConfigList of an HTTPS record's `ech` value (RFC 9848; framing checked by the codec), or null when none of its
+ * configurations is usable or this build has no ECH: the connection then sends GREASE (RFC 9849 section 6.1: "If no
+ * compatible configuration is found, then the client SHOULD proceed as described in Section 6.2").
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun parsedEch(bytes: ByteArray): io.kuicksilver.tls.EchConfigList? =
+    try {
+        io.kuicksilver.tls.EchConfigList
+            .parse(bytes)
+            .takeIf { it.isUsable }
+    } catch (_: io.kuicksilver.tls.TlsException) {
+        null
+    }
 
 /** No connection to an endpoint of the HTTPS records could be set up, before the request went out: try the next one. */
 internal class EndpointUnreachable(

@@ -169,6 +169,34 @@ public expect object Ksl {
         atEpochSeconds: Long,
     ): KslOcspVerdict
 
+    /**
+     * The usable ECHConfigs of the ECHConfigList [list] (`ksl_ech_config_list_check`, ABI 7 additive), as an ECHConfigList:
+     * empty when it parses but holds none this OpenSSL can use (or ECH is not in this build), null when it does not parse.
+     *
+     * @throws KslException.Internal when memory runs out before the list is read (never reported as a list that does not parse).
+     */
+    public fun echConfigListCheck(list: ByteArray): ByteArray?
+
+    /**
+     * A server's ECH keys parsed into a native `ksl_ech_keys` handle (`ksl_ech_keys_new`, ABI 7 additive): [framed] is
+     * (uint32 length || flags || PEM)*, flags bit 0 for retry_configs. The private keys stay native; the caller wipes [framed]
+     * (the JNI copy is wiped here). Throws [KslException.Internal] with `KSL_E_BAD_ARG` when the set does not read. Freed with
+     * [echKeysFree].
+     */
+    public fun echKeysNew(framed: ByteArray): Long
+
+    /** Drops one reference to a `ksl_ech_keys`; `0` is ignored. */
+    public fun echKeysFree(keys: Long)
+
+    /**
+     * Server: the keys sessions made from now on decrypt with (`ksl_ctx_set_ech_keys`); the context takes its own reference,
+     * `0` removes them. Allowed on a frozen context (rotation).
+     */
+    public fun ctxSetEchKeys(
+        ctx: Long,
+        keys: Long,
+    )
+
     // session
     public fun sslNew(
         ctx: Long,

@@ -1,6 +1,6 @@
 # Kuicksilver
 
-> QUIC, HTTP/3, Kotlin Multiplatform: a QUIC and HTTP/3 library with a Ktor client and server engine, for Android, iOS, JVM, Native (Linux, macOS, Windows), on a statically linked, signature-checked OpenSSL 3.5 LTS.
+> QUIC, HTTP/3, Kotlin Multiplatform: a QUIC and HTTP/3 library with a Ktor client and server engine, for Android, iOS, JVM, Native (Linux, macOS, Windows), on a statically linked, signature-checked OpenSSL 4.1.
 
 Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksilver-native (the `ksl` C shim and OpenSSL), kuicksilver-tls, kuicksilver-ktor-network, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-client (`HttpClient(Kuicksilver)`), kuicksilver-ktor-server (`embeddedServer(Kuicksilver)`), and the kuicksilver-bom.
 

@@ -1,0 +1,114 @@
+OpenSSL 4.1.0: on an ECH rejection the client sends ech_required before its own flight
+
+Kuicksilver's own code, the eighth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-grease-length.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_8, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
+issue https://github.com/openssl/openssl/issues/33831, which carries this fix and a reproducer). Applies to OpenSSL
+master at 3a3f13563825 too (patch(1) with offsets).
+
+The bug: RFC 9849 section 6.1.6 has a client whose ECH was rejected complete the handshake, authenticated for the
+public_name, and then abort with ech_required "before sending any application data"; section 6.1.7: "If the server
+requests a client certificate, the client MUST respond with an empty Certificate message, denoting no client
+certificate." tls_process_initial_server_flight (statem_clnt.c) sends ech_required while the server's Finished is
+processed, before the client's flight: no Certificate, no Finished, and with SSL_OP_ENABLE_MIDDLEBOX_COMPAT the alert
+leaves in a plaintext record.
+
+The fix: tls_prepare_client_certificate takes the "no certificate" path (cert_req 2; neither cert_cb nor
+client_cert_cb is called) when ECH was offered and rejected, so the Certificate is empty and no CertificateVerify is
+sent; tls_process_initial_server_flight only marks the rejection (reject_pending); the client post-work after its
+Finished, under the application write keys, sends ech_required (retry_configs_ok set as before).
+
+diff --git a/ssl/ech/ech_local.h b/ssl/ech/ech_local.h
+--- a/ssl/ech/ech_local.h
++++ b/ssl/ech/ech_local.h
+@@ -247,6 +247,11 @@
+      * not.
+      */
+     int retry_configs_ok;
++    /*
++     * client: ECH was rejected; finish our flight (an empty Certificate if
++     * one was requested, RFC 9849 section 6.1.7) and then send ech_required
++     */
++    int reject_pending;
+     int inner_ech_seen_ok; /* set if we see inner ECH as expected */
+     int grease; /* 1 if we're GREASEing, 0 otherwise */
+     char *grease_suite; /* HPKE suite string for GREASEing */
+--- a/ssl/statem/statem_clnt.c
++++ b/ssl/statem/statem_clnt.c
+@@ -409,6 +409,17 @@
+     return 0;
+ }
+ 
++#ifndef OPENSSL_NO_ECH
++/* ECH was offered (not GREASE) and the server did not accept it */
++static int ech_rejected(const SSL_CONNECTION *s)
++{
++    return s->ext.ech.es != NULL
++        && s->ext.ech.attempted == 1
++        && s->ext.ech.success != 1
++        && s->ext.ech.grease != OSSL_ECH_IS_GREASE;
++}
++#endif
++
+ static int do_compressed_cert(SSL_CONNECTION *sc)
+ {
+     /* If we negotiated RPK, we won't try to compress it */
+@@ -986,6 +997,14 @@
+                 }
+             }
+         }
++#ifndef OPENSSL_NO_ECH
++        /* our Finished is out and the write keys are the final ones */
++        if (s->ext.ech.reject_pending) {
++            s->ext.ech.retry_configs_ok = 1; /* note those are good */
++            SSLfatal(s, SSL_AD_ECH_REQUIRED, SSL_R_ECH_REQUIRED);
++            return WORK_ERROR;
++        }
++#endif
+         break;
+ 
+     case TLS_ST_CW_KEY_UPDATE:
+@@ -3577,15 +3596,12 @@
+ #endif
+ 
+ #ifndef OPENSSL_NO_ECH
+-    /* check result of ech and return error if needed */
+-    if (s->ext.ech.es != NULL
+-        && s->ext.ech.attempted == 1
+-        && s->ext.ech.success != 1
+-        && s->ext.ech.grease != OSSL_ECH_IS_GREASE) {
+-        s->ext.ech.retry_configs_ok = 1; /* note those are good */
+-        SSLfatal(s, SSL_AD_ECH_REQUIRED, SSL_R_ECH_REQUIRED);
+-        return 0;
+-    }
++    /*
++     * ECH rejected: complete our flight (with an empty Certificate if one
++     * was requested, RFC 9849 section 6.1.7), then send ech_required
++     * (section 6.1.6) once our Finished has been written.
++     */
++    s->ext.ech.reject_pending = ech_rejected(s);
+ #endif /* OPENSSL_NO_ECH */
+ 
+     return 1;
+@@ -4322,6 +4338,21 @@
+     int i;
+     SSL *ssl = SSL_CONNECTION_GET_SSL(s);
+ 
++#ifndef OPENSSL_NO_ECH
++    if (ech_rejected(s)) {
++        /*
++         * RFC 9849 section 6.1.7: the server is not authenticated for the
++         * name the certificate is meant for, send an empty Certificate.
++         * (Runs before the server Finished is processed.)
++         */
++        s->s3.tmp.cert_req = 2;
++        s->ext.compress_certificate_from_peer[0] = TLSEXT_comp_cert_none;
++        if (!ssl3_digest_cached_records(s, 0))
++            /* SSLfatal() already called */
++            return WORK_ERROR;
++        return WORK_FINISHED_CONTINUE;
++    }
++#endif
+     if (wst == WORK_MORE_A) {
+         /* Let cert callback update client certificates if required */
+         if (s->cert->cert_cb) {

@@ -184,6 +184,9 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `certificateCompression` (*experimental*) | `Boolean` | `true` | TLS 1.3 only (QUIC and TCP) | 0.3.0 | TLS certificate compression (RFC 8879): offers brotli, then zlib, and sends the chain compressed when the peer offers one of them; a session that staples OCSP sends it uncompressed; `false`: no offer, and a compressed certificate from the peer is `unexpected_message` ([Certificate compression](tls.md#certificate-compression)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](tls.md#certificate-revocation)) |
 | `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two) | 1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with `Tls12And13` at least one elliptic curve | 0.3.0 | key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, `handshake_failure` with none in common; in TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (without `secp256r1`, a P-256 certificate is refused) ([Key exchange groups](tls.md#key-exchange-groups)) |
+| `echConfigList` (*experimental*) | `EchConfigList?` | `null` | clients only; not with `versions` `Tls12And13` | 0.3.0 | Encrypted Client Hello configurations offered (RFC 9849; an HTTPS record's `ech` parameter, RFC 9848); unusable ECHConfigs are ignored one by one; a rejection fails with `TlsException.EchRejected` and its `retryConfigs` ([Encrypted Client Hello](tls.md#encrypted-client-hello)) |
+| `echGrease` (*experimental*) | `Boolean` | `true` | clients | 0.3.0 | GREASE ECH where no configuration is offered (RFC 9849 section 6.2.1) ([Encrypted Client Hello](tls.md#encrypted-client-hello)) |
+| `echKeys` (*experimental*) | `EchServerKeys?` | `null` | servers only; 1 to 16 keys, at least one for `retry_configs` | 0.3.0 | the server's ECH keys (shared mode), `rotate` replaces them for new handshakes ([Encrypted Client Hello](tls.md#encrypted-client-hello)) |
 
 ### SessionTicketConfig
 
@@ -378,6 +381,16 @@ Guide: [Ktor: Client](ktor.md#client).
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
 | `priorKnowledge` | `Set<HostPort>` | empty | 0.3.0 | the `http://` origins (host and port as in the URL) whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for `https://`, through an HTTP proxy in a CONNECT tunnel; cleartext, so only servers on a trusted network ([h2c on the client](ktor.md#h2c-on-the-client)) |
 
+### ECH client options
+
+`ech { … }` (`EchClientConfig`, *experimental*; guide: [Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)):
+
+| Option | Type | Default | Since | What it does |
+|---|---|---|---|---|
+| `configLists` | `Map<String, EchConfigList>` | empty | 0.3.0 | ECHConfigLists given out of band, by request host: every connection for that origin offers it (directly, to an `Alt-Svc` alternative, inside a proxy tunnel) unless an HTTPS record's endpoint brings its own; with a `tls` block that allows TLS 1.2 the engine's creation fails with `IllegalArgumentException` (RFC 9849 section 6.1) |
+| `grease` | `Boolean` | `true` | 0.3.0 | GREASE ECH on every TLS connection that offers no configuration (RFC 9849 section 6.2.1) |
+| `fromHttpsRecords` | `Boolean` | `true` | 0.3.0 | offer the `ech` parameter of the origin's HTTPS records (RFC 9848; `http3.httpsRecords`, `Auto` mode): no ClientHello before the records resolved (section 5.3), and no fallback to a connection without them when every endpoint has `ech` (section 5.1, SVCB-reliant); ignored when `tls` allows TLS 1.2 |
+
 ### HTTP/3 client options
 
 `http3 { … }` (`Http3ClientConfig`; guide: [HTTP/3 on the client](ktor.md#http3-on-the-client)):
@@ -472,6 +485,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |
 | `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | no key shares; with `versions` `Tls12And13` at least one elliptic curve | 0.3.0 | the server's key-exchange groups for TCP and HTTP/3, in its order of preference; with `Tls12And13` and client certificates, a TLS 1.2 client's P-256 certificate needs `secp256r1` in the list ([Key exchange groups](tls.md#key-exchange-groups)) |
 | `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy; HTTP/3 takes none ([PROXY protocol](ktor.md#proxy-protocol)) |
+| `echKeys` (*experimental*) | `EchServerKeys?` | `null` |  | 0.3.0 | Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and HTTP/3; `rotate` replaces them for new handshakes; the identity (or the `sniSelector` answer for the keys' `public_name`) must cover the `public_name` ([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -480,6 +494,7 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 `kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's most preferred first, or one string
 of them separated by `:` or `,`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
+`kuicksilver.tls.echKeys` (a list of ECH key PEM files, or one comma-separated string; read at startup),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.h2c` (`off`, `withHttp11` or
 `only`: h2c on the cleartext deployment port; refused with the identity files), `kuicksilver.http2RepeatOffenderPenalty`,

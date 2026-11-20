@@ -75,9 +75,15 @@ Every Kuicksilver artifact (JVM jars, the Android AAR, the Kotlin/Native klibs) 
 built by this repository. Applications do not get OpenSSL updates from their operating system for it; they get them
 from us, so we commit to the following.
 
-- **Pinned release.** We use the OpenSSL 3.5 LTS branch. The exact release, the SHA-256 of its tarball and the
+- **Pinned release.** We use the OpenSSL 4.1 branch, and the 4.2 LTS branch once it is released (ADR-0019: Encrypted
+  Client Hello needs OpenSSL 4; 4.1 is supported by OpenSSL until 2027-11-23). The exact release, the SHA-256 of its tarball and the
   fingerprint of the OpenSSL release signing key are pinned in [`gradle/openssl.toml`](gradle/openssl.toml); the build
-  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). The build configuration
+  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). Two small patches are carried on the
+  tarball as an exception (ADR-0019: OpenSSL 4.1.0 fails Encrypted Client Hello after a HelloRetryRequest when the client
+  has a custom extension, as every QUIC client has, and ends an ECH rejection after a HelloRetryRequest with
+  `illegal_parameter`): they are in `tools/openssl/patches/`, pinned by their SHA-256 next to the tarball's, applied in
+  a fixed order and exactly by `tools/openssl/build.sh`, listed in the build provenance and the SBOM, and each is dropped
+  with the first OpenSSL release that fixes its bug. The build configuration
   ([`tools/openssl/configure-flags.txt`](tools/openssl/configure-flags.txt)) compiles out everything the stack does
   not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
   logging, and more), which removes a large part of OpenSSL's attack surface.
@@ -101,7 +107,7 @@ from us, so we commit to the following.
   | Critical or High, reachable through Kuicksilver | within 72 hours of the advisory |
   | Moderate or Low, reachable through Kuicksilver | within 7 days of the advisory |
   | Not reachable in our configuration or through our use of OpenSSL | in the next planned release, with a note saying why it does not affect us |
-  | Non-security 3.5.x patch release | within 30 days |
+  | Non-security 4.1.x patch release | within 30 days |
 
   For a reachable issue we also publish a GitHub Security Advisory of this repository that names the OpenSSL advisory
   and CVE, the affected Kuicksilver versions and the fixed one ([Where to see the status](#where-to-see-the-status)).
@@ -116,12 +122,12 @@ from us, so we commit to the following.
   planned release later.
 - **What such a release goes through.** An OpenSSL patch release runs the full local gate on its release commit, like
   every release ([docs/release.md](docs/release.md#every-release)), but not the 24–72 hour soak that precedes a planned
-  release, when nothing else changes: such a release only moves OpenSSL to a fixed 3.5.x release.
+  release, when nothing else changes: such a release only moves OpenSSL to a fixed 4.1.x release.
 
 - **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
   `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when
   an OpenSSL advisory applies.
-- **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer 3.x (`KSL_SYSTEM_OPENSSL`; 4.x is refused, prepared but not supported in 0.3.0);
+- **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer 3.x (`KSL_SYSTEM_OPENSSL`; 4.x is refused, prepared but not supported in 0.3.0; the bundled OpenSSL is 4.1);
   published artifacts never do this. If you build that way, your operating system vendor is responsible for patching
   OpenSSL.
 - **Not FIPS.** Kuicksilver is not FIPS-certified, and the bundled OpenSSL is built without the FIPS provider (no

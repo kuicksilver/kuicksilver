@@ -199,6 +199,10 @@ public class KuicksilverApplicationEngine(
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsKeyExchangeGroups: io.kuicksilver.tls.KeyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups.Default
 
+        /** Set by `EngineMain` (`kuicksilver.tls.echKeys`): the ECH keys of the connectors [identity] serves, closed when the engine stops. */
+        @ExperimentalKuicksilverApi
+        internal var tlsEchKeys: io.kuicksilver.tls.EchServerKeys? = null
+
         /** Set by `EngineMain` (`kuicksilver.tls.ocspStapling`): the OCSP response the connectors [identity] serves staple. */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
@@ -686,15 +690,21 @@ public class KuicksilverApplicationEngine(
     ) {
         stopGraceMillis = gracePeriodMillis
         stopRequest.complete()
-        val result =
-            withTimeoutOrNull(gracePeriodMillis) {
-                serverJob.join()
-                true
+        try {
+            val result =
+                withTimeoutOrNull(gracePeriodMillis) {
+                    serverJob.join()
+                    true
+                }
+            stopWasForcedForTest = result == null
+            if (result == null) {
+                serverJob.cancel()
+                withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
             }
-        stopWasForcedForTest = result == null
-        if (result == null) {
-            serverJob.cancel()
-            withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
+        } finally {
+            // the ECH keys EngineMain read (`kuicksilver.tls.echKeys`) are the engine's own: their native set is freed with it
+            @OptIn(ExperimentalKuicksilverApi::class)
+            configuration.tlsEchKeys?.close()
         }
     }
 
@@ -763,6 +773,8 @@ public class KuicksilverApplicationEngine(
                             versions = configuration.tlsVersions
                             @OptIn(ExperimentalKuicksilverApi::class)
                             keyExchangeGroups = configuration.tlsKeyExchangeGroups
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            echKeys = configuration.tlsEchKeys
                             // a plain connector served with the deployment's identity keeps its PROXY protocol
                             @OptIn(ExperimentalKuicksilverApi::class)
                             proxyProtocol = (c as? KuicksilverPlainConnector)?.proxyProtocol ?: configuration.deploymentProxyProtocol
@@ -794,7 +806,11 @@ public class KuicksilverApplicationEngine(
                             "use ktor.security.ssl.enabledProtocols there",
                     )
                 }
-                // and the key-exchange groups, which Ktor's sslConnector has no setting for
+                // and the key-exchange groups and ECH keys, which Ktor's sslConnector has no setting for
+                @OptIn(ExperimentalKuicksilverApi::class)
+                if (configuration.tlsEchKeys != null) {
+                    throw TlsException.Config("kuicksilver.tls.echKeys applies to the port of kuicksilver.tls.certificateChain, not to $c")
+                }
                 @OptIn(ExperimentalKuicksilverApi::class)
                 if (configuration.tlsKeyExchangeGroups != io.kuicksilver.tls.KeyExchangeGroups.Default) {
                     throw TlsException.Config(

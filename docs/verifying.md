@@ -49,8 +49,9 @@ bad or missing signature, a missing file, a build that failed). It exits 1 on an
    own signature fails, its subjects are not read.
 3. **Rebuild.** The verified tag's `tools`, `gradle` and `kuicksilver-native/src` are exported with `git archive`, the
    pinned OpenSSL tarball is downloaded and checked (signature and SHA-256, `tools/openssl/fetch.sh` of the tag; from
-   0.3.0 also the zlib and brotli tarballs of `gradle/compression-libs.toml`, built into OpenSSL's libcrypto), and the
-   libraries of [the table below](#which-native-libraries-are-reproducible) are built with the tag's own scripts and
+   0.3.0 also the zlib and brotli tarballs of `gradle/compression-libs.toml`, built into OpenSSL's libcrypto), the
+   patches the tag carries on it, if any, are checked against their pinned SHA-256 and applied exactly, in order
+   (`tools/openssl/apply-patch.pl`; [ADR-0019](adr/0019-openssl-4-and-ech.md)), and the libraries of [the table below](#which-native-libraries-are-reproducible) are built with the tag's own scripts and
    the pinned NDK's LLVM tools (`LLVM_OBJCOPY` and the like are ignored), and compared with the copies inside the
    published jar, AAR and klibs.
 
@@ -186,7 +187,8 @@ A match on a second, independent machine is what this page asks for and has not 
 yours, matching or not.
 
 What a match shows: those bytes come from the tag's C sources, the tag's build scripts and the OpenSSL tarball whose
-signature and hash were checked, compiled by the pinned toolchain; nothing else was linked in. It does not show that the
+signature and hash were checked (with the tag's carried patches, whose hashes were checked), compiled by the pinned
+toolchain; nothing else was linked in. It does not show that the
 toolchain itself is honest (Xcode, the NDK and the Kotlin/Native LLVM are binaries from Apple, Google and JetBrains), and
 it says nothing about the files below.
 

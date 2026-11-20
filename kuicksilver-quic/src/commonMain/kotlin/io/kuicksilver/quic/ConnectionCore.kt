@@ -739,6 +739,13 @@ public class ConnectionCore internal constructor(
     internal var candidateAnswered = false
     internal var closeFrame: CloseFrame? = null
 
+    /**
+     * Client: the TLS failure is the ech_required of a rejected ECH (RFC 9849 section 6.1.6), which comes after the client's
+     * own flight (an empty Certificate when asked, section 6.1.7, and its Finished): that CRYPTO goes out in the packets of
+     * the CONNECTION_CLOSE, ahead of the frame, instead of being dropped with the connection.
+     */
+    internal var closeAfterFlight = false
+
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
     internal val closeSentIn = BooleanArray(3)
     internal var closeSent: Boolean

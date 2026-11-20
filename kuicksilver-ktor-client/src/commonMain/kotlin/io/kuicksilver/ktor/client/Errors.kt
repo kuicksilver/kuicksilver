@@ -33,9 +33,12 @@ internal fun HttpRequestData.socketTimeoutMillis(): Long? =
  * The TLS configuration of a connection to [host] with [alpn]: the same trust, pins and identity for HTTP/3 and its
  * HTTP/1.1 fallback (threat-model 3.18); SNI and verification use the origin's host.
  */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverEngineConfig.tlsConfigFor(
     host: String,
     alpn: List<String>,
+    // what the connection offers for ECH (RFC 9849), from its EchRoute; null: none, GREASE as configured
+    ech: EchRoute.Offer? = null,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
         trust = this@tlsConfigFor.trust
@@ -44,6 +47,10 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
         // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
         this.alpn = alpn
         serverName = host
+        // the connection decides these: one configuration per endpoint, the retry's after a rejection; ECH is TLS 1.3
+        // only, and a TLS 1.2 configuration offers none (EchClientConfig.fromHttpsRecords)
+        echConfigList = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
+        echGrease = this@tlsConfigFor.ech.grease
     }
 
 /**
@@ -77,14 +84,19 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
         val own = this@proxyTlsConfigFor.proxyTls
+        // ECH (RFC 9849) on the proxy hop: GREASE as configured, never the origin's configuration; a proxyTls block may
+        // give the proxy's own
         if (own == null) {
             trust = this@proxyTlsConfigFor.trust
             tls()
             trust = proxyTrustOf(trust)
             identity = null
+            echConfigList = null
+            echGrease = this@proxyTlsConfigFor.ech.grease
         } else {
             trust = proxyTrustOf(this@proxyTlsConfigFor.trust)
             identity = null
+            echGrease = this@proxyTlsConfigFor.ech.grease
             own()
         }
         // HTTP/1.1 to an https:// proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023), h3 to a

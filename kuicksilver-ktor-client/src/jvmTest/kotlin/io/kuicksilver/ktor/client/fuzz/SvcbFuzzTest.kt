@@ -58,7 +58,12 @@ class SvcbFuzzTest {
         }
         val endpoints = serviceEndpoints(records, 443, setOf("h3", "h2", "http/1.1"), Random(0))
         assertTrue(endpoints.size <= MAX_ENDPOINTS)
-        for (e in endpoints) assertTrue(isHostName(e.host) && (e.quic || e.tcp))
+        for (e in endpoints) assertTrue(isHostName(e.host) && (e.quic || e.tcp) && e.ech == null)
+        // with ECH (RFC 9848) each endpoint carries its record's checked `ech`: a list whose length prefix is the rest
+        for (e in serviceEndpoints(records, 443, setOf("h3", "h2", "http/1.1"), Random(0), ech = true)) {
+            val ech = e.ech ?: continue
+            assertTrue(ech.size >= 6 && ((ech[0].toInt() and 0xff) shl 8 or (ech[1].toInt() and 0xff)) == ech.size - 2)
+        }
         aliasTarget(records, Random(0))?.let { assertTrue(it.isNotEmpty()) }
     }
 

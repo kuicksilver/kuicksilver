@@ -52,6 +52,12 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
            fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
         SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
+    if (!ksl_ech_ssl_init(s)) {
+        SSL_free(s->ssl);
+        BIO_free(s->net);
+        free(s);
+        return NULL;
+    }
     /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data), a
        server that asks for a client certificate (the CompressedCertificate it may get, KSL_GET_CERT_COMPRESSION) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT || c->client_cert_mode != KSL_CLIENT_CERT_NONE) {
@@ -123,6 +129,22 @@ static int set_verify_name(ksl_ssl *s, const char *name) {
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: verify name must be a non-empty ASCII host or IP literal");
         return KSL_ERROR;
     }
+    if (s->ech_set &&
+        !SSL_in_before(s->ssl)) { /* after a rejection the outer handshake is checked against the public_name */
+        ksl_ssl_set_error(s, KSL_E_TOO_LATE,
+                          "ksl: the verify name of an ECH session is set before the handshake starts");
+        return KSL_ERROR;
+    }
+    if (s->ech_set) { /* ECH names a host (RFC 9849 section 6.1): an IP literal is refused before anything changes */
+        X509_VERIFY_PARAM *probe = X509_VERIFY_PARAM_new();
+        int ip = probe != NULL && X509_VERIFY_PARAM_set1_ip_asc(probe, name) == 1;
+        X509_VERIFY_PARAM_free(probe);
+        ERR_clear_error();
+        if (ip || probe == NULL) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: ECH needs a host name, not an IP literal, as the verify name");
+            return KSL_ERROR;
+        }
+    }
     X509_VERIFY_PARAM *p = SSL_get0_param(s->ssl);
     s->verify_flags = X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
     X509_VERIFY_PARAM_set_hostflags(p, s->verify_flags);
@@ -162,6 +184,8 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         name[len] = 0;
         return what == KSL_SET_SNI ? set_sni(s, name) : set_verify_name(s, name);
     }
+    case KSL_SET_ECH_CONFIG_LIST:
+        return ksl_ech_set_config_list(s, data, len);
     case KSL_SET_QUIC_VERSION: {
         if (!data || len != 4) {
             ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: QUIC version is 4 bytes");
@@ -285,7 +309,8 @@ static int copy_out(uint8_t *out, size_t cap, size_t *len, const void *src, size
 }
 int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     ERR_clear_error();
-    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG && what != KSL_GET_QUIC_PENDING) {
+    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG && what != KSL_GET_QUIC_PENDING &&
+        what != KSL_GET_ECH_STATUS && what != KSL_GET_ECH_RETRY_CONFIGS && what != KSL_GET_VERIFY_NAME) {
         ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: session failed");
         return KSL_ERROR;
     }
@@ -372,6 +397,21 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;
         return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_ECH_STATUS: {
+        uint8_t b = (uint8_t)ksl_ech_status(s);
+        return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_ECH_RETRY_CONFIGS: {
+        size_t n = 0;
+        int r = ksl_ech_retry_configs(s, out, cap, &n);
+        if (len)
+            *len = n;
+        return r;
+    }
+    case KSL_GET_VERIFY_NAME: {
+        const char *n = s->verify_ip ? s->verify_ip : ksl_verify_host(s);
+        return copy_out(out, cap, len, (const uint8_t *)n, n ? strlen(n) : 0);
     }
     case KSL_GET_CERT_COMPRESSORS: {
         uint8_t b = (uint8_t)ksl_cert_compressors();
@@ -615,6 +655,7 @@ int ksl_drive(ksl_ssl *s) {
     ERR_clear_error();
     int r;
     if (!s->done) {
+        ksl_ech_before_handshake(s);
         r = SSL_do_handshake(s->ssl);
         /* A server with early data enabled stops at TLS_ST_EARLY_DATA once its own Finished is out (SSL_do_handshake returns 1, as for
            SSL_read_early_data over TCP); the handshake is complete only with the client's Finished: calling again re-enters it. */
@@ -638,6 +679,12 @@ int ksl_drive(ksl_ssl *s) {
                     return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED,
                                         "ksl: no application protocol negotiated where one is required");
                 }
+            }
+            /* RFC 9849 sections 5 and 6.2.1: what the server sent in EncryptedExtensions for ECH, checked before the session counts as
+               established */
+            if (ksl_ech_check_done(s) != KSL_OK) {
+                s->done = 0;
+                return KSL_ERROR;
             }
             if (s->mode == KSL_MODE_QUIC) {
                 /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
@@ -684,6 +731,8 @@ int ksl_drive(ksl_ssl *s) {
             return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
         s->fatal = 1;
         ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: handshake failed");
+        ksl_ech_check_failed(
+            s); /* after our ech_required: the ECH error RFC 9849 has the client report instead, if any */
         return KSL_ERROR;
     }
 }

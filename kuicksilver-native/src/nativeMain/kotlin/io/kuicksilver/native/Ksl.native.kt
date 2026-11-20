@@ -5,6 +5,7 @@
 package io.kuicksilver.native
 
 import cnames.structs.ksl_ctx
+import cnames.structs.ksl_ech_keys
 import cnames.structs.ksl_key
 import cnames.structs.ksl_pkey
 import cnames.structs.ksl_session
@@ -24,6 +25,8 @@ public actual object Ksl {
     private fun key(h: Long): CPointer<ksl_key>? = if (h == 0L) null else interpretCPointer(nativeNullPtr + h)
 
     private fun udp(h: Long): CPointer<ksl_udp>? = if (h == 0L) null else interpretCPointer(nativeNullPtr + h)
+
+    private fun echKeys(h: Long): CPointer<ksl_ech_keys>? = if (h == 0L) null else interpretCPointer(nativeNullPtr + h)
 
     private fun CPointer<*>?.h(): Long = this?.rawValue?.toLong() ?: 0L
 
@@ -196,6 +199,30 @@ public actual object Ksl {
             if (rc == 0) path += unframeDerList(bytes ?: return@memScoped -1)
             rc
         }
+
+    public actual fun echConfigListCheck(list: ByteArray): ByteArray? =
+        memScoped {
+            val len = alloc<ULongVar>()
+            val out = allocArray<UByteVar>(list.size.coerceAtLeast(2))
+            val r = list.pin { p, n -> ksl_ech_config_list_check(p, n, out, list.size.coerceAtLeast(2).toULong(), len.ptr) }
+            if (r != KSL_OK) null else out.readBytes(len.value.toInt())
+        }
+
+    public actual fun echKeysNew(framed: ByteArray): Long =
+        memScoped {
+            val msg = allocArray<ByteVar>(256)
+            msg[0] = 0
+            val h = framed.pin { p, n -> ksl_ech_keys_new(p, n, msg, 256u) }.h()
+            if (h == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, msg.toKString().ifEmpty { "ksl: ECH keys refused" })
+            h
+        }
+
+    public actual fun echKeysFree(keys: Long): Unit = ksl_ech_keys_free(echKeys(keys))
+
+    public actual fun ctxSetEchKeys(
+        ctx: Long,
+        keys: Long,
+    ): Unit = ctxCheck(ctx, ksl_ctx_set_ech_keys(ctx(ctx), echKeys(keys)))
 
     public actual fun ctxSetCrls(
         ctx: Long,

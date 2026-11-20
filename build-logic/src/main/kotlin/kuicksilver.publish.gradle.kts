@@ -13,7 +13,7 @@ import com.vanniktech.maven.publish.SourcesJar
 plugins { id("com.vanniktech.maven.publish") }
 
 private val descriptions = mapOf(
-    "kuicksilver-native" to "The ksl C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings and the native library loader",
+    "kuicksilver-native" to "The ksl C shim with OpenSSL 4.1 inside, its JNI and cinterop bindings and the native library loader",
     "kuicksilver-tls" to "TLS 1.3 configuration and trust (platform verifier, private CA, SPKI pins, TOFU) over any byte channel",
     "kuicksilver-ktor-network" to "Socket.tls() and Socket.tlsServer() for ktor-network sockets",
     "kuicksilver-quic" to "QUIC transport (v1 and v2) for Kotlin Multiplatform: streams, datagrams, migration, a coroutine API over a sans-IO core",
@@ -33,7 +33,7 @@ mavenPublishing {
     coordinates("io.kuicksilver", project.name, project.version.toString())
     pom {
         name.set(project.name)
-        description.set(descriptions[project.name] ?: "Kotlin Multiplatform QUIC, HTTP/3 and TLS 1.3 over OpenSSL 3.5")
+        description.set(descriptions[project.name] ?: "Kotlin Multiplatform QUIC, HTTP/3 and TLS 1.3 over OpenSSL 4.1")
         inceptionYear.set("2026")
         url.set("https://github.com/kuicksilver/kuicksilver")
         licenses { license { name.set("Apache-2.0"); url.set("https://www.apache.org/licenses/LICENSE-2.0.txt"); distribution.set("repo") } }
@@ -48,4 +48,4 @@ mavenPublishing {
 }
 
 // CycloneDX SBOMs of every publication (build/sbom; SbomWiring.kt): attached to the GitHub release, not uploaded to Central
-registerCyclonedxSbom(descriptions[project.name] ?: "Kotlin Multiplatform QUIC, HTTP/3 and TLS 1.3 over OpenSSL 3.5")
+registerCyclonedxSbom(descriptions[project.name] ?: "Kotlin Multiplatform QUIC, HTTP/3 and TLS 1.3 over OpenSSL 4.1")

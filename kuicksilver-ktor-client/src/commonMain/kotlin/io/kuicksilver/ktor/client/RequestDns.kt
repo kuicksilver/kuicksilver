@@ -41,6 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * On an IPv6-only network with NAT64 ([Nat64], RFC 8305 section 7) the IPv4 answers, and an IPv4 literal, are handed out as
  * IPv6 addresses synthesized with the network's prefixes, and the race asks for IPv4 only when it needs to.
  */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class RequestDns private constructor(
     /** One family (true: IPv6) of a host name, port 0: empty for none, an exception for a failed lookup. */
     private val resolveFamily: suspend (String, Boolean) -> List<TcpAddress>,
@@ -52,13 +53,27 @@ internal class RequestDns private constructor(
     private val endpoint: Pair<String, Int>?,
     /** The request's DNS events of each lookup of one family ([resolveFamily] reports a lookup of both itself); null: none. */
     private val familyEvents: DnsObserver?,
+    /** The ECH offer of connections made through this view: an HTTPS record endpoint's ([connectTo]); null: the origin's. */
+    private val echOfEndpoint: EchRoute?,
+    /** The ECH routes of the request's origins (by host), shared by every view. */
+    private val echRoutes: kotlin.concurrent.atomics.AtomicReference<Map<String, EchRoute>>,
 ) {
     constructor(
         nat64: Nat64 = Nat64.system,
         newSort: () -> DestinationSort = { DestinationSort() },
         familyEvents: DnsObserver? = null,
         resolveFamily: suspend (String, Boolean) -> List<TcpAddress> = ::resolveFamily,
-    ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null, familyEvents)
+    ) : this(
+        resolveFamily,
+        nat64,
+        newSort,
+        Mutex(),
+        HashMap(),
+        null,
+        familyEvents,
+        null,
+        kotlin.concurrent.atomics.AtomicReference(emptyMap()),
+    )
 
     /** Whether this is the system's resolution ([Dns.System]), made as before the application resolver existed (tests). */
     internal var isSystemForTest: Boolean = false
@@ -74,7 +89,28 @@ internal class RequestDns private constructor(
     fun connectTo(
         host: String,
         port: Int,
-    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port, familyEvents)
+        // the endpoint's ECH (RFC 9848), shared with the QUIC side of the same endpoint; null: the origin's
+        ech: EchRoute? = null,
+    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port, familyEvents, ech, echRoutes)
+
+    /**
+     * The ECH route of a connection through this view for [originHost]: the endpoint's ([connectTo]), else the one of the
+     * request for that origin, made once from [initial] (the configured list of the host) and shared by the request's
+     * connections, so the request retries after a rejection once (RFC 9849 section 6.1.6, [EchRoute]).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun echRoute(
+        originHost: String,
+        initial: (String) -> io.kuicksilver.tls.EchConfigList?,
+    ): EchRoute {
+        echOfEndpoint?.let { return it }
+        while (true) {
+            val m = echRoutes.load()
+            m[originHost]?.let { return it }
+            val r = EchRoute(initial(originHost))
+            if (echRoutes.compareAndSet(m, m + (originHost to r))) return r
+        }
+    }
 
     /**
      * Takes [addresses] (4 or 16 bytes each), the A/AAAA records an HTTPS answer carried, for [host]: RFC 9460 section 5,
@@ -279,7 +315,7 @@ internal class RequestDns private constructor(
         return literal
     }
 
-    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null, familyEvents)
+    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null, familyEvents, null, echRoutes)
 
     /**
      * One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. A host with

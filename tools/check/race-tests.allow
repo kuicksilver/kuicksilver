@@ -41,3 +41,4 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/Protoco
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt | negative_handshakeDoesNotLiftAStall | not-a-race | BrokenAltSvc bookkeeping on the test's own clock: no concurrency at all
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt | stallBackoffWalksBackDown | not-a-race | BrokenAltSvc bookkeeping on the test's own clock: no concurrency at all
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt | negative_aLiveStallMarkDoesNotDecay | not-a-race | BrokenAltSvc bookkeeping on the test's own clock: no concurrency at all
+kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/EchKeysRaceJvmTest.kt | keysAreAppliedWhenTheContextIsBuilt | not-a-race | one thread builds a context and reads the version it applied; the race tests of the file are the others

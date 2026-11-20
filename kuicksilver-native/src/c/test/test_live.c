@@ -3,6 +3,7 @@
 /* ksl_live_objects: every object ksl makes is counted while it lives and only then (the soak harness reads these counters;
  * docs/spec/threat-model.md, resource exhaustion). The counters are process-wide, so each check compares deltas. */
 #include "test_common.h"
+#include "ksl_internal.h" /* KSL_HAS_ECH */
 
 static int64_t live(int which) {
     int64_t v[KSL_LIVE_COUNT];
@@ -132,9 +133,36 @@ static void test_udp(void) {
     END();
 }
 
+/* ECH key sets: the handles ksl_ech_keys_new hands out, until ksl_ech_keys_free; a context's own reference is not counted */
+static void test_ech_keys(void) {
+    SECTION("live_counters_ech_keys");
+#if KSL_HAS_ECH
+    size_t pl;
+    uint8_t *pem = read_file(TESTDATA "ech/ech-a.pem", &pl);
+    uint8_t *framed = malloc(pl + 5);
+    framed[0] = (uint8_t)((pl + 1) >> 24), framed[1] = (uint8_t)((pl + 1) >> 16), framed[2] = (uint8_t)((pl + 1) >> 8);
+    framed[3] = (uint8_t)(pl + 1), framed[4] = 1;
+    memcpy(framed + 5, pem, pl);
+    int64_t k0 = live(KSL_LIVE_ECH_KEYS);
+    ksl_ech_keys *k = ksl_ech_keys_new(framed, pl + 5, NULL, 0);
+    CHECK(k != NULL && live(KSL_LIVE_ECH_KEYS) == k0 + 1, "a key set is one live handle");
+    ksl_ctx *sc = ksl_ctx_new(KSL_SERVER);
+    CHECK(ksl_ctx_set_ech_keys(sc, k) == KSL_OK && live(KSL_LIVE_ECH_KEYS) == k0 + 1,
+          "the context's own reference is not a handle");
+    ksl_ech_keys_free(k);
+    CHECK(live(KSL_LIVE_ECH_KEYS) == k0, "dropping the handle returns the counter while the context keeps the set");
+    ksl_ctx_free(sc);
+    CHECK(live(KSL_LIVE_ECH_KEYS) == k0, "freeing the context changes nothing");
+    free(framed);
+    free(pem);
+#endif
+    END();
+}
+
 void run_live(void) {
     test_counters_shape();
     test_handshake_objects_return();
+    test_ech_keys();
     test_keys();
     test_udp();
 }

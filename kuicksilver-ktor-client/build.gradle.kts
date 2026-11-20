@@ -171,3 +171,9 @@ tasks.register("androidMigrationDeviceTest") {
         }
     }
 }
+
+// LiveEchTest (jvmTest): opt-in, it needs the network (a public ECH server and DNS over HTTPS); skipped unless
+// -Pkuicksilver.liveEch=true
+tasks.withType<Test>().configureEach {
+    providers.gradleProperty("kuicksilver.liveEch").orNull?.let { systemProperty("kuicksilver.liveEch", it) }
+}

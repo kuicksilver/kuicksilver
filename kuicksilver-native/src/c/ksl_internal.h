@@ -17,6 +17,13 @@
  * but not supported in 0.3.0; building with -DKSL_SYSTEM_OPENSSL_MAX_MAJOR=4 (tools/ci/system-openssl.sh reads
  * KSL_SYSTEM_OPENSSL_MAX_MAJOR) is how the range is opened once 4.x is supported. */
 #define KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR 3
+/* Encrypted Client Hello (ksl_ech.c): with the bundled OpenSSL 4 only. A system libssl is not used for it: 3.x has no ECH, and a
+   system 4.x would lack the patch ADR-0019 carries for ECH after a HelloRetryRequest. */
+#if !defined(KSL_SYSTEM_OPENSSL) && OPENSSL_VERSION_MAJOR >= 4 && !defined(OPENSSL_NO_ECH)
+#define KSL_HAS_ECH 1
+#else
+#define KSL_HAS_ECH 0
+#endif
 #ifndef KSL_SYSTEM_OPENSSL_MAX_MAJOR
 #define KSL_SYSTEM_OPENSSL_MAX_MAJOR KSL_SYSTEM_OPENSSL_DEFAULT_MAX_MAJOR
 #endif
@@ -47,6 +54,11 @@ struct ksl_ctx {
     int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
     int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
     int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int ech_grease;  /* client: KSL_OPT_ECH_GREASE */
+    int abort_ext; /* client: ksl_tcp_abort's ClientHello extension is registered (only on contexts that allow TLS 1.2) */
+    /* server: the ECH keys new sessions copy (a reference), replaced whole under ech_lock (ksl_ctx_set_ech_keys) */
+    ksl_ech_keys *ech_keys;
+    CRYPTO_RWLOCK *ech_lock;
     int cert_compression; /* KSL_OPT_CERT_COMPRESSION: RFC 8879 offered and accepted (brotli, zlib); a server's chain compressed at freeze */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
@@ -103,6 +115,17 @@ struct ksl_ssl {
     char *verify_ip;
     unsigned verify_flags;
     int verify_pending, verify_decision, verify_alert;
+    int ech_set;           /* client: KSL_SET_ECH_CONFIG_LIST took a list (ksl_ech.c) */
+    int ech_required_sent; /* client: info_cb saw this session send ech_required (121): OpenSSL rejected-ECH path (ksl_ech.c) */
+    int ech_grease_ready; /* client: the GREASE ECH suite of this handshake was picked (ksl_ech_before_handshake) */
+#ifdef KSL_TEST
+    /* test hooks (ksl_ech.c): what OpenSSL reports of the server's retry_configs and of a resumption, for the outcomes a real OpenSSL
+       server cannot produce (an accepted ECH with retry_configs, malformed ones, a PSK after a rejection) */
+    int test_ech_retry_set; /* 1: test_ech_retry is what SSL_ech_get1_retry_config gives (NULL: none); 2: it fails */
+    const uint8_t *test_ech_retry;
+    size_t test_ech_retry_len;
+    int test_ech_reused;
+#endif
     STACK_OF(X509) * presented_chain, *validated_chain;
     /* 0-RTT (server): context stamped into tickets, the transport's verdict, whether the resumed ticket's context matched */
     uint8_t early_ctx[64];
@@ -172,6 +195,8 @@ struct ksl_ssl {
 int64_t ksl_ticket_now(void);
 #ifdef KSL_TEST
 extern int64_t ksl_test_ticket_clock_skew;
+extern int
+    ksl_test_ech_store_fail; /* ksl_ech.c: the next ECHConfig checks fail as if OSSL_ECHSTORE_new ran out of memory */
 #endif
 
 struct ksl_key {
@@ -199,6 +224,22 @@ int ksl_ssl_fail(ksl_ssl *s, uint32_t code, const char *msg); /* records, marks 
 /* event queue (ksl_quic.c) */
 ksl_event *ksl_push_event(ksl_ssl *s, int type, const uint8_t *copy_from, size_t len);
 size_t ksl_quic_pending(const ksl_ssl *s, int level); /* CRYPTO bytes provided at level and not yet read by TLS */
+
+/* Encrypted Client Hello (ksl_ech.c) */
+int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len);
+int ksl_ech_status(ksl_ssl *s);
+int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len);
+int ksl_ech_ssl_init(ksl_ssl *s); /* ksl_ssl_new: GREASE, a server's keys; 0 on failure */
+void ksl_ech_before_handshake(
+    ksl_ssl *s);                       /* ksl_drive, before the first ClientHello: the GREASE suite of this session */
+int ksl_ech_check_done(ksl_ssl *s);    /* ksl_drive, a client handshake that completed: KSL_OK, or the session failed */
+void ksl_ech_check_failed(ksl_ssl *s); /* ksl_drive, a client handshake that failed: the precise ECH error, if any */
+int ksl_ech_inner_versions_ok(
+    SSL *ssl); /* ksl_client_hello_cb: 0 when an accepted inner ClientHello offers TLS 1.2 or below */
+void ksl_ech_ctx_free(ksl_ctx *c);
+const char *
+ksl_verify_host(ksl_ssl *s); /* the host name a server certificate is checked against now (NULL: an IP literal) */
+int ksl_ctx_register_abort_ext(ksl_ctx *c); /* ksl_ctx.c: once, when a client context allows TLS 1.2 */
 
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);

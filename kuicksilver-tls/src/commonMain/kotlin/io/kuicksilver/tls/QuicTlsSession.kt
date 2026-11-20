@@ -344,6 +344,10 @@ public interface QuicTlsSession : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val keyExchangeGroup: String? get() = null
 
+    /** The Encrypted Client Hello outcome ([EchStatus]) once the handshake completed or failed; [EchStatus.None] before. */
+    @ExperimentalKuicksilverApi
+    public val echStatus: EchStatus get() = EchStatus.None
+
     /**
      * The algorithm the peer's certificate chain came compressed with (RFC 8879), null when it came uncompressed, has not come,
      * or the session failed. The default (an implementation without certificate compression) is null.

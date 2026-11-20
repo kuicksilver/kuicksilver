@@ -26,7 +26,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 /** TLS configurations for the core tests. */
-@OptIn(DelicateKuicksilverApi::class)
+@OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
 internal object CoreFixtures {
     val testCa = Certificate(TestCerts.testCa)
     val accept =
@@ -46,6 +46,9 @@ internal object CoreFixtures {
             this.alpn = listOf(alpn)
             serverName = name
             this.trust = trust
+            // the core tests measure the client's first datagrams and replay fuzz traces byte for byte: GREASE ECH (on by
+            // default, RFC 9849 section 6.2.1) adds an extension of OpenSSL's choosing to every ClientHello; kuicksilver-tls tests it
+            echGrease = false
             block()
         }
 

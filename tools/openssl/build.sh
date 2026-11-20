@@ -21,6 +21,11 @@
 # (docs/guide/building.md).
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256s, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
+# The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, then patch_2 /
+# patch_2_sha256 up to patch_9 / patch_9_sha256, each only with all the ones before it. Each file must have its pinned
+# SHA-256, and tools/openssl/apply-patch.pl applies them, in that order and exactly, to the copy of the verified tree the
+# build runs in; their hashes are part of the cache key, of the target line (tokens patch-sha256=<first 16 hex>,
+# patch-2-sha256=<...>, ...) and of provenance.txt (patch-sha256 <hash>, patch-2-sha256 <hash>, ...).
 # zlib and brotli (gradle/compression-libs.toml, verified by fetch.sh) are compiled with libcrypto's compiler and flags and
 # appended to libcrypto.a (tools/openssl/compression.mk): OpenSSL's certificate compression (RFC 8879) needs them, and as
 # members of libcrypto.a they are linked, symbol-prefixed and export-checked exactly like OpenSSL. Android and iOS get brotli's
@@ -41,6 +46,26 @@ pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;;
 [ -f "$toml" ] || { echo "no pin profile $toml" >&2; exit 1; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
+patch_files=(); patch_id=""; prov_patches=""
+# a key the loop below does not read would be a patch silently left out (patch_10, patch_1, Patch_2, patch2): refused
+unknown=$(sed -n 's/^\([A-Za-z0-9_]*[Pp][Aa][Tt][Cc][Hh][A-Za-z0-9_]*\) *=.*/\1/p' "$toml" | grep -Exv 'patch(_[2-9])?(_sha256)?' || true)
+[ -z "$unknown" ] || { echo "$toml: unknown patch key(s): $(echo $unknown) (patch, patch_2 ... patch_9 and their _sha256)" >&2; exit 1; }
+for n in "" _2 _3 _4 _5 _6 _7 _8 _9; do
+  pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$toml"); ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$toml")
+  case "${pf:+f}${ps:+s}" in ""|fs) ;; *) echo "$toml: patch$n and patch${n}_sha256 go together" >&2; exit 1 ;; esac
+  [ -n "$pf" ] || continue
+  idx=${n#_}; idx=${idx:-1}   # patch is 1, patch_2 is 2, ...: all the ones before it must be there
+  if [ ${#patch_files[@]} -ne $((idx - 1)) ]; then
+    prev=$([ "$idx" -eq 2 ] && echo patch || echo "patch_$((idx - 1))"); echo "$toml: patch$n without $prev" >&2; exit 1
+  fi
+  label="patch${n//_/-}-sha256"
+  patch_id="${patch_id:+$patch_id }$label=$(printf %s "$ps" | cut -c1-16)"; prov_patches="${prov_patches}$label $ps"$'\n'
+  if [ "$print_only" != 1 ]; then
+    actual=$(shasum -a 256 < "$root/$pf" 2>/dev/null | cut -d' ' -f1) || actual=""
+    [ "$actual" = "$ps" ] || { echo "FAILED: $pf has SHA-256 ${actual:-<unreadable>}, $toml pins $ps" >&2; exit 1; }
+  fi
+  patch_files+=("$root/$pf")
+done
 [ "$print_only" = 1 ] || [ -d "$src" ] || { echo "run fetch.sh first" >&2; exit 1; }
 ctoml="$root/gradle/compression-libs.toml"
 tv() { # <table> <key>: the string value of key in [table] of gradle/compression-libs.toml
@@ -133,18 +158,19 @@ esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
-if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $ksl_tag" | portable; echo; exit 0; fi
+if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $patch_id $ksl_tag" | portable; echo; exit 0; fi
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
 ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder"
-key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}" | shasum -a 256 | cut -c1-16)
+key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}${patch_id:+|$patch_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
 provenance() { # <dir>: what was built from what, checked by -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts)
   { echo "tarball-sha256 $(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")"; echo "zlib-tarball-sha256 $zlib_sha"; echo "brotli-tarball-sha256 $brotli_sha"
     echo "target $(portable < "$1/configure-target.txt")"
-    for a in libcrypto.a libssl.a; do echo "$a $(shasum -a 256 < "$1/lib/$a" | cut -d' ' -f1)"; done; } > "$1/provenance.txt"
+    for a in libcrypto.a libssl.a; do echo "$a $(shasum -a 256 < "$1/lib/$a" | cut -d' ' -f1)"; done
+    printf %s "$prov_patches"; } > "$1/provenance.txt"
 }
 if [ -d "$cache/lib" ] && [ "${KSL_OPENSSL_FRESH:-0}" != 1 ]; then
   rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"; [ -f "$dest/provenance.txt" ] || provenance "$dest"
@@ -157,6 +183,8 @@ mkdir -p "$work/ksl-zlib" "$work/ksl-brotli"; cp -R "$zlib_src/." "$work/ksl-zli
 cp "$here"/brotli/ksl_static_init.c "$here"/brotli/ksl_encoder_stub.c "$here"/brotli/ksl_compress.c "$work/ksl-brotli/c/enc/"
 cp "$here"/brotli/ksl_decompress.c "$work/ksl-brotli/c/dec/"
 cd "$work"
+[ ${#patch_files[@]} -eq 0 ] || perl "$here/apply-patch.pl" "$work" "${patch_files[@]}" >"$out/build/$target.patch.log" 2>&1 \
+  || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: the carried patches do not apply to OpenSSL $version" >&2; exit 1; }
 # the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
 ./Configure "$cfg" $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
@@ -177,12 +205,14 @@ KSL_V="$version" perl -0777 -ne '
   $s =~ s/^compiler: // or die "$fmt: compiler_flags[] does not start with compiler:\n";
   my @t = grep { !m{/} } split /\s+/, $s; unshift @t, "cc" if !@t || $t[0] =~ /^-/;
   print join(" ", @t), "\n", $plat, "\n";' crypto/buildinf.h > "$out/build/$target.buildinf.txt"
+rm -f crypto/buildinf.h   # OpenSSL 4 generates it read-only (util/file-from-stdout.pl); rewritten below
 perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
 make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
 make -j"$JOBS" -f Makefile -f "$here/compression.mk" KSL_BROTLI_ENCODER="$brotli_encoder" ksl-compression >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"
 cp libcrypto.a libssl.a "$cache/lib/"
 cp -R include/openssl "$cache/include/"
-cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}${ksl_tag:+ $ksl_tag}" > "$cache/configure-target.txt"; provenance "$cache"
+chmod -R u+w "$cache/include"   # OpenSSL 4 generates some headers read-only (util/file-from-stdout.pl); copies must stay replaceable
+cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}${patch_id:+ $patch_id}${ksl_tag:+ $ksl_tag}" > "$cache/configure-target.txt"; provenance "$cache"
 rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"
 echo "built $target -> $dest (cache $key)"

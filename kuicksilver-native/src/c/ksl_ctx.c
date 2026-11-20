@@ -47,6 +47,11 @@ static void info_cb(const SSL *ssl, int where, int ret) {
         (SSL_version(ssl) < TLS1_3_VERSION || code == SSL_AD_USER_CANCELLED))
         return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
+#if KSL_HAS_ECH
+    /* the rejected-ECH path (RFC 9849 section 6.1.6) is ours, recorded for itself: a later alert must not hide it (ksl_ech_status) */
+    if (!(where & SSL_CB_READ) && code == SSL_AD_ECH_REQUIRED)
+        s->ech_required_sent = 1;
+#endif
 }
 /* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
    (or leave behind) a copy of the TLS secrets uncleansed (threat model 3.7). */
@@ -341,7 +346,11 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
 /* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
    and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the Private Use
    range (RFC 9846 section 11: "Values with the first byte 255 (decimal) are reserved for Private Use"); OpenSSL refuses a server's
-   answer to an extension the client did not send (RFC 9846 section 4.3). */
+   answer to an extension the client did not send (RFC 9846 section 4.3).
+   Registered only on a client context that allows TLS 1.2 (KSL_OPT_MIN_VERSION KSL_TLS1_2), the only one where it can matter: a
+   renegotiation is TLS 1.2's. OpenSSL 4.1.0 cannot build an ECH ClientHello next to a custom extension whose callback declines to
+   send it (bug A of ADR-0019: extensions_cust.c custom_ext_add marks it for the outer ClientHello, which then fails with
+   internal_error), so a context that has it takes no ECH configuration (KSL_SET_ECH_CONFIG_LIST); ECH never needs TLS 1.2. */
 #define KSL_ABORT_EXT_TYPE 0xff5a
 static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al,
                             void *arg) {
@@ -748,12 +757,13 @@ ksl_ctx *ksl_ctx_new(int role) {
     if (role == KSL_SERVER)
         c->ocsp_lock = CRYPTO_THREAD_lock_new(); /* NULL: no verdict cache, every handshake checks the response */
 #endif
-    if (role == KSL_CLIENT &&
-        SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1) {
-        SSL_CTX_free(c->ctx);
-        free(c);
-        return NULL;
-    }
+#if KSL_HAS_ECH
+    /* a server's ECH keys may be set (and rotated) from any thread at any time, also on a frozen context: the lock exists before
+       the context is shared (made by the first ksl_ctx_set_ech_keys, it raced the others and ksl_ech_ssl_init). NULL: out of
+       memory, no keys can be set (ksl_ctx_set_ech_keys answers KSL_E_NO_MEMORY) */
+    if (role == KSL_SERVER)
+        c->ech_lock = CRYPTO_THREAD_lock_new();
+#endif
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
@@ -763,11 +773,20 @@ void ksl_ctx_free(ksl_ctx *c) {
     ksl_live_add(KSL_LIVE_CTX, -1);
     SSL_CTX_free(c->ctx);
     CRYPTO_THREAD_lock_free(c->ocsp_lock);
+    ksl_ech_ctx_free(c);
     if (c->ticket_keys) {
         OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80);
         free(c->ticket_keys);
     }
     free(c);
+}
+int ksl_ctx_register_abort_ext(ksl_ctx *c) {
+    if (c->role != KSL_CLIENT || c->abort_ext)
+        return 1;
+    if (SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1)
+        return 0;
+    c->abort_ext = 1;
+    return 1;
 }
 static int frozen(ksl_ctx *c) {
     if (c->frozen) {
@@ -1190,6 +1209,11 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: versions are KSL_TLS1_2 or KSL_TLS1_3");
             return KSL_ERROR;
         }
+        /* a client that may negotiate TLS 1.2 gets ksl_tcp_abort's extension (abort_ext_add_cb), kept if the bound rises again */
+        if (option == KSL_OPT_MIN_VERSION && value == KSL_TLS1_2 && !ksl_ctx_register_abort_ext(c)) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ClientHello extension refused");
+            return KSL_ERROR;
+        }
         return (option == KSL_OPT_MIN_VERSION ? SSL_CTX_set_min_proto_version(c->ctx, value)
                                               : SSL_CTX_set_max_proto_version(c->ctx, value)) == 1
                    ? KSL_OK
@@ -1247,6 +1271,29 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         }
         c->sni_pause = value != 0;
         return KSL_OK;
+    case KSL_OPT_ECH_GREASE:
+        if (c->role != KSL_CLIENT) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ECH GREASE is client-only");
+            return KSL_ERROR;
+        }
+        c->ech_grease = value != 0;
+        return KSL_OK;
+    case KSL_OPT_ECH_ALPN_PAD:
+        if (c->role != KSL_CLIENT || value < 0 || value > 4 + 2 + 0xffff) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: KSL_OPT_ECH_ALPN_PAD is a client's, 0 to 65541 octets");
+            return KSL_ERROR;
+        }
+#if KSL_HAS_ECH
+        if (SSL_CTX_ech_set_alpn_pad_target(c->ctx, (size_t)value) != 1) {
+            ERR_clear_error();
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: OpenSSL refused the ALPN padding target");
+            return KSL_ERROR;
+        }
+        return KSL_OK;
+#else
+        ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, "ksl: this build has no ECH (OpenSSL 4 bundled only)");
+        return KSL_ERROR;
+#endif
     case KSL_OPT_CERT_COMPRESSION:
         if (value != 0 && value != 1) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: certificate compression is 0 or 1");

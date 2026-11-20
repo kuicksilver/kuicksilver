@@ -19,9 +19,9 @@
 #     linux-x86_64, linux-aarch_64 ← linux · osx-aarch_64, osx-x86_64 ← apple · windows-x86_64 ← openssl-docker (mingw-x64)
 #   android (API 24, 35): AAR (arm64-v8a, x86_64, armeabi-v7a), size and 16 KiB gates, emulator tests
 #   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
-#   openssl-next (linux-x64, macos-arm64; weekly, or dispatch with only=openssl-next): the newest OpenSSL 4.x (gradle/openssl-next.toml) built
+#   openssl-next (linux-x64, macos-arm64; weekly, or dispatch with only=openssl-next): the next OpenSSL 4.x (gradle/openssl-next.toml) built
 #     natively, the ksl C tests and a JVM smoke test against it. continue-on-error, needs nothing, nothing needs it, no artifact is kept:
-#     0.3.0 ships OpenSSL 3.5 LTS only (docs/stability.md, OpenSSL).
+#     releases ship the pin of gradle/openssl.toml only (docs/stability.md, OpenSSL).
 name: build
 on:
   # Documentation-only changes run the whole matrix too (no paths-ignore): the lint job checks the docs (doc-refs, links,
@@ -126,6 +126,8 @@ jobs:
             bash "tools/check/$t-test.sh" || rc=1
           done
           exit $rc
+      - name: 'lint: the carried OpenSSL patch applies exactly, and only with its pinned hash'
+        run: bash tools/openssl/apply-patch-test.sh   # ADR-0019
       - name: 'lint: race tests to repeat under load (list) and its negative controls'
         # the 10 runs under load are the local gate's, before its step 1 (docs/process.md, "Repository checks"); here the
         # selection is checked on stubs and listed against the same base as fuzz-formats
@@ -1029,11 +1031,11 @@ jobs:
           retention-days: 14
 
   openssl-next:
-    # OpenSSL 4.x readiness, never a gate: the newest 4.x release of gradle/openssl-next.toml (version, tarball SHA-256 and signing
-    # key pinned like the 3.5 one, same fetch.sh and build.sh through KSL_OPENSSL_PIN) is built on the runner itself, the ksl C
+    # Readiness for the next OpenSSL 4.x, never a gate: the release of gradle/openssl-next.toml (version, tarball SHA-256, signing
+    # key and carried patch pinned like the main pin, same fetch.sh and build.sh through KSL_OPENSSL_PIN) is built on the runner itself, the ksl C
     # tests run against it, and a JVM smoke test loads the JNI library built from it. continue-on-error: a red step here shows in
     # the log, not in the run's result; no job depends on it and no artifact leaves it but a failed step's test reports and heap
-    # dumps (release artifacts are 3.5 only). Not in push or pull_request runs: the weekly run, or a dispatch whose `only`
+    # dumps (release artifacts use gradle/openssl.toml only). Not in push or pull_request runs: the weekly run, or a dispatch whose `only`
     # names it.
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.only), ',openssl-next,')) }}
     continue-on-error: true

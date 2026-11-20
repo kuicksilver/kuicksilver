@@ -44,6 +44,11 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
         ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
     val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
+    // the patches carried under ADR-0019, when the pin names them (their hashes are in the target line too)
+    for ((key, label) in listOf("patch_sha256" to "patch-sha256") + (2..9).map { "patch_${it}_sha256" to "patch-$it-sha256" }) {
+        val pinnedPatch = Regex("^$key = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
+        if (provenance[label] != pinnedPatch) return "provenance.txt names $label ${provenance[label] ?: "none"}, ${pinnedPatch ?: "none"} is pinned"
+    }
     for (lib in listOf("zlib", "brotli")) {
         val pinned = compressionSha(lib)
         if (pinned == null || provenance["$lib-tarball-sha256"] != pinned) return "provenance.txt names $lib tarball ${provenance["$lib-tarball-sha256"]}, $pinned is pinned in ${compressionPin.name}"
@@ -73,6 +78,7 @@ opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), fileTree(root.resolve("tools/openssl/brotli")), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
+        inputs.files(root.resolve("tools/openssl/apply-patch.pl"), fileTree(root.resolve("tools/openssl/patches")))   // ADR-0019
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own

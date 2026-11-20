@@ -1,6 +1,6 @@
 # Module kuicksilver-tls
 
-TLS 1.3 (and TLS 1.2 on request) over OpenSSL 3.5: configuration, certificate trust (the platform verifier, a private
+TLS 1.3 (and TLS 1.2 on request) over OpenSSL 4.1: configuration, certificate trust (the platform verifier, a private
 CA, SPKI pins, trust on first use), server identities, and TLS over any pair of byte channels. Guide:
 `docs/guide/tls.md`.
 

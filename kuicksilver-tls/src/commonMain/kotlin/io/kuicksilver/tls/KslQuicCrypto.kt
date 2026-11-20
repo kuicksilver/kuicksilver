@@ -16,6 +16,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.concurrent.Volatile
 
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
@@ -224,6 +225,8 @@ internal class KslQuicTlsSession(
     private val ctx = lease.ctx
     private var ssl: Long =
         try {
+            // a server's ECH keys go into its context first: a session copies them when it is made (TlsConfig.echKeys, rotation)
+            ctx.ensureEchKeys()
             Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
         } catch (t: Throwable) {
             lease.close() // nobody can close a session that was never built
@@ -231,8 +234,14 @@ internal class KslQuicTlsSession(
         }
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
+
+    // the name the last verification pause is for, read on the loop (the public_name after an ECH rejection): verifyPeer runs
+    // off the loop, which may free the native session meanwhile, so it reads nothing native
+    @Volatile private var pausedName: EchVerifyName? = null
     private var alpn: String? = null
     private var group: String? = null
+    private var ech: EchStatus = EchStatus.None
+    private var echOffered = false // client: an ECH configuration was set ([TlsConfig.echConfigList])
     private var failure: DriveResult.Failed? = null
     private var done = false
     private val verification = Verification(ctx.config)
@@ -257,6 +266,7 @@ internal class KslQuicTlsSession(
                 this.reference = host
                 sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
                 Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+                echOffered = offerEch(ssl, config)
             } catch (t: Throwable) {
                 // a session that failed to build is nobody's to close: its SSL and context go now (close() would read fields not set yet)
                 Ksl.sslFree(ssl)
@@ -484,8 +494,10 @@ internal class KslQuicTlsSession(
                     ) {
                         TlsException.Verify(r, presented) to (if (ctx.config.genericAlerts) 40 else r.alertCode)
                     } else {
-                        sniFailure ?: e.toTlsFailure(presented)
+                        sniFailure ?: (if (echOffered) echRejection(s(), e)?.let { it to ECH_REQUIRED_ALERT } else null)
+                            ?: e.toTlsFailure(presented)
                     }
+                ech = echStatusOf(s())
                 settleAdmission(failed = true)
                 return DriveResult.Failed(ex, alert).also { failure = it }
             }
@@ -497,6 +509,7 @@ internal class KslQuicTlsSession(
 
             KslConst.WANT_VERIFY -> {
                 presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
+                if (ctx.config.role == TlsRole.Client) pausedName = verifyNameOf(s(), reference, echOffered)
                 DriveResult.WantVerify(presented)
             }
 
@@ -529,6 +542,7 @@ internal class KslQuicTlsSession(
         done = true
         alpn = Ksl.sslGet(s(), KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
         group = groupOf(s())
+        ech = echStatusOf(s())
         val active = active
         val config = active.config
         val pinsApply =
@@ -567,7 +581,11 @@ internal class KslQuicTlsSession(
         }
     }
 
-    override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult = verification.verify(chain, reference)
+    // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
+    override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult {
+        val v = pausedName ?: EchVerifyName(reference, hidden = false, publicName = false)
+        return verification.verify(chain, v.name, echPublicName = v.publicName, hiddenName = v.hidden)
+    }
 
     override val trustCommitPending: Boolean get() = done && failure == null && verification.trustPending
 
@@ -667,12 +685,20 @@ internal class KslQuicTlsSession(
     }
 
     override fun nextEvent(): TlsEvent? {
-        if (failure !=
-            null
-        ) {
-            while (Ksl.quicNextEvent(s(), event)) if (event.type == KslConst.EV_KEY) Ksl.keyFree(event.key)
+        failure?.let { f ->
+            // a failed session hands out nothing, not even keys; except the flight a client whose ECH was rejected wrote
+            // before its ech_required (RFC 9849 sections 6.1.6 and 6.1.7: an empty Certificate when asked, the Finished),
+            // which the transport sends with its CONNECTION_CLOSE
+            val flight = f.exception is TlsException.EchRejected
+            while (Ksl.quicNextEvent(s(), event)) {
+                if (event.type == KslConst.EV_KEY) {
+                    Ksl.keyFree(event.key)
+                } else if (flight && event.type == KslConst.EV_CRYPTO_SEND) {
+                    return TlsEvent.CryptoData(EncryptionLevel.of(event.level), event.payload)
+                }
+            }
             return null
-        } // a failed session hands out nothing, not even keys
+        }
         if (!Ksl.quicNextEvent(s(), event)) return pendingTickets.removeFirstOrNull()?.let { TlsEvent.SessionTicket(it) }
         return when (event.type) {
             KslConst.EV_CRYPTO_SEND -> {
@@ -721,6 +747,9 @@ internal class KslQuicTlsSession(
         }
 
     override val keyExchangeGroup: String? get() = group
+
+    @ExperimentalKuicksilverApi
+    override val echStatus: EchStatus get() = ech
 
     // a server that accepted 0-RTT knows the protocol from the ClientHello, before the handshake completes
     override val negotiatedAlpn: String? get() =

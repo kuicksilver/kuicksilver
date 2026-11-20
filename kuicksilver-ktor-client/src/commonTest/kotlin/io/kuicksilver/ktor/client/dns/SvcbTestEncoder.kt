@@ -10,6 +10,7 @@ internal object SvcbTestEncoder {
         out.u16(r.priority)
         out.addAll(name(r.target).toList())
         if (r.isAlias) return out.toByteArray()
+        if (r.echMandatory) out.param(0, byteArrayOf(0, 5)) // mandatory=ech, the one mandatory key the record keeps
         if (r.alpn.isNotEmpty()) {
             val v = ArrayList<Byte>()
             for (id in r.alpn) {
@@ -21,6 +22,7 @@ internal object SvcbTestEncoder {
         if (r.noDefaultAlpn) out.param(2, ByteArray(0))
         r.port?.let { out.param(3, byteArrayOf((it shr 8).toByte(), it.toByte())) }
         if (r.ipv4Hints.isNotEmpty()) out.param(4, r.ipv4Hints.reduce { a, b -> a + b })
+        r.ech?.let { out.param(5, it) }
         if (r.ipv6Hints.isNotEmpty()) out.param(6, r.ipv6Hints.reduce { a, b -> a + b })
         return out.toByteArray()
     }

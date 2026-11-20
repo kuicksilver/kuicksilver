@@ -35,17 +35,21 @@ static int crl_lists(X509_STORE *crls, X509 *issuer, X509 *cert) {
     if (crls == NULL)
         return 0;
     int listed = 0;
-    if (!X509_STORE_lock(crls))
-        return 0;
-    STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(crls);
-    for (int i = 0; objs && i < sk_X509_OBJECT_num(objs) && !listed; i++) {
+    /* a snapshot taken under the store's own lock (X509_STORE_get1_objects locks it: holding X509_STORE_lock around the
+       call would deadlock); NULL when out of memory, then counted as listed so the responder is refused (fail closed) */
+    STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(crls);
+    if (objs == NULL) {
+        ERR_clear_error();
+        return 1;
+    }
+    for (int i = 0; i < sk_X509_OBJECT_num(objs) && !listed; i++) {
         X509_CRL *crl = X509_OBJECT_get0_X509_CRL(sk_X509_OBJECT_value(objs, i));
         X509_REVOKED *rev = NULL;
         if (crl && X509_NAME_cmp(X509_CRL_get_issuer(crl), X509_get_subject_name(issuer)) == 0 &&
             X509_CRL_verify(crl, X509_get0_pubkey(issuer)) == 1 && X509_CRL_get0_by_cert(crl, &rev, cert) == 1)
             listed = 1;
     }
-    X509_STORE_unlock(crls);
+    sk_X509_OBJECT_pop_free(objs, X509_OBJECT_free);
     ERR_clear_error();
     return listed;
 }
@@ -74,7 +78,10 @@ static int responder_authorized(X509 *signer, X509 *issuer, int64_t at, X509_STO
     if (X509_check_issued(issuer, signer) != X509_V_OK || X509_verify(signer, ik) != 1)
         return 0;
     time_t when = (time_t)at;
-    if (X509_cmp_time(X509_get0_notBefore(signer), &when) > 0 || X509_cmp_time(X509_get0_notAfter(signer), &when) < 0)
+    /* -2: a time that does not parse, refused like one outside the validity period */
+    int nb = ASN1_TIME_cmp_time_t(X509_get0_notBefore(signer), when),
+        na = ASN1_TIME_cmp_time_t(X509_get0_notAfter(signer), when);
+    if (nb == -2 || na == -2 || nb > 0 || na < 0)
         return 0;
     STACK_OF(X509) *path = sk_X509_new_null();
     int weak = path == NULL || !sk_X509_push(path, signer) || !sk_X509_push(path, issuer) ||
@@ -414,8 +421,87 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
    no CRL for that CA, and that CA is not checked. When one does (a CRL OpenSSL does not take for this certificate: a distribution
    point the certificate does not name, a scope it is outside of) the error stands: the status is unknown, and the handshake
    fails (fail closed). A revoked certificate, and a CRL that is expired, not yet valid or does not verify, fail as well. */
+static int crl_verify_cb(int ok, X509_STORE_CTX *x);
+static int crl_error(int e) {
+    switch (e) {
+    case X509_V_ERR_CERT_REVOKED:
+    case X509_V_ERR_UNABLE_TO_GET_CRL:
+    case X509_V_ERR_UNABLE_TO_GET_CRL_ISSUER:
+    case X509_V_ERR_UNABLE_TO_DECRYPT_CRL_SIGNATURE:
+    case X509_V_ERR_CRL_SIGNATURE_FAILURE:
+    case X509_V_ERR_CRL_NOT_YET_VALID:
+    case X509_V_ERR_CRL_HAS_EXPIRED:
+    case X509_V_ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD:
+    case X509_V_ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD:
+    case X509_V_ERR_KEYUSAGE_NO_CRL_SIGN:
+    case X509_V_ERR_UNHANDLED_CRITICAL_CRL_EXTENSION:
+    case X509_V_ERR_DIFFERENT_CRL_SCOPE:
+    case X509_V_ERR_CRL_PATH_VALIDATION_ERROR:
+        return 1;
+    default:
+        return 0;
+    }
+}
+/* marks the nested verification of anchor_status, so that its own callbacks never start another one */
+static const char anchor_check_mark = 0;
+/* The status of a trust anchor that is not self-signed (AnchoredCa roots = [an intermediate], X509_V_FLAG_PARTIAL_CHAIN) when a
+   configured CRL names its issuer. OpenSSL 3.5 checked it with X509_V_FLAG_CRL_CHECK_ALL; OpenSSL 4 stops the CRL checks of a
+   partial chain below the anchor (x509_vfy.c revocation_check_end: num_untrusted - 1), so ksl checks it here as before: the
+   anchor is verified on its own, as the target of a path without PARTIAL_CHAIN, against the same store, time and level, with
+   X509_V_FLAG_CRL_CHECK for it alone. A CRL error of that check is the anchor's (revoked: 44; expired: 45; ...); a path that does
+   not build (the CRL's issuer is not among the roots) or fails otherwise leaves the CRL unverifiable: CRL_SIGNATURE_FAILURE when
+   no issuer was found (51), UNABLE_TO_GET_CRL otherwise (48), fail closed either way (docs/guide/tls.md, Certificate
+   revocation). X509_V_OK when the anchor passes or no configured CRL names its issuer. */
+static int anchor_status(X509_STORE_CTX *x, X509 *anchor) {
+    STACK_OF(X509_CRL) *named = X509_STORE_CTX_get1_crls(x, X509_get_issuer_name(anchor));
+    int any = named != NULL && sk_X509_CRL_num(named) > 0;
+    sk_X509_CRL_pop_free(named, X509_CRL_free);
+    if (!any)
+        return X509_V_OK;
+    X509_STORE_CTX *n = X509_STORE_CTX_new();
+    int e = X509_V_ERR_UNABLE_TO_GET_CRL;
+    if (n != NULL && X509_STORE_CTX_init(n, X509_STORE_CTX_get0_store(x), anchor, NULL) == 1) {
+        X509_VERIFY_PARAM *p = X509_STORE_CTX_get0_param(n);
+        /* the outer path's time, depth and security level; no name, any purpose (a CA certificate), no partial chain */
+        if (X509_VERIFY_PARAM_set1(p, X509_STORE_CTX_get0_param(x)) == 1 &&
+            X509_VERIFY_PARAM_clear_flags(p, X509_V_FLAG_PARTIAL_CHAIN | X509_V_FLAG_CRL_CHECK_ALL) == 1 &&
+            X509_VERIFY_PARAM_set_flags(p, X509_V_FLAG_CRL_CHECK) == 1 &&
+            X509_VERIFY_PARAM_set1_host(p, NULL, 0) == 1 && X509_VERIFY_PARAM_set1_ip(p, NULL, 0) == 1 &&
+            X509_VERIFY_PARAM_set_purpose(p, X509_PURPOSE_ANY) == 1 &&
+            X509_STORE_CTX_set_app_data(n, (void *)&anchor_check_mark) == 1) {
+            X509_STORE_CTX_set_verify_cb(n, crl_verify_cb);
+            if (X509_verify_cert(n) == 1)
+                e = X509_V_OK;
+            else {
+                int ne = X509_STORE_CTX_get_error(n);
+                e = crl_error(ne) ? ne
+                    : ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY || ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT
+                        ? X509_V_ERR_CRL_SIGNATURE_FAILURE
+                        : X509_V_ERR_UNABLE_TO_GET_CRL;
+            }
+        }
+    }
+    X509_STORE_CTX_free(n);
+    ERR_clear_error();
+    return e;
+}
 static int crl_verify_cb(int ok, X509_STORE_CTX *x) {
-    if (ok || X509_STORE_CTX_get_error(x) != X509_V_ERR_UNABLE_TO_GET_CRL)
+    if (ok) {
+        /* the success signal at the top of a path that ends in a trust anchor which is not self-signed */
+        STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(x);
+        X509 *cur = X509_STORE_CTX_get_current_cert(x);
+        int top = chain != NULL ? sk_X509_num(chain) - 1 : -1;
+        if (X509_STORE_CTX_get_app_data(x) == &anchor_check_mark || top < 0 ||
+            X509_STORE_CTX_get_error_depth(x) != top || cur != sk_X509_value(chain, top) ||
+            X509_STORE_CTX_get_num_untrusted(x) > top || X509_self_signed(cur, 0) == 1)
+            return ok;
+        int e = anchor_status(x, cur);
+        if (e == X509_V_OK)
+            return ok;
+        X509_STORE_CTX_set_error(x, e);
+        return 0;
+    }
+    if (X509_STORE_CTX_get_error(x) != X509_V_ERR_UNABLE_TO_GET_CRL)
         return ok;
     X509 *cur = X509_STORE_CTX_get_current_cert(x);
     STACK_OF(X509_CRL) *named = cur ? X509_STORE_CTX_get1_crls(x, X509_get_issuer_name(cur)) : NULL;

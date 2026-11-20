@@ -59,7 +59,9 @@ public class TlsConnection private constructor(
 ) : AutoCloseable {
     private val ctx = lease.ctx
     private val config = ctx.config
-    private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
+
+    // a server's ECH keys go into its context first: a session copies them when it is made (TlsConfig.echKeys, rotation)
+    private var ssl: Long = ctx.ensureEchKeys().let { Ksl.sslNew(ctx.handle, KslConst.MODE_TCP) }
     private val lock = Mutex()
 
     /** The transport this connection reads (tests tell their connection's hooks apart by it). */
@@ -207,6 +209,14 @@ public class TlsConnection private constructor(
     public var keyExchangeGroup: String? = null
         private set
 
+    /** The Encrypted Client Hello outcome ([EchStatus]); [EchStatus.None] until the handshake completed. */
+    @ExperimentalKuicksilverApi
+    public var echStatus: EchStatus = EchStatus.None
+        private set
+
+    /** Client: an ECH configuration was set on this connection ([TlsConfig.echConfigList]). */
+    private var echOffered = false
+
     private fun s(): Long {
         if (closed || ssl == 0L) throw IllegalStateException("connection closed")
         return ssl
@@ -249,7 +259,8 @@ public class TlsConnection private constructor(
             reference = host
             sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
             Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
-            cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity)
+            echOffered = offerEch(ssl, config)
+            cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity, ech = echOffered)
         } else {
             stapleFor(ssl, config)
         }
@@ -342,7 +353,9 @@ public class TlsConnection private constructor(
 
                 KslConst.WANT_VERIFY -> {
                     presented = chain()
-                    val r = verification.verify(presented, reference!!)
+                    // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
+                    val v = verifyNameOf(s(), reference!!, echOffered)
+                    val r = verification.verify(presented, v.name, echPublicName = v.publicName, hiddenName = v.hidden)
                     lock.withLock { resume(r) }
                 }
 
@@ -357,8 +370,10 @@ public class TlsConnection private constructor(
         }
     }
 
+    @OptIn(ExperimentalKuicksilverApi::class)
     private fun failWith(e: KslException.Internal): Nothing {
         rejection?.let { throw TlsException.Verify(it, presented) }
+        if (echOffered) echRejection(s(), e)?.let { throw it }
         val (ex, _) = e.toTlsFailure(presented)
         throw ex
     }
@@ -416,6 +431,7 @@ public class TlsConnection private constructor(
         protocolVersion = if (Ksl.sslGet(s(), KslConst.GET_VERSION)[1].toInt() == 0x03) TlsVersion.Tls12 else TlsVersion.Tls13
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
         keyExchangeGroup = groupOf(s())
+        echStatus = echStatusOf(s())
         peerCertificateCompression = CertificateCompression.of(Ksl.sslGet(s(), KslConst.GET_CERT_COMPRESSION))
         presented = chain()
         val effective = overrideCtx?.ctx?.config ?: config
@@ -431,7 +447,8 @@ public class TlsConnection private constructor(
                     ) {
                         verification.pinCheck(cached.validated)
                     } else {
-                        verification.verify(cached.chain, reference!!)
+                        // a ticket of the ECH partition resumes only under ECH: its name is hidden
+                        verification.verify(cached.chain, reference!!, hiddenName = echOffered)
                     }
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             } else if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) {
@@ -1099,7 +1116,7 @@ public class TlsConnection private constructor(
         /**
          * Whether [e], a read's failure on an established connection of [version], is OpenSSL refusing a post-handshake
          * message: TLS 1.3, unexpected_message (10) sent by us, OpenSSL's SSL_R_UNEXPECTED_MESSAGE (ERR_LIB_SSL 20, reason 244).
-         * Tied to OpenSSL 3.5 (the pinned 3.5.9, gradle/openssl.toml): in `ssl/statem/statem_clnt.c`,
+         * Tied to the pinned OpenSSL (4.1.0, gradle/openssl.toml; checked again on the move from 3.5): in `ssl/statem/statem_clnt.c`,
          * `ossl_statem_client13_read_transition` accepts in TLS_ST_OK only NewSessionTicket, KeyUpdate and a CertificateRequest
          * after post_handshake_auth was sent (`s->post_handshake_auth == SSL_PHA_EXT_SENT`, which ksl never sends), and
          * `ossl_statem_client_read_transition` ends any other message with `SSLfatal(s, SSL3_AD_UNEXPECTED_MESSAGE,
@@ -1348,12 +1365,24 @@ public class SessionCache(
                 .processCache { Default.clear() }
         }
 
+        /**
+         * The cache key of a client's sessions. [ech]: the connection offers an ECH configuration. Sessions of connections
+         * with ECH and without it are kept apart: a ticket from an ECH connection offered without ECH would put its PSK
+         * identity in the clear ClientHello and link the two connections, the hidden name to the visible one (the linking
+         * RFC 9849 section 10.7 describes; with ECH the identity rides only in the encrypted inner ClientHello). A GREASE
+         * connection counts as one without ECH (section 6.2.1: it "MAY offer to resume sessions established without ECH").
+         * Connections with different ECH configurations of the origin (a retry's, a rotated record's) share them: the
+         * identity stays encrypted there.
+         */
         internal fun key(
             sni: String?,
             reference: String,
             trust: TrustConfig,
             identity: TlsIdentity?,
-        ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
+            ech: Boolean = false,
+        ): String =
+            "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}" +
+                if (ech) "|ech" else ""
     }
 
     /** Removes and returns the newest live ticket of [key]: a ticket is used at most once (RFC 9846 appendix C.4). */
@@ -1470,7 +1499,7 @@ public class SessionCache(
                 if (KslContext.verifyModeFor(config) == KslConst.VERIFY_OPENSSL) {
                     v.pinCheck(e.validated)
                 } else {
-                    v.verify(e.chain, HostName.normalize(referenceOf(config)))
+                    v.verify(e.chain, HostName.normalize(referenceOf(config)), hiddenName = config.echConfigList?.isUsable == true)
                 }
             } catch (t: Throwable) {
                 e.close()
@@ -1495,7 +1524,13 @@ public class SessionCache(
 
     private fun quicKey(config: TlsConfig): String =
         "quic|" + config.alpn.joinToString(",") + "|" +
-            key(config.serverName, HostName.normalize(referenceOf(config)).value, config.trust, config.identity)
+            key(
+                config.serverName,
+                HostName.normalize(referenceOf(config)).value,
+                config.trust,
+                config.identity,
+                ech = config.echConfigList?.isUsable == true,
+            )
 }
 
 internal expect fun nowSeconds(): Long

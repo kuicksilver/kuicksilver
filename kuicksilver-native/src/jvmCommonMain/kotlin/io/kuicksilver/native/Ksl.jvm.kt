@@ -133,6 +133,27 @@ public actual object Ksl {
         return out[0]
     }
 
+    public actual fun echConfigListCheck(list: ByteArray): ByteArray? {
+        val out = IntArray(2)
+        val kept = KslNative.echConfigListCheck(list, out)
+        if (out[0] == -2) throw KslException.Internal(KslConst.E_NO_MEMORY, 0, "ksl: out of memory checking an ECHConfigList")
+        return if (out[0] != 0) null else kept ?: ByteArray(0)
+    }
+
+    public actual fun echKeysNew(framed: ByteArray): Long {
+        val msg = arrayOfNulls<String>(1)
+        val h = KslNative.echKeysNew(framed, msg)
+        if (h == 0L) throw KslException.Internal(KslConst.E_BAD_ARG, 0, msg[0] ?: "ksl: ECH keys refused")
+        return h
+    }
+
+    public actual fun echKeysFree(keys: Long): Unit = KslNative.echKeysFree(keys)
+
+    public actual fun ctxSetEchKeys(
+        ctx: Long,
+        keys: Long,
+    ): Unit = ctxCheck(ctx, KslNative.ctxSetEchKeys(ctx, keys))
+
     public actual fun ctxSetCrls(
         ctx: Long,
         crlsDer: List<ByteArray>,
