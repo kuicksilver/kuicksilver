@@ -9,17 +9,19 @@
 # flaky part, and a test failure is never retried, also when an install stalled in the same run.
 #
 # Usage: tools/ci/android-connected-check.sh [gradle args...] (from the repository root)
+# Each run goes through gradlew-retry.sh, which repeats a run whose dependency was not found (never one with a failing test).
 set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
-./gradlew --stacktrace androidConnectedCheck "$@" 2>&1 | tee "$log"
+bash "$here/gradlew-retry.sh" --stacktrace androidConnectedCheck "$@" 2>&1 | tee "$log"
 rc=${PIPESTATUS[0]}
 [ "$rc" -eq 0 ] && exit 0
 if grep -q "Failed to install-write all apks" "$log" && grep -q "ShellCommandUnresponsiveException" "$log" &&
   ! grep -q "There were failing tests" "$log"; then
   echo "::warning::androidConnectedCheck: a test APK install stalled (ShellCommandUnresponsiveException); running it once more"
   adb shell df /data || true
-  ./gradlew --stacktrace androidConnectedCheck "$@"
+  bash "$here/gradlew-retry.sh" --stacktrace androidConnectedCheck "$@"
   exit $?
 fi
 exit "$rc"

@@ -55,7 +55,9 @@ defaults:
   run:
     shell: bash
 env:
-  G: ./gradlew --stacktrace
+  # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test failed) runs once more
+  # with --refresh-dependencies (tools/ci/gradlew-retry.sh)
+  G: bash tools/ci/gradlew-retry.sh --stacktrace
 
 jobs:
   lint:
@@ -140,6 +142,8 @@ jobs:
         run: bash tools/ci/local-matrix-test.sh   # --dry-run only: no Gradle, Docker, OpenSSL or emulator
       - name: 'check: android connected-test retry (fake gradlew)'
         run: bash tools/ci/android-connected-check-test.sh
+      - name: 'check: Gradle retry after a dependency not found (fake gradlew)'
+        run: bash tools/ci/gradlew-retry-test.sh
       - name: 'lint: RFC compliance summary table'
         run: |
           bash tools/check/rfc-table.sh
@@ -639,7 +643,7 @@ jobs:
       - name: 'sample: realtime-telemetry'
         # its test classes are read for test methods no runner calls, as the modules' are below
         run: |
-          (cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest)
+          (cd samples/realtime-telemetry && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
           python3 -I tools/check/test-bytecode.py samples/realtime-telemetry/build/classes/kotlin/jvm/test
       - name: 'fuzz: regression corpus'
         run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"

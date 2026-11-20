@@ -1,12 +1,34 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
+// Repositories. Maven Central answers 404 for files it has now and then (CI runs 44630132347, 44657561143, 44674970605);
+// Gradle takes a 404 as "not there" and asks the next repository, so Google's mirror of Central comes last, for a module
+// the others did not find: on the happy path it is never asked. It changes no trust: every file still has to match
+// gradle/verification-metadata.xml (signature or SHA-256). Central comes before the Gradle Plugin Portal, which answers
+// for Central's modules with a redirect there, one more hop that can fail; the portal keeps the plugins only it has.
+// build-logic/settings.gradle.kts has the same lists. A missing file of a module that was found (a jar) is asked for only
+// where its metadata came from: tools/ci/gradlew-retry.sh retries that in CI.
 pluginManagement {
     includeBuild("build-logic")
-    repositories { gradlePluginPortal(); google(); mavenCentral() }
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+            name = "MavenCentralMirror"
+            mavenContent { releasesOnly() }
+        }
+    }
 }
 dependencyResolutionManagement {
-    repositories { google(); mavenCentral() }
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://maven-central.storage-download.googleapis.com/maven2/") {
+            name = "MavenCentralMirror"
+            mavenContent { releasesOnly() }
+        }
+    }
 }
 rootProject.name = "kuicksilver"
 
