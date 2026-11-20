@@ -78,7 +78,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   what the time went to before an address was tried (`NameLookup`, `PoolWait`, `H2DialWait`); a QUIC failure says how
   far the handshake got (`QuicHandshakeProgress`: no packet from the server, or started) and names its connection
   (`connectionId`, tied to the attempt by the connection its own `connect` created, not by address); a handshake
-  that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Ktor's
+  that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Through a
+  CONNECT-UDP proxy each step is reported at the proxy's address with `viaProxy`: the QUIC handshake with each of its
+  addresses, the CONNECT-UDP request (`ProxyHandshake`) and the origin's handshake through the tunnel. Ktor's
   `HttpRequestTimeoutException` carries the diagnostics like any other failure.
 - TLS: Encrypted Client Hello (RFC 9849; experimental; in the Ktor engines too, see below).
   Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,

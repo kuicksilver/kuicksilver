@@ -550,4 +550,105 @@ class ClientConnectUdpProxyTlsTest {
                 assertIs<TlsException.AlertReceived>(e.cause, "$e")
             }
         }
+
+    /** The connection setups that failed, as the listener heard them. */
+    private class SetupFailures : KuicksilverEventListener() {
+        val heard = AtomicReference(emptyList<ConnectFailure>())
+
+        override fun connectFailed(
+            request: io.ktor.client.request.HttpRequestData,
+            failure: ConnectFailure,
+        ) {
+            heard.update { it + failure }
+        }
+    }
+
+    /**
+     * A failed QUIC handshake with the CONNECT-UDP proxy is reported as it fails, like a direct attempt: `QuicHandshake`
+     * at the proxy's address, `viaProxy`, with the [ProxyTlsException] and the connection it was.
+     */
+    @Test fun negative_aFailedProxyHandshakeIsReportedAtTheProxysAddress() =
+        h3Test {
+            val heard = SetupFailures()
+            withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    dns = ProxyName
+                    eventListener = heard
+                    proxyTls = { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) }
+                    connectUdpProxy = udpProxy(proxyPort)
+                }).use { c ->
+                    assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
+                }
+                val f = heard.heard.load().single()
+                assertEquals(Transport.Quic, f.transport)
+                assertEquals(ConnectStage.QuicHandshake, f.stage)
+                assertTrue(f.viaProxy, "$f")
+                assertEquals(proxyPort, f.address?.port, "$f")
+                assertIs<ProxyTlsException>(f.cause, "$f")
+                assertTrue(f.connectionId != null, "the proxy connection is named: $f")
+            }
+        }
+
+    /**
+     * A proxy that never answers runs into the connect timeout: the timeout is reported for the proxy handshake it cut
+     * short, at the proxy's address and `viaProxy`, never as a bare `NameLookup` without an address.
+     */
+    @Test fun negative_aTimeoutAtASilentProxyIsReportedAtTheProxysAddress() =
+        h3Test {
+            val silent = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+            val heard = SetupFailures()
+            try {
+                val port = silent.localAddress.port
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    dns = ProxyName
+                    eventListener = heard
+                    connectUdpProxy = udpProxy(port)
+                    connectTimeout = 1.seconds
+                }).use { c ->
+                    assertFailsWith<Throwable> { c.get("https://127.0.0.1:1/").bodyAsText() }
+                }
+                val all = heard.heard.load()
+                assertTrue(all.none { it.stage == ConnectStage.NameLookup }, "a bare NameLookup report: $all")
+                val f = all.single()
+                assertEquals(ConnectStage.QuicHandshake, f.stage)
+                assertTrue(f.viaProxy, "$f")
+                assertEquals(port, f.address?.port, "$f")
+                assertEquals(QuicHandshakeProgress.NoPacketReceived, f.quicProgress, "$f")
+            } finally {
+                silent.close()
+            }
+        }
+
+    /**
+     * The proxy answered and opened the tunnel, but the origin behind it never answers: the timeout is reported for the
+     * origin's handshake through the tunnel, `viaProxy` at the proxy's address; the proxy's own handshake, which completed,
+     * is not reported, and no bare `NameLookup` is.
+     */
+    @Test fun negative_aTimeoutBehindTheProxyIsReportedForTheTunnelledHandshake() =
+        h3Test {
+            val heard = SetupFailures()
+            val silentTarget = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+            val proxy = loopbackProxy()
+            try {
+                withProxyAndOrigin(proxy, Seen()) { proxyPort, _ ->
+                    testClient(Http3DiscoveryMode.H3Only, engine = {
+                        dns = ProxyName
+                        eventListener = heard
+                        connectUdpProxy = udpProxy(proxyPort)
+                        connectTimeout = 2.seconds
+                    }).use { c ->
+                        assertFailsWith<Throwable> { c.get("https://127.0.0.1:${silentTarget.localAddress.port}/").bodyAsText() }
+                    }
+                    assertEquals(1, proxy.stats.tunnelsOpened)
+                    val all = heard.heard.load()
+                    assertTrue(all.none { it.stage == ConnectStage.NameLookup }, "a bare NameLookup report: $all")
+                    val f = all.single()
+                    assertEquals(ConnectStage.QuicHandshake, f.stage)
+                    assertTrue(f.viaProxy, "$f")
+                    assertEquals(proxyPort, f.address?.port, "$f")
+                }
+            } finally {
+                silentTarget.close()
+            }
+        }
 }

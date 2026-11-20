@@ -1328,7 +1328,7 @@ internal class H3Pool(
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
                         if (t.udpProxy != null) {
-                            connectThroughUdpProxy(t, dns, failures, route)
+                            connectThroughUdpProxy(t, dns, failures, route, data, started)
                         } else {
                             raceQuic(t.host, t.port, dns, failures, { won, a ->
                                 attempts.update { it + (won to Destination.of(a)) }
@@ -1433,28 +1433,52 @@ internal class H3Pool(
         dns: RequestDns,
         failures: MutableList<Throwable>,
         route: EchRoute,
+        data: HttpRequestData,
+        started: kotlin.concurrent.atomics.AtomicReference<List<QuicAttemptProgress>>,
     ): Http3Connection {
         val p = t.udpProxy!!
+        // each step reported as the direct race reports its attempts (connectFailed as it fails, the connect timeout with
+        // the step it cut short), at the proxy's address and with viaProxy: the QUIC handshake with each of the proxy's
+        // addresses, the CONNECT-UDP request on the connection that won, the origin's handshake through the tunnel
+        var proxyAddress: InetSocketAddress? = null
+        val raced = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
         // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
         val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
-            raceQuic(p.host, p.port, dns, failures, chooseFailure = ::proxyRaceFailure) { destination ->
+            raceQuic(p.host, p.port, dns, failures, { _, a ->
+                proxyAddress = InetSocketAddress(a.hostText, a.port)
+            }, chooseFailure = ::proxyRaceFailure) { destination ->
                 val (ep, remote) = endpointFor(destination, proxyHop)
-                try {
-                    ep.connect(remote, proxyTls, quic, config.http3.settings)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    throw proxyTlsFailure(p, e) ?: e
+                val step = QuicAttemptProgress(destination, viaProxy = true).also { a -> raced.update { it + a } }
+                proxyStep(step, data, started) { a ->
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+                        try {
+                            ep.connect(remote, proxyTls, quic, config.http3.settings)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            throw proxyTlsFailure(p, e) ?: e
+                        }
+                    }
                 }
             }
+        // the race is over: its losers were cancelled by the race, not by a later connect timeout (none is reported for them)
+        val done = raced.load()
+        started.update { it - done.toSet() }
         // from here on the CONNECT (and its proxy-authorization) may go out: a timeout is no longer the proxy's TLS failure
         (failures as? SetupFailures)?.proxyReached = true
         var inner: Http3Endpoint? = null
         try {
             val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
-            val tunnel = outer.connectUdp(p.template, t.host, t.port, headers)
+            val at = proxyAddress
+            val tunnel =
+                proxyStep(
+                    QuicAttemptProgress(at, viaProxy = true, stage = io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake),
+                    data,
+                    started,
+                ) { outer.connectUdp(p.template, t.host, t.port, headers) }
             val cache = lock.withLock { tunnelTickets.getOrPut(p.routeKey) { io.kuicksilver.tls.SessionCache() } }
             val tunnelConfig =
                 endpointConfig
@@ -1475,13 +1499,18 @@ internal class H3Pool(
             // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
             val c =
-                withEchRetry(route) { offer ->
-                    ep.connect(
-                        tunnel.remoteAddress,
-                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
-                        tunnelled,
-                        config.http3.settings,
-                    )
+                proxyStep(QuicAttemptProgress(at, viaProxy = true), data, started) { a ->
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+                        withEchRetry(route) { offer ->
+                            ep.connect(
+                                tunnel.remoteAddress,
+                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
+                                tunnelled,
+                                config.http3.settings,
+                            )
+                        }
+                    }
                 }
             c.closed.invokeOnCompletion {
                 ep.close()
@@ -1492,6 +1521,29 @@ internal class H3Pool(
             inner?.close()
             outer.close()
             throw e
+        }
+    }
+
+    /**
+     * One step of a setup through a CONNECT-UDP proxy, [a]: listed in [started] for the connect timeout's report, marked
+     * cancelled when it is cancelled (a lost race or the timeout), and reported to [data]'s listener as it fails.
+     */
+    private suspend fun <T> proxyStep(
+        a: QuicAttemptProgress,
+        data: HttpRequestData,
+        started: kotlin.concurrent.atomics.AtomicReference<List<QuicAttemptProgress>>,
+        block: suspend (QuicAttemptProgress) -> T,
+    ): T {
+        started.update { it + a }
+        return try {
+            block(a)
+        } catch (x: CancellationException) {
+            a.cancelled = true
+            throw x
+        } catch (x: Throwable) {
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            events.connectFailed(data, a.failure(x))
+            throw x
         }
     }
 
@@ -1525,7 +1577,7 @@ internal class H3Pool(
         wt: Boolean,
         route: EchRoute,
     ): Http3Connection {
-        val (ep, remote) = endpointFor(a.destination)
+        val (ep, remote) = endpointFor(checkNotNull(a.destination) { "a direct attempt has its address" })
         // the connection this very call creates tells the attempt its handle (by identity, not by address: two setups to
         // one address from different origins never mix up)
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -2612,7 +2664,12 @@ internal fun h3WebSocketStreamEnd(
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class QuicAttemptProgress(
-    val destination: InetSocketAddress,
+    /** Where it goes: the origin's address, or the proxy's for a step through a CONNECT-UDP proxy (null: not known). */
+    val destination: InetSocketAddress?,
+    /** A step through a CONNECT-UDP proxy. */
+    val viaProxy: Boolean = false,
+    /** What it is: a QUIC handshake, or the CONNECT-UDP request to the proxy (`ProxyHandshake`). */
+    val stage: io.kuicksilver.ktor.client.ConnectStage = io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
 ) {
     val info = kotlin.concurrent.atomics.AtomicReference<io.kuicksilver.quic.ConnectionInfo?>(null)
 
@@ -2632,9 +2689,9 @@ internal class QuicAttemptProgress(
     fun failure(cause: Throwable): io.kuicksilver.ktor.client.ConnectFailure =
         io.kuicksilver.ktor.client.ConnectFailure(
             io.kuicksilver.ktor.client.Transport.Quic,
-            io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
+            stage,
             destination,
-            false,
+            viaProxy,
             cause,
             progress(),
             info.load()?.id,
