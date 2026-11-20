@@ -266,7 +266,10 @@ internal class H3StallMonitor(
     fun ended(): Boolean {
         if (everStalled) return false
         val keys = completedKeys.load().takeIf { it.isNotEmpty() } ?: return false
-        val end = conn.quic.closed.takeIf { it.isCompleted }?.getCompleted()
+        val end =
+            conn.quic.closed
+                .takeIf { it.isCompleted }
+                ?.getCompleted()
         val orderly =
             end is io.kuicksilver.quic.QuicException.ConnectionLost.ApplicationClosed &&
                 end.initiator == io.kuicksilver.quic.Initiator.Local &&

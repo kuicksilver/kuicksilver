@@ -39,7 +39,6 @@ import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
-import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EchRoute
@@ -56,6 +55,7 @@ import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
+import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.isTransientRefusal
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
@@ -1827,14 +1827,18 @@ internal class H3Pool(
                 lock.withLock {
                     when {
                         // stalled since it was looked up: dropped from the pool, and no request goes on it any more
-                        stalledConnections.load()[c] != null -> null
+                        stalledConnections.load()[c] != null -> {
+                            null
+                        }
 
                         (connections[t.key] === e || (e in retired && !e.drained)) && !c.ended() -> {
                             e.active.addAndFetch(1)
                             true
                         }
 
-                        else -> false
+                        else -> {
+                            false
+                        }
                     }
                 }
             // the alternative just stalled: this request was not sent, so it goes over TCP whatever its method
@@ -2094,7 +2098,8 @@ internal class H3Pool(
                 if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
                 // the connection stalled under the request: the stall is the failure, with what the request saw as its cause
                 val stall = watch?.stall
-                val named = e is io.kuicksilver.ktor.client.QuicStalledException || e.cause is io.kuicksilver.ktor.client.QuicStalledException
+                val named =
+                    e is io.kuicksilver.ktor.client.QuicStalledException || e.cause is io.kuicksilver.ktor.client.QuicStalledException
                 if (stall != null && e !is CancellationException && !named) {
                     throw if (e is H3NotSent) H3NotSent(stall.exception(e.cause)) else stall.exception(e)
                 }

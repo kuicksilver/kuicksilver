@@ -241,6 +241,7 @@ internal class KuicksilverEngine(
             }
         }
     }
+
     private val altSvcLock = Mutex()
 
     /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released; internal for tests. */

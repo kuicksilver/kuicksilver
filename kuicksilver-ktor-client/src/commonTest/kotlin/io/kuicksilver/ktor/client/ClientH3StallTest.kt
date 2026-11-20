@@ -240,7 +240,12 @@ class ClientH3StallTest {
                     val d = assertNotNull(r.kuicksilverDiagnostics)
                     assertEquals(FallbackReason.QuicStalled, d.fallback, "$d")
                     assertNotNull(d.h3Failure?.stall(), "${d.h3Failure}")
-                    assertNotNull(heard.fallbacks.tryReceive().getOrNull()?.stall())
+                    assertNotNull(
+                        heard.fallbacks
+                            .tryReceive()
+                            .getOrNull()
+                            ?.stall(),
+                    )
                     assertEquals(1, heard.marked.load())
                     val engine = engineOf(c)
                     assertTrue(engine.brokenAltSvc.isBroken("https://127.0.0.1:${s.port}", "127.0.0.1:${s.port}"))
