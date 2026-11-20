@@ -388,7 +388,9 @@ internal class KslDatagramIo private constructor(
          * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
          * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose loopback probe failed
          * ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable socket, said once per process to
-         * [logger] at [LogLevel.Warn]; [refused] gets that refusal (a refused bind is a `kotlinx.io.IOException`). [configure]
+         * [logger] at [LogLevel.Warn]; [refused] gets that refusal: a refused bind is a `kotlinx.io.IOException`, another
+         * failure of `ksl` a `KslException`, a process whose loopback probe failed or a socket the system gave no DF an
+         * [Unavailable] that is [Unavailable.permanent] (neither changes for the process). [configure]
          * sees the bound socket's descriptor before any datagram (Android binds it to a network); if it throws, the socket is
          * closed.
          */
@@ -403,6 +405,7 @@ internal class KslDatagramIo private constructor(
             if (unsupported != null) {
                 // the loopback probe failed (a sandbox refusing every bind): the portable socket, said once like a refused bind
                 if (!reusePort) warnFallback(logger) { "accelerated UDP socket unavailable ($unsupported); using the portable socket" }
+                refused(Unavailable("the accelerated UDP socket is unavailable in this process ($unsupported)", permanent = true))
                 return null
             }
             val ip = local.resolveAddress() ?: return null
@@ -424,6 +427,7 @@ internal class KslDatagramIo private constructor(
             if (socket.grantedFlags and KslUdpSocket.DF == 0) {
                 socket.close()
                 warnFallback(logger) { "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket" }
+                refused(Unavailable("the system granted the accelerated UDP socket no Don't Fragment", permanent = true))
                 return null
             }
             // DF in DO mode on a half (KslUdpSocket.DF_DO: probe mode refused, or Apple's DF bit) is DF too; a forged ICMP message
@@ -436,6 +440,15 @@ internal class KslDatagramIo private constructor(
             }
             return KslDatagramIo(socket)
         }
+
+        /**
+         * Why [open] answered null without a failure of its own: [permanent] when it stays so for the process (the loopback
+         * probe failed, the system grants the socket no DF), so a socket the caller cannot use instead is lastingly without DF.
+         */
+        internal class Unavailable(
+            message: String,
+            val permanent: Boolean,
+        ) : Exception(message)
 
         @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
         private val fallbackWarned = kotlin.concurrent.atomics.AtomicBoolean(false)
