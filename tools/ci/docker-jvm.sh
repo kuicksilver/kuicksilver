@@ -11,6 +11,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"; cls="${1:-linux-x86_64}"
 . "$root/tools/ci/matrix.sh"
 abi=$(sed -n 's/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p' "$root/kuicksilver-native/src/c/ksl.h")
 case "$cls" in linux-x86_64) plat=linux/amd64; img=kuicksilver-openssl-linux-x64; so=libksl_${abi}_linux_x86_64.so; march=x86_64 ;; linux-aarch_64) plat=linux/arm64; img=kuicksilver-openssl-linux-arm64; so=libksl_${abi}_linux_aarch_64.so; march=aarch64 ;; *) echo "unknown $cls" >&2; exit 2 ;; esac
+# an emulated container gets a longer slow-teardown bound for the leak sentinel (leak-slow.sh); a host run is native
+# shellcheck source=tools/ci/leak-slow.sh
+. "$root/tools/ci/leak-slow.sh"; leak_slow_for "$plat"
 # 1) the shared library, with the glibc floor of manylinux2014
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"

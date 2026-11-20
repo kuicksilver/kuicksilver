@@ -64,7 +64,11 @@ close, a connection's draining) is waited for, woken by every close and every na
 opened each object and prints it. Teardown that took longer than 1.5 s (`KUICKSILVER_LEAK_SLOW_MS`) is reported with its
 time, the test and the kinds it waited for, and fails the test with `KUICKSILVER_LEAK_STRICT=1`. Strict mode is on
 in CI (`build.yml`'s workflow env) and in `tools/ci/local-matrix.sh`, which passes it into its Docker steps (with the
-other three variables, when set: `KUICKSILVER_LEAK_SITES=1` names the opener of a leak seen only on Linux); a
+other three variables, when set: `KUICKSILVER_LEAK_SITES=1` names the opener of a leak seen only on Linux). A container
+of another architecture than the host runs emulated (linux/amd64 on an Apple Silicon Mac), where a QUIC connection's
+closing period (3 x PTO) grows with the slower round trips: 6 connections took 1636 ms to close there, while no teardown
+of the native linux-arm64 run reached 1500 ms. Such a container gets `KUICKSILVER_LEAK_SLOW_MS=6000` unless it was set
+([`leak-slow.sh`](../tools/ci/leak-slow.sh), tested by `leak-slow-test.sh`); native runs keep 1.5 s. A
 Kotlin/Native test task passes the sentinel's variables to its executable, on the iOS simulator as `SIMCTL_CHILD_*`
 (simctl hands the app only those, without the prefix); the Windows VM runner and the Android device runs do not get it. Its first finding was a product one: a TLS client's close waited
 up to its 3 s bound for the server's `close_notify` behind a response the application never read (`TlsSocketCloseTest`).
