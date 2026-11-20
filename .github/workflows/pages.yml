@@ -397,6 +397,9 @@ jobs:
 
   deploy:
     needs: publish
+    # without an explicit condition the job inherits success() over every ancestor, and a dev snapshot skips build,
+    # so deploy was skipped although publish had pushed gh-pages
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read    # check out gh-pages
