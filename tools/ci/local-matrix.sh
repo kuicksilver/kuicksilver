@@ -211,6 +211,7 @@ step "lint: RFC compliance summary table"      bash -c 'bash tools/check/rfc-tab
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
 step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
+step "lint: published docs name no local path" bash -c 'bash tools/check/site-paths.sh && bash tools/check/site-paths-test.sh'   # pages.yml refuses such a path only after the push
 step "lint: guide samples (guide-sync)"          bash tools/check/guide-sync.sh
 step "lint: guide-sync negative controls"        bash tools/check/guide-sync-test.sh
 step "lint: configuration tables vs the code"    bash tools/check/config-table.sh

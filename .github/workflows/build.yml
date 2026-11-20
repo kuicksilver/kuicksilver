@@ -148,6 +148,11 @@ jobs:
         run: python3 tools/http/gen-tables.py --check
       - name: 'lint: links (Markdown, llms.txt)'
         run: bash tools/check/links.sh
+      - name: 'lint: the published documentation names no local path (build-paths over the site sources)'
+        # pages.yml scans the built pages too, but only after a push to main: a /tmp path in a guide sample failed there
+        run: |
+          bash tools/check/site-paths.sh
+          bash tools/check/site-paths-test.sh
       - name: 'lint: guide code samples match GuideSamplesTest'
         run: |
           bash tools/check/guide-sync.sh
