@@ -415,7 +415,8 @@ class PacketProtectorTest {
     }
 
     @Test fun nextKeepsHeaderKeyAndChangesCiphertext() {
-        val (_, w) = KslQuicCrypto.initialProtectors(dcid, 1, TlsRole.Client)
+        val (r, w) = KslQuicCrypto.initialProtectors(dcid, 1, TlsRole.Client)
+        r.close() // only the write side is looked at
         val w2 = w.next()
         val header = PacketBuffer.of(byteArrayOf(0x40, 1))
         val a = PacketBuffer.allocate(64)

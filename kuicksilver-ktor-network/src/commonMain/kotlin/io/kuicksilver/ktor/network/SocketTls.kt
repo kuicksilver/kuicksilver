@@ -148,7 +148,11 @@ public class TlsSocket private constructor(
 
     /** The application's side of [attachedWriter], as given to [attachForWriting] (closeFromSocketClose). */
     @Volatile private var attachedChannel: ByteChannel? = null
-    private var closing = false
+
+    @Volatile private var closing = false
+
+    /** Set once [close] began (not by an abort): [attachForReading], on any thread, then starts no relay. */
+    @Volatile private var closeBegun = false
 
     /**
      * The bound of [close] in all; null: the close waits for the peer to take what is queued (then 3 s at most for its
@@ -169,9 +173,32 @@ public class TlsSocket private constructor(
      * `ClosedByteChannelException` where they hand it on, and a second wrapping (ktor's `copyTo` closed the channel with
      * the wrapped failure it caught) hid the [TlsException] two causes deep. A channel opened with
      * [openDeliveringReadChannel] keeps the plaintext relayed before the failure readable (`ReadDelivery`).
+     *
+     * A channel opened once [close] has begun gets nothing: it fails at once, and no relay reads the session's input,
+     * which the close reads and drops from then on (a second reader would race it and take the peer's bytes past the
+     * close).
      */
     @OptIn(InternalAPI::class)
-    override fun attachForReading(channel: ByteChannel): WriterJob =
+    override fun attachForReading(channel: ByteChannel): WriterJob {
+        if (closeBegun) return closedForReading(channel)
+        val job = relayTo(channel)
+        attachedReader = job
+        // a close that began meanwhile may have looked for the relay before it was set: it ends here then (both sides set
+        // their own flag before they read the other's, so one of them sees the other's). It cannot read alongside the
+        // close's drop either way: the close cancels the session's input (TlsConnection.cancelInput) once the relay it saw
+        // has ended, and a relay that came after reads only that cancelled input
+        if (closeBegun) job.job.cancel()
+        return job
+    }
+
+    /** The application's channel of a closed socket: it fails at once, nothing is read for it. */
+    private fun closedForReading(channel: ByteChannel): WriterJob =
+        writer(coroutineContext, channel) {
+            throw kotlinx.io.IOException("the TLS socket is closed: nothing more is read")
+        }
+
+    @OptIn(InternalAPI::class)
+    private fun relayTo(channel: ByteChannel): WriterJob =
         writer(coroutineContext, channel) {
             val source = tls.input
             try {
@@ -190,6 +217,12 @@ public class TlsSocket private constructor(
                 throw failure
             }
         }
+
+    /**
+     * The relay above, once attached: [close] and [abortTls] end it. It may wait for room in the application's channel,
+     * as a child of the raw socket's job: an application that stopped reading held that job, and the socket, for good.
+     */
+    @Volatile private var attachedReader: WriterJob? = null
 
     /** How the relay above fails the application's channel ([openDeliveringReadChannel]). */
     internal val readDelivery: ReadDelivery = ReadDelivery()
@@ -239,8 +272,14 @@ public class TlsSocket private constructor(
      * stopped reading holds the flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the
      * TLS session is freed and the raw socket is aborted as by [abort], which releases its descriptor. On a server ([Socket.tlsServer]) the close
      * waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.
+     * The application reads nothing after the close: what the peer still sends is read and dropped from then on, so the
+     * wait for its `close_notify` lasts while the peer sends, not while nobody reads (RFC 9846 section 6.1 lets either side
+     * close its read side without waiting; reading on avoids resetting the connection under the peer's unread input). To
+     * keep reading after the request, close only the write channel ([openWriteChannel]'s `flushAndClose`): `close_notify`
+     * is sent and the read channel delivers the rest until the peer's.
      */
     override fun close() {
+        closeBegun = true
         if (closing) return
         closing = true
         val bound = closeTimeout
@@ -253,6 +292,15 @@ public class TlsSocket private constructor(
         }
         launch {
             try {
+                // the application reads no more: its relay ends, and the session's input is cancelled, so that what is still
+                // coming is read and dropped (TlsConnection.cancelInput) and the peer's close_notify is not held behind it
+                // (and the peer's writes behind that) until the bound; a relay attached as the close began fails on the
+                // cancelled input, so nothing reads it alongside the drop
+                attachedReader?.job?.let {
+                    it.cancel()
+                    it.join()
+                }
+                tls.cancelInput(CancellationException("the TLS socket is closed: nothing more is read"))
                 attachedWriter?.let { rj ->
                     runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()
@@ -295,6 +343,10 @@ public class TlsSocket private constructor(
         @OptIn(InternalKuicksilverApi::class)
         raw.abort()
         tls.close()
+        // and the application's pumps: the write pump waits for the application's next bytes, the read relay for room in
+        // its channel; both are children of the raw socket's job, which they held, and the socket, for good
+        attachedWriter?.job?.cancel()
+        attachedReader?.job?.cancel()
     }
 
     /**

@@ -36,9 +36,9 @@ class NioDatagramIoTest {
     }
 
     // the portable transport on purpose: on Linux the default is the accelerated one (KslDatagramIoTest)
-    private suspend fun pair(): Pair<DatagramIo, DatagramIo> =
-        DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable) to
-            DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+    private suspend fun pair(): Pair<DatagramIo, DatagramIo> = one() to one()
+
+    private suspend fun one(): DatagramIo = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
 
     @Test fun loopbackSendReceive() =
         runBlocking {
@@ -79,7 +79,7 @@ class NioDatagramIoTest {
 
     @Test fun portableCapabilities() =
         runBlocking {
-            val (a, _) = pair()
+            val a = one()
             try {
                 val c = a.capabilities.value
                 // ECT(0) through IP_TOS where the JDK can set it. Windows 11 refuses IP_TOS on a DatagramChannel (SocketException) and
@@ -100,7 +100,7 @@ class NioDatagramIoTest {
         runBlocking {
             // ADR-0006: the portable socket marks everything it sends ECT(0) through IP_TOS where the platform lets it set the option;
             // it cannot read marks, so ecnReceive stays false. Capability-consistent: ecnSend is reported exactly when IP_TOS holds ECT(0)
-            val (a, _) = pair()
+            val a = one()
             try {
                 val c = a.capabilities.value
                 assertFalse(c.ecnReceive)
@@ -123,7 +123,7 @@ class NioDatagramIoTest {
      */
     @Test fun nioSetsDontFragmentWherePossible() =
         runBlocking {
-            val (a, _) = pair()
+            val a = one()
             try {
                 val df = (a as io.kuicksilver.quic.NioDatagramIo).dontFragmentForTest()
                 if (Runtime.version().feature() >= 19) assertEquals(true, df) else assertEquals(null, df)
@@ -135,7 +135,7 @@ class NioDatagramIoTest {
 
     @Test fun nioClearsTosAfterValidationFailure() =
         runBlocking {
-            val (a, _) = pair()
+            val a = one()
             try {
                 a.disableEcnMarking()
                 assertEquals(0, (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest())
@@ -147,7 +147,7 @@ class NioDatagramIoTest {
 
     @Test fun closeUnblocksReceive() =
         runBlocking {
-            val (a, _) = pair()
+            val a = one()
             val inb = PacketBatch(4)
             val job =
                 async {

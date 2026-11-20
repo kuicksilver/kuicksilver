@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.events.Events
@@ -20,6 +22,7 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h1.installH1CallHandling
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.KuicksilverLogger
@@ -815,6 +818,10 @@ public class KuicksilverApplicationEngine(
         val startupJob = startupJob
         return CoroutineScope(applicationProvider().parentCoroutineContext + engineDispatcher).launch(start = CoroutineStart.LAZY) {
             serverScope = this
+            // the leak sentinel's record of a started server (off in production: one read): it ends once the server job and
+            // everything under it (listeners, connections, calls) ended
+            val leak = LeakRegistry.open("server.engine")
+            if (leak != 0L) coroutineContext[Job]!!.invokeOnCompletion { LeakRegistry.close(leak) }
             val servers = ArrayList<TcpServer>()
             val h3 = ArrayList<H3Listener>()
             try {

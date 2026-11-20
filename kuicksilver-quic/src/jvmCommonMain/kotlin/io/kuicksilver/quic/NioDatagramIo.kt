@@ -1,10 +1,13 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.toJavaAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +33,9 @@ internal class NioDatagramIo private constructor(
             InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
         }
     private val caps = MutableStateFlow(IoCapabilities.Portable)
+
+    /** The leak sentinel's record of this socket (0 in production). */
+    private val leakId = LeakRegistry.open("udp.socket")
     override val capabilities: StateFlow<IoCapabilities> get() = caps
 
     /** ADR-0006: the portable socket marks every datagram ECT(0) through IP_TOS (no per-datagram control, no reading of marks). */
@@ -188,6 +194,7 @@ internal class NioDatagramIo private constructor(
         selector.close()
         writeSelector.wakeup()
         writeSelector.close()
+        LeakRegistry.close(leakId)
     }
 
     companion object {

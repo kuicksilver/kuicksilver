@@ -172,6 +172,7 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   bash tools/interop/build-image.sh
 }
 export SIZE_LIMIT="${SIZE_LIMIT:-3200000}"
+export KUICKSILVER_LEAK_STRICT="${KUICKSILVER_LEAK_STRICT:-1}" # a slow teardown fails its test, as in CI (docs/process.md)
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
@@ -192,13 +193,14 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/select-races.py || rc=1; python3 -I tools/check/race-tests.py || rc=1
   python3 -I tools/check/wall-bounds.py || rc=1
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
+  python3 -I tools/check/sentinel.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
 # with the base CI's lint job exports to all its later steps (KSL_FUZZ_FORMATS_BASE, build.yml), so a control that reads it
 # unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
-  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
     bash "tools/check/$t-test.sh" || rc=1
   done
   bash tools/ci/race-repeat-test.sh || rc=1

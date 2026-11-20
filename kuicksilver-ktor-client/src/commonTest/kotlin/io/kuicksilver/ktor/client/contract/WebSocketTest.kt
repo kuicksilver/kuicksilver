@@ -64,16 +64,18 @@ class WebSocketTest : ClientLoader(except(ENGINES_WITHOUT_WS)) {
     @Test
     fun testExceptionIfWebsocketIsNotInstalled(): Unit =
         runBlocking {
-            val client = HttpClient()
-            assertFailsWith<IllegalStateException> {
-                client.webSocketSession()
-            }.let {
-                assertContains(it.message!!, WebSockets.key.name)
-            }
-            assertFailsWith<IllegalStateException> {
-                client.webSocket {}
-            }.let {
-                assertContains(it.message!!, WebSockets.key.name)
+            HttpClient().use { client ->
+                // closed, as Ktor's own copy of this test leaves it open
+                assertFailsWith<IllegalStateException> {
+                    client.webSocketSession()
+                }.let {
+                    assertContains(it.message!!, WebSockets.key.name)
+                }
+                assertFailsWith<IllegalStateException> {
+                    client.webSocket {}
+                }.let {
+                    assertContains(it.message!!, WebSockets.key.name)
+                }
             }
         }
 

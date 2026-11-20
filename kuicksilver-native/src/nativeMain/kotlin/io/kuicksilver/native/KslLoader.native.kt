@@ -47,3 +47,5 @@ public actual object KslLoader {
         return NativeAvailability.Available
     }
 }
+
+internal actual fun kslLoaded(): Boolean = true // linked in: the counters are there before ksl_init

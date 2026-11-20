@@ -58,6 +58,8 @@ env:
   # every Gradle step: a run that failed on a dependency Central answered "not found" for (no test and no dependency
   # verification failed) runs once more with --refresh-dependencies (tools/ci/gradlew-retry.sh)
   G: bash tools/ci/gradlew-retry.sh --stacktrace
+  # the leak sentinel fails a test whose teardown is slow, not only one that leaks (docs/process.md)
+  KUICKSILVER_LEAK_STRICT: "1"
 
 jobs:
   lint:
@@ -115,11 +117,12 @@ jobs:
           python3 -I tools/check/wall-bounds.py || rc=1   # wall-clock bounds of tests with their numbers in tools/check/wall-bounds.allow
           python3 -I tools/check/tracked-hashes.py || rc=1  # cited hashes in tracked files
           python3 -I tools/check/wildcard-binds.py || rc=1  # test sockets reached over loopback bind loopback
+          python3 -I tools/check/sentinel.py || rc=1   # the leak sentinel's allowlist only shrinks (tools/check/sentinel.allow)
           exit $rc
       - name: 'lint: doc-refs and test-check negative controls'
         run: |
           rc=0
-          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
+          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
             bash "tools/check/$t-test.sh" || rc=1
           done
           exit $rc

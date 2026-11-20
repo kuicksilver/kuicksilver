@@ -291,12 +291,21 @@ internal class CorePair(
         batch.close()
         client.release()
         server?.release()
+        // the client owns the tickets its events handed out: those a test did not [keep] go with the pair (a consumed or
+        // closed one is closed already; closing is idempotent)
+        for (e in clientEvents) if (e is ConnectionEvent.SessionTicket && e.ticket !in kept) e.ticket.close()
         val live = leaks.live
         if (live.isNotEmpty()) throw AssertionError("native objects left open after the cores were released: $live")
         BufferWatch.closed("CorePair", buffers)
     }
 
     private var closed = false
+
+    /** Tickets of [clientEvents] the test takes past [close] (and closes itself). */
+    private val kept = HashSet<io.kuicksilver.tls.QuicSessionTicket>()
+
+    /** [ticket] outlives this pair: [close] leaves it open, the test closes it. */
+    fun keep(ticket: io.kuicksilver.tls.QuicSessionTicket): io.kuicksilver.tls.QuicSessionTicket = ticket.also { kept += it }
 }
 
 /** The thread running the caller (a key compared for identity only). */

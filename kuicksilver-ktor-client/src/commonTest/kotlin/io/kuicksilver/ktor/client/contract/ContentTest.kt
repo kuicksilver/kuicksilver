@@ -449,6 +449,7 @@ class ContentTest : ClientLoader(timeout = 1.minutes) {
             val expected = "I will not introduce deadlocks.\n"
 
             test { client ->
+                // the derived client is closed after its call (Ktor's copy leaves it open): an engine closes only once its calls ended
                 val responseText =
                     client
                         .config {
@@ -460,8 +461,13 @@ class ContentTest : ClientLoader(timeout = 1.minutes) {
                                     }
                                 }
                             }
-                        }.get("$TEST_SERVER/content/big-plain-text")
-                        .bodyAsText()
+                        }.let { derived ->
+                            try {
+                                derived.get("$TEST_SERVER/content/big-plain-text").bodyAsText()
+                            } finally {
+                                derived.close()
+                            }
+                        }
 
                 val lines = responseText.trim().lines()
                 assertEquals(10_000, lines.size, "Should be same number of lines")

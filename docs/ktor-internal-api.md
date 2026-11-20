@@ -41,3 +41,13 @@ the `HttpRequestLifecycle` plugin's close notification does not fire over HTTP/1
 The vendored engine contract tests (`src/*Test/.../contract` of both engine modules, in their common, JVM, Android and Native
 test source sets; `NOTICE`) are re-vendored from the same Ktor tag on every upgrade; their exclusions are listed in
 `docs/guide/ktor.md`, "Compatibility".
+
+## Kotlin internals the test harness depends on
+
+Not Ktor, and not shipped: the leak sentinel of the test harness ([process.md, "The leak sentinel"](process.md#the-leak-sentinel))
+uses Kotlin/Native's test launcher, which kotlin.test does not make public API. Re-check it when the Kotlin version moves,
+as the entries above when Ktor's does.
+
+| What | Where | Why | Risk |
+|---|---|---|---|
+| `GeneratedSuites`, `testLauncherEntryPoint`, `TestSuite`, `TestCase` | Kotlin/Native stdlib, `kotlin.native.internal.test`, `@ExperimentalNativeApi` (public, documented as not stable, KT-47915) | `kuicksilver-testing/sentinel/native/.../LeakSentinelMain.kt` is every native test executable's entry point (`-e`): it wraps the suites the compiler generated, to check after each test and each class | a changed launcher fails the test executables' link or their start; `LeakSentinelInstalledTest` fails when the sentinel no longer runs |

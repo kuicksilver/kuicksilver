@@ -20,6 +20,7 @@ import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
@@ -566,7 +567,11 @@ class ClientWebSocketConnectingTest {
                             val s = listener.accept()
                             val i = index++
                             onAccept(i)
-                            launch { s.use { runCatching { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) } } }
+                            // ATOMIC: a socket accepted as the test stops its server is closed too (a plain launch never starts then)
+                            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                            launch(start = CoroutineStart.ATOMIC) {
+                                s.use { runCatching { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) } }
+                            }
                         }
                     }
                 withTimeout(20.seconds) { block((listener.localAddress as InetSocketAddress).port) }

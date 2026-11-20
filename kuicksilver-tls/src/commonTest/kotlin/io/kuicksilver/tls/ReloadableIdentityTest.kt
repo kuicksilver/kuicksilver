@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -33,6 +34,11 @@ import kotlin.time.Duration.Companion.seconds
  * the identity they started with, resumption across a reload (section 4.7.1), and native keys freed only when nothing uses them.
  */
 class ReloadableIdentityTest {
+    /** Session caches of this test's own handshakes, closed after it (their native sessions). */
+    private val caches = TestCaches()
+
+    @AfterTest fun closeCaches() = caches.close()
+
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val leafA = Certificate(TestCerts.server)
@@ -53,7 +59,7 @@ class ReloadableIdentityTest {
     /** A full handshake (a cache of its own, so nothing resumes) or, with [cache], one that may resume. */
     private suspend fun open(
         id: TlsIdentity,
-        cache: SessionCache = SessionCache(),
+        cache: SessionCache = caches.new(),
     ): Pair<TlsConnection, TlsConnection> {
         val (cd, sd) = connect(TcpFixtures.client(), server(id), clientCache = cache)
         return withTimeout(20.seconds) { cd.await() to sd.await() }
@@ -116,7 +122,7 @@ class ReloadableIdentityTest {
                         pair.clientOut,
                         TcpFixtures.client(),
                         kotlin.coroutines.EmptyCoroutineContext,
-                        SessionCache(),
+                        caches.new(),
                     )
                 }
             val (c, s) = withTimeout(20.seconds) { cd.await() to sd.await() }
@@ -277,7 +283,7 @@ class ReloadableIdentityTest {
                     trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
                 }
             val client = TcpFixtures.client { identity = x }
-            val cache = SessionCache()
+            val cache = caches.new()
             val keyX = SessionCache.key(client.serverName, "server.test", client.trust, x)
             val (c1, s1) = connect(client, server, clientCache = cache).let { (c, s) -> withTimeout(20.seconds) { c.await() to s.await() } }
             exchange(c1, s1)
@@ -343,7 +349,7 @@ class ReloadableIdentityTest {
     @Test fun negative_ticketIssuedBeforeReloadIsNotResumed(): Unit =
         runBlocking {
             val r = TlsIdentity.reloadable(identityA())
-            val cache = SessionCache()
+            val cache = caches.new()
             val client = TcpFixtures.client()
             val key = SessionCache.key(client.serverName, "server.test", client.trust, null)
             val (c0, s0) = open(r, cache)

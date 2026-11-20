@@ -165,6 +165,8 @@ class StreamObserverRaceTest {
                         }
                     writer.join()
                     readers.forEach { it.join() }
+                    // the wrappers were never the core's: they end with the test (what a stream's end does to `done`)
+                    for (s in streams) s.done.complete(Unit)
                     failure.get()?.let { throw it }
 
                     for (i in 0 until rounds) {

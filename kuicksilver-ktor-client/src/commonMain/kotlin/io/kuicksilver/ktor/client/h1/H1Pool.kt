@@ -120,8 +120,17 @@ internal class H1Connection(
             tls != null,
         )
 
-    /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
-    val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
+    /**
+     * What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). Cancelled (a body
+     * abandoned, a timeout), it ends over TLS with [TlsConnection.cancelInput]: the session reads on and drops what still
+     * comes, so an orderly close still gets the server's close_notify instead of closing under its unread data.
+     */
+    val input: HeadLimitedInput =
+        if (tls != null) {
+            HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES) { tls.cancelInput(it) }
+        } else {
+            HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
+        }
 
     /**
      * Not closed, not closed by the server, and nothing unread: bytes on a connection between exchanges answer no request
@@ -307,23 +316,34 @@ internal class H1Pool(
      */
     internal var orderlyCloseTimeoutForTest: Duration = ORDERLY_CLOSE_TIMEOUT
 
+    /** Test hook: gets how long each [closeOrderly] took, once the connection is closed (in order or past its bound). */
+    internal var orderlyCloseTookForTest: ((Duration) -> Unit)? = null
+
     /**
      * Ends [tls] (none for h2c) in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
      * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
      * FIN. Bounded by [ORDERLY_CLOSE_TIMEOUT]; past it, and when the engine is closed meanwhile, the connection is closed
-     * hard. Runs in [closers], never in the caller.
+     * hard. Runs in [closers], never in the caller. With [dropInput] (an HTTP/1.1 connection, which nobody reads once it
+     * closes, and an HTTP/2 one, whose read loop has stopped with the connection) what the server still sends is read and dropped ([TlsConnection.cancelInput]): the wait for its close_notify
+     * then lasts while it sends, not while nobody reads (a response refused after its head, its body still coming, held
+     * each such close to the bound). The session still reads its records, so a ticket is still taken.
      */
     private fun closeOrderly(
         tls: TlsConnection?,
         rawOut: ByteWriteChannel,
         tcp: Socket,
+        dropInput: Boolean = false,
     ) {
         // ATOMIC: an engine closed meanwhile still runs the finally block, which closes the connection hard
         @OptIn(DelicateCoroutinesApi::class)
         closers.launch(start = CoroutineStart.ATOMIC) {
+            val started =
+                kotlin.time.TimeSource.Monotonic
+                    .markNow()
             try {
                 val bound = orderlyCloseTimeoutForTest
+                if (dropInput) tls?.cancelInput(kotlinx.io.IOException("the connection is closing"))
                 withTimeoutOrNull(bound) {
                     tls?.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
@@ -331,6 +351,7 @@ internal class H1Pool(
             } finally {
                 tls?.close()
                 tcp.close()
+                orderlyCloseTookForTest?.invoke(started.elapsedNow())
             }
         }
     }
@@ -1797,7 +1818,9 @@ internal class H1Pool(
                                     },
                                     // the last GOAWAY is in tls.output: it goes out, then close_notify (RFC 9113 sections
                                     // 5.4.1 and 6.8, RFC 9846 section 6.1)
-                                    closeTransportGracefully = { closeOrderly(tls, rawOut, tcp) },
+                                    // the read loop has stopped (the connection is closed): what the server still
+                                    // sends is read and dropped, so its close_notify is not held behind it
+                                    closeTransportGracefully = { closeOrderly(tls, rawOut, tcp, dropInput = true) },
                                     onChange = { h2.bump(key) },
                                     // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error
                                     // (Section 5.4.1) of type PROTOCOL_ERROR"; the TLS layer ends the input of an h2 connection
@@ -1871,7 +1894,7 @@ internal class H1Pool(
                         tls.output,
                         key,
                         clock(),
-                        orderly = { closeOrderly(tls, rawOut, tcp) },
+                        orderly = { closeOrderly(tls, rawOut, tcp, dropInput = true) },
                         tcpIn = rawIn,
                         tcpOut = rawOut,
                         viaProxy = viaProxy,

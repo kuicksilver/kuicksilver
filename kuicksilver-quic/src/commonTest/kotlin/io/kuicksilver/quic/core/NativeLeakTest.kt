@@ -77,9 +77,11 @@ class NativeLeakTest {
      */
     private fun leakFree(
         pair: (QuicCrypto) -> CorePair,
+        /** Tickets taken before the test and consumed by it (0-RTT): their session references go, and nothing replaces them. */
+        consumedTickets: Int = 0,
         scenario: (CorePair) -> Unit,
     ) {
-        val before = nativeConnectionObjects()
+        val before = nativeConnectionObjects().toMutableList().also { it[2] -= consumedTickets }
         val crypto = LeakTrackingCrypto(ksl)
         val p = pair(crypto)
         try {
@@ -335,7 +337,7 @@ class NativeLeakTest {
                     serverEarly = early(app = byteArrayOf(9)), // another application context: the server refuses the 0-RTT
                     clientSetup = { c -> early0Rtt(c, ticket) },
                 )
-            }) { p ->
+            }, consumedTickets = 1) { p ->
                 handshakeAndRun(p)
                 assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
                 p.client.close(0, "", p.now)
@@ -352,7 +354,7 @@ class NativeLeakTest {
                 CorePair(crypto = it, clientEarly = EarlyDataState.Allowed, serverEarly = early(), clientSetup = { c ->
                     early0Rtt(c, ticket)
                 })
-            }) { p ->
+            }, consumedTickets = 1) { p ->
                 handshakeAndRun(p)
                 assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataAccepted })
                 p.client.close(0, "", p.now)
@@ -377,7 +379,7 @@ class NativeLeakTest {
                         serverEarly = if (accepted) early() else early(app = byteArrayOf(9)),
                         clientSetup = { c -> early0Rtt(c, ticket) },
                     )
-                }) { p ->
+                }, consumedTickets = 1) { p ->
                     handshakeAndRun(p)
                     if (accepted) {
                         assertTrue(p.server!!.readKeys[1] != null, "the server still holds its 0-RTT read key")
@@ -567,7 +569,7 @@ class NativeLeakTest {
             assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             tickets.dropLast(1).forEach { it.close() }
-            return tickets.last()
+            return p.keep(tickets.last())
         }
     }
 

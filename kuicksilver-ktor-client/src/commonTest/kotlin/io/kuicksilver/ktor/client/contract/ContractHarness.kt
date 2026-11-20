@@ -34,6 +34,7 @@ import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.TestCerts
 import io.kuicksilver.ktor.client.quicServerSupported
+import io.kuicksilver.testing.sentinel.LeakSentinel
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
@@ -74,7 +75,10 @@ internal object ContractServer {
             message.startsWith("Websocket handler failed") && cause.toString().contains("Http3Exception")
         })
 
-    val ports: Pair<Int, Int> by lazy {
+    // started by whichever test needs it first and kept for the test process: the leak sentinel does not count it as that test's
+    val ports: Pair<Int, Int> by lazy { LeakSentinel.shared { start() } }
+
+    private fun start(): Pair<Int, Int> {
         val server =
             embeddedServer(
                 KuicksilverServer,
@@ -89,7 +93,7 @@ internal object ContractServer {
                     port = 0
                 }
             }
-        runBlocking {
+        return runBlocking {
             server.startSuspend(false)
             val c = server.engine.resolvedConnectors()
             c[0].port to c[1].port

@@ -66,6 +66,8 @@ internal class KslNioSocket(
     private val delegate: Socket,
     private val selector: SelectorManager,
     closeTimeout: Duration?,
+    /** Accepted by a listener of ours (the leak sentinel's `tcp.accepted`), not connected out (`tcp.socket`). */
+    accepted: Boolean = false,
 ) : Socket by delegate {
     private val selectable: Selectable
     private val nio: SocketChannel
@@ -90,6 +92,7 @@ internal class KslNioSocket(
             runCatching { delegate.close() }
             throw e
         }
+        trackLeak(if (accepted) "tcp.accepted" else "tcp.socket")
     }
 
     /** `SO_SNDBUF` and `SO_RCVBUF` of the channel as the system reports them now (a test hook). */
@@ -396,12 +399,14 @@ internal class KslNioServerSocket(
             runCatching { delegate.close() }
             throw e
         }
+        trackLeak("tcp.listener")
     }
 
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
-    override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
+    override suspend fun accept(): Socket =
+        KslNioSocket(delegate.accept(), selector, closeTimeout = null, accepted = true) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()
 }

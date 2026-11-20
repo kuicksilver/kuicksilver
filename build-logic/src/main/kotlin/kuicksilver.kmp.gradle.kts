@@ -10,6 +10,7 @@ plugins {
     id("org.jetbrains.dokka")
     id("kuicksilver.coverage")
     id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
+    id("kuicksilver.leak-sentinel")   // every test, on every platform, must close what the library opened for it
     id("org.jmailen.kotlinter")   // ktlint (ktlint_official, 140 columns, .editorconfig): `formatKotlin` rewrites, `lintKotlin` gates `check`
 }
 
@@ -112,7 +113,11 @@ kotlin {
         compileSdk = 35
         minSdk = 24
         withHostTestBuilder {}.configure {}
-        withDeviceTestBuilder { sourceSetTreeName = "test" }.configure { instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+        withDeviceTestBuilder { sourceSetTreeName = "test" }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+            // the leak sentinel on a device (kuicksilver.leak-sentinel): every plain test class runs through its runner
+            instrumentationRunnerArguments["runnerBuilder"] = "io.kuicksilver.testing.sentinel.LeakSentinelRunnerBuilder"
+        }
         packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") }   // LICENSE/NOTICE stay: every artifact carries them (Apache-2.0 section 4)
     }
     linuxX64(); linuxArm64()

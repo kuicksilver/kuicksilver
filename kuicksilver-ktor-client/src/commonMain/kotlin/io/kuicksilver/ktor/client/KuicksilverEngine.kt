@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ClientEngineClosedException
@@ -34,6 +36,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.QuicException
@@ -294,6 +297,9 @@ internal class KuicksilverEngine(
                     selector.close()
                 }
             }
+        // the leak sentinel's record of this engine (off in production: one read): it ends once the cleanup after close() ran
+        val leak = LeakRegistry.open("client.engine")
+        if (leak != 0L) cleanup.invokeOnCompletion { LeakRegistry.close(leak) }
     }
 
     /** Set by [close]: new calls fail at once, the ones already made finish before the cleanup runs. */
@@ -304,6 +310,7 @@ internal class KuicksilverEngine(
         closed = true
         h3.refuseWebTransport() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
+        cancelLostSetups()
         httpsRecords?.close() // a DNS lookup still running would hold up the cleanup for up to its timeout
         engineJob.complete()
         super.close()
@@ -932,6 +939,35 @@ internal class KuicksilverEngine(
         }
     }
 
+    /**
+     * QUIC setups that lost their race and go on only to fill the pool or to mark the alternative broken: no call waits for
+     * them. [close] cancels them (Ktor's close() lets running requests finish, and these are none), so a closed engine
+     * ends at once instead of after a setup's own bound, the connect or the handshake timeout.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val lostSetups = kotlin.concurrent.atomics.AtomicReference<Set<Job>>(emptySet())
+
+    /** [setup] lost its race: it ends with the engine's close, or on its own before. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun keepLostSetup(setup: Job) {
+        while (true) {
+            val s = lostSetups.load()
+            if (lostSetups.compareAndSet(s, s + setup)) break
+        }
+        setup.invokeOnCompletion {
+            while (true) {
+                val s = lostSetups.load()
+                if (lostSetups.compareAndSet(s, s - setup)) break
+            }
+        }
+        if (closed) setup.cancel() // lost as the engine closed: close() may have looked at the set before it was added
+    }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun cancelLostSetups() {
+        for (j in lostSetups.load()) j.cancel()
+    }
+
     /** Once the QUIC setup that lost a race is settled: QUIC confirmed on [network], or [alt] of [origin] marked broken. */
     private fun settleLostQuic(
         h3Attempt: kotlinx.coroutines.Deferred<io.kuicksilver.http3.Http3Connection>,
@@ -939,6 +975,7 @@ internal class KuicksilverEngine(
         origin: String,
         alt: String,
     ) {
+        keepLostSetup(h3Attempt)
         h3Attempt.invokeOnCompletion { cause ->
             engineScope.launch {
                 // a 0-RTT connection counts once its handshake completed (or failed)

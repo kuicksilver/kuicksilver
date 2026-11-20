@@ -313,6 +313,10 @@ internal class NativeTcpServerSocket(
     override val coroutineContext: CoroutineContext = selector.coroutineContext + Dispatchers.Unconfined + socketContext
     private val closed = AtomicBoolean(false)
 
+    init {
+        trackLeak("tcp.listener")
+    }
+
     override suspend fun accept(): Socket {
         val peer = ByteArray(SOCKADDR_STORAGE)
         while (true) {
@@ -373,6 +377,11 @@ internal class NativeTcpSocket(
     Selectable {
     override val socketContext: CompletableJob = Job(parent)
     override val coroutineContext: CoroutineContext get() = socketContext
+
+    init {
+        // a socket a listener of ours accepted is its child ([parent]); a connected one has none
+        trackLeak(if (parent != null) "tcp.accepted" else "tcp.socket")
+    }
 
     /** The local address, taken by [recordLocalAddress] once the socket is connected. */
     @Volatile private var local: SocketAddress? = null

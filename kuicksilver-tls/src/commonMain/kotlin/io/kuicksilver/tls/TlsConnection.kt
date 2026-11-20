@@ -84,6 +84,9 @@ public class TlsConnection private constructor(
 
     private val inputChannel = ByteChannel(autoFlush = true)
     private val inputView = DeliverThenFail(inputChannel)
+
+    /** Set by [cancelInput]: the application reads no more, and the reader pump reads on and drops what it decrypts. */
+    @Volatile private var droppingInput = false
     private val outputChannel = ByteChannel(autoFlush = true)
     private val verification = Verification(config)
     private var presented: List<Certificate> = emptyList()
@@ -564,7 +567,15 @@ public class TlsConnection private constructor(
         suspend fun deliver() {
             rememberSession()
             if (have == 0) return
-            inputChannel.writeFully(plain, 0, have)
+            if (!droppingInput) {
+                try {
+                    inputChannel.writeFully(plain, 0, have)
+                } catch (e: Throwable) {
+                    // [cancelInput] woke this write: what the application will not read is dropped from now on
+                    if (!droppingInput) throw e
+                    currentCoroutineContext().ensureActive()
+                }
+            }
             have = 0
         }
 
@@ -605,7 +616,12 @@ public class TlsConnection private constructor(
                     r == -KslConst.EOF -> {
                         deliver()
                         drainRequests.trySend(Unit)
-                        inputChannel.flushAndClose()
+                        try {
+                            inputChannel.flushAndClose()
+                        } catch (e: Throwable) {
+                            if (!droppingInput) throw e // cancelled by [cancelInput]: nothing more to end
+                            currentCoroutineContext().ensureActive()
+                        }
                         return false
                     }
 
@@ -912,7 +928,7 @@ public class TlsConnection private constructor(
      * [shutdown] with the bound owned by the caller: [drainTimeout] bounds the whole shutdown, or, when null, sending what is
      * queued is not bounded (a slow reader gets the last response whole; the caller bounds the connection) and only the wait
      * for the peer's close_notify after it is (3 s). [stopAwaitingPeer] ends that wait early when it completes (a server
-     * that stops does not wait for idle clients that never answer): RFC 8446 section 6.1, "Both parties need not wait to
+     * that stops does not wait for idle clients that never answer): RFC 9846 section 6.1, "Both parties need not wait to
      * receive a "close_notify" alert before closing their read side of the connection". [afterSent] runs once close_notify
      * was handed to the transport, before that wait: a server ends its transport's write side there (its TCP FIN), as RFC
      * 6455 section 5.5.1 wants of a WebSocket server ("The server MUST close the underlying TCP connection immediately")
@@ -954,6 +970,22 @@ public class TlsConnection private constructor(
             withTimeoutOrNull(SHUTDOWN_TIMEOUT) { awaitPeer() }
         }
         close()
+    }
+
+    /**
+     * The application reads no more: [input] is cancelled with [cause] (a read waiting on it wakes with it, and every later
+     * read fails), while the session goes on reading the transport and drops what it decrypts. The peer's `close_notify` (or
+     * the end of the transport) still reaches [shutdown]'s wait, and a session ticket is still taken, instead of the session
+     * ending its reads at once: closing under the peer's unread input would make the kernel reset the connection, which can
+     * erase our `close_notify` before the peer reads it.
+     *
+     * The owner must end the session after this, with [shutdown] or [close]: the reader pump keeps reading the transport,
+     * decrypting and dropping, until the peer's `close_notify`, the transport's end or [close], and nothing else stops it.
+     */
+    @InternalKuicksilverApi
+    public fun cancelInput(cause: Throwable?) {
+        droppingInput = true
+        inputView.cancel(cause)
     }
 
     /**
@@ -1308,6 +1340,13 @@ public class SessionCache(
 
         /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */
         public val Default: SessionCache = SessionCache()
+
+        init {
+            // the process's own cache: the leak sentinel empties it before it counts a test's native sessions (one registration
+            // per process; nothing calls it in production)
+            io.kuicksilver.native.LeakRegistry
+                .processCache { Default.clear() }
+        }
 
         internal fun key(
             sni: String?,

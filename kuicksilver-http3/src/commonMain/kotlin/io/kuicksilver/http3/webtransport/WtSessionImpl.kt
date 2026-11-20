@@ -33,6 +33,7 @@ import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.drains
 import io.kuicksilver.http3.runtime.qlog
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -199,6 +200,12 @@ internal class WtSessionImpl(
     private var peerFinished = false
     override val drainRequested: StateFlow<Boolean> get() = drainFlow
     override val closed: Deferred<WebTransportCloseInfo> get() = closedInfo
+
+    init {
+        // the leak sentinel's record of this session (off in production: one read): it ends once the session is closed
+        val leak = LeakRegistry.open("h3.webTransport")
+        if (leak != 0L) closedInfo.invokeOnCompletion { LeakRegistry.close(leak) }
+    }
 
     /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
     fun start() {

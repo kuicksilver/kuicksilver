@@ -35,6 +35,7 @@ import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.awaitCancellation
@@ -934,7 +935,10 @@ class ClientH1FramingTest {
                         while (true) {
                             val s = listener.accept()
                             val i = index++
-                            launch {
+                            // ATOMIC: a socket accepted as the test stops its server is closed too; a plain launch cancelled before
+                            // it started never ran, and the socket and its listener stayed open (seen on Kotlin/Native)
+                            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                            launch(start = CoroutineStart.ATOMIC) {
                                 // the client may close first (a response it refused): the server side just ends
                                 s.use { runCatching { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) } }
                             }

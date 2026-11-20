@@ -1,10 +1,13 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionCreated
@@ -140,6 +143,13 @@ internal class EndpointLoop private constructor(
             scope.cancel()
             throw e
         }
+    }
+
+    init {
+        // the leak sentinel's record of this endpoint (off in production: one read): it ends once the close job freed
+        // everything and every coroutine of the loop's scope ended
+        val leak = LeakRegistry.open("quic.endpoint")
+        if (leak != 0L) scope.coroutineContext[kotlinx.coroutines.Job]!!.invokeOnCompletion { LeakRegistry.close(leak) }
     }
 
     /** [dispatcher] for a stream reader's hop onto the loop ([LoopDispatcher.Batched]). */
@@ -526,6 +536,7 @@ internal class EndpointLoop private constructor(
 
     private fun failAll(reason: QuicException.ConnectionLost) {
         for (rt in runtimes.values) rt.retire(reason)
+        for (rt in runtimes.values) rt.forgotten()
         runtimes.clear()
         handshaking = 0
     }
@@ -749,6 +760,7 @@ internal class EndpointLoop private constructor(
                             )
                         }
                     }
+                    for (rt in runtimes.values) rt.forgotten()
                     runtimes.clear()
                     // the socket first: it wakes a receiver blocked inside the socket call; its batch is freed only once that call returned (a native receive writes into the batch's memory)
                     r.release { io.close() }

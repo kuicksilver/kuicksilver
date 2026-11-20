@@ -22,6 +22,7 @@ import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.CapsuleRules
 import io.kuicksilver.http3.message.DatagramFilter
 import io.kuicksilver.http3.webtransport.WtStreamRouter
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.DatagramPolicy
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
@@ -145,6 +146,10 @@ internal class DatagramDemux(
     fun register(streamId: Long): Channel<ByteArray> {
         val ch = Channel<ByteArray>(QUEUE, BufferOverflow.DROP_OLDEST)
         streams[streamId] = ch
+        if (LeakRegistry.enabled) {
+            val ids = leakIds ?: HashMap<Long, Long>().also { leakIds = it }
+            LeakRegistry.close(ids.put(streamId, LeakRegistry.open("h3.datagramFlow")) ?: 0L)
+        }
         prunePending()
         if (pending.any { it.streamId == streamId }) {
             val mine = pending.filter { it.streamId == streamId }
@@ -179,6 +184,15 @@ internal class DatagramDemux(
 
     fun unregister(streamId: Long) {
         streams.remove(streamId)?.close()
+        leakIds?.let { LeakRegistry.close(it.remove(streamId) ?: 0L) }
+    }
+
+    /** The leak sentinel's records of the registered flows, by stream (never made in production). */
+    private var leakIds: HashMap<Long, Long>? = null
+
+    /** The connection is gone: every registered channel closes (session dispatcher only). */
+    fun unregisterAll() {
+        for (id in streams.keys.toList()) unregister(id)
     }
 
     /** Streams with a registered datagram channel (test hook; session dispatcher only). */

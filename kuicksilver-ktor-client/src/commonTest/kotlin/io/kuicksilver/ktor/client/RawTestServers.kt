@@ -23,6 +23,7 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.ktor.network.setCloseTimeout
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
@@ -34,6 +35,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Duration.Companion.seconds
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
 internal suspend fun readRequest(input: ByteReadChannel): String {
@@ -60,8 +62,12 @@ internal suspend fun tcpOn(
     port: Int,
 ) = bindTcp(selector, "127.0.0.1", port).let { it to (it.localAddress as InetSocketAddress).port }
 
+/** How long the server's close of a connection may wait for the client to take what the handler wrote ([tlsWithSilentUdp]). */
+private val SERVER_CLOSE_BOUND = 10.seconds
+
 /**
- * A TLS (HTTP/1.1) listener on 127.0.0.1 that runs [handler] once per accepted connection with its index, then closes it;
+ * A TLS (HTTP/1.1) listener on 127.0.0.1 that runs [handler] once per accepted connection with its index, then closes it
+ * in order (what the handler wrote, then close_notify, within [SERVER_CLOSE_BOUND]) before the raw socket;
  * with [silentUdp] the UDP port of the same number is bound too and never answers (QUIC blocked): the UDP side binds a
  * free port and TCP takes that number, or the other way round ([bindOnSamePort]; a free port of one says nothing about its twin). With
  * [listener] (not closed here) it serves on that socket instead of binding one. Connections are accepted once
@@ -136,11 +142,21 @@ internal suspend fun tlsWithSilentUdp(
                         val i = index++
                         launch {
                             runCatching {
-                                raw.tlsServer(tls).use { s ->
+                                val s = raw.tlsServer(tls)
+                                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                s.setCloseTimeout(SERVER_CLOSE_BOUND)
+                                try {
                                     handler(i, s.negotiatedAlpn, s.openReadChannel(), s.openWriteChannel(autoFlush = true))
+                                } finally {
+                                    // the TLS socket's close is graceful and runs on its own: what the handler queued, then
+                                    // close_notify, then the raw socket. Closing the raw socket before that is over cut the
+                                    // server's writer short (the session failed, the connection was reset), so the client saw
+                                    // a reset where the test meant a whole response; its own bound ends it otherwise
+                                    s.close()
+                                    s.socketContext.join()
                                 }
                             }
-                            raw.close()
+                            raw.close() // a no-op after the close above; a failed handshake's socket ends here
                         }
                     }
                 }

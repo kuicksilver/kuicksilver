@@ -1501,6 +1501,41 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   went out and sent again (on a new HTTP/3 connection or over HTTP/1.1), never ended: the refused attempt's writer waited
   forever on a channel no one read, in the call's context, so the call's Job never completed and the connection the
   answering attempt used was never released. A failed attempt now ends its own body channel.
+- HTTP/3 client: the datagram channel of an extended CONNECT tunnel (CONNECT-UDP, WebTransport) stayed registered, and
+  open, when the connection ended: its removal was launched into the connection's scope, which the connection's end
+  cancels before it ran. Every channel still registered now closes once the connection's coroutines are gone, so a reader
+  of the tunnel's datagrams sees the end (`ConnectionEndTest.clientTunnelDatagramChannelEndsWithTheConnection`; found by
+  the leak sentinel).
+- Ktor client: a closed client still waited for a QUIC setup that had lost its race to TCP (it goes on in the background
+  to fill the pool or to mark the alternative broken) until that setup's own bound, up to the connect timeout, before it
+  released its endpoint and connections. `close()` now cancels such setups at once: no call waits for them, and a closed
+  engine cannot use what they make. Requests still running are left to finish, as Ktor's `close()` promises
+  (`ClientEarlyDataTest.closeCancelsAQuicSetupThatLostTheRace`; found by the leak sentinel).
+- TLS over TCP (`Socket.tls`, `Socket.tlsServer`): a socket that ended kept its job, and the pumps under it, for good when
+  the application had stopped reading (the relay waited for room in the application's channel) or, for an abort, kept its
+  write channel open without writing (the pump waited for its next bytes). The descriptor was closed; the coroutines
+  stayed, one set per such connection. A close and an abort now end both pumps
+  (`TlsSocketReleaseTest`; found by the leak sentinel). A behaviour change: the application's read channel stops at
+  `close()` (see the next entry), not once the close is over; a read still waiting on it ends with a cancellation, and
+  plaintext the session had not handed to that channel yet is dropped (read what you need before you close).
+- TLS over TCP: a closing socket waited for the peer's close_notify behind input the application would never read: the
+  session waited for room in the read channel, the peer's writes waited behind it, and a client's close ran to its 3 s
+  bound (a client that closed without reading the rest of a response). From `close()` on, what the peer still sends is
+  read and dropped, so its close_notify ends the wait as soon as it comes. Closing only the write channel (a half-close)
+  still delivers the rest. A read channel opened once `close()` has begun fails at once and starts no second reader,
+  which took the input from the close's drop and brought the wait back (`TlsSocketCloseTest`; found by the leak
+  sentinel's slow-close report).
+- Ktor client, HTTP/1.1 over TLS: the orderly close of a connection whose response nobody would read any more waited
+  behind it in the same way. A response refused after its head (an invalid `Content-Length`) while the server went on
+  sending held its close_notify wait to the 1 s bound; a response the application abandoned went the other way, its
+  session stopped reading at once and the connection closed under the rest of the body, so the kernel reset it, which
+  can erase the client's close_notify before the server reads it. Both now read and drop what still comes until the
+  server's close_notify (`TlsConnection.cancelInput`, internal), and a session ticket that comes meanwhile is still taken
+  (`ClientOrderlyCloseTest.negative_aRefusedResponseDoesNotHoldTheOrderlyClose`,
+  `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`). The same for HTTP/2: a connection that ended (a connection
+  error, a missed health PING, a local failure) while the server still sent DATA waited for its close_notify behind it,
+  its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`). A closing TLS
+  socket now drops its input the same way, instead of reading it out.
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

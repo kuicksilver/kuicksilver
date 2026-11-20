@@ -10,6 +10,7 @@ package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
@@ -69,6 +70,13 @@ internal class ConnectionRuntime(
     override val core: ConnectionCore,
 ) : QuicConnection {
     internal val handshake = CompletableDeferred<Unit>()
+
+    /** The leak sentinel's record of this connection (0 in production): closed once the loop forgot it ([forgotten]). */
+    private val leakId = LeakRegistry.open("quic.connection")
+
+    /** The loop dropped this connection from its table: it is released, or goes with the endpoint's core. */
+    internal fun forgotten() = LeakRegistry.close(leakId)
+
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
 

@@ -23,6 +23,8 @@ import kotlinx.io.Source
 internal class HeadLimitedInput(
     private val source: ByteReadChannel,
     private val maxHeadBytes: Int,
+    /** How a [cancel] ends [source]; by default its own cancel (over TLS, the session's, which reads on and drops). */
+    private val cancelSource: (Throwable?) -> Unit = { source.cancel(it) },
 ) : ByteReadChannel {
     private val buffer = Buffer()
 
@@ -82,7 +84,7 @@ internal class HeadLimitedInput(
 
     override fun cancel(cause: Throwable?) {
         buffer.clear()
-        source.cancel(cause)
+        cancelSource(cause)
     }
 
     private companion object {

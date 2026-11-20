@@ -54,6 +54,8 @@ class ServerClientCaReloadTest {
         private val selector: SelectorManager,
         private val tcp: Socket,
         private val tls: TlsConnection,
+        /** The connection's own ticket cache: closed with it (its native sessions). */
+        private val cache: SessionCache,
     ) {
         suspend fun get(): String {
             val req = "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n".encodeToByteArray()
@@ -86,6 +88,7 @@ class ServerClientCaReloadTest {
             tls.close()
             tcp.close()
             selector.close()
+            kotlinx.coroutines.runBlocking { cache.close() } // the ticket that arrived for it, too
         }
 
         companion object {
@@ -94,6 +97,7 @@ class ServerClientCaReloadTest {
                 id: TlsIdentity,
             ): H1 {
                 val selector = SelectorManager(Dispatchers.IO)
+                val cache = SessionCache()
                 val tcp =
                     io.kuicksilver.ktor.network
                         .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
@@ -104,9 +108,9 @@ class ServerClientCaReloadTest {
                             tcp.openWriteChannel(autoFlush = true),
                             ServerFixtures.clientTls(identity = id),
                             EmptyCoroutineContext,
-                            SessionCache(),
+                            cache,
                         )
-                    H1(selector, tcp, tls)
+                    H1(selector, tcp, tls, cache)
                 } catch (t: Throwable) {
                     tcp.close()
                     selector.close()

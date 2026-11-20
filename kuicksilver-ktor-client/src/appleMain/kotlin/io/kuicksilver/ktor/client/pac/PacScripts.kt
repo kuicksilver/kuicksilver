@@ -97,6 +97,9 @@ internal object PacScripts {
     /** Downloads started (tests). */
     val downloads: Int get() = downloadCount.load()
 
+    /** The client that downloads every script, made on first use and kept for the process (tests). */
+    internal val clientForTest: HttpClient get() = client
+
     private val client by lazy {
         HttpClient(Kuicksilver) {
             expectSuccess = false

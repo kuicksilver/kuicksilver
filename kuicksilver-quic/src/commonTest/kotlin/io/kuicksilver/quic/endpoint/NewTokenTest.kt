@@ -457,7 +457,8 @@ class NewTokenTest {
 
     @Test fun tokenFromOneLoopValidOnAnother() {
         // the loops of a group share one AddressTokens: a client the kernel hashes onto another loop next time is still validated
-        val shared = AddressTokens(KslQuicCrypto, Random(3), owners = 2)
+        // this test's own reference (each endpoint core takes one more): dropped at the end, as LoopGroup drops its own
+        val shared = AddressTokens(KslQuicCrypto, Random(3))
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto, sharedTokens = shared) { admission = rec }
         val other =
@@ -497,6 +498,7 @@ class NewTokenTest {
         } finally {
             other.close()
             p.close()
+            shared.close()
         }
     }
 

@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic
 
 import io.ktor.network.selector.SelectorManager
@@ -9,6 +11,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
 import io.ktor.utils.io.errors.PosixException
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.native.toByteArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -46,6 +49,9 @@ internal class KtorDatagramIo private constructor(
     override val localAddress: InetSocketAddress = socket.localAddress as InetSocketAddress
     override val capabilities: StateFlow<IoCapabilities> = MutableStateFlow(IoCapabilities.Portable)
     private var lastAddress: InetSocketAddress? = null
+
+    /** The leak sentinel's record of this socket (0 in production). */
+    private val leakId = LeakRegistry.open("udp.socket")
 
     /** One-shot: [interruptReceive] ends the receive in flight with 0 datagrams. */
     private val interrupts = Channel<Unit>(Channel.CONFLATED)
@@ -153,6 +159,7 @@ internal class KtorDatagramIo private constructor(
     override fun close() {
         socket.close()
         selector.close()
+        LeakRegistry.close(leakId)
     }
 
     private fun refuseIpv6Destinations(batch: PacketBatch) {

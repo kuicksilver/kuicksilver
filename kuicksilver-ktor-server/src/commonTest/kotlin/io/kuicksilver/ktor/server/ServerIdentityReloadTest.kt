@@ -46,6 +46,8 @@ class ServerIdentityReloadTest {
         private val selector: SelectorManager,
         private val tcp: Socket,
         val tls: TlsConnection,
+        /** The connection's own ticket cache: closed with it (its native sessions). */
+        private val cache: SessionCache,
     ) {
         suspend fun get(): String {
             val req = "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n".encodeToByteArray()
@@ -78,6 +80,7 @@ class ServerIdentityReloadTest {
             tls.close()
             tcp.close()
             selector.close()
+            kotlinx.coroutines.runBlocking { cache.close() } // the ticket that arrived for it, too
         }
 
         companion object {
@@ -86,6 +89,7 @@ class ServerIdentityReloadTest {
                 // while a read is pending, and two of them on Dispatchers.Default (two threads on a two-core device, the
                 // CI emulators) left the QUIC loops, which run there, waiting for seconds
                 val selector = SelectorManager(Dispatchers.IO)
+                val cache = SessionCache()
                 val tcp =
                     io.kuicksilver.ktor.network
                         .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
@@ -95,9 +99,9 @@ class ServerIdentityReloadTest {
                         tcp.openWriteChannel(autoFlush = true),
                         ServerFixtures.clientTls(),
                         EmptyCoroutineContext,
-                        SessionCache(),
+                        cache,
                     )
-                return H1(selector, tcp, tls)
+                return H1(selector, tcp, tls, cache)
             }
         }
     }

@@ -34,6 +34,7 @@ import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.RetryPacket
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.VersionNegotiationPacket
+import io.kuicksilver.testing.sentinel.LeakSentinel
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.SessionTicketConfig
@@ -1255,7 +1256,8 @@ internal object Tickets {
     @Synchronized
     fun take(small: Boolean): QuicSessionTicket {
         val pool = pools[if (small) 1 else 0]
-        if (pool.isEmpty()) pool += fresh(small)
+        // the pool lives for the test process: the leak sentinel does not count its tickets as the test's that made them
+        if (pool.isEmpty()) pool += LeakSentinel.shared { fresh(small) }
         return pool.removeFirst()
     }
 
@@ -1277,7 +1279,7 @@ internal object Tickets {
             p.runUntil(limit = 2.seconds) { p.clientEvents.count { it is ConnectionEvent.SessionTicket } >= 2 }
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             check(tickets.isNotEmpty() && tickets.all { it.remembered != null }) { "no ticket with remembered parameters" }
-            return tickets
+            return tickets.onEach { p.keep(it) }
         }
     }
 }

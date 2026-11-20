@@ -16,6 +16,7 @@ import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.VarInt
 import io.kuicksilver.quic.wire.WireWriter
 import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.TlsRole
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -26,7 +27,7 @@ class PacketProtectionTest {
     // ---- header protection and AEAD as two steps (the Key Phase bit is read in between) ----
     @Test fun splitUnprotectEqualsK2Unprotect() =
         with(Rfc9001Packets) {
-            val (r, _) = KslQuicCrypto.initialProtectors(DCID, VersionProfile.V1.version, TlsRole.Server)
+            val r = readOnly(DCID, VersionProfile.V1.version, TlsRole.Server)
             val a = PacketBuffer.of(A2_PROTECTED)
             val b = PacketBuffer.of(A2_PROTECTED)
             try {
@@ -46,8 +47,8 @@ class PacketProtectionTest {
         }
 
     @Test fun keyPhaseBitReadableAfterHeaderProtectionRemoved() {
-        val (_, clientWrite) = KslQuicCrypto.initialProtectors(ByteArray(8) { 9 }, VersionProfile.V1.version, TlsRole.Client)
-        val (serverRead, _) = KslQuicCrypto.initialProtectors(ByteArray(8) { 9 }, VersionProfile.V1.version, TlsRole.Server)
+        val clientWrite = writeOnly(ByteArray(8) { 9 }, VersionProfile.V1.version, TlsRole.Client)
+        val serverRead = readOnly(ByteArray(8) { 9 }, VersionProfile.V1.version, TlsRole.Server)
         val buf = PacketBuffer.allocate(200)
         try {
             val w = WireWriter(buf, 0, 200)
@@ -76,6 +77,28 @@ class PacketProtectionTest {
 
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** The Initial read protector of [role]; the write one, which a test does not use, is closed at once (native keys). */
+    private fun readOnly(
+        dcid: ByteArray,
+        version: Int,
+        role: TlsRole,
+    ): PacketProtector =
+        KslQuicCrypto.initialProtectors(dcid, version, role).let { (r, w) ->
+            w.close()
+            r
+        }
+
+    /** The Initial write protector of [role]; the read one is closed at once. */
+    private fun writeOnly(
+        dcid: ByteArray,
+        version: Int,
+        role: TlsRole,
+    ): PacketProtector =
+        KslQuicCrypto.initialProtectors(dcid, version, role).let { (r, w) ->
+            r.close()
+            w
+        }
+
     private val mask = ByteArray(5)
 
     /** Builds and protects an Initial like the RFC appendix: returns the datagram bytes. */
@@ -90,7 +113,7 @@ class PacketProtectionTest {
         role: TlsRole,
         keyDcid: ByteArray,
     ): ByteArray {
-        val (_, w) = KslQuicCrypto.initialProtectors(keyDcid, profile.version, role)
+        val w = writeOnly(keyDcid, profile.version, role)
         val buf = PacketBuffer.allocate(1500)
         try {
             val wr = WireWriter(buf, 0, buf.capacity)
@@ -126,7 +149,7 @@ class PacketProtectionTest {
         keyDcid: ByteArray,
         cut: Int = 0,
     ): Pair<Long, ByteArray?> {
-        val (r, _) = KslQuicCrypto.initialProtectors(keyDcid, profile.version, role)
+        val r = readOnly(keyDcid, profile.version, role)
         val buf = PacketBuffer.of(packet)
         try {
             val v = PacketHeaderView()
@@ -221,7 +244,7 @@ class PacketProtectionTest {
         with(Rfc9001Packets) {
             val short = A2_PROTECTED.copyOf(22 + 19) // header 22 + pn/payload 19 < 4 + 16
             val buf = PacketBuffer.of(short)
-            val (r, _) = KslQuicCrypto.initialProtectors(DCID, 1, TlsRole.Server)
+            val r = readOnly(DCID, 1, TlsRole.Server)
             try {
                 assertEquals(-1L, PacketProtection.unprotect(buf, 0, 22, short.size, -1, r, mask))
             } finally {

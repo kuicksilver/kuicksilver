@@ -15,10 +15,12 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.server.receivedEarly
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -259,6 +261,29 @@ class ClientEarlyDataTest {
                 assertEquals("h1", r.bodyAsText())
                 assertTrue(t0.elapsedNow() < 10.seconds, "HTTP/1.1 waited ${t0.elapsedNow()}")
                 assertFalse(engine.brokenAltSvc.quicConfirmedOn("B"), "QUIC confirmed on B without a handshake")
+            }
+        }
+
+    /**
+     * The QUIC setup that lost the race keeps going in the background, to fill the pool for the next request or to mark
+     * the alternative broken. Once the client is closed nothing can use it: close() cancels it, and the engine ends at
+     * once instead of after the setup's own bound (the 20 s connect timeout here). The request that HTTP/1.1 answered was
+     * already over; requests still running are left to finish, as Ktor's close() promises.
+     */
+    @Test fun closeCancelsAQuicSetupThatLostTheRace() =
+        h3Test {
+            var network = "A"
+            ticketThenUdpBlocked(20.seconds, { network }, onBlocked = { network = "B" }) { url, c, engine ->
+                val r = c.get(url)
+                assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                assertEquals("h1", r.bodyAsText())
+                c.close()
+                // an event, not a wait: the cleanup ends once the engine's background work did; the bound only turns the old
+                // behaviour (the setup running on to its 20 s connect timeout) into a failure
+                assertNotNull(
+                    withTimeoutOrNull(5.seconds) { engine.cleanup.join() },
+                    "the closed engine still waits for the losing QUIC setup",
+                )
             }
         }
 }

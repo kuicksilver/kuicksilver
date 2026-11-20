@@ -234,7 +234,7 @@ public actual object Ksl {
             }
         }
 
-    public actual fun sslFree(ssl: Long): Unit = ksl_ssl_free(ssl(ssl))
+    public actual fun sslFree(ssl: Long): Unit = ksl_ssl_free(ssl(ssl)).also { LeakRegistry.nativeFreed() }
 
     public actual fun sslSet(
         ssl: Long,
@@ -375,7 +375,7 @@ public actual object Ksl {
         sslCheck(ssl, ksl_ssl_set_session(ssl(ssl), session(session)))
     }
 
-    public actual fun sessionFree(session: Long): Unit = ksl_session_free(session(session))
+    public actual fun sessionFree(session: Long): Unit = ksl_session_free(session(session)).also { LeakRegistry.nativeFreed() }
 
     public actual fun sslNewSessionTicket(ssl: Long) {
         sslCheck(ssl, ksl_ssl_new_session_ticket(ssl(ssl)))
@@ -518,7 +518,7 @@ public actual object Ksl {
 
     public actual fun keyNext(key: Long): Long = ksl_key_next(key(key)).h().also { if (it == 0L) internal("ksl_key_next failed") }
 
-    public actual fun keyFree(key: Long): Unit = ksl_key_free(key(key))
+    public actual fun keyFree(key: Long): Unit = ksl_key_free(key(key)).also { LeakRegistry.nativeFreed() }
 
     public actual fun keyRandom(kind: Int): Long =
         ksl_key_random(kind).h().also {
@@ -953,7 +953,7 @@ public actual object Ksl {
 
     public actual fun udpShutdown(udp: Long): Unit = ksl_udp_shutdown(udp(udp))
 
-    public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))
+    public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp)).also { LeakRegistry.nativeFreed() }
 
     public actual fun udpTakeUnreachable(
         udp: Long,
