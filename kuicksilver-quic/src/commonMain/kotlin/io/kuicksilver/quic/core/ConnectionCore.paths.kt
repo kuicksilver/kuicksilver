@@ -137,17 +137,16 @@ internal fun ConnectionCore.acceptPacketTooBig(
  */
 internal fun ConnectionCore.newPmtud(
     start: Int,
-    waitForData: Boolean = state != io.kuicksilver.quic.ConnectionState.Confirmed,
+    waitForData: Boolean = !applicationDataSinceConfirmed,
 ): Pmtud {
     val upper = pmtudUpperBound()
     return Pmtud(
         upperBound = upper,
         start = minOf(start, upper),
         sentAfterPn = loss.space(SpaceId.Application).nextPn - 1,
-        // a search made before the handshake was confirmed (the connection's first) begins with its first application data after
-        // that (RFC 8899 section 4.3, Pmtud.waitsForData); one replacing a search for new capabilities begins at once, one for a
-        // new address waits unless the connection already sent application data after confirmation (resetForNewIp,
-        // initPathOnSocket: a download-only client that moved does not start probing)
+        // every search waits for the connection's first application data after confirmation (RFC 8899 section 4.3,
+        // Pmtud.waitsForData): the first one, made during the handshake, and one made later for new capabilities, a new socket or a
+        // new address while the connection has sent none (a download-only client that migrates does not start probing)
         waitForData = waitForData,
     )
 }
@@ -374,7 +373,7 @@ private fun ConnectionCore.resetForNewIp(
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
     setMtu(p, 1200)
-    p.pmtud?.let { p.pmtud = newPmtud(1200, waitForData = !applicationDataSinceConfirmed) }
+    p.pmtud?.let { p.pmtud = newPmtud(1200) }
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
     // about the new one (a bleaching middlebox there, or none)
     p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
@@ -654,7 +653,7 @@ private fun ConnectionCore.initPathOnSocket(
     // the search for a new address waits for application data unless the connection already sent some after confirmation
     // (Pmtud.waitsForData: a download-only client that moves sends no probes from there either)
     if (p.caps.df && runsPmtud && p.pmtud == null) {
-        p.pmtud = newPmtud(p.mtu, waitForData = !applicationDataSinceConfirmed)
+        p.pmtud = newPmtud(p.mtu)
     }
 }
 

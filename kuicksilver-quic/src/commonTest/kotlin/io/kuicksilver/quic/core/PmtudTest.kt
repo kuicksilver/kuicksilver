@@ -114,6 +114,39 @@ class PmtudTest {
         }
     }
 
+    /**
+     * RFC 8899 section 4.3 (Pmtud.waitsForData), an application's migration to a new socket (ConnectionRuntime.openPath: addPath,
+     * then the socket's capabilities): the new path's search waits for application data unless the connection already sent some
+     * after confirmation. A download-only client that migrates sends no probe from the new socket; one that sent data probes there at
+     * once.
+     */
+    @Test fun aMigrationToANewSocketKeepsTheWaitForData() {
+        for (sent in listOf(false, true)) {
+            val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+            p.use { _ ->
+                val s = p.server.connections().single()
+                if (sent) clientSends(p, c, s) else download(p, s, 50_000)
+                val other = InetSocketAddress("10.0.0.7", 40000)
+                val pid = c.addPath(p.serverAddr, p.now)
+                c.setPathCapabilities(pid, df)
+                p.clientSocketSources[pid] = other
+                p.clientListens += other
+                c.probePath(pid, p.now)
+                assertTrue(p.runUntil(5.seconds) { c.pathState(pid) == PathState.Validated }, "second path validated")
+                c.switchPath(pid, p.now)
+                val before = p.clientDatagramSizes.size
+                p.runUntil(5.seconds) { false }
+                val probes = p.clientDatagramSizes.drop(before).filter { it > 1200 }
+                if (sent) {
+                    assertTrue(probes.isNotEmpty(), "a client that sent data probes from the new socket at once")
+                } else {
+                    assertTrue(probes.isEmpty(), "a download-only client probed from the new socket: $probes")
+                    assertTrue(c.path.pmtud!!.awaitingData, "the new socket's search waits for data")
+                }
+            }
+        }
+    }
+
     /** The client sends a little on a new stream, from wherever [EndpointPair.clientSource] now says, until the server has it. */
     private fun clientSends(
         p: EndpointPair,
@@ -621,6 +654,10 @@ class PmtudTest {
         above: Int,
     ): Int {
         var seen = 0
+        // a search waits for the connection's first application data after confirmation (Pmtud.waitsForData): some goes first
+        val id = c.openStream(true)
+        c.writeStream(id, ByteArray(100), 0, 100, true)
+        assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L }, "the data is acknowledged")
         p.filterToServer = { _, b ->
             if (seen == 0 && b.size > above && c.path.pmtud?.probeInFlightForTest == b.size) seen = b.size
             true

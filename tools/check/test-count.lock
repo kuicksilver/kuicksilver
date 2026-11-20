@@ -4720,6 +4720,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.pmtudSea
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.theClientsInitialIsPaddedToTheConfiguredStart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.theServersFirstFlightUsesItsConfiguredStart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudStartTest.withPmtudOffTheStartIsTheCeiling
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.aMigrationToANewSocketKeepsTheWaitForData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.atMostThreeLostProbesPerSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.blackHoleFallsBackTo1200AndPauses60s
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.ccNotifiedOnMtuChange
