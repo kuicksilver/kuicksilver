@@ -1327,6 +1327,7 @@ kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.serverStrea
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unknownTestcaseExits127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unsupportedCasesExit127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.zerorttCaseSendsTheRemainingRequestsIn0Rtt
+kuicksilver-interop/src/nativeTest	io.kuicksilver.interop.StopSignalNativeTest.negative_anIgnoredSigintStaysIgnored
 kuicksilver-interop/src/nativeTest	io.kuicksilver.interop.StopSignalNativeTest.sigtermRequestsTheStopAndASecondSignalIsTheDefault
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.CleartextPolicyAndroidTest.cleartextRefusedByTheNetworkSecurityConfigurationNeverConnects
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.ClientMigrationAndroidTest.followsDefaultNetworkOnEmulator
@@ -4788,6 +4789,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.ne
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.preferredAddressValidatedAfterTheMigrationMovesTheActivePath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.sameFamilyOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.statelessResetFromThePreferredAddressUnderValidationIsDetected
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.theMoveToThePreferredAddressKeepsTheSearchsWaitForData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.userMigrationAbandonsPendingPreferredProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.withoutAnIdleTimeoutAnIdIsKeptForTheFallback
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeContentTest.probesResendDataBehindPingOnlyPackets

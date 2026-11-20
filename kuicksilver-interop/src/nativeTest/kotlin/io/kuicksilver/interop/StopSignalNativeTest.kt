@@ -36,4 +36,20 @@ class StopSignalNativeTest {
         assertEquals(SIG_DFL, term, "SIGTERM is back to its default action")
         assertEquals(SIG_DFL, int, "SIGINT is back to its default action")
     }
+
+    /** SIGINT ignored when the endpoint starts (a background job, nohup) stays ignored; SIGTERM is still taken. */
+    @Test fun negative_anIgnoredSigintStaysIgnored() = runBlocking {
+        signal(SIGINT, SIG_IGN)
+        try {
+            val stop = CompletableDeferred<Unit>()
+            installStopSignal(stop, CompletableDeferred())
+            val int: CPointer<CFunction<(Int) -> Unit>>? = signal(SIGINT, SIG_IGN)
+            assertEquals(SIG_IGN, int, "SIGINT is still ignored")
+            assertEquals(0, ksl_interop_raise_stop())
+            withTimeout(5.seconds) { stop.await() }
+            assertEquals(SIG_IGN, signal(SIGINT, SIG_IGN), "and stays ignored after the stop")
+        } finally {
+            signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL)
+        }
+    }
 }

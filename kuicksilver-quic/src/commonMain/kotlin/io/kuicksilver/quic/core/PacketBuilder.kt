@@ -85,6 +85,12 @@ internal class PacketBuilder(
                 // the first application data after confirmation begins the search (Pmtud.waitsForData, RFC 8899 section 4.3)
                 if (c.state == ConnectionState.Confirmed && !p.zeroRtt && (p.frames.streamCount > 0 || p.frames.dgCount > 0)) {
                     it.pmtud?.onApplicationDataSent()
+                    if (!c.applicationDataSinceConfirmed) {
+                        // the connection is in use: the searches of its other addresses (a preferred address under validation) go too
+                        c.applicationDataSinceConfirmed = true
+                        val all = c.paths.all
+                        for (j in 0 until all.size) all[j].pmtud?.onApplicationDataSent()
+                    }
                 }
             }
         }

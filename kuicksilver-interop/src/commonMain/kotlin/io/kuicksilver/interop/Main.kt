@@ -98,8 +98,9 @@ internal suspend fun serveUntilStopped(server: InteropServer, stop: Deferred<Uni
 
 /**
  * Completes [stop] when the process is asked to stop (SIGTERM; SIGINT too). JVM: a shutdown hook, which also holds the JVM's
- * shutdown until [closed] completes (at most [STOP_GRACE] and a second). Native: a handler written in C that only stores a flag
- * and restores both signals' default action (a second signal ends a stop that hangs), read by a coroutine every 20 ms; the process
+ * shutdown until [closed] completes (at most [STOP_GRACE] and a second). Native: a handler written in C that only stores to a
+ * lock-free atomic_int and restores the default action (a second signal ends a stop that hangs; SIGINT ignored on entry stays
+ * ignored), read by a coroutine every 20 ms; the process
  * then exits on its own, so [closed] is not waited for.
  */
 internal expect fun installStopSignal(stop: CompletableDeferred<Unit>, closed: CompletableDeferred<Unit>)

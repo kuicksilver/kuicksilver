@@ -1,31 +1,45 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# The interop endpoint's stop request (StopSignal.native.kt): a SIGTERM/SIGINT handler in C that only stores a volatile
-# sig_atomic_t and puts both signals back to their default action (POSIX lists signal() as async-signal-safe), so it is safe on
-# whatever thread the signal interrupts, a thread the Kotlin runtime knows or not, and a second signal ends a process whose
-# stop hangs. Kotlin reads the flag from a coroutine.
+# The interop endpoint's stop request (StopSignal.native.kt): a SIGTERM/SIGINT handler in C that only stores to a lock-free
+# atomic_int and puts the signals it handles back to their default action (POSIX lists signal() as async-signal-safe), so it is
+# safe on whatever thread the signal interrupts, a thread the Kotlin runtime knows or not, and a second signal ends a process
+# whose stop hangs. SIGINT ignored on entry (a background job, nohup) stays ignored. Kotlin reads the flag from a coroutine.
 package = io.kuicksilver.interop.stopsignal
-headers = signal.h
+headers = signal.h stdatomic.h
 ---
-static volatile sig_atomic_t ksl_interop_stop_flag = 0;
+static atomic_int ksl_interop_stop_flag = 0;
+static atomic_int ksl_interop_sigint_handled = 0;
 
 static void ksl_interop_on_stop(int sig) {
     (void)sig;
-    ksl_interop_stop_flag = 1;
+    atomic_store(&ksl_interop_stop_flag, 1);
     signal(SIGTERM, SIG_DFL);
-    signal(SIGINT, SIG_DFL);
+    if (atomic_load(&ksl_interop_sigint_handled))
+        signal(SIGINT, SIG_DFL);
 }
 
-/* Installs the handler for SIGTERM and SIGINT; 0 on success, -1 when the system refused one. */
+/* Installs the handler for SIGTERM, and for SIGINT unless it was ignored; 0 on success, -1 when the system refused one, -2 when the
+   flag is not lock-free (it then cannot be stored from a signal handler safely). */
 static inline int ksl_interop_install_stop(void) {
-    ksl_interop_stop_flag = 0;
-    if (signal(SIGTERM, ksl_interop_on_stop) == SIG_ERR) return -1;
-    if (signal(SIGINT, ksl_interop_on_stop) == SIG_ERR) return -1;
+    if (!atomic_is_lock_free(&ksl_interop_stop_flag))
+        return -2;
+    atomic_store(&ksl_interop_stop_flag, 0);
+    if (signal(SIGTERM, ksl_interop_on_stop) == SIG_ERR)
+        return -1;
+    void (*was)(int) = signal(SIGINT, ksl_interop_on_stop);
+    if (was == SIG_ERR)
+        return -1;
+    if (was == SIG_IGN) {
+        signal(SIGINT, SIG_IGN); /* ignored on entry: stays so */
+        atomic_store(&ksl_interop_sigint_handled, 0);
+    } else {
+        atomic_store(&ksl_interop_sigint_handled, 1);
+    }
     return 0;
 }
 
 /* Whether a stop signal arrived. */
-static inline int ksl_interop_stop_requested(void) { return ksl_interop_stop_flag != 0; }
+static inline int ksl_interop_stop_requested(void) { return atomic_load(&ksl_interop_stop_flag) != 0; }
 
 /* Raises SIGTERM in this process (tests). */
 static inline int ksl_interop_raise_stop(void) { return raise(SIGTERM); }

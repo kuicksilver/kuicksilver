@@ -97,6 +97,48 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * RFC 8899 section 4.3 (Pmtud.waitsForData): the move to the server's preferred address starts the search over for the new address
+     * (the path probed from the application's socket, initPathOnSocket; resetForNewIp when the application's path takes the address)
+     * and keeps the old search's wait. A client that only downloads (here: sends nothing after the handshake) still
+     * sends no probe from the new address; one that already sent application data searches there at once.
+     */
+    @Test fun theMoveToThePreferredAddressKeepsTheSearchsWaitForData() {
+        val df = io.kuicksilver.quic.IoCapabilities(false, false, 1, false, true, 1)
+        for (sends in listOf(false, true)) {
+            val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+            p.use { _ ->
+                val c = p.connect()
+                assertTrue(c.state != io.kuicksilver.quic.ConnectionState.Confirmed, "the first search is made before confirmation")
+                c.setPathCapabilities(PathId.Initial, df)
+                var wrote = !sends
+                var movedAt = -1
+                assertTrue(
+                    p.runUntil(10.seconds) {
+                        if (!wrote && c.state == io.kuicksilver.quic.ConnectionState.Confirmed) {
+                            val id = c.openStream(true)
+                            c.writeStream(id, ByteArray(4_000), 0, 4_000, true)
+                            wrote = true
+                        }
+                        val moved = p.changes(c).any { it.reason == PathChangeReason.PreferredAddress }
+                        if (moved && movedAt < 0) movedAt = p.clientDatagramSizes.size
+                        moved
+                    },
+                    "the client never moved: ${p.events[c]}",
+                )
+                p.runUntil(5.seconds) { false }
+                val after = p.clientDatagramSizes.drop(movedAt).filter { it > 1200 }
+                if (sends) {
+                    assertTrue(!c.path.pmtud!!.awaitingData, "the search on the preferred address does not wait")
+                    assertTrue(after.isNotEmpty(), "a client that sent data probes from the new address at once")
+                } else {
+                    assertTrue(c.path.pmtud!!.awaitingData, "the search on the preferred address still waits for data")
+                    assertTrue(after.isEmpty(), "a client that sent no data probed from the new address: $after")
+                }
+            }
+        }
+    }
+
     /** The same for the preferred address probed again from the socket of an application's migration (RFC 9000 section 9.6.3). */
     @Test fun negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn() {
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
