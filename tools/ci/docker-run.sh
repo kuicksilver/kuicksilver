@@ -5,9 +5,9 @@
 # Usage: docker-run.sh <platform> <image> "<command>"; KSL_DOCKER_OPTS adds options to `docker run` (one step's own need)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-# an emulated container gets a longer slow-teardown bound for the leak sentinel (leak-slow.sh)
-# shellcheck source=tools/ci/leak-slow.sh
-. "$root/tools/ci/leak-slow.sh"; leak_slow_for "$1"
+# an emulated container gets a longer slow-teardown bound for the leak sentinel (sentinel-slow.sh)
+# shellcheck source=tools/ci/sentinel-slow.sh
+. "$root/tools/ci/sentinel-slow.sh"; sentinel_slow_for "$1"
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086
