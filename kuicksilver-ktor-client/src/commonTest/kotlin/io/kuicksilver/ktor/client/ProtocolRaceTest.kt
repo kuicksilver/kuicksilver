@@ -181,6 +181,44 @@ class ProtocolRaceTest {
             assertEquals(listOf("h1"), lost)
         }
 
+    /**
+     * HTTP/1.1 won, and the caller is cancelled while the race still waits for the cancelled HTTP/3 setup to end: the
+     * winner, which no caller receives, goes to [onLoser] (the engine recycles it) instead of being dropped with its
+     * connection (a TLS connection left open for good: the leak sentinel's tcp.socket and ksl.ssl).
+     */
+    @Test fun negative_anH1WinnerTheCallerNeverGotIsHandedToOnLoser() =
+        runTest {
+            val lost = ArrayList<String>()
+            val h3Cancelled = CompletableDeferred<Unit>()
+            val h3Gate = CompletableDeferred<Unit>()
+            val caller =
+                launch {
+                    race.race(
+                        {
+                            try {
+                                awaitCancellation()
+                            } finally {
+                                // a setup that takes a while to end once cancelled (a QUIC close in flight)
+                                withContext(NonCancellable) {
+                                    h3Cancelled.complete(Unit)
+                                    h3Gate.await()
+                                }
+                            }
+                        },
+                        { "h1" },
+                        null,
+                        quicConfirmed = false,
+                        onLoser = { lost += it },
+                    )
+                    error("the caller is cancelled before the race returns")
+                }
+            h3Cancelled.await() // HTTP/1.1 won: the race's scope waits for the HTTP/3 setup now
+            caller.cancel()
+            h3Gate.complete(Unit)
+            caller.join()
+            assertEquals(listOf("h1"), lost)
+        }
+
     @Test fun bothFailThrowsH1Failure() =
         runTest {
             val e = assertFailsWith<IOException> { race.race<String>({ throw IOException("h3") }, { throw IOException("h1") }, null, true) }

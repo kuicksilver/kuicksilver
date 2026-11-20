@@ -2196,6 +2196,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.loserIsHandedOverWhenCallerIsCancelled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.losingH1ResultIsHandedToOnLoser
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.minimumHeadStartOnUnconfirmedNetwork
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_anH1WinnerTheCallerNeverGotIsHandedToOnLoser
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_hardDelayOutsideRfc8305BoundsIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.anExpiredAnswerIsAskedAgainWhileTheOldCallIsStillListed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.cfAnswerPicked
