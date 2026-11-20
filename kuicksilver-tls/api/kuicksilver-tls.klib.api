@@ -70,6 +70,20 @@ final enum class io.kuicksilver.tls/EarlyDataState : kotlin/Enum<io.kuicksilver.
     final fun values(): kotlin/Array<io.kuicksilver.tls/EarlyDataState> // io.kuicksilver.tls/EarlyDataState.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.tls/EchStatus : kotlin/Enum<io.kuicksilver.tls/EchStatus> { // io.kuicksilver.tls/EchStatus|null[0]
+    enum entry Accepted // io.kuicksilver.tls/EchStatus.Accepted|null[0]
+    enum entry Grease // io.kuicksilver.tls/EchStatus.Grease|null[0]
+    enum entry None // io.kuicksilver.tls/EchStatus.None|null[0]
+    enum entry Offered // io.kuicksilver.tls/EchStatus.Offered|null[0]
+    enum entry Rejected // io.kuicksilver.tls/EchStatus.Rejected|null[0]
+
+    final val entries // io.kuicksilver.tls/EchStatus.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/EchStatus> // io.kuicksilver.tls/EchStatus.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/EchStatus // io.kuicksilver.tls/EchStatus.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/EchStatus> // io.kuicksilver.tls/EchStatus.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.tls/EncryptionLevel : kotlin/Enum<io.kuicksilver.tls/EncryptionLevel> { // io.kuicksilver.tls/EncryptionLevel|null[0]
     enum entry Application // io.kuicksilver.tls/EncryptionLevel.Application|null[0]
     enum entry EarlyData // io.kuicksilver.tls/EncryptionLevel.EarlyData|null[0]
@@ -165,6 +179,7 @@ final enum class io.kuicksilver.tls/TlsVersions : kotlin/Enum<io.kuicksilver.tls
 
 abstract fun interface io.kuicksilver.tls/CertificateVerifier { // io.kuicksilver.tls/CertificateVerifier|null[0]
     abstract suspend fun verify(kotlin.collections/List<io.kuicksilver.tls/Certificate>, kotlin/String?, io.kuicksilver.tls/TlsRole): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/CertificateVerifier.verify|verify(kotlin.collections.List<io.kuicksilver.tls.Certificate>;kotlin.String?;io.kuicksilver.tls.TlsRole){}[0]
+    open suspend fun verify(kotlin.collections/List<io.kuicksilver.tls/Certificate>, kotlin/String?, io.kuicksilver.tls/TlsRole, io.kuicksilver.tls/VerificationContext): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/CertificateVerifier.verify|verify(kotlin.collections.List<io.kuicksilver.tls.Certificate>;kotlin.String?;io.kuicksilver.tls.TlsRole;io.kuicksilver.tls.VerificationContext){}[0]
 }
 
 abstract fun interface io.kuicksilver.tls/KeylogSink { // io.kuicksilver.tls/KeylogSink|null[0]
@@ -216,6 +231,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
         abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
     open val earlyDataAccepted // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted|{}earlyDataAccepted[0]
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val echStatus // io.kuicksilver.tls/QuicTlsSession.echStatus|{}echStatus[0]
+        open fun <get-echStatus>(): io.kuicksilver.tls/EchStatus // io.kuicksilver.tls/QuicTlsSession.echStatus.<get-echStatus>|<get-echStatus>(){}[0]
     open val keyExchangeGroup // io.kuicksilver.tls/QuicTlsSession.keyExchangeGroup|{}keyExchangeGroup[0]
         open fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/QuicTlsSession.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     open val localCertificates // io.kuicksilver.tls/QuicTlsSession.localCertificates|{}localCertificates[0]
@@ -608,6 +625,40 @@ final class io.kuicksilver.tls/ClientHelloInfo { // io.kuicksilver.tls/ClientHel
         final fun <get-signatureSchemes>(): kotlin.collections/List<kotlin/Int> // io.kuicksilver.tls/ClientHelloInfo.signatureSchemes.<get-signatureSchemes>|<get-signatureSchemes>(){}[0]
 }
 
+final class io.kuicksilver.tls/EchConfigList { // io.kuicksilver.tls/EchConfigList|null[0]
+    final val bytes // io.kuicksilver.tls/EchConfigList.bytes|{}bytes[0]
+        final fun <get-bytes>(): kotlin/ByteArray // io.kuicksilver.tls/EchConfigList.bytes.<get-bytes>|<get-bytes>(){}[0]
+    final val isUsable // io.kuicksilver.tls/EchConfigList.isUsable|{}isUsable[0]
+        final fun <get-isUsable>(): kotlin/Boolean // io.kuicksilver.tls/EchConfigList.isUsable.<get-isUsable>|<get-isUsable>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/EchConfigList.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/EchConfigList.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/EchConfigList.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/EchConfigList.Companion|null[0]
+        final fun parse(kotlin/ByteArray): io.kuicksilver.tls/EchConfigList // io.kuicksilver.tls/EchConfigList.Companion.parse|parse(kotlin.ByteArray){}[0]
+        final fun parseBase64(kotlin/String): io.kuicksilver.tls/EchConfigList // io.kuicksilver.tls/EchConfigList.Companion.parseBase64|parseBase64(kotlin.String){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/EchKey { // io.kuicksilver.tls/EchKey|null[0]
+    constructor <init>(kotlin/ByteArray, kotlin/Boolean = ...) // io.kuicksilver.tls/EchKey.<init>|<init>(kotlin.ByteArray;kotlin.Boolean){}[0]
+    constructor <init>(kotlin/CharArray, kotlin/Boolean = ...) // io.kuicksilver.tls/EchKey.<init>|<init>(kotlin.CharArray;kotlin.Boolean){}[0]
+    constructor <init>(kotlin/String, kotlin/Boolean = ...) // io.kuicksilver.tls/EchKey.<init>|<init>(kotlin.String;kotlin.Boolean){}[0]
+
+    final val inRetryConfigs // io.kuicksilver.tls/EchKey.inRetryConfigs|{}inRetryConfigs[0]
+        final fun <get-inRetryConfigs>(): kotlin/Boolean // io.kuicksilver.tls/EchKey.inRetryConfigs.<get-inRetryConfigs>|<get-inRetryConfigs>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.tls/EchKey.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.tls/EchServerKeys : kotlin/AutoCloseable { // io.kuicksilver.tls/EchServerKeys|null[0]
+    constructor <init>(kotlin.collections/List<io.kuicksilver.tls/EchKey>) // io.kuicksilver.tls/EchServerKeys.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.EchKey>){}[0]
+
+    final fun close() // io.kuicksilver.tls/EchServerKeys.close|close(){}[0]
+    final fun rotate(kotlin.collections/List<io.kuicksilver.tls/EchKey>) // io.kuicksilver.tls/EchServerKeys.rotate|rotate(kotlin.collections.List<io.kuicksilver.tls.EchKey>){}[0]
+}
+
 final class io.kuicksilver.tls/HostName { // io.kuicksilver.tls/HostName|null[0]
     final val isIpLiteral // io.kuicksilver.tls/HostName.isIpLiteral|{}isIpLiteral[0]
         final fun <get-isIpLiteral>(): kotlin/Boolean // io.kuicksilver.tls/HostName.isIpLiteral.<get-isIpLiteral>|<get-isIpLiteral>(){}[0]
@@ -760,6 +811,12 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
     final val clientAuth // io.kuicksilver.tls/TlsConfig.clientAuth|{}clientAuth[0]
         final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/TlsConfig.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+    final val echConfigList // io.kuicksilver.tls/TlsConfig.echConfigList|{}echConfigList[0]
+        final fun <get-echConfigList>(): io.kuicksilver.tls/EchConfigList? // io.kuicksilver.tls/TlsConfig.echConfigList.<get-echConfigList>|<get-echConfigList>(){}[0]
+    final val echGrease // io.kuicksilver.tls/TlsConfig.echGrease|{}echGrease[0]
+        final fun <get-echGrease>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.echGrease.<get-echGrease>|<get-echGrease>(){}[0]
+    final val echKeys // io.kuicksilver.tls/TlsConfig.echKeys|{}echKeys[0]
+        final fun <get-echKeys>(): io.kuicksilver.tls/EchServerKeys? // io.kuicksilver.tls/TlsConfig.echKeys.<get-echKeys>|<get-echKeys>(){}[0]
     final val genericAlerts // io.kuicksilver.tls/TlsConfig.genericAlerts|{}genericAlerts[0]
         final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
     final val handshakeTimeout // io.kuicksilver.tls/TlsConfig.handshakeTimeout|{}handshakeTimeout[0]
@@ -808,6 +865,15 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var clientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth|{}clientAuth[0]
             final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
             final fun <set-clientAuth>(io.kuicksilver.tls/ClientAuth) // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<set-clientAuth>|<set-clientAuth>(io.kuicksilver.tls.ClientAuth){}[0]
+        final var echConfigList // io.kuicksilver.tls/TlsConfig.Builder.echConfigList|{}echConfigList[0]
+            final fun <get-echConfigList>(): io.kuicksilver.tls/EchConfigList? // io.kuicksilver.tls/TlsConfig.Builder.echConfigList.<get-echConfigList>|<get-echConfigList>(){}[0]
+            final fun <set-echConfigList>(io.kuicksilver.tls/EchConfigList?) // io.kuicksilver.tls/TlsConfig.Builder.echConfigList.<set-echConfigList>|<set-echConfigList>(io.kuicksilver.tls.EchConfigList?){}[0]
+        final var echGrease // io.kuicksilver.tls/TlsConfig.Builder.echGrease|{}echGrease[0]
+            final fun <get-echGrease>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.echGrease.<get-echGrease>|<get-echGrease>(){}[0]
+            final fun <set-echGrease>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.echGrease.<set-echGrease>|<set-echGrease>(kotlin.Boolean){}[0]
+        final var echKeys // io.kuicksilver.tls/TlsConfig.Builder.echKeys|{}echKeys[0]
+            final fun <get-echKeys>(): io.kuicksilver.tls/EchServerKeys? // io.kuicksilver.tls/TlsConfig.Builder.echKeys.<get-echKeys>|<get-echKeys>(){}[0]
+            final fun <set-echKeys>(io.kuicksilver.tls/EchServerKeys?) // io.kuicksilver.tls/TlsConfig.Builder.echKeys.<set-echKeys>|<set-echKeys>(io.kuicksilver.tls.EchServerKeys?){}[0]
         final var genericAlerts // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts|{}genericAlerts[0]
             final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
             final fun <set-genericAlerts>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<set-genericAlerts>|<set-genericAlerts>(kotlin.Boolean){}[0]
@@ -861,6 +927,8 @@ final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuic
     final val sessionReused // io.kuicksilver.tls/TlsConnection.sessionReused|{}sessionReused[0]
         final fun <get-sessionReused>(): kotlin/Boolean // io.kuicksilver.tls/TlsConnection.sessionReused.<get-sessionReused>|<get-sessionReused>(){}[0]
 
+    final var echStatus // io.kuicksilver.tls/TlsConnection.echStatus|{}echStatus[0]
+        final fun <get-echStatus>(): io.kuicksilver.tls/EchStatus // io.kuicksilver.tls/TlsConnection.echStatus.<get-echStatus>|<get-echStatus>(){}[0]
     final var keyExchangeGroup // io.kuicksilver.tls/TlsConnection.keyExchangeGroup|{}keyExchangeGroup[0]
         final fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     final var negotiatedAlpn // io.kuicksilver.tls/TlsConnection.negotiatedAlpn|{}negotiatedAlpn[0]
@@ -882,6 +950,15 @@ final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuic
     }
 }
 
+final class io.kuicksilver.tls/VerificationContext { // io.kuicksilver.tls/VerificationContext|null[0]
+    final val echPublicName // io.kuicksilver.tls/VerificationContext.echPublicName|{}echPublicName[0]
+        final fun <get-echPublicName>(): kotlin/Boolean // io.kuicksilver.tls/VerificationContext.echPublicName.<get-echPublicName>|<get-echPublicName>(){}[0]
+    final val hiddenName // io.kuicksilver.tls/VerificationContext.hiddenName|{}hiddenName[0]
+        final fun <get-hiddenName>(): kotlin/Boolean // io.kuicksilver.tls/VerificationContext.hiddenName.<get-hiddenName>|<get-hiddenName>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.tls/VerificationContext.toString|toString(){}[0]
+}
+
 sealed class io.kuicksilver.tls/TlsException : kotlinx.io/IOException { // io.kuicksilver.tls/TlsException|null[0]
     final class AlertReceived : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.AlertReceived|null[0]
         constructor <init>(kotlin/Int, kotlin/String) // io.kuicksilver.tls/TlsException.AlertReceived.<init>|<init>(kotlin.Int;kotlin.String){}[0]
@@ -894,6 +971,13 @@ sealed class io.kuicksilver.tls/TlsException : kotlinx.io/IOException { // io.ku
 
     final class Config : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.Config|null[0]
         constructor <init>(kotlin/String) // io.kuicksilver.tls/TlsException.Config.<init>|<init>(kotlin.String){}[0]
+    }
+
+    final class EchRejected : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.EchRejected|null[0]
+        constructor <init>(io.kuicksilver.tls/EchConfigList?) // io.kuicksilver.tls/TlsException.EchRejected.<init>|<init>(io.kuicksilver.tls.EchConfigList?){}[0]
+
+        final val retryConfigs // io.kuicksilver.tls/TlsException.EchRejected.retryConfigs|{}retryConfigs[0]
+            final fun <get-retryConfigs>(): io.kuicksilver.tls/EchConfigList? // io.kuicksilver.tls/TlsException.EchRejected.retryConfigs.<get-retryConfigs>|<get-retryConfigs>(){}[0]
     }
 
     final class Protocol : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.Protocol|null[0]

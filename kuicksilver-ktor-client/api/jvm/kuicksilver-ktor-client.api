@@ -104,6 +104,16 @@ public final class io/kuicksilver/ktor/client/Dns_jvmCommonKt {
 	public static final fun of (Lio/kuicksilver/ktor/client/IpAddress$Companion;Ljava/net/InetAddress;)Lio/kuicksilver/ktor/client/IpAddress;
 }
 
+public final class io/kuicksilver/ktor/client/EchClientConfig {
+	public fun <init> ()V
+	public final fun getConfigLists ()Ljava/util/Map;
+	public final fun getFromHttpsRecords ()Z
+	public final fun getGrease ()Z
+	public final fun setConfigLists (Ljava/util/Map;)V
+	public final fun setFromHttpsRecords (Z)V
+	public final fun setGrease (Z)V
+}
+
 public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Configuration Lio/kuicksilver/ktor/client/FallbackReason;
@@ -335,11 +345,13 @@ public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engin
 
 public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
 	public fun <init> ()V
+	public final fun ech (Lkotlin/jvm/functions/Function1;)V
 	public final fun getAssumeHttp11 ()Z
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getConnectUdpProxy ()Lio/kuicksilver/ktor/client/ConnectUdpProxy;
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getDns ()Lio/kuicksilver/ktor/client/Dns;
+	public final fun getEch ()Lio/kuicksilver/ktor/client/EchClientConfig;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
 	public final fun getHttp11Hints ()Ljava/util/Set;
 	public final fun getHttp2 ()Lio/kuicksilver/ktor/client/Http2ClientConfig;

@@ -53,7 +53,12 @@ public final class io/kuicksilver/tls/CertificateRevocationList$Companion {
 }
 
 public abstract interface class io/kuicksilver/tls/CertificateVerifier {
+	public fun verify (Ljava/util/List;Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;Lio/kuicksilver/tls/VerificationContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun verify (Ljava/util/List;Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/tls/CertificateVerifier$DefaultImpls {
+	public static fun verify (Lio/kuicksilver/tls/CertificateVerifier;Ljava/util/List;Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;Lio/kuicksilver/tls/VerificationContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/tls/CipherSuites {
@@ -131,6 +136,48 @@ public final class io/kuicksilver/tls/EarlyDataState : java/lang/Enum {
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/EarlyDataState;
 	public static fun values ()[Lio/kuicksilver/tls/EarlyDataState;
+}
+
+public final class io/kuicksilver/tls/EchConfigList {
+	public static final field Companion Lio/kuicksilver/tls/EchConfigList$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytes ()[B
+	public fun hashCode ()I
+	public final fun isUsable ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/EchConfigList$Companion {
+	public final fun parse ([B)Lio/kuicksilver/tls/EchConfigList;
+	public final fun parseBase64 (Ljava/lang/String;)Lio/kuicksilver/tls/EchConfigList;
+}
+
+public final class io/kuicksilver/tls/EchKey {
+	public fun <init> (Ljava/lang/String;Z)V
+	public synthetic fun <init> (Ljava/lang/String;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> ([BZ)V
+	public synthetic fun <init> ([BZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> ([CZ)V
+	public synthetic fun <init> ([CZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getInRetryConfigs ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/EchServerKeys : java/lang/AutoCloseable {
+	public fun <init> (Ljava/util/List;)V
+	public fun close ()V
+	public final fun rotate (Ljava/util/List;)V
+}
+
+public final class io/kuicksilver/tls/EchStatus : java/lang/Enum {
+	public static final field Accepted Lio/kuicksilver/tls/EchStatus;
+	public static final field Grease Lio/kuicksilver/tls/EchStatus;
+	public static final field None Lio/kuicksilver/tls/EchStatus;
+	public static final field Offered Lio/kuicksilver/tls/EchStatus;
+	public static final field Rejected Lio/kuicksilver/tls/EchStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/EchStatus;
+	public static fun values ()[Lio/kuicksilver/tls/EchStatus;
 }
 
 public final class io/kuicksilver/tls/EncryptionLevel : java/lang/Enum {
@@ -316,6 +363,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public fun enableEarlyData ([BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
 	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
+	public fun getEchStatus ()Lio/kuicksilver/tls/EchStatus;
 	public fun getKeyExchangeGroup ()Ljava/lang/String;
 	public fun getLocalCertificates ()Ljava/util/List;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
@@ -339,6 +387,7 @@ public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
 	public static fun commitTrust (Lio/kuicksilver/tls/QuicTlsSession;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
+	public static fun getEchStatus (Lio/kuicksilver/tls/QuicTlsSession;)Lio/kuicksilver/tls/EchStatus;
 	public static fun getKeyExchangeGroup (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/String;
 	public static fun getLocalCertificates (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/util/List;
 	public static fun getPeerCertificateCompression (Lio/kuicksilver/tls/QuicTlsSession;)Lio/kuicksilver/tls/CertificateCompression;
@@ -421,6 +470,9 @@ public final class io/kuicksilver/tls/TlsConfig {
 	public final fun getCertificateCompression ()Z
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getEchConfigList ()Lio/kuicksilver/tls/EchConfigList;
+	public final fun getEchGrease ()Z
+	public final fun getEchKeys ()Lio/kuicksilver/tls/EchServerKeys;
 	public final fun getGenericAlerts ()Z
 	public final fun getHandshakeTimeout-UwyO8pc ()J
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
@@ -444,6 +496,9 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun getCertificateCompression ()Z
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getEchConfigList ()Lio/kuicksilver/tls/EchConfigList;
+	public final fun getEchGrease ()Z
+	public final fun getEchKeys ()Lio/kuicksilver/tls/EchServerKeys;
 	public final fun getGenericAlerts ()Z
 	public final fun getHandshakeTimeout-UwyO8pc ()J
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
@@ -462,6 +517,9 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun setCertificateCompression (Z)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
+	public final fun setEchConfigList (Lio/kuicksilver/tls/EchConfigList;)V
+	public final fun setEchGrease (Z)V
+	public final fun setEchKeys (Lio/kuicksilver/tls/EchServerKeys;)V
 	public final fun setGenericAlerts (Z)V
 	public final fun setHandshakeTimeout-LRDsOJo (J)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
@@ -485,6 +543,7 @@ public final class io/kuicksilver/tls/TlsConnection : java/lang/AutoCloseable {
 	public final fun channelBinding (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun close ()V
 	public final fun exportKeyingMaterial (Ljava/lang/String;[BILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getEchStatus ()Lio/kuicksilver/tls/EchStatus;
 	public final fun getInput ()Lio/ktor/utils/io/ByteReadChannel;
 	public final fun getKeyExchangeGroup ()Ljava/lang/String;
 	public final fun getLocalCertificates ()Ljava/util/List;
@@ -549,6 +608,11 @@ public final class io/kuicksilver/tls/TlsException$AlertReceived : io/kuicksilve
 
 public final class io/kuicksilver/tls/TlsException$Config : io/kuicksilver/tls/TlsException {
 	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/tls/TlsException$EchRejected : io/kuicksilver/tls/TlsException {
+	public fun <init> (Lio/kuicksilver/tls/EchConfigList;)V
+	public final fun getRetryConfigs ()Lio/kuicksilver/tls/EchConfigList;
 }
 
 public final class io/kuicksilver/tls/TlsException$Protocol : io/kuicksilver/tls/TlsException {
@@ -673,6 +737,12 @@ public final class io/kuicksilver/tls/TrustConfig$ReloadableCa : io/kuicksilver/
 public final class io/kuicksilver/tls/TrustConfig$Tofu : io/kuicksilver/tls/TrustConfig {
 	public fun <init> (Lio/kuicksilver/tls/TofuStore;)V
 	public final fun getStore ()Lio/kuicksilver/tls/TofuStore;
+}
+
+public final class io/kuicksilver/tls/VerificationContext {
+	public final fun getEchPublicName ()Z
+	public final fun getHiddenName ()Z
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class io/kuicksilver/tls/VerifyReason {

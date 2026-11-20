@@ -271,6 +271,20 @@ final class io.kuicksilver.ktor.client/ConnectUdpProxy { // io.kuicksilver.ktor.
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ConnectUdpProxy.toString|toString(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/EchClientConfig { // io.kuicksilver.ktor.client/EchClientConfig|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/EchClientConfig.<init>|<init>(){}[0]
+
+    final var configLists // io.kuicksilver.ktor.client/EchClientConfig.configLists|{}configLists[0]
+        final fun <get-configLists>(): kotlin.collections/Map<kotlin/String, io.kuicksilver.tls/EchConfigList> // io.kuicksilver.ktor.client/EchClientConfig.configLists.<get-configLists>|<get-configLists>(){}[0]
+        final fun <set-configLists>(kotlin.collections/Map<kotlin/String, io.kuicksilver.tls/EchConfigList>) // io.kuicksilver.ktor.client/EchClientConfig.configLists.<set-configLists>|<set-configLists>(kotlin.collections.Map<kotlin.String,io.kuicksilver.tls.EchConfigList>){}[0]
+    final var fromHttpsRecords // io.kuicksilver.ktor.client/EchClientConfig.fromHttpsRecords|{}fromHttpsRecords[0]
+        final fun <get-fromHttpsRecords>(): kotlin/Boolean // io.kuicksilver.ktor.client/EchClientConfig.fromHttpsRecords.<get-fromHttpsRecords>|<get-fromHttpsRecords>(){}[0]
+        final fun <set-fromHttpsRecords>(kotlin/Boolean) // io.kuicksilver.ktor.client/EchClientConfig.fromHttpsRecords.<set-fromHttpsRecords>|<set-fromHttpsRecords>(kotlin.Boolean){}[0]
+    final var grease // io.kuicksilver.ktor.client/EchClientConfig.grease|{}grease[0]
+        final fun <get-grease>(): kotlin/Boolean // io.kuicksilver.ktor.client/EchClientConfig.grease.<get-grease>|<get-grease>(){}[0]
+        final fun <set-grease>(kotlin/Boolean) // io.kuicksilver.ktor.client/EchClientConfig.grease.<set-grease>|<set-grease>(kotlin.Boolean){}[0]
+}
+
 final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/FileAltSvcStore|null[0]
     constructor <init>(kotlinx.io.files/Path, kotlin/Function0<kotlin/Long> = ...) // io.kuicksilver.ktor.client/FileAltSvcStore.<init>|<init>(kotlinx.io.files.Path;kotlin.Function0<kotlin.Long>){}[0]
 
@@ -432,6 +446,8 @@ final class io.kuicksilver.ktor.client/IpAddress { // io.kuicksilver.ktor.client
 final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.engine/HttpClientEngineConfig { // io.kuicksilver.ktor.client/KuicksilverEngineConfig|null[0]
     constructor <init>() // io.kuicksilver.ktor.client/KuicksilverEngineConfig.<init>|<init>(){}[0]
 
+    final val ech // io.kuicksilver.ktor.client/KuicksilverEngineConfig.ech|{}ech[0]
+        final fun <get-ech>(): io.kuicksilver.ktor.client/EchClientConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.ech.<get-ech>|<get-ech>(){}[0]
     final val http2 // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|{}http2[0]
         final fun <get-http2>(): io.kuicksilver.ktor.client/Http2ClientConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2.<get-http2>|<get-http2>(){}[0]
     final val http3 // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|{}http3[0]
@@ -504,6 +520,7 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
         final fun <get-webSocketMaxMessageSize>(): kotlin/Long // io.kuicksilver.ktor.client/KuicksilverEngineConfig.webSocketMaxMessageSize.<get-webSocketMaxMessageSize>|<get-webSocketMaxMessageSize>(){}[0]
         final fun <set-webSocketMaxMessageSize>(kotlin/Long) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.webSocketMaxMessageSize.<set-webSocketMaxMessageSize>|<set-webSocketMaxMessageSize>(kotlin.Long){}[0]
 
+    final fun ech(kotlin/Function1<io.kuicksilver.ktor.client/EchClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.ech|ech(kotlin.Function1<io.kuicksilver.ktor.client.EchClientConfig,kotlin.Unit>){}[0]
     final fun http2(kotlin/Function1<io.kuicksilver.ktor.client/Http2ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http2|http2(kotlin.Function1<io.kuicksilver.ktor.client.Http2ClientConfig,kotlin.Unit>){}[0]
     final fun http3(kotlin/Function1<io.kuicksilver.ktor.client/Http3ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|http3(kotlin.Function1<io.kuicksilver.ktor.client.Http3ClientConfig,kotlin.Unit>){}[0]
 }
@@ -555,13 +572,6 @@ final class io.kuicksilver.ktor.client/ProxyTlsException : io.kuicksilver.ktor.c
     constructor <init>(kotlin/String, kotlin/Throwable) // io.kuicksilver.ktor.client/ProxyTlsException.<init>|<init>(kotlin.String;kotlin.Throwable){}[0]
 }
 
-final class io.kuicksilver.ktor.client/QuicStalledException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/QuicStalledException|null[0]
-    final val probeTimeouts // io.kuicksilver.ktor.client/QuicStalledException.probeTimeouts|{}probeTimeouts[0]
-        final fun <get-probeTimeouts>(): kotlin/Int // io.kuicksilver.ktor.client/QuicStalledException.probeTimeouts.<get-probeTimeouts>|<get-probeTimeouts>(){}[0]
-    final val silence // io.kuicksilver.ktor.client/QuicStalledException.silence|{}silence[0]
-        final fun <get-silence>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicStalledException.silence.<get-silence>|<get-silence>(){}[0]
-}
-
 final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/QuicConnectionSnapshot|null[0]
     final val connectionId // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId|{}connectionId[0]
         final fun <get-connectionId>(): kotlin/String? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId.<get-connectionId>|<get-connectionId>(){}[0]
@@ -591,6 +601,13 @@ final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.k
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/QuicConnectionSnapshot.toString|toString(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/QuicStalledException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/QuicStalledException|null[0]
+    final val probeTimeouts // io.kuicksilver.ktor.client/QuicStalledException.probeTimeouts|{}probeTimeouts[0]
+        final fun <get-probeTimeouts>(): kotlin/Int // io.kuicksilver.ktor.client/QuicStalledException.probeTimeouts.<get-probeTimeouts>|<get-probeTimeouts>(){}[0]
+    final val silence // io.kuicksilver.ktor.client/QuicStalledException.silence|{}silence[0]
+        final fun <get-silence>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicStalledException.silence.<get-silence>|<get-silence>(){}[0]
+}
+
 final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.client/ResolvedProxy|null[0]
     final val credentials // io.kuicksilver.ktor.client/ResolvedProxy.credentials|{}credentials[0]
         final fun <get-credentials>(): io.kuicksilver.ktor.client/ProxyCredentials? // io.kuicksilver.ktor.client/ResolvedProxy.credentials.<get-credentials>|<get-credentials>(){}[0]
@@ -616,13 +633,6 @@ final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.cl
     }
 }
 
-open class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/ProxyException|null[0]
-    constructor <init>(kotlin/String, kotlin/Int?, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/ProxyException.<init>|<init>(kotlin.String;kotlin.Int?;kotlin.Throwable?){}[0]
-
-    final val replyCode // io.kuicksilver.ktor.client/ProxyException.replyCode|{}replyCode[0]
-        final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
-}
-
 final class io.kuicksilver.ktor.client/TcpConnectionSnapshot : io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/TcpConnectionSnapshot|null[0]
     final val alpn // io.kuicksilver.ktor.client/TcpConnectionSnapshot.alpn|{}alpn[0]
         final fun <get-alpn>(): kotlin/String? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.alpn.<get-alpn>|<get-alpn>(){}[0]
@@ -642,6 +652,13 @@ final class io.kuicksilver.ktor.client/TcpConnectionSnapshot : io.kuicksilver.kt
         final fun <get-viaProxy>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.viaProxy.<get-viaProxy>|<get-viaProxy>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/TcpConnectionSnapshot.toString|toString(){}[0]
+}
+
+open class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException { // io.kuicksilver.ktor.client/ProxyException|null[0]
+    constructor <init>(kotlin/String, kotlin/Int?, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/ProxyException.<init>|<init>(kotlin.String;kotlin.Int?;kotlin.Throwable?){}[0]
+
+    final val replyCode // io.kuicksilver.ktor.client/ProxyException.replyCode|{}replyCode[0]
+        final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
 }
 
 sealed class io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/ConnectionSnapshot|null[0]

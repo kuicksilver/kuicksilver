@@ -172,6 +172,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/
 	public fun getAddressDescription ()Ljava/lang/String;
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getEchKeys ()Lio/kuicksilver/tls/EchServerKeys;
 	public fun getHost ()Ljava/lang/String;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeyExchangeGroups ()Lio/kuicksilver/tls/KeyExchangeGroups;
@@ -193,6 +194,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverTlsConnector;
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getEchKeys ()Lio/kuicksilver/tls/EchServerKeys;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeyExchangeGroups ()Lio/kuicksilver/tls/KeyExchangeGroups;
@@ -206,6 +208,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun proxyProtocol (Lkotlin/jvm/functions/Function1;)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
+	public final fun setEchKeys (Lio/kuicksilver/tls/EchServerKeys;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setKeyExchangeGroups (Lio/kuicksilver/tls/KeyExchangeGroups;)V
