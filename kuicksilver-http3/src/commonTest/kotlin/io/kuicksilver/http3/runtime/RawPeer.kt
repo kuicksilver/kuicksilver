@@ -4,12 +4,14 @@ package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.qpack.QpackEncoder
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -142,4 +144,19 @@ internal suspend fun awaitOutputStopped(st: QuicStream): Long {
             ?: throw AssertionError("no STOP_SENDING on stream ${st.id} within 5s (or the stream ended without one)")
     awaitCondition("the stop failing the output") { st.output.closedCause != null }
     return code
+}
+
+/**
+ * Ends this request stream with its FIN where the server may already have answered: RFC 9114 section 4.1 lets a server
+ * whose response is complete stop the rest of the request with STOP_SENDING H3_NO_ERROR, and a stop that arrives before
+ * the FIN leaves fails the write with it (seen on the Android emulator and macosArm64 in CI). Only the peer's H3_NO_ERROR
+ * stop is taken; any other failure, a stop with another code included, propagates.
+ */
+internal suspend fun QuicStream.finishRequest() {
+    try {
+        output.flushAndClose()
+    } catch (e: Throwable) {
+        val stop = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull()
+        if (stop?.initiator != Initiator.Peer || stop.code != Http3ErrorCode.NO_ERROR) throw e
+    }
 }

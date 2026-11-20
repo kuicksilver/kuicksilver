@@ -21,3 +21,14 @@ dependencies {
         implementation("org.jdom:jdom2:2.0.6.1") { because("first release without the known vulnerabilities") }
     }
 }
+// The Kotlin plugin of kotlin-dsl asks for kotlin-build-tools-impl as a range (strictly [2.4.0-Beta2, 2.5.0)) in the ABI
+// tools' class path. A range takes the newest release Central lists (2.4.21 when the catalog said 2.4.20), and the
+// listing is fetched from every repository on every resolution. Pinned to the catalog's Kotlin: no listing is fetched.
+configurations.matching { it.name == "kotlinAbiValidationCompatClasspath" }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin" && requested.name == "kotlin-build-tools-impl") {
+            useVersion(libs.versions.kotlin.get())
+            because("the catalog's Kotlin, not the newest release in a range")
+        }
+    }
+}

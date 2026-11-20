@@ -22,6 +22,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.MemoryIo
+import io.kuicksilver.http3.PacketTooBigStatus
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.UdpProxyConfig
 import io.kuicksilver.http3.UdpProxyResolver
@@ -31,6 +32,7 @@ import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.runtime.awaitCondition
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -70,6 +72,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
+import kotlin.time.TimeSource
 
 internal val proxySettings = http3Settings { enableConnectProtocol = true }
 
@@ -93,14 +96,29 @@ internal class ProxyRig(
     val socketsOpened = AtomicInt(0)
     val socketsClosed = Channel<InetSocketAddress>(Channel.UNLIMITED)
 
-    /** The sockets the proxy opened, in order. */
-    val sockets = ArrayList<ClosingIo>()
+    /**
+     * The sockets the proxy opened, in order. Copied on write: tunnels set up together open theirs on several threads at
+     * once, and an ArrayList lost some of them (rigTakesSocketsOpenedTogether).
+     */
+    private val opened = kotlin.concurrent.atomics.AtomicReference<List<ClosingIo>>(emptyList())
+    val sockets: List<ClosingIo> get() = opened.load()
     val proxy =
         UdpProxy(
             configure { _ ->
-                socketsOpened.incrementAndFetch()
-                val io = pair.quic.net.open(InetSocketAddress("10.0.0.2", nextPort.incrementAndFetch()))
-                ClosingIo(io) { socketsClosed.trySend(io.localAddress) }.also { sockets += it }
+                try {
+                    socketsOpened.incrementAndFetch()
+                    val io = pair.quic.net.open(InetSocketAddress("10.0.0.2", nextPort.incrementAndFetch()))
+                    ClosingIo(io) { socketsClosed.trySend(io.localAddress) }.also { s ->
+                        while (true) {
+                            val now = opened.load()
+                            if (opened.compareAndSet(now, now + s)) break
+                        }
+                    }
+                } catch (e: Throwable) {
+                    // the proxy answers a failed socket 502 proxy_internal_error and keeps the cause: [close] reports it
+                    failures.trySend(e)
+                    throw e
+                }
             },
         ).also {
             // tests send no ICMP: as root (the local matrix's containers) the real probe opens a raw socket, and a real Packet
@@ -1164,8 +1182,7 @@ class ConnectUdpTest {
             var closed = 0
             rig.proxy.impl.clock = TestTimeSource()
             rig.proxy.impl.probeForTest = {
-                io.kuicksilver.quic.PacketTooBigSender
-                    .Probe(true, "test")
+                PacketTooBigSender.Probe(true, "test")
             }
             rig.proxy.impl.senderForTest = {
                 object : PtbSink {
@@ -1522,7 +1539,17 @@ class ConnectUdpTest {
                 }
             rig.use { r ->
                 val p = r.pair
-                val slow = List(SystemResolver.MAX_PER_CLIENT) { async { p.client.connectUdp(template, "slow$it.example", 5000) } }
+                val slow =
+                    List(SystemResolver.MAX_PER_CLIENT) {
+                        async {
+                            try {
+                                p.client.connectUdp(template, "slow$it.example", 5000)
+                            } catch (e: Http3Exception.ConnectRejected) {
+                                // which refusal it was (the proxy-status names it): a 502 here once in CI said only "502"
+                                throw AssertionError("slow$it.example was refused ${e.status}: ${e.headers}", e)
+                            }
+                        }
+                    }
                 repeat(SystemResolver.MAX_PER_CLIENT) { withTimeout(5.seconds) { started.receive() } }
                 val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "one-more.example", 5000) }
                 assertEquals(503, e.status)
@@ -1556,6 +1583,113 @@ class ConnectUdpTest {
             } finally {
                 gate2.complete(Unit)
                 SystemResolver.lookupForTest = null
+            }
+        }
+
+    /**
+     * The proxy opens tunnel sockets on several threads at once (negative_oneClientCannotTakeEveryLookup releases four
+     * lookups together): the rig records every socket it opened, and the in-memory network reaches each one.
+     */
+    @Test fun rigTakesSocketsOpenedTogether() =
+        h3Test {
+            repeat(20) {
+                val rig = rig()
+                rig.use {
+                    val n = 64
+                    val go = CompletableDeferred<Unit>()
+                    val opening =
+                        List(n) {
+                            async(Dispatchers.Default) {
+                                go.await()
+                                rig.proxy.impl.config
+                                    .socketFactory(InetSocketAddress("0.0.0.0", 0)) as ClosingIo
+                            }
+                        }
+                    go.complete(Unit)
+                    val opened = opening.map { it.await() }
+                    assertEquals(n, rig.socketsOpened.load())
+                    assertEquals(opened.toSet(), rig.sockets.toSet(), "every socket the proxy opened is recorded once")
+                    assertEquals(n, rig.sockets.size)
+                    for (io in opened) {
+                        rig.pair.quic.net
+                            .deliver(echoAt, io.localAddress, byteArrayOf(1))
+                        assertTrue(
+                            io.io.inbox
+                                .tryReceive()
+                                .isSuccess,
+                            "${io.localAddress} is on the network",
+                        )
+                    }
+                    opened.forEach { it.close() }
+                }
+            }
+        }
+
+    /**
+     * UdpProxyStats.packetTooBig is "as probed at its first tunnel": once a tunnel is open the status says whether Packet
+     * Too Big applies, before any payload was dropped, and the probe runs once. It ran only at the first dropped payload,
+     * after that drop was counted, so a reader that saw the drop could still find NotProbed (android (24) in CI).
+     */
+    @Test fun packetTooBigIsProbedAtTheFirstTunnel() =
+        h3Test {
+            for (privileged in listOf(false, true)) {
+                val rig = rig()
+                var probes = 0
+                rig.proxy.impl.probeForTest = {
+                    probes++
+                    io.kuicksilver.quic.PacketTooBigSender
+                        .Probe(privileged, "test")
+                }
+                rig.use { r ->
+                    assertEquals(PacketTooBigStatus.NotProbed, rig.proxy.stats.packetTooBig)
+                    val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                    val expected = if (privileged) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable
+                    assertEquals(expected, rig.proxy.stats.packetTooBig)
+                    val second = r.pair.client.connectUdp(template, "192.0.2.51", 5000)
+                    assertEquals(expected, rig.proxy.stats.packetTooBig)
+                    assertEquals(1, probes, "one probe for the proxy")
+                    assertEquals(0, rig.proxy.stats.droppedTooLargeForClient)
+                    second.close()
+                    t.close()
+                }
+            }
+        }
+
+    /**
+     * Two tunnels set up at the same moment probe once: the second waits for the first's probe and takes its result,
+     * instead of finding NotProbed and opening a raw socket of its own. The first probe is held (on another thread) until
+     * the second caller ran as far as it can without it: undispatched, it either probed at once or suspended.
+     */
+    @Test fun concurrentFirstTunnelsProbeOnce() =
+        h3Test {
+            val rig = rig()
+            val probes = AtomicInt(0)
+            val release = kotlin.concurrent.atomics.AtomicBoolean(false)
+            rig.proxy.impl.probeForTest = {
+                if (probes.incrementAndFetch() == 1) {
+                    val until = TimeSource.Monotonic.markNow() + 10.seconds
+                    while (!release.load() && until.hasNotPassedNow()) {
+                        // held until the second caller ran
+                    }
+                }
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.use {
+                val first = async(Dispatchers.Default) { rig.proxy.impl.packetTooBigAvailable() }
+                try {
+                    awaitCondition("the first probe") { probes.load() == 1 }
+                    val second = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { rig.proxy.impl.packetTooBigAvailable() }
+                    assertEquals(1, probes.load(), "the second caller probed while the first probe ran")
+                    assertFalse(second.isCompleted, "the second caller waits for the first probe")
+                    release.store(true)
+                    assertTrue(withTimeout(10.seconds) { second.await() })
+                } finally {
+                    release.store(true) // a failed assertion must not leave the first probe spinning
+                }
+                assertTrue(withTimeout(10.seconds) { first.await() })
+                assertEquals(1, probes.load())
+                assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
             }
         }
 

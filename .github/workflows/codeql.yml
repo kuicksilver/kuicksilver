@@ -53,7 +53,8 @@ jobs:
         # task once buildJniHost (the host JNI library, and the OpenSSL fetch and build under it) is excluded: the jars of the
         # lower modules are then built without a native library, which compiling does not need.
         run: |
-          ./gradlew --no-daemon --no-build-cache --no-configuration-cache --max-workers=2 \
+          # a dependency Central answered "not found" for gets one refreshed run more (tools/ci/gradlew-retry.sh)
+          bash tools/ci/gradlew-retry.sh --no-daemon --no-build-cache --no-configuration-cache --max-workers=2 \
             -Pkotlin.incremental=false -Pkotlin.compiler.execution.strategy=in-process \
             -x :kuicksilver-native:buildJniHost compileKotlinJvm
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3

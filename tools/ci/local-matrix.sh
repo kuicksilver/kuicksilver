@@ -202,6 +202,8 @@ step "lint: doc refs and test gates, negatives" bash -c 'rc=0
     bash "tools/check/$t-test.sh" || rc=1
   done
   bash tools/ci/race-repeat-test.sh || rc=1
+  bash tools/ci/gradlew-retry-test.sh || rc=1
+  bash tools/ci/android-connected-check-test.sh || rc=1
   exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
@@ -211,6 +213,7 @@ step "lint: RFC compliance summary table"      bash -c 'bash tools/check/rfc-tab
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
 step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
+step "lint: published docs name no local path" bash -c 'bash tools/check/site-paths.sh && bash tools/check/site-paths-test.sh'   # pages.yml refuses such a path only after the push
 step "lint: guide samples (guide-sync)"          bash tools/check/guide-sync.sh
 step "lint: guide-sync negative controls"        bash tools/check/guide-sync-test.sh
 step "lint: configuration tables vs the code"    bash tools/check/config-table.sh

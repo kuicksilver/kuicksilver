@@ -27,6 +27,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.inputTakenForTest
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.readAhead
@@ -425,7 +426,9 @@ class QpackDynamicTest {
      * window". A request field section of about 10 KB that waits for an insert is not read off a 16 KiB stream window: the client
      * gets no credit back for it while another request on the connection is answered.
      */
-    @Test fun blockedSectionStaysInTheStreamWindow() =
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun blockedSectionStaysInTheStreamWindow() =
         h3Test {
             QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { q ->
                 val (c, s) = q.connect()
@@ -446,7 +449,9 @@ class QpackDynamicTest {
                 launch { server.acceptRequest().respond(204).finish() }
                 val other = c.openBidi()
                 other.output.writeFully(raw.headers(other.id, GET))
-                other.output.flushAndClose()
+                // the complete 204 stopped the rest of the request (RFC 9114 section 4.1) before its FIN left
+                assertEquals(Http3ErrorCode.NO_ERROR, withTimeout(10.seconds) { other.awaitSendStopped() })
+                other.finishRequest()
                 other.input.readAllBytes()
                 assertEquals(left, st.sendCredit(), "credit came back for a blocked section")
                 st.reset(Http3ErrorCode.REQUEST_CANCELLED)

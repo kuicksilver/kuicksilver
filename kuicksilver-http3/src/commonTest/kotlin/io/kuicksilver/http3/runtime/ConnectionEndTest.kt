@@ -468,7 +468,7 @@ class ConnectionEndTest {
                 p.client.close()
                 withTimeout(5.seconds) { p.server.closed.await() }
                 val chunk = ByteArray(64 * 1024)
-                assertFailsWith<Throwable> {
+                assertFailsWith<Throwable>("the handler's response writes (16 MiB, no reader) succeeded") {
                     withTimeout(5.seconds) {
                         repeat(256) {
                             // 16 MiB: far more than the channel buffers
@@ -677,16 +677,44 @@ class ConnectionEndTest {
                 withTimeout(5.seconds) { p.server.acceptRequest() }
                 p.server.close()
                 withTimeout(5.seconds) { p.client.closed.await() }
-                val chunk = ByteArray(64 * 1024)
-                assertFailsWith<Throwable> {
-                    withTimeout(5.seconds) {
-                        repeat(256) {
-                            body.writeFully(chunk)
-                            body.flush()
-                        }
-                    }
-                }.let { e -> assertTrue(e !is TimeoutCancellationException, "the application's body write hung") }
+                assertBodyWritesFail(body)
                 response.join()
             }
         }
+
+    /**
+     * The connection ends between the request's HEADERS and the start of its sender: the stream's flush fails with the
+     * close, so the request fails before a sender exists. The application writing the body is released all the same. Only
+     * the sender (or its cancellation) ended the body, so its writes waited forever: requestBodyWriteAfterTheConnectionEndedFails
+     * failed so on a macOS runner, where the server's close won the race with the flush of the request's HEADERS.
+     */
+    @Test fun requestBodyWriteFailsWhenTheConnectionEndsBeforeTheSenderStarts() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                // the order behind the bug, forced: the connection is gone before the HEADERS are flushed
+                p.client.session.afterRequestHeadersForTest = {
+                    p.server.close()
+                    withTimeout(5.seconds) { p.client.closed.await() }
+                }
+                val body = ByteChannel()
+                val response = async { runCatching { p.client.request(http3Request("POST", "server.test", "/") { this.body = body }) } }
+                val result = withTimeout(5.seconds) { response.await() }
+                assertTrue(result.isFailure, "a request whose connection ended before its body was sent failed: $result")
+                assertBodyWritesFail(body)
+            }
+        }
+
+    /** Writes [body] far beyond what its channel buffers: they must fail, neither succeed (no reader) nor hang. */
+    private suspend fun assertBodyWritesFail(body: ByteChannel) {
+        val chunk = ByteArray(64 * 1024)
+        assertFailsWith<Throwable>("the application's body writes (16 MiB, no reader) succeeded") {
+            withTimeout(5.seconds) {
+                repeat(256) {
+                    // 16 MiB: far more than the channel buffers
+                    body.writeFully(chunk)
+                    body.flush()
+                }
+            }
+        }.let { e -> assertTrue(e !is TimeoutCancellationException, "the application's body write hung (the body was never cancelled)") }
+    }
 }

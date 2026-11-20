@@ -141,7 +141,7 @@ internal class UdpProxyImpl(
     internal val packetTooBigNoSource = AtomicLong(0)
     internal val packetTooBigFailed = AtomicLong(0)
 
-    /** RFC 9298 section 6.1: probed once, at the first tunnel, when the configuration asks for it. */
+    /** RFC 9298 section 6.1: probed once, at the first tunnel (before its 2xx), when the configuration asks for it. */
     private val packetTooBig =
         AtomicReference(if (config.packetTooBig) PacketTooBigStatus.NotProbed else PacketTooBigStatus.Off)
 
@@ -151,14 +151,21 @@ internal class UdpProxyImpl(
     /** Tests replace the sender of a tunnel (a privileged one cannot be had on every host, and tests send to no one). */
     internal var senderForTest: (() -> PtbSink)? = null
 
-    /** Whether tunnels send Packet Too Big; probes once (opening and closing a raw socket) the first time it is asked. */
-    internal fun packetTooBigAvailable(): Boolean {
+    /** One probe at a time: tunnels set up together wait for the first one's probe instead of each running their own. */
+    private val probeLock = Mutex()
+
+    /**
+     * Whether tunnels send Packet Too Big; probes once (opening and closing a raw socket) the first time it is asked, which
+     * is the first tunnel's setup. Single-flight: a caller that comes while the probe runs waits for it and takes its result.
+     */
+    internal suspend fun packetTooBigAvailable(): Boolean {
         if (packetTooBig.load() == PacketTooBigStatus.NotProbed) {
-            val p = (probeForTest ?: PacketTooBigSender::probe)()
-            packetTooBig.compareAndSet(
-                PacketTooBigStatus.NotProbed,
-                if (p.available) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable,
-            )
+            probeLock.withLock {
+                if (packetTooBig.load() == PacketTooBigStatus.NotProbed) {
+                    val p = (probeForTest ?: PacketTooBigSender::probe)()
+                    packetTooBig.store(if (p.available) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable)
+                }
+            }
         }
         return packetTooBig.load() == PacketTooBigStatus.Available
     }
@@ -375,6 +382,9 @@ internal class UdpProxyImpl(
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
             io.io.disableEcnMarking()
             val payloadLimit = config.linkMtu - if (v4) IPV4_UDP_OVERHEAD else IPV6_UDP_OVERHEAD
+            // section 6.1: the privilege is probed at the first tunnel, before its 2xx, so once a client holds a tunnel
+            // UdpProxyStats.packetTooBig says whether Packet Too Big applies (not only after a payload was dropped)
+            packetTooBigAvailable()
             beforeAnswerForTest?.invoke(request)
             val stream =
                 try {

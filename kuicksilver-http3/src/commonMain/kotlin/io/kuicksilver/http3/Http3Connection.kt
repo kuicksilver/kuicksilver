@@ -11,6 +11,7 @@ import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.goAway
+import io.kuicksilver.http3.runtime.releaseWith
 import io.kuicksilver.http3.runtime.request
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.StreamPriority
@@ -65,10 +66,17 @@ public class Http3Connection private constructor(
      * [Http3Request]) throws IllegalArgumentException before a stream is opened; so do its trailers, which also abandon
      * the request (the stream is reset with H3_REQUEST_CANCELLED). A request with a `protocol` (Extended CONNECT) waits
      * for the peer's SETTINGS and throws IllegalArgumentException unless they enable it (RFC 9220 section 3); [connect]
-     * is the usual way to make one.
+     * is the usual way to make one. A request that fails, also with IllegalStateException on a server's connection, ends
+     * its [Http3Request.body] with the exception it throws, so a coroutine writing the body is released, its next write
+     * failing with that exception; except one that fails with [Http3Exception.RequestNotProcessed] whose `neverSent` is
+     * true: that body was never read and can be sent again.
      */
     public suspend fun request(request: Http3Request): Http3Response {
-        check(role == Http3Role.Client) { "request() is client-only" }
+        if (role != Http3Role.Client) {
+            val e = IllegalStateException("request() is client-only")
+            request.body?.releaseWith(e)
+            throw e
+        }
         return session.request(request)
     }
 

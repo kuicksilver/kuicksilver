@@ -251,10 +251,18 @@ class H3QlogTest {
                 raw.control.output.flush()
                 raw.uni(0x3fff, ByteArray(1))
                 raw.uni(FrameType.grease(2), ByteArray(0))
+                // One record is one event. The server logs a GREASE stream and frame of its own ("owner":"local",
+                // http:frame_created), which used to satisfy a wait over the joined records before the peer's reserved
+                // stream was read: API 24 then saw only [control, unknown]. The wait asks for the peer's events only.
                 awaitCondition("the frames and streams logged") {
-                    val all = sink.trace(TlsRole.Server).records.joinToString("")
-                    "\"frame_type_value\":${0x2abc}" in all && "{\"frame_type\":\"reserved\",\"length\":0}" in all &&
-                        "\"stream_type_value\":${0x3fff}" in all && "\"stream_type\":\"reserved\"" in all
+                    val records = sink.trace(TlsRole.Server).records
+                    val logged = { a: String, b: String -> records.any { a in it && b in it } }
+                    val parsed = "\"name\":\"http:frame_parsed\""
+                    val remote = "\"owner\":\"remote\""
+                    logged(parsed, "\"frame_type_value\":${0x2abc}") &&
+                        logged(parsed, "{\"frame_type\":\"reserved\",\"length\":0}") &&
+                        logged(remote, "\"stream_type_value\":${0x3fff}") &&
+                        logged(remote, "\"stream_type\":\"reserved\"")
                 }
                 server.close()
             }

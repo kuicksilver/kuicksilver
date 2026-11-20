@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # The step selection of tools/ci/local-matrix.sh (--only, --from), through --dry-run only: nothing is built or run. Each
 # negative_* case must be refused with exit 2 before the preflight (no "preflight:" line); the others list exactly the
-# expected steps. Usage: tools/ci/local-matrix-test.sh
+# expected steps. The step counts docs/process.md gives (default, release, with the browser run) must be those --dry-run
+# lists. Usage: tools/ci/local-matrix-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; script="$here/local-matrix.sh"
 fails=0
@@ -19,8 +20,8 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
 }
 t onlyListAndRange          0 "25 50 51 55"                          -- --only 25,50-51,55
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 47 73 | tr '\n' ' ' | sed 's/ $//')" -- --from 47
-t onlyWithItsProducer       0 "41 42"                                -- --only 41,42
+t fromWithDependencies      0 "$(seq 48 74 | tr '\n' ' ' | sed 's/ $//')" -- --from 48
+t onlyWithItsProducer       0 "42 43"                                -- --only 42,43
 t negative_noValue          2 "needs a value"                        -- --only
 t negative_optionAsValue    2 "needs a value"                        -- --only --skip-android
 t negative_emptyList        2 "an empty step list"                   -- --only ""
@@ -33,13 +34,20 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,74
+t negative_pastLast         2 "past the last step"                   -- --only 3,75
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 74
+t negative_fromPastLast     2 "past the last step"                   -- --from 75
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
-t negative_missingProducer  2 "select those steps too: --only 41,44" -- --only 44
-t negative_missingMarkers   2 "select those steps too: --only 63-65" -- --only 65
-t negative_fromMissesLink   2 "select those steps too: --only 58,66-73" -- --from 66
+t negative_missingProducer  2 "select those steps too: --only 42,45" -- --only 45
+t negative_missingMarkers   2 "select those steps too: --only 64-66" -- --only 66
+t negative_fromMissesLink   2 "select those steps too: --only 59,67-74" -- --from 67
+# the counts in docs/process.md ("**74 steps**; ... which makes **79** (... a Chrome WebTransport run, 80)") against --dry-run
+doc="$here/../../docs/process.md"
+count() { bash "$script" --dry-run "$@" 2>&1 | grep -c '^\['; }
+documented=$(tr '\n' ' ' < "$doc" | sed -n 's/.*has \*\*\([0-9]*\) steps\*\*;.*makes \*\*\([0-9]*\)\*\* (and `--with-browser` *adds a Chrome WebTransport run, \([0-9]*\)).*/\1 \2 \3/p')
+listed="$(count) $(count --with-interop --with-windows) $(count --with-interop --with-windows --with-browser)"
+if [ -n "$documented" ] && [ "$documented" = "$listed" ]; then echo "ok   stepCountsInProcessMd ($listed)"
+else echo "FAIL stepCountsInProcessMd: docs/process.md says '${documented:-nothing found}', --dry-run lists '$listed'"; fails=$((fails + 1)); fi
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

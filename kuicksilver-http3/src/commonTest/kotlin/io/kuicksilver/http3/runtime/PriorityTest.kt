@@ -12,6 +12,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
@@ -490,6 +491,12 @@ class PriorityTest {
                 w.finish() // the whole body is the transport's before the tunnel's data
                 serverTunnel.output.writeFully(marker)
                 serverTunnel.output.flush()
+                // the flush hands the marker to the tunnel's pump, which hands it to the QUIC stream on the connection's
+                // dispatcher later: released before that, the held packets' ACKs let the body go out while the marker is
+                // not scheduled yet (android (24) in CI: 234 KB before it; the emulator: 29 KB, or 71 KB on a late pump)
+                awaitCondition("the tunnel's data handed to the transport") {
+                    serverTunnel.contentHandedToTransport == marker.size.toLong()
+                }
                 q.net.drop = null
                 held.close()
                 for ((to, b) in held) q.net.deliver(serverAddress, to, b)

@@ -39,9 +39,13 @@ import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 
 /** In-memory UDP for tests on every platform; [delayFrom] holds datagrams from one address back (reordering between streams). */
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class MemoryNet {
-    private val sockets = HashMap<InetSocketAddress, MemoryIo>()
+    /**
+     * The open sockets by address, copied on write: sockets are opened on several threads at once (a CONNECT-UDP proxy's
+     * tunnels set up together) while the endpoints' loops deliver, and a HashMap could lose one of them.
+     */
+    private val sockets = kotlin.concurrent.atomics.AtomicReference<Map<InetSocketAddress, MemoryIo>>(emptyMap())
 
     @Volatile var delay: Duration = Duration.ZERO
 
@@ -54,7 +58,10 @@ internal class MemoryNet {
         capabilities: IoCapabilities = IoCapabilities.Portable,
     ): MemoryIo {
         val io = MemoryIo(this, local, capabilities)
-        sockets[local] = io
+        while (true) {
+            val now = sockets.load()
+            if (sockets.compareAndSet(now, now + (local to io))) break
+        }
         return io
     }
 
@@ -75,11 +82,11 @@ internal class MemoryNet {
         if (d ==
             Duration.ZERO
         ) {
-            sockets[to]?.inbox?.trySend(bytes to from)
+            sockets.load()[to]?.inbox?.trySend(bytes to from)
         } else {
             scope.launch {
                 delay(d)
-                sockets[to]?.inbox?.trySend(bytes to from)
+                sockets.load()[to]?.inbox?.trySend(bytes to from)
             }
         }
     }

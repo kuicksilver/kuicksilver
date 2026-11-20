@@ -6,6 +6,7 @@ package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http3.Http3EarlyDataPolicy
@@ -160,6 +161,34 @@ internal suspend fun H3Session.request(
     r: Http3Request,
     keepOpen: Boolean = false,
     caller: ContinuationInterceptor? = null,
+): Http3Response =
+    try {
+        requestRepeating(r, keepOpen, caller)
+    } catch (e: Throwable) {
+        // the request failed for good (a 0-RTT rejection was already repeated): an application writing its body is released,
+        // whether a sender ever read the body or not (a connection that ended, a request refused as malformed, a caller
+        // that gave up while the request waited for stream credit). Not one refused before anything of it left: its body
+        // was never read, RequestNotProcessed.neverSent promises it can be sent again, and the Ktor engine does so (on a
+        // new connection, or over HTTP/1.1)
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        if (!(e is Http3Exception.RequestNotProcessed && e.neverSent)) r.body?.releaseWith(e)
+        throw e
+    }
+
+/**
+ * Ends a request body whose request failed with [e]: its writer's next write fails with [e] (as ktor-io reports a cancel
+ * cause: [e] itself or a copy of it, possibly as the cause of a ClosedWriteChannelException), the failure its caller got.
+ * One exception: ktor-io drops a cause that is a ClosedWriteChannelException (its copy is null), the failure of a write
+ * to the request stream the transport ended, and a writer would learn nothing; the transport's exception under it goes instead.
+ */
+internal fun ByteReadChannel.releaseWith(e: Throwable) {
+    cancel(if (e is ClosedWriteChannelException) H3Session.transportCause(e) ?: e else e)
+}
+
+private suspend fun H3Session.requestRepeating(
+    r: Http3Request,
+    keepOpen: Boolean,
+    caller: ContinuationInterceptor?,
 ): Http3Response {
     val mayGoEarly =
         testSendUnsafeEarly || (r.allowEarlyData && !keepOpen && r.body == null && r.method in Http3EarlyDataPolicy.SAFE_METHODS)
@@ -346,7 +375,7 @@ private suspend fun H3Session.exchange(
             // a server that answered without the rest of the request may stop it before our FIN left (with H3_NO_ERROR, or
             // abruptly with another code): the upload ends, and the response, when one comes, still counts (RFC 9114 section
             // 4.1: clients MUST NOT discard complete responses because their request was terminated abruptly)
-            val stop = stoppedByPeer(e) ?: throw e
+            val stop = stoppedByPeer(e) ?: throw e // released by request(), which ends the body of a failed request
             if (sender == null) r.body?.cancel(stop) // the application writing the request body is released
         }
         val frames =

@@ -532,13 +532,15 @@ class RapidResetTest {
                 raw.openControl()
                 val st = c.openBidi()
                 st.output.writeFully(raw.headers(st.id, GET))
-                st.output.flushAndClose()
                 val r = withTimeout(10.seconds) { server.acceptRequest() } as ServerRequestImpl
                 awaitCondition("the watch's start") { started.load() != null }
                 assertTrue(r.respondedInFull)
                 awaitCondition("the watch ending") { started.load()!!.isCompleted }
                 assertTrue(started.load()!!.isCancelled, "the starter cancelled the watch of a response complete before it was stored")
                 assertEquals(null, r.stopWatch)
+                // the complete response stopped the rest of the request (RFC 9114 section 4.1) before its FIN left
+                assertEquals(Http3ErrorCode.NO_ERROR, withTimeout(10.seconds) { st.awaitSendStopped() })
+                st.finishRequest()
                 server.close()
             }
         }
