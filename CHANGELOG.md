@@ -1040,6 +1040,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
   full-size probe; a sender searches as before, and a begun search runs to its end.
+- QUIC Interop Runner endpoint: the client waits for its endpoint's close before it exits, so its qlog traces, which are
+  buffered until a connection is released, are complete (they were often empty files).
 - The bundled OpenSSL moves from 3.5.9 (the 3.5 LTS branch) to **4.1.0**, and to the 4.2 LTS branch once it is released
   (ADR-0019): Encrypted Client Hello needs OpenSSL 4. The pin keeps its form (version, tarball SHA-256 and signing key,
   verified before every build); `configure-flags.txt` drops the four options 4.0 removed (`no-engine`, `no-atexit`,

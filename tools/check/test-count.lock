@@ -1302,11 +1302,13 @@ kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.negative_
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.otherServersAreReachedFromTheWildcardOfTheirFamily
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientClosesEveryQlogTraceBeforeItReturns
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientDownloadsAllRequestsOnOneConnection
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientExits1WhenTheConnectionIsLost
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientExits1WhenTheConnectionIsLostBeforeTheRequestIsWritten
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.everySupportedTestcaseConfigures
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3CaseDownloadsOverH3
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3ClientClosesEveryQlogTraceBeforeItReturns
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.http3IsASupportedTestcase
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.ipv6CaseBindsDualStack
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.keylogWrittenWhenEnvSet

@@ -28,6 +28,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -104,7 +106,12 @@ internal object H3InteropClient {
                 val ok = coroutineScope { requests.map { url -> async { fetch(conn, authority, Url.parse(url).path, downloads) } }.awaitAll().all { it } }
                 conn.close(); ok
             }
-        } finally { endpoint.close() }
+        } finally {
+            // the process exits right after this returns (exitWith): close() only starts the endpoint's close on its loop, and the
+            // qlog traces, which buffer until closed, were then never written (empty client qlogs in the interop runs). Waiting for
+            // the close completes them; NonCancellable, so a timed-out or failed download completes them too
+            withContext(NonCancellable) { endpoint.closeAndJoin() }
+        }
     }
     private suspend fun fetch(conn: Http3Connection, authority: String, path: String, downloads: String): Boolean {
         val resp = conn.request(http3Request("GET", authority, path))

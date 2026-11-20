@@ -197,6 +197,32 @@ class HqInteropTest {
             assertEquals(404, srv.lastStatusFor("missing.bin"), "a missing file is a 404, not a reset")
         }
     }
+    // the runner's endpoint exits right after the download (exitWith): a trace the endpoint closes only after that (QuicEndpoint.close
+    // starts the close on the loop and returns) never reached its file, which buffers until it is closed (empty client qlogs in the
+    // int37 interop runs). The trace's close is slowed down here, so a client that returned before it had run is caught every time
+    private class SlowClosingSink : io.kuicksilver.quic.QlogSink {
+        val opened = java.util.concurrent.atomic.AtomicInteger(); val closed = java.util.concurrent.atomic.AtomicInteger()
+        override fun open(odcidHex: String, role: TlsRole): io.kuicksilver.quic.QlogTrace {
+            opened.incrementAndGet()
+            return object : io.kuicksilver.quic.QlogTrace { override fun write(record: String) {}; override fun close() { Thread.sleep(300); closed.incrementAndGet() } }
+        }
+    }
+    @Test fun clientClosesEveryQlogTraceBeforeItReturns() = runBlocking {
+        val root = www("q.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
+            val sink = SlowClosingSink()
+            assertTrue(HqInteropClient.download(listOf("https://127.0.0.1:${srv.port}/q.bin"), downloads.path, Testcases.client("transfer")!!, InteropTrust.config(emptyMap()), null, sink))
+            assertEquals(1, sink.opened.get()); assertEquals(1, sink.closed.get(), "the trace is closed (its file complete) when the client returns")
+        }
+    }
+    @Test fun http3ClientClosesEveryQlogTraceBeforeItReturns() = runBlocking {
+        val root = www("q3.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        H3InteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
+            val sink = SlowClosingSink()
+            assertTrue(H3InteropClient.download(listOf("https://127.0.0.1:${srv.port}/q3.bin"), downloads.path, Testcases.client("http3")!!, InteropTrust.config(emptyMap()), null, sink))
+            assertEquals(1, sink.opened.get()); assertEquals(1, sink.closed.get(), "the trace is closed (its file complete) when the client returns")
+        }
+    }
     @Test fun http3IsASupportedTestcase() { assertTrue("http3" in Testcases.supported); assertTrue(Testcases.client("http3")!!.http3); assertTrue(Testcases.server("http3")!!.http3); assertTrue(!Testcases.client("transfer")!!.http3) }
 
     // ---- 0.2.0: the runner's `resumption` and `zerortt` cases (ADR-0015; 0-RTT is opt-in, so only these two plans turn it on)
