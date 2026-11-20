@@ -181,6 +181,11 @@ internal class NioDatagramIo private constructor(
                 // a cancelled receive: runInterruptible interrupted this thread, which makes select return at once without
                 // throwing; with the flag still set every later select returns at once too, so the loop spun forever and the
                 // cancellation never ended the call. The interrupt ends it here (runInterruptible makes it the cancellation)
+                // Thread.interrupted() also clears the flag before drain reads the channel: an interruptible channel operation
+                // started on an interrupted thread closes the channel (AbstractInterruptibleChannel.begin, and old Android
+                // libcore's the same way, with ClosedByInterruptException), which would end the socket, not the receive. An
+                // interrupt that lands during drain itself still closes it there; runInterruptible's interrupt comes only
+                // with the cancellation, which ends the receive either way
                 if (Thread.interrupted()) throw InterruptedException("receive cancelled")
                 selector.selectedKeys().clear()
                 val n = drain(into)

@@ -47,6 +47,8 @@ class QuicExceptionTest {
                 QuicException.ConnectionLost.ApplicationClosed(0, "", Initiator.Peer),
                 QuicException.ConnectionLost.StatelessReset(),
                 QuicException.StreamError.Reset(4, 7, Initiator.Peer),
+                QuicException.DontFragmentUnavailable(IpFamily.V4, "test", permanent = false),
+                QuicException.EndpointClosing(),
             ).map { e ->
                 e.addSuppressed(attached)
                 e.createCopy()

@@ -3026,7 +3026,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   that failed after its certificate still pinned the presented key. It is now written only once the handshake completed,
   over TCP and QUIC (`TofuCommitTest`), and before the connection is handed to the application: a connection closed at
   once still leaves its pin, a store that fails fails the connection over QUIC as over TCP, and one that does not answer
-  is cancelled at the handshake timeout, which fails the connection (`api.TofuRuntimeTest`).
+  is cancelled at the handshake timeout, which fails the connection (`api.TofuRuntimeTest`); a store that returns as the
+  timeout fires counts as stored. A `put` that ends in `withContext` (or another scope builder) can still write the pin
+  and end with the cancellation when the timeout fires as it completes: the connection then fails, and the next one
+  finds the pin (`TofuStore.put`).
   A QUIC session reports what it holds through the new experimental `QuicTlsSession.trustCommitPending` and
   `commitTrust`, which the connection runtime calls; a transport that drives the session itself must call it after
   `HandshakeDone`, or a `Tofu` first contact is accepted and never remembered.

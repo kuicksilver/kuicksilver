@@ -301,7 +301,7 @@ public sealed class QuicException(
                 "${if (family == null) "on any traffic" else "for ${family.label} destinations"}: $detail",
         ) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail, permanent)
+        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail, permanent).withSuppressedOf(this)
     }
 
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */

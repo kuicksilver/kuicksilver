@@ -348,7 +348,16 @@ public interface TofuStore {
     /** The pin stored for [name] (a normalized host name), or null on first contact; may be called concurrently. */
     public suspend fun get(name: String): SpkiSha256?
 
-    /** Stores [pin] for [name] after a first contact; must persist across restarts, or every restart is a new first contact. */
+    /**
+     * Stores [pin] for [name] after a first contact; must persist across restarts, or every restart is a new first contact.
+     *
+     * Called once the handshake completed, within what is left of the handshake timeout; a call still running then is
+     * cancelled and the connection fails. One that returns as the timeout fires counts as stored. The exception: a `put`
+     * that ends in a scope builder (`withContext(Dispatchers.IO) { ... }`, `coroutineScope`) can finish its write just as
+     * the timeout fires and still end with the cancellation (the builder throws instead of returning), so the pin is
+     * stored while the connection fails with the timeout. The pin is the key the completed handshake authenticated, and the
+     * next connection to [name] finds it.
+     */
     public suspend fun put(
         name: String,
         pin: SpkiSha256,

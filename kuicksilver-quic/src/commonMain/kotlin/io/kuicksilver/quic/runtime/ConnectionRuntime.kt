@@ -966,7 +966,8 @@ internal class ConnectionRuntime(
             try {
                 // completedWithin, not withTimeoutOrNull: a store that finished as the deadline fired is a commit (the key is
                 // stored), and the connection completes; withTimeoutOrNull dropped that result and failed a connection whose
-                // pin it had just written
+                // pin it had just written. Not covered (TofuStore.put says so): a put that ends in a scope builder such as
+                // withContext, which throws the cancellation instead of returning when the deadline fires as it completes
                 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
                 val committed =
                     io.kuicksilver.tls.completedWithin(left.coerceAtLeast(kotlin.time.Duration.ZERO)) { session.commitTrust() }
