@@ -552,6 +552,36 @@ class ClientConnectUdpProxyTlsTest {
             }
         }
 
+    /**
+     * The proxy's refusal of a missing client certificate (certificate_required) can reach the client after its own
+     * handshake completed (a TLS 1.3 server checks the certificate after the client's Finished), so during the CONNECT-UDP
+     * request: as the connection's close with the alert (`CRYPTO_ERROR` 0x174). That is still the proxy's TLS failure, a
+     * [ProxyTlsException] around the alert. Deterministic: the hook ends the CONNECT-UDP step with that close (on the JVM
+     * the alert comes before `connect` returns; on Kotlin/Native it was seen to come after).
+     */
+    @Test fun negative_aProxyTlsAlertAfterOurHandshakeIsStillAProxyTlsFailure() =
+        h3Test {
+            withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    dns = ProxyName
+                    connectUdpProxy = udpProxy(proxyPort)
+                }).use { c ->
+                    (c.engine as KuicksilverEngine).h3.proxyConnectedForTest = {
+                        throw io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed(
+                            0x174,
+                            0,
+                            "",
+                            ByteArray(0),
+                            io.kuicksilver.quic.Initiator.Peer,
+                            TlsException.AlertReceived(116, "TLS alert 116"),
+                        )
+                    }
+                    val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
+                    assertIs<TlsException.AlertReceived>(e.cause, "$e")
+                }
+            }
+        }
+
     /** The connection setups that failed, as the listener heard them. */
     private class SetupFailures : KuicksilverEventListener() {
         val heard = AtomicReference(emptyList<ConnectFailure>())

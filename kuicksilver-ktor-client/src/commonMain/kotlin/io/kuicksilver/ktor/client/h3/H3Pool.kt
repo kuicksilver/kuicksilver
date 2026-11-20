@@ -1018,6 +1018,9 @@ internal class H3Pool(
     @kotlin.concurrent.Volatile
     internal var tunnelTicketsUsedForTest: io.kuicksilver.tls.SessionCache? = null
 
+    /** Test hook: runs once the race to a CONNECT-UDP proxy has a connection, in place of the start of its CONNECT-UDP request. */
+    internal var proxyConnectedForTest: (suspend (Http3Connection) -> Unit)? = null
+
     fun close() {
         refusingWebTransport = true
         closed = true
@@ -1481,7 +1484,19 @@ internal class H3Pool(
                     QuicAttemptProgress(at, viaProxy = true, stage = io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake),
                     data,
                     started,
-                ) { outer.connectUdp(p.template, t.host, t.port, headers) }
+                ) {
+                    try {
+                        proxyConnectedForTest?.invoke(outer)
+                        outer.connectUdp(p.template, t.host, t.port, headers)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // the proxy's TLS can still end the connection once ours completed: a TLS 1.3 server checks the
+                        // client's certificate after the client's Finished (certificate_required, RFC 8446 section 4.4.2.4),
+                        // so the alert can come during the CONNECT-UDP request; it is the proxy's TLS failure all the same
+                        throw proxyTlsFailure(p, e) ?: e
+                    }
+                }
             val cache = lock.withLock { tunnelTickets.getOrPut(p.routeKey) { io.kuicksilver.tls.SessionCache() } }
             val tunnelConfig =
                 endpointConfig
