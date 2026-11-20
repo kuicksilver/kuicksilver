@@ -2739,8 +2739,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   used either, while one whose system refuses probe mode now gets DO mode, `KslUdpSocket.DF_DO`). On a socket with no DF
   for one address family (a dual-stack socket's IPv4 or IPv6 half, IPv6 on an AF_INET socket), datagrams to that family
   are not sent: that path closes, or on the active path the connection ends with a CONNECTION_CLOSE of NO_VIABLE_PATH
-  caused by the refusal; a server drops client Initials from that family before any state, and
-  `QuicEndpoint.dontFragmentUnavailable` names it. `ConnectionLost.NoViablePath` can now carry a cause. The Ktor client
+  caused by the refusal (such datagrams count in the new `EndpointStats.datagramsSkippedNoDf`, not in `datagramsSent`); a
+  server drops datagrams from that family before any state or stateless answer, also with `loops > 1`, and
+  `QuicEndpoint.noDontFragmentFamily` names it. `ConnectionLost.NoViablePath` can now carry a cause. The Ktor client
   sends such calls over TCP at once, with the new `FallbackReason.QuicUnavailable`; a server endpoint does not start; the
   Ktor server serves HTTP/1.1 and HTTP/2 only ("HTTP/3 is not served on port ..."), or HTTP/3 for one family without
   Alt-Svc for the other, and reports it in the new `KuicksilverApplicationEngine.http3Status`. There is no opt-out.

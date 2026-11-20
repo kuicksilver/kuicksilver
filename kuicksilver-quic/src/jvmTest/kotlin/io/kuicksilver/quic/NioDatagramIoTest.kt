@@ -284,6 +284,30 @@ class NioDatagramIoTest {
         assertTrue(NioDatagramIo.dfUnavailableDetail(DF_INET6, false).contains("refused both"))
     }
 
+    /**
+     * A failed probe (Android: the descriptor could not be duplicated, out of file descriptors) is no lasting lack of DF: the
+     * socket does not open, with `permanent = false`, so a CONNECT-UDP proxy does not remember the family; no means at all
+     * (no ksl below JDK 19) is permanent.
+     */
+    @Test fun aFailedProbeIsNotAPermanentLackOfDf() =
+        runBlocking {
+            assertFalse(NioDatagramIo.dfLackPermanent(DF_PROBE_FAILED))
+            assertTrue(NioDatagramIo.dfLackPermanent(-1) && NioDatagramIo.dfLackPermanent(0) && NioDatagramIo.dfLackPermanent(DF_INET6))
+            assertTrue("file descriptors" in NioDatagramIo.dfUnavailableDetail(DF_PROBE_FAILED, false))
+            for ((bits, permanent) in listOf(DF_PROBE_FAILED to false, -1 to true)) {
+                NioDatagramIo.dfForTest = { bits to false }
+                try {
+                    val e =
+                        assertFailsWith<QuicException.DontFragmentUnavailable> {
+                            DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
+                        }
+                    assertEquals(permanent, e.permanent, "bits $bits")
+                } finally {
+                    NioDatagramIo.dfForTest = null
+                }
+            }
+        }
+
     /** No DF on any traffic: the socket does not open, with the typed error. */
     @Test fun negative_aSocketWithoutDfDoesNotOpen() =
         runBlocking {

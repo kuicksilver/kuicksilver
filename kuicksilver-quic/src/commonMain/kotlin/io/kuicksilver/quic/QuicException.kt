@@ -270,22 +270,28 @@ public sealed class QuicException(
      * layer. In IPv4, the Don't Fragment (DF) bit MUST be set if possible"), so QUIC is not used on it: [DatagramIo.open] and
      * [QuicEndpoint.bind] throw it where no traffic of the socket could get DF (the JVM without the `ksl` native library
      * below JDK 19, which has no `IP_DONTFRAGMENT`; Android or a system refusing both DF modes; the Kotlin/Native portable
-     * socket). Where only one address family has no DF ([QuicEndpoint.dontFragmentUnavailable]), nothing is sent to it: the
+     * socket). Where only one address family has no DF ([QuicEndpoint.noDontFragmentFamily]), nothing is sent to it: the
      * path closes, or on the active path the connection ends with [ConnectionLost.TransportClosed] (NO_VIABLE_PATH) caused by
      * it, and a server drops that family's Initials. The HTTP/3 client of kuicksilver-ktor-client falls back to TCP.
      *
-     * @property family the address family without DF; null: the whole socket.
+     * @property family the address family without DF; null when no traffic of the socket can have DF (the whole socket is
+     *   refused), never "unknown".
      * @property detail why DF cannot be set.
+     * @property permanent whether it holds for as long as the process runs (the JVM without `ksl` below JDK 19, a system that
+     *   refuses both DF modes), so a caller may remember it; false where a later attempt may succeed (the accelerated socket
+     *   could not open this time, for example out of descriptors, and the portable one has no DF).
      */
+    @ExperimentalKuicksilverApi
     public class DontFragmentUnavailable(
         public val family: IpFamily?,
         public val detail: String,
+        public val permanent: Boolean = true,
     ) : QuicException(
             "QUIC not used: the UDP socket cannot set Don't Fragment (RFC 9000 section 14) " +
                 "${if (family == null) "on any traffic" else "for ${family.label} destinations"}: $detail",
         ) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail)
+        override fun createCopy(): DontFragmentUnavailable = DontFragmentUnavailable(family, detail, permanent)
     }
 
     /** The endpoint is closing: `connect` and `accept` after [QuicEndpoint.close] throw it. */
@@ -295,7 +301,8 @@ public sealed class QuicException(
     }
 }
 
-/** An IP address family, as [QuicException.DontFragmentUnavailable] names it. */
+/** An IP address family, as [QuicException.DontFragmentUnavailable] and [QuicEndpoint.noDontFragmentFamily] name it. */
+@ExperimentalKuicksilverApi
 public enum class IpFamily(
     /** "IPv4" or "IPv6". */
     public val label: String,

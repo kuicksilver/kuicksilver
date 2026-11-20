@@ -15,6 +15,7 @@ internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): Da
     throw QuicException.DontFragmentUnavailable(
         null,
         "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
+        permanent = false, // the accelerated socket may open next time (a refusal under load, out of descriptors)
     )
 
 internal actual fun printWarning(line: String) {

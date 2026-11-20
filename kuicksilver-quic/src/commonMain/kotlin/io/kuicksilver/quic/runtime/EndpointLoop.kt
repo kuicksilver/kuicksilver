@@ -199,7 +199,7 @@ internal class EndpointLoop private constructor(
     override val localAddress: InetSocketAddress get() = io.localAddress
 
     @ExperimentalKuicksilverApi
-    override val dontFragmentUnavailable: io.kuicksilver.quic.IpFamily? get() = core.noDfFamily
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = core.noDfFamily
 
     /** A datagram another loop of the group hands over: [asReceived] ones are treated as if they arrived on this socket (test hook), the rest belong to a connection here. */
     internal class Forwarded(

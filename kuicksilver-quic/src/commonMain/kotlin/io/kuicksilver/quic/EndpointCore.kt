@@ -741,6 +741,12 @@ public class EndpointCore internal constructor(
             deliver(it, data, length, from, ecn, now, socket)
             return it
         }
+        // no DF towards that family (RFC 9000 section 14): nothing could answer it, so no state and no stateless answer of any
+        // kind (Stateless Reset, Retry, Version Negotiation, a refusal) is queued or spends a limiter's budget
+        if (noDfFamily != null && ipFamilyOf(from) == noDfFamily) {
+            droppedStateless++
+            return null
+        }
         // the preferred socket serves connections only: no new connection, no stateless answer (RFC 9000 section 9.6); but a Stateless
         // Reset for a connection there is compared first, as anywhere ("the comparison MUST be performed when the first packet in an
         // incoming datagram either cannot be associated with a connection or cannot be decrypted", section 10.3.1)
@@ -805,11 +811,6 @@ public class EndpointCore internal constructor(
                 droppedStateless++
                 return null
             }
-        // no DF towards that family: nothing could answer this client (RFC 9000 section 14), so no state, Retry or VN for it
-        if (noDfFamily != null && ipFamilyOf(from) == noDfFamily) {
-            droppedStateless++
-            return null
-        }
         if (hv.type == PacketType.ZeroRtt && serverEarly != null && !hv.unsupportedVersion) {
             bufferEarly(data, length, from, ecn, now)
             return null

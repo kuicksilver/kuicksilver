@@ -97,6 +97,7 @@ private inline fun EndpointLoop.sendOrLoseWith(
     ctx: CoroutineContext,
     send: (full: Boolean) -> Int,
 ) {
+    var counted = 0
     val lost =
         if (isDefunct(target)) {
             batch.count // a lost socket is not written again: its paths wait for a move to a new one
@@ -123,17 +124,9 @@ private inline fun EndpointLoop.sendOrLoseWith(
                         }
                     }
                 }
-                // slots the socket skipped for want of DF towards their family (no QUIC without DF): their path fails
-                if (target is DfFamilyRestricted) {
-                    for (to in target.takeDfRefusals()) {
-                        val family = ipFamilyOf(to)
-                        val e =
-                            QuicException.DontFragmentUnavailable(family, "this socket has no DF for ${family?.label ?: to}")
-                        rt?.onDontFragmentUnavailable(e, target, to)
-                    }
-                }
                 if (sent < batch.count && !full) fullThisFlush.add(target)
                 observer.datagramsSent += sent
+                counted = sent
                 batch.count - sent
             } catch (e: CancellationException) {
                 ctx.ensureActive() // else a DatagramIo's own failure: a lost batch
@@ -156,9 +149,33 @@ private inline fun EndpointLoop.sendOrLoseWith(
             } catch (e: Throwable) {
                 sendFailures++
                 batch.count
+            } finally {
+                // slots the socket skipped for want of DF towards their family (no QUIC without DF): not sent, and their path
+                // fails (it closes, or the connection ends, so their packets leave loss and congestion state with it). Taken
+                // even when the send threw part-way through the batch: they are this batch's, never the next one's
+                val skipped = takeDfRefusals(target, rt)
+                if (skipped > 0) {
+                    observer.datagramsSkippedNoDf += skipped
+                    observer.datagramsSent -= minOf(skipped, counted)
+                }
             }
         }
     if (lost > 0) lose(lost, rt)
+}
+
+/** The destinations [target] skipped for want of DF in its latest send, reported to [rt]; returns how many. */
+private fun takeDfRefusals(
+    target: DatagramIo,
+    rt: ConnectionRuntime?,
+): Int {
+    if (target !is DfFamilyRestricted) return 0
+    val refused = target.takeDfRefusals()
+    for (to in refused) {
+        val family = ipFamilyOf(to)
+        val e = QuicException.DontFragmentUnavailable(family, "this socket has no DF for ${family?.label ?: to}")
+        rt?.onDontFragmentUnavailable(e, target, to)
+    }
+    return refused.size
 }
 
 /**

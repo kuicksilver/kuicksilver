@@ -26,8 +26,10 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EmsgsizeReports
+import io.kuicksilver.quic.IpFamily
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PacketTooBigSender
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.UnreachableReports
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.isRefusedAsTooLarge
@@ -319,23 +321,56 @@ internal class UdpProxyImpl(
             } else {
                 emptyList()
             }
-        val address =
+        val allowed =
             candidates
                 .map(::unmapped)
-                .firstOrNull { a ->
-                    own.none { it.contentEquals(canonical(a)) } && config.targetFilter.allows(target.host.text, a, target.port)
+                .filter { a -> own.none { it.contentEquals(canonical(a)) } && config.targetFilter.allows(target.host.text, a, target.port) }
+                .ifEmpty { return refuse(request, answered, 403, "destination_ip_prohibited") }
+        // RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"; a socket without DF towards
+        // the target's family could (after an ICMP message lowered its cached path MTU): no DF, no tunnel. So the candidates
+        // of a family with DF come first (in their order), a family found without DF (cached for this proxy) is skipped, and
+        // only when no candidate of a family with DF is left is the request refused
+        var address: ByteArray? = null
+        var io: OnceClosed? = null
+        val lacking = LinkedHashSet<IpFamily>() // the families found without DF for this request, for the refusal's details
+        for (a in allowed.sortedBy { if (familyOf(it) in noDfFamilies) 1 else 0 }) {
+            val family = familyOf(a)
+            if (family in noDfFamilies) {
+                lacking += family
+                continue
+            }
+            if (family in lacking) continue // already found without DF in this request (not cached: maybe transient)
+            val opened =
+                try {
+                    OnceClosed(config.socketFactory(InetSocketAddress(if (family == IpFamily.V4) "0.0.0.0" else "::", 0)))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: QuicException.DontFragmentUnavailable) {
+                    // remembered only when it holds for good (no ksl below JDK 19, both DF modes refused); a refusal that may
+                    // pass next time (the accelerated socket could not open, out of descriptors) fails this request only
+                    if (e.permanent) learnNoDf(family)
+                    lacking += family
+                    continue
+                } catch (_: Throwable) {
+                    return refuse(request, answered, 502, "proxy_internal_error")
                 }
-                ?: return refuse(request, answered, 403, "destination_ip_prohibited")
+            // only the family the socket was opened for counts: an AF_INET socket reports IPv6 as without DF because it
+            // cannot reach IPv6 at all, which says nothing about an IPv6 socket
+            if (opened.io.noDontFragmentFamily == family) {
+                learnNoDf(family)
+                lacking += family
+                opened.close()
+                continue
+            }
+            address = a
+            io = opened
+            break
+        }
+        if (address == null || io == null) {
+            return refuseNoDf(request, answered, lacking.joinToString(" or ") { it.label })
+        }
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)
-        val io =
-            try {
-                OnceClosed(config.socketFactory(InetSocketAddress(if (v4) "0.0.0.0" else "::", 0)))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                return refuse(request, answered, 502, "proxy_internal_error")
-            }
         try {
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
             io.io.disableEcnMarking()
@@ -388,15 +423,53 @@ internal class UdpProxyImpl(
         }
     }
 
-    /** Answers [status] with `proxy-status: <name>; error=<error>` when [error] is given (RFC 9209 section 2). */
+    /**
+     * The address families this proxy's target sockets have no Don't Fragment for, as learned from the sockets it opened
+     * (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's [noDontFragmentFamily]): a host's DF
+     * support does not change while it runs, so later requests skip those candidates without opening a socket.
+     */
+    @kotlin.concurrent.Volatile
+    private var noDfFamilies: Set<IpFamily> = emptySet()
+
+    private fun learnNoDf(family: IpFamily) {
+        if (family !in noDfFamilies) noDfFamilies = noDfFamilies + family
+    }
+
+    /** The family of an address of 4 or 16 bytes (an IPv4-mapped one is already unmapped to its 4). */
+    private fun familyOf(a: ByteArray): IpFamily = if (a.size == 4) IpFamily.V4 else IpFamily.V6
+
+    /**
+     * The target's address family has no Don't Fragment on this host, so a tunnel could fragment (RFC 9298 section 3.1:
+     * "UDP proxies MUST NOT introduce fragmentation at the IP layer"): 500 with `proxy_configuration_error` (RFC 9209
+     * section 2.3.24: "The intermediary encountered an error regarding its configuration", recommended status 500) and the
+     * reason in `details` (section 2.1.6).
+     */
+    private suspend fun refuseNoDf(
+        request: Http3ServerRequest,
+        answered: (Int) -> Unit,
+        family: String,
+    ) {
+        refuse(request, answered, 500, "proxy_configuration_error", "no Don't Fragment for $family targets on this host")
+    }
+
+    /**
+     * Answers [status] with `proxy-status: <name>; error=<error>` when [error] is given (RFC 9209 section 2), and
+     * `; details="<details>"` (a quoted string, section 2.1.6) when [details] is.
+     */
     private suspend fun refuse(
         request: Http3ServerRequest,
         answered: (Int) -> Unit,
         status: Int,
         error: String?,
+        details: String? = null,
     ) {
         count(refused)
-        val fields = if (error == null) emptyList() else listOf(PROXY_STATUS to "${config.proxyName}; error=$error")
+        val fields =
+            if (error == null) {
+                emptyList()
+            } else {
+                listOf(PROXY_STATUS to "${config.proxyName}; error=$error" + (details?.let { "; details=\"$it\"" } ?: ""))
+            }
         try {
             request.respond(status, Http3Headers(fields)).finish()
             answered(status)

@@ -868,6 +868,29 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * No DF towards the peer's address family (RFC 9000 section 14): a Stateless Reset to it is neither queued nor charged to
+     * the reset limiter, as no answer to that family goes out. The positive control answers the same datagram.
+     */
+    @Test fun negative_noStatelessResetToAFamilyWithoutDf() {
+        val control = Pair(crypto = KslQuicCrypto, serverSeed = 7)
+        val p = Pair(crypto = KslQuicCrypto, serverSeed = 7)
+        try {
+            val dcid = serverFormatCid(0)
+            control.feed(control.server, shortTo(dcid, 100), clientAddr)
+            assertEquals(1, control.stateless(control.server).size, "the positive control: a reset")
+            p.server.noDfFamily = io.kuicksilver.quic.IpFamily.V4 // clientAddr is IPv4
+            p.feed(p.server, shortTo(dcid, 100), clientAddr)
+            assertEquals(0, p.stateless(p.server).size, "no reset to a family without DF")
+            assertEquals(0L, p.server.stats.statelessResets)
+            assertEquals(0L, p.server.stats.statelessRateLimited, "no limiter budget spent")
+            assertEquals(1L, p.server.stats.datagramsDroppedStateless)
+        } finally {
+            control.close()
+            p.close()
+        }
+    }
+
     @Test fun tokenNotDerivableFromCidGenerator() {
         val a = Pair(crypto = KslQuicCrypto, serverSeed = 5)
         val b = Pair(crypto = KslQuicCrypto, serverSeed = 5)

@@ -78,6 +78,15 @@ public interface DatagramIo : AutoCloseable {
      */
     public fun disableEcnMarking() {}
 
+    /**
+     * The address family this socket cannot set Don't Fragment for, so nothing of it may go there (no DF, no QUIC: RFC 9000
+     * section 14; no DF, no CONNECT-UDP tunnel: RFC 9298 section 3.1), or null when it has DF for every family it reaches: a
+     * dual-stack portable socket whose IPv4 or IPv6 half has none, an AF_INET socket (IPv6). A socket without DF at all is
+     * never opened ([open] throws [QuicException.DontFragmentUnavailable]). A custom socket overrides it where it applies.
+     */
+    @ExperimentalKuicksilverApi
+    public val noDontFragmentFamily: IpFamily? get() = null
+
     /** Holds [open], the platform's socket factory. */
     public companion object {
         /**

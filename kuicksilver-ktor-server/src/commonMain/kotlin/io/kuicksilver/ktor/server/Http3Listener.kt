@@ -161,7 +161,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
     with(scope) {
         h3Endpoints += endpoint
         h3Ports += port
-        val noDf = endpoint.dontFragmentUnavailable
+        val noDf = endpoint.noDontFragmentFamily
         if (noDf != null) {
             h3NoDfFamily[port] = noDf
             environment.log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")

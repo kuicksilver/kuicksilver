@@ -11,11 +11,14 @@ internal const val DF_INET6 = 4
 internal const val DF_V4_DO = 8
 internal const val DF_V6_DO = 16
 
+/** [dfProbe]: the probe itself failed (Android: the descriptor could not be duplicated, out of file descriptors); may pass later. */
+internal const val DF_PROBE_FAILED = -2
+
 /**
  * DF on every datagram of the open channel [ch], which the JDK cannot put in probe mode: per half (IPv4, and the IPv6 half of
  * an AF_INET6 socket) probe mode (`IP_PMTUDISC_PROBE` / `IPV6_PMTUDISC_PROBE`) where the system takes it, else DO mode. The
  * `DF_*` bits of the result; 0 where nothing was set (Apple: no modes); -1 when there is no means here (the JVM without
- * `ksl`, a runtime without the channel's descriptor). Never throws.
+ * `ksl`, a runtime without the channel's descriptor); [DF_PROBE_FAILED] when the probe itself failed. Never throws.
  */
 internal expect fun dfProbe(ch: DatagramChannel): Int
 

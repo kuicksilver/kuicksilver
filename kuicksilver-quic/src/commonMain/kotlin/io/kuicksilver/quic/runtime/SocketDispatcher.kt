@@ -8,6 +8,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DfFamilyRestricted
 import io.kuicksilver.quic.DirectReceive
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.IoCapabilities
@@ -196,7 +197,8 @@ internal open class LoopInbox(
 ) : DatagramIo,
     DirectReceive,
     QueuedReceive,
-    PacketTooBigSource {
+    PacketTooBigSource,
+    DfFamilyRestricted {
     private val size = SocketDispatcher.RING
     private val data: Array<ByteArray> = Array(size) { ByteArray(EndpointLoop.SLOT_SIZE) }
     private val lengths = IntArray(size)
@@ -354,6 +356,13 @@ internal open class LoopInbox(
 
     override fun disableEcnMarking() = sender.disableEcnMarking()
 
+    // the shared socket's address family without DF and this loop's skipped slots, through its sender
+    override val noDfFamily: io.kuicksilver.quic.IpFamily? get() = (sender as? DfFamilyRestricted)?.noDfFamily
+
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = sender.noDontFragmentFamily
+
+    override fun takeDfRefusals(): List<InetSocketAddress> = (sender as? DfFamilyRestricted)?.takeDfRefusals() ?: emptyList()
+
     /** This loop is done with the socket: its sender closes, and the last inbox to close closes the socket. */
     override fun close() {
         if (!closed.compareAndSet(0, 1)) return
@@ -388,19 +397,47 @@ internal class AcceleratedLoopInbox(
 internal class SerializedSender(
     private val io: DatagramIo,
     private val lock: Mutex,
-) : DatagramIo {
+) : DatagramIo,
+    DfFamilyRestricted {
     override val localAddress: InetSocketAddress get() = io.localAddress
     override val capabilities: StateFlow<IoCapabilities> get() = io.capabilities
 
     override suspend fun receive(into: PacketBatch): Int = throw UnsupportedOperationException("a sender does not receive")
 
-    override suspend fun send(batch: PacketBatch): Int = lock.withLock { io.send(batch) }
+    /** This loop's slots the shared socket skipped for want of DF, taken under the lock so another loop's are not mixed in. */
+    private val refused = ArrayList<InetSocketAddress>(2)
+
+    override val noDfFamily: io.kuicksilver.quic.IpFamily? get() = (io as? DfFamilyRestricted)?.noDfFamily
+
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = io.noDontFragmentFamily
+
+    override fun takeDfRefusals(): List<InetSocketAddress> {
+        if (refused.isEmpty()) return emptyList()
+        val out = refused.toList()
+        refused.clear()
+        return out
+    }
+
+    private fun collectRefusals() {
+        (io as? DfFamilyRestricted)?.let { refused += it.takeDfRefusals() }
+    }
+
+    // the refusals are collected even when the send throws part-way through a batch: they belong to this loop's batch
+    override suspend fun send(batch: PacketBatch): Int =
+        lock.withLock {
+            try {
+                io.send(batch)
+            } finally {
+                collectRefusals()
+            }
+        }
 
     override fun trySend(batch: PacketBatch): Int {
         if (!lock.tryLock()) return 0
         try {
             return io.trySend(batch)
         } finally {
+            collectRefusals()
             lock.unlock()
         }
     }

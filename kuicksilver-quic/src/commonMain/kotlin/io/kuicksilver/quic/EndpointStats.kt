@@ -161,6 +161,13 @@ public class EndpointStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val datagramsDispatchDropped: Long = 0,
+    /**
+     * Datagrams not sent because the socket cannot set Don't Fragment for their destination's address family (no DF, no
+     * QUIC: RFC 9000 section 14; [QuicEndpoint.noDontFragmentFamily]); not counted in [datagramsSent]. Their path closes, or
+     * their connection ends, at once, so their packets leave loss and congestion state with it.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val datagramsSkippedNoDf: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -207,6 +214,7 @@ public class EndpointStats internal constructor(
             loadBalancerReservationFailures + o.loadBalancerReservationFailures,
             loadBalancerNoncesWasted + o.loadBalancerNoncesWasted,
             datagramsDispatchDropped + o.datagramsDispatchDropped,
+            datagramsSkippedNoDf + o.datagramsSkippedNoDf,
         )
 
     /** For logs. */
@@ -228,5 +236,6 @@ public class EndpointStats internal constructor(
             "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
             "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures, " +
             "loadBalancerNoncesExhausted=$loadBalancerNoncesExhausted, loadBalancerReservationFailures=$loadBalancerReservationFailures, " +
-            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted, datagramsDispatchDropped=$datagramsDispatchDropped)"
+            "loadBalancerNoncesWasted=$loadBalancerNoncesWasted, datagramsDispatchDropped=$datagramsDispatchDropped, " +
+            "datagramsSkippedNoDf=$datagramsSkippedNoDf)"
 }
