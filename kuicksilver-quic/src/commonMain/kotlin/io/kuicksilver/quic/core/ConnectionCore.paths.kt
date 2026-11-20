@@ -137,7 +137,14 @@ internal fun ConnectionCore.acceptPacketTooBig(
  */
 internal fun ConnectionCore.newPmtud(start: Int): Pmtud {
     val upper = pmtudUpperBound()
-    return Pmtud(upperBound = upper, start = minOf(start, upper), sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
+    return Pmtud(
+        upperBound = upper,
+        start = minOf(start, upper),
+        sentAfterPn = loss.space(SpaceId.Application).nextPn - 1,
+        // a search made before the handshake was confirmed (the connection's first) begins with its first application data after
+        // that (RFC 8899 section 4.3, Pmtud.waitsForData); one replacing a search later begins at once
+        waitForData = state != io.kuicksilver.quic.ConnectionState.Confirmed,
+    )
 }
 
 /** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */

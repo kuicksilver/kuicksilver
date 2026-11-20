@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -491,13 +492,24 @@ class DispatchedGroupTest {
                 try {
                     val accepted = async { g.accept() }
                     val c = ep.connect(serverAddr, clientConfig)
-                    val s = (accepted.await() as ConnectionRuntime).core
+                    val sc = accepted.await()
+                    val s = (sc as ConnectionRuntime).core
                     val st = c.openBidi()
+                    // the server's search begins with its own application data (RFC 8899 section 4.3, Pmtud.waitsForData): it sends,
+                    // and the client reads what it sends
+                    val drain =
+                        async {
+                            val r = c.acceptStream()
+                            val b = ByteArray(65536)
+                            while (r.input.readAvailable(b, 0, b.size) >= 0) yield()
+                        }
+                    val sst = sc.openBidi()
                     while (s.stats.pathMtu < 1400) {
-                        st.output.writeFully(ByteArray(1000))
-                        st.output.flush()
+                        sst.output.writeFully(ByteArray(1000))
+                        sst.output.flush()
                         yield()
                     }
+                    drain.cancel()
                     // the start of a 1-RTT datagram the server sent the client: first byte, the client's ID, then anything
                     val quote = byteArrayOf(0x43) + s.remoteCid.toByteArray() + ByteArray(24) { 9 }
                     io.queued.trySend(Triple(quote, clientIo.localAddress, 1328))

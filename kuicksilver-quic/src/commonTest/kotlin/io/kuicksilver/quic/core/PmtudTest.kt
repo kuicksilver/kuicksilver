@@ -93,6 +93,27 @@ class PmtudTest {
         }
     }
 
+    /**
+     * RFC 8899 sections 4.3 and 5.1.1: "A PL MAY inhibit sending probe packets when no application data has been sent since the
+     * previous probe packet". A connection's first search begins with its first application data after the handshake was confirmed:
+     * a client that only downloads, or idles or closes after its handshake, sends no full-size probe (the interop runner's zerortt
+     * case counted three of them, 3.8 KB, against the client's 1-RTT budget, int37). The data that follows begins the search, which
+     * still raises the size, and the server that sends the download searches on its own.
+     */
+    @Test fun negative_noProbeBeforeApplicationDataAfterConfirmation() {
+        val (p, c) = pair()
+        p.use { _ ->
+            assertTrue(!p.runUntil(5.seconds) { probesTo(p).isNotEmpty() }, "an idle client probed: ${probesTo(p)}")
+            val s = p.server.connections().single()
+            download(p, s) // the client only acknowledges
+            assertTrue(probesTo(p).isEmpty(), "a downloading client probed: ${probesTo(p)}")
+            assertEquals(1200, c.stats.pathMtu)
+            assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu == 1452 }, "the sender searched: server mtu ${s.stats.pathMtu}")
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "its data began the client's search: mtu ${c.stats.pathMtu}")
+        }
+    }
+
     /** The client sends a little on a new stream, from wherever [EndpointPair.clientSource] now says, until the server has it. */
     private fun clientSends(
         p: EndpointPair,

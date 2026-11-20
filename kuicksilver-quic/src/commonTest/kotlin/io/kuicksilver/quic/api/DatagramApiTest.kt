@@ -373,6 +373,9 @@ class DatagramApiTest {
                 withTimeout(60.seconds) {
                     // review focus 4: the path MTU shrinks under a queue of large datagrams; they can no longer be sent and are dropped instead of blocking the queue
                     val (c, s) = p.connect()
+                    // a connection's first search begins with its first application data after confirmation (RFC 8899 section 4.3)
+                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(byteArrayOf(0)))
+                    assertContentEquals(byteArrayOf(0), s.datagrams.first().data)
                     withTimeoutOrNull(20.seconds) {
                         while (c.maxDatagramSize.value <
                             1380

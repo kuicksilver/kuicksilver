@@ -658,7 +658,8 @@ class KslDatagramIoTest {
                         assertEquals(EcnState.Capable, s.stats.ecnState)
                     }
                     assertEquals(1452, c.stats.pathMtu, "PMTUD reached the loopback ceiling")
-                    assertEquals(1452, s.stats.pathMtu)
+                    // the server only acknowledged: its search waits for application data of its own (RFC 8899 section 4.3)
+                    assertEquals(1200, s.stats.pathMtu, "a receiver that only acknowledges sends no probe")
                     c.close()
                     s.close()
                 }

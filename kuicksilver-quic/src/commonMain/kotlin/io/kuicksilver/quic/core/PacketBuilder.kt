@@ -80,7 +80,13 @@ internal class PacketBuilder(
             val p = inDatagram[i]
             p.datagramSize = n
             // what a Packet Too Big about this path may claim was too large is the datagram, not its largest packet
-            c.paths.byId(io.kuicksilver.quic.PathId(p.pathId))?.let { if (n > it.largestSent) it.largestSent = n }
+            c.paths.byId(io.kuicksilver.quic.PathId(p.pathId))?.let {
+                if (n > it.largestSent) it.largestSent = n
+                // the first application data after confirmation begins the search (Pmtud.waitsForData, RFC 8899 section 4.3)
+                if (c.state == ConnectionState.Confirmed && !p.zeroRtt && (p.frames.streamCount > 0 || p.frames.dgCount > 0)) {
+                    it.pmtud?.onApplicationDataSent()
+                }
+            }
         }
         inDatagram.clear()
         datagramSeq++
@@ -207,8 +213,8 @@ internal class PacketBuilder(
         if (count < out.capacity && c.writeKeys[3] != null && c.closeFrame == null && c.state == ConnectionState.Confirmed &&
             c.path.state != PathState.Validating
         ) {
-            c.path.pmtud?.let { m ->
-                // no PMTU probes to an address under validation
+            c.path.pmtud?.takeUnless { it.waitsForData }?.let { m ->
+                // no PMTU probes to an address under validation, nor before application data went out (Pmtud.waitsForData)
                 val size = m.nextProbeSize(now, c.pto())
                 val held =
                     if (size <= 0 || size > out.segmentSize) {
