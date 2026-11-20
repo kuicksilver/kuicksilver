@@ -36,6 +36,23 @@ class ResetAckTest {
 
     private fun ack(id: Long) = SentFrames().also { it.addId(SentFrames.ID_RESET_STREAM, id, 0x10c, 0) }
 
+    /**
+     * The reset-tracking sets are made by a reset and let go once it is acknowledged and its stream reported: an idle
+     * connection that once reset a stream holds none of them (IdleFootprintTest varied by up to 912 B with them).
+     */
+    @Test fun negative_theResetSetsAreLetGoOnceEmpty() {
+        val m = manager(TlsRole.Client)
+        assertEquals(0, m.resetSetsHeldForTest())
+        val id = m.open(bidi = false, StreamPriority.Default)
+        m.reset(id, 0x10c)
+        assertEquals(3, m.resetSetsHeldForTest(), "unacknowledged, retired, offered to the runtime")
+        assertEquals(listOf(id), m.takeRetiredAwaitingAck())
+        assertEquals(2, m.resetSetsHeldForTest(), "the offered list goes with its taking")
+        m.onFramesAcked(ack(id))
+        assertTrue(m.finished(id))
+        assertEquals(0, m.resetSetsHeldForTest(), "nothing pending: no set kept")
+    }
+
     @Test fun negative_resetStreamIsFinishedOnlyOnceItsResetIsAcknowledged() {
         val m = manager(TlsRole.Client)
         val id = m.open(bidi = false, StreamPriority.Default)

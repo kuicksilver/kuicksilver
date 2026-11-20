@@ -42,6 +42,9 @@ public object LeakRegistry {
     /** Whether owners are tracked now. */
     public val enabled: Boolean get() = on
 
+    /** Whether [enable] asked for each object's opening stack (kept across [disable]). */
+    public val sitesKept: Boolean get() = withSites
+
     /** Tracks every object opened from now on; [sites]: each keeps the stack that opened it. */
     public fun enable(sites: Boolean) {
         withSites = sites
@@ -49,12 +52,15 @@ public object LeakRegistry {
     }
 
     /**
-     * Stops tracking objects opened from now on (those tracked already stay until closed), until the next [enable]: for a
-     * measurement that must see the library as production runs it, without the completion handlers an owner registers to
-     * [close] its id (the memory benchmark's per-connection inventory).
+     * Stops tracking objects opened from now on (those tracked already stay until closed), until the next [enable]: for
+     * a measurement that must see the library as production runs it, without the completion handlers an owner registers
+     * to [close] its id (the memory benchmark's per-connection inventory). Returns whether tracking was on;
+     * `enable(sitesKept)` turns it back on as it was.
      */
-    public fun disable() {
+    public fun disable(): Boolean {
+        val was = on
         on = false
+        return was
     }
 
     /**
