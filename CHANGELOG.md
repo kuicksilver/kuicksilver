@@ -1679,7 +1679,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`). The same for HTTP/2: a connection that ended (a connection
   error, a missed health PING, a local failure) while the server still sent DATA waited for its close_notify behind it,
   its read loop already stopped, until the bound (`negative_anH2CloseDoesNotWaitBehindDataNobodyReads`). A closing TLS
-  socket now drops its input the same way, instead of reading it out.
+  socket now drops its input the same way, instead of reading it out. The drop is bounded: past 256 KiB the session
+  stops reading and the connection closes under the rest (the kernel resets it, and the server's writes fail), so a
+  response abandoned or timed out mid-body is not downloaded for as long as the close waits; as first merged it was
+  read at line rate for up to the 1 s bound, and a server could write a whole 1 GiB response nobody read (engine interop's
+  `ClientToNettyH1Test.requestTimeoutMidBody`; `ClientOrderlyCloseTest.negative_anAbandonedLargeResponseIsCutPastTheDropBound`,
+  `negative_aRefusedLargeResponseIsCutPastTheDropBound`).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

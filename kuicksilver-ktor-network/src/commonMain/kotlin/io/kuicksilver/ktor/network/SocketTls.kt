@@ -294,8 +294,9 @@ public class TlsSocket private constructor(
             try {
                 // the application reads no more: its relay ends, and the session's input is cancelled, so that what is still
                 // coming is read and dropped (TlsConnection.cancelInput) and the peer's close_notify is not held behind it
-                // (and the peer's writes behind that) until the bound; a relay attached as the close began fails on the
-                // cancelled input, so nothing reads it alongside the drop
+                // (and the peer's writes behind that) until the bound (past 256 KiB dropped the session stops reading, and
+                // the close comes under the rest); a relay attached as the close began fails on the cancelled input, so
+                // nothing reads it alongside the drop
                 attachedReader?.job?.let {
                     it.cancel()
                     it.join()

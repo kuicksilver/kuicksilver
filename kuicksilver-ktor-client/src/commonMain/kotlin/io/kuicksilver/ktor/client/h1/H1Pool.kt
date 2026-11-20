@@ -125,7 +125,8 @@ internal class H1Connection(
     /**
      * What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). Cancelled (a body
      * abandoned, a timeout), it ends over TLS with [TlsConnection.cancelInput]: the session reads on and drops what still
-     * comes, so an orderly close still gets the server's close_notify instead of closing under its unread data.
+     * comes, so an orderly close still gets the server's close_notify instead of closing under its unread data, up to
+     * `TlsConnection.INPUT_DROP_LIMIT`, 256 KiB; a longer rest is cut, not downloaded.
      */
     val input: HeadLimitedInput =
         if (tls != null) {
@@ -329,7 +330,9 @@ internal class H1Pool(
      * hard. Runs in [closers], never in the caller. With [dropInput] (an HTTP/1.1 connection, which nobody reads once it
      * closes, and an HTTP/2 one, whose read loop has stopped with the connection) what the server still sends is read and dropped ([TlsConnection.cancelInput]): the wait for its close_notify
      * then lasts while it sends, not while nobody reads (a response refused after its head, its body still coming, held
-     * each such close to the bound). The session still reads its records, so a ticket is still taken.
+     * each such close to the bound). The session still reads its records, so a ticket is still taken. Past the session's
+     * drop bound (`TlsConnection.INPUT_DROP_LIMIT`) it stops reading and the close comes under the rest: a response
+     * abandoned mid-body is cut, as it was before the drop, not downloaded for as long as the wait lasts.
      */
     private fun closeOrderly(
         tls: TlsConnection?,

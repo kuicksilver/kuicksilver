@@ -89,6 +89,9 @@ public class TlsConnection private constructor(
 
     /** Set by [cancelInput]: the application reads no more, and the reader pump reads on and drops what it decrypts. */
     @Volatile private var droppingInput = false
+
+    /** The plaintext the reader pump dropped since [cancelInput], up to [INPUT_DROP_LIMIT]; the reader pump's alone. */
+    private var droppedInput = 0L
     private val outputChannel = ByteChannel(autoFlush = true)
     private val verification = Verification(config)
     private var presented: List<Certificate> = emptyList()
@@ -584,14 +587,21 @@ public class TlsConnection private constructor(
         suspend fun deliver() {
             rememberSession()
             if (have == 0) return
-            if (!droppingInput) {
+            var dropped = droppingInput
+            if (!dropped) {
                 try {
                     inputChannel.writeFully(plain, 0, have)
                 } catch (e: Throwable) {
                     // [cancelInput] woke this write: what the application will not read is dropped from now on
                     if (!droppingInput) throw e
                     currentCoroutineContext().ensureActive()
+                    dropped = true
                 }
+            }
+            if (dropped) {
+                droppedInput += have
+                // more than the bound: the rest is not read at all, and the owner's close comes under it ([cancelInput])
+                if (droppedInput > INPUT_DROP_LIMIT) throw InputDropLimitReached()
             }
             have = 0
         }
@@ -703,6 +713,10 @@ public class TlsConnection private constructor(
         ) {
             inputChannel.cancel(e)
             throw e
+        } catch (
+            _: InputDropLimitReached,
+        ) {
+            // the application's input is already cancelled ([cancelInput]); the pump just ends, and with it [shutdown]'s wait
         } catch (
             e: Throwable,
         ) {
@@ -996,8 +1010,14 @@ public class TlsConnection private constructor(
      * ending its reads at once: closing under the peer's unread input would make the kernel reset the connection, which can
      * erase our `close_notify` before the peer reads it.
      *
+     * The drop is bounded: once more than [INPUT_DROP_LIMIT] bytes of plaintext were dropped the reader pump stops reading
+     * the transport at all, which ends [shutdown]'s wait, and the owner's close comes under what is still unread (the kernel
+     * then resets the connection, and the peer's writes fail). A response nobody reads is thus not downloaded for as long as
+     * the close's wait lasts, while a short rest still gets to the peer's `close_notify` (RFC 9846 section 6.1: "Both
+     * parties need not wait to receive a "close_notify" alert before closing their read side of the connection").
+     *
      * The owner must end the session after this, with [shutdown] or [close]: the reader pump keeps reading the transport,
-     * decrypting and dropping, until the peer's `close_notify`, the transport's end or [close], and nothing else stops it.
+     * decrypting and dropping, until the peer's `close_notify`, the transport's end, [close] or the drop bound.
      */
     @InternalKuicksilverApi
     public fun cancelInput(cause: Throwable?) {
@@ -1100,6 +1120,12 @@ public class TlsConnection private constructor(
 
         /** Tests: runs on the handshake's coroutine once its loop ended, still inside the handshake deadline. */
         @Volatile internal var handshakeLoopEndedForTest: (suspend (TlsConnection) -> Unit)? = null
+
+        /**
+         * The most plaintext the reader pump drops after [cancelInput] before it stops reading: 256 KiB, as much as a TLS
+         * socket reads out after a fatal alert and as the Ktor server reads of a request body its handler left unread.
+         */
+        internal const val INPUT_DROP_LIMIT: Long = 256 * 1024
 
         /** Ciphertext the reader pump takes from the transport, and plaintext it gathers, per pass. */
         internal const val READ_CHUNK: Int = 64 * 1024
@@ -1708,3 +1734,6 @@ private class HandshakeTimedOut : kotlinx.io.IOException("no handshake within it
  */
 @InternalKuicksilverApi
 public val Throwable.isHandshakeTimeout: Boolean get() = this is TlsException.Protocol && cause is HandshakeTimedOut
+
+/** Ends the reader pump once it dropped more than [TlsConnection.INPUT_DROP_LIMIT] after [TlsConnection.cancelInput]. */
+private class InputDropLimitReached : Exception("the dropped input passed its bound")
