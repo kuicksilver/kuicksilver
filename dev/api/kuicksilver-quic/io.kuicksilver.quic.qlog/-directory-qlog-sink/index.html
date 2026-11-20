@@ -1,0 +1,211 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>DirectoryQlogSink</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic.qlog/DirectoryQlogSink///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic.qlog</a><span class="delimiter">/</span><span class="current">DirectoryQlogSink</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Directory</span><wbr><span>Qlog</span><wbr><span><span>Sink</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">DirectoryQlogSink</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">directory<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxOpenTraces<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxTotalBytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>logHeaderValues<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator"> = </span><span class="token boolean">false</span></span></span><span class="token punctuation">)</span> : <a href="../../io.kuicksilver.quic/-qlog-sink/index.html">QlogSink</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/qlog/DirectoryQlogSink.kt#L40">source</a>)</span></span></div><p class="paragraph">One <code class="lang-kotlin">&lt;odcid&gt;_&lt;client|server&gt;_&lt;random&gt;.sqlog</code> file per connection inside <code class="lang-kotlin">directory</code> (docs/guide/quic.md, "qlog").</p><p class="paragraph">On a server the original destination connection ID is chosen by the client, so the file handling assumes a hostile name (threat model 3.2): the directory is created owner-only when missing and refused (the trace is not opened, an exception the endpoint logs) when it is a symbolic link, not a directory, owned by another user, or writable by group or others without the sticky bit; each file is created exclusively and never through a link (an existing name, a planted symlink or FIFO, is never truncated, followed or blocked on), with a random suffix so a client reusing another connection's ID gets a file of its own. Two ceilings bound what a flood of connections can write through this sink: at most <a href="max-open-traces.html">maxOpenTraces</a> traces open at once (further connections are not traced), and at most <a href="max-total-bytes.html">maxTotalBytes</a> written over the sink's lifetime (after that, no new trace opens and open ones stop writing). A fixed 64 MiB per connection still bounds each trace. Files are opened and written on the endpoint loop, so a slow disk stalls every connection of that loop: on a busy server wrap the sink in <a href="../-async-qlog-sink/index.html">AsyncQlogSink</a>.</p><h4 class="tableheader">Parameters</h4><div class="table"><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><u><span><span>directory</span></span></u></div></span></div><div><div class="title"><p class="paragraph">where the traces go; created when missing.</p></div></div></div></div></div></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="-1894291327%2FConstructors%2F42191490" anchor-label="DirectoryQlogSink" id="-1894291327%2FConstructors%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-directory-qlog-sink.html"><span>Directory</span><wbr><span>Qlog</span><wbr><span><span>Sink</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1894291327%2FConstructors%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">directory<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">maxOpenTraces<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxTotalBytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token punctuation">, </span></span><span class="parameter ">logHeaderValues<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator"> = </span><span class="token boolean">false</span></span></span><span class="token punctuation">)</span></div><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">directory<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">A sink with the default ceilings: 256 open traces, 1 GiB over its lifetime.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1900191788%2FProperties%2F42191490" anchor-label="logHeaderValues" id="-1900191788%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="log-header-values.html"><span>log</span><wbr><span>Header</span><wbr><span><span>Values</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1900191788%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">val </span><a href="log-header-values.html">logHeaderValues</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">see <a href="../../io.kuicksilver.quic/-qlog-sink/log-header-values.html">QlogSink.logHeaderValues</a>; false (the default) writes field names only.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="875513515%2FProperties%2F42191490" anchor-label="maxOpenTraces" id="875513515%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-open-traces.html"><span>max</span><wbr><span>Open</span><wbr><span><span>Traces</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="875513515%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-open-traces.html">maxOpenTraces</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">traces open at the same time; at least 1 (default 256).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="558729404%2FProperties%2F42191490" anchor-label="maxTotalBytes" id="558729404%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-total-bytes.html"><span>max</span><wbr><span>Total</span><wbr><span><span>Bytes</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="558729404%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-total-bytes.html">maxTotalBytes</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">bytes written by all traces of this sink together; at least 1 (default 1 GiB).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="1499636424%2FFunctions%2F42191490" anchor-label="open" id="1499636424%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="open.html"><span><span>open</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1499636424%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="open.html"><span class="token function">open</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">odcidHex<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">role<span class="token operator">: </span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-role/index.html">TlsRole</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../io.kuicksilver.quic/-qlog-trace/index.html">QlogTrace</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Called on the endpoint loop at a connection's first event, with its original destination connection ID in hex and our <a href="../../io.kuicksilver.quic/-qlog-sink/open.html">role</a>; null skips tracing for that connection, and an exception disables it without touching the connection.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

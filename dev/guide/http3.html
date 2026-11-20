@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP/3 with Kuicksilver - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li class="current"><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="http3-with-kuicksilver">HTTP/3 with Kuicksilver</h1>
+<p><strong>What this page is for.</strong> It explains the HTTP/3 layer on its own, without Ktor: QPACK, requests and responses, endpoints,
+0-RTT, shutdown, priorities, Extended CONNECT, capsules and WebTransport. If you use Ktor, start with <a href="ktor.html">Ktor engines</a>.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Dependency: <code>io.kuicksilver:kuicksilver-http3:0.3.0</code> or newer (it brings <code>kuicksilver-quic</code> and <code>kuicksilver-tls</code>).
+Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#kotlin-version">Kotlin version</a>).</li>
+<li>Platforms: JVM 17 or newer, Android <code>minSdk</code> 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>A server needs a <code>TlsIdentity</code> (certificate chain and private key); a client needs a trust configuration
+(<code>TrustConfig.Platform</code> by default). See <a href="tls.html#configuration">TLS: Configuration</a>.</li>
+</ul>
+<p><strong>Minimal example.</strong> A server that answers requests is <a href="#serving-requests">Serving requests</a>, a client request is
+<a href="#client-requests">Client requests</a>, and both start from <a href="#endpoints-and-connections">Endpoints and connections</a>.</p>
+<p><a id="imports"></a>
+<strong>Imports.</strong> The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. <code>InetSocketAddress</code> is ktor-network's, on every target. Experimental API needs
+<code>@file:OptIn(ExperimentalKuicksilverApi::class)</code> or the module-wide opt-in (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#stability-levels">stability</a>).</p>
+<pre><code class="language-kotlin">// guide:http3:imports
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.writeFully
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.ConnectUdp
+import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.UdpProxy
+import io.kuicksilver.http3.UdpProxyConfig
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.connectUdp
+import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.webTransport
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.io.readString
+</code></pre>
+<p>Kuicksilver's HTTP/3 layer (<code>io.kuicksilver:kuicksilver-http3</code>) implements HTTP/3 (RFC 9114) with QPACK (RFC 9204),
+extensible priorities (RFC 9218), Extended CONNECT (RFC 9220) and HTTP datagrams (RFC 9297) on top of
+<code>kuicksilver-quic</code>. Server push is not implemented. The frame and QPACK codecs are sans-IO (ADR-0004); the connection
+runtime is a set of coroutines over <code>QuicConnection</code> streams. The code blocks below compile and run as
+<code>GuideSamplesTest</code> (<code>kuicksilver-http3/src/jvmTest</code>).</p>
+<h2 id="qpack">QPACK</h2>
+<p>Header compression uses the static table always and the dynamic table only when both sides allow it:</p>
+<ul>
+<li>What we advertise to the peer (<code>Http3Settings.qpackMaxTableCapacity</code>, <code>qpackBlockedStreams</code>) defaults to 0/0, like
+most implementations: the peer's encoder then sends static references and literals only. <code>enableQpackDynamicTable()</code>
+advertises 4096 bytes and 16 blocked streams.</li>
+<li>Our own encoder uses at most <code>encoderMaxTableCapacity</code> (4096 by default) of whatever the peer advertises, and blocks
+at most min(peer's <code>SETTINGS_QPACK_BLOCKED_STREAMS</code>, 100) streams. Without a blocking budget it still inserts
+entries, but references them only once the peer has acknowledged them.</li>
+<li>At most 1000 sections wait for the peer's acknowledgment; above that the encoder sends static references and
+literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.</li>
+<li><code>authorization</code>, <code>proxy-authorization</code>, <code>cookie</code> and <code>set-cookie</code> are never inserted into the dynamic table and are
+sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.</li>
+<li>The 'N' bit (RFC 9204 section 4.5.4, experimental): a received section's <code>Http3Headers.neverIndexed</code> lists the field
+lines that carried it, and <code>headers.withNeverIndexed(&quot;x-api-key&quot;)</code> sends the named fields as literals with it, never
+inserted nor referenced; a received section forwarded as it is keeps the bit (section 7.1.3).</li>
+<li>The decoder rejects, before allocating, integers longer than 62 bits and string literals above a ceiling, and counts
+the decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
+<code>maxFieldSectionSize</code>. In a field section the ceiling is <code>maxFieldSectionSize</code> itself and a longer string makes the
+section too large (431 on the server, <code>FieldSectionTooLarge</code> on the client; the connection lives, RFC 9204 section
+7.4); on the encoder stream it is 64 KiB and a longer string closes the connection with <code>QPACK_ENCODER_STREAM_ERROR</code>.</li>
+<li>An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
+known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).</li>
+<li>A field section that references entries still in flight on the peer's encoder stream waits for them (at most
+<code>qpackBlockedStreams</code> such streams; one more closes the connection with <code>QPACK_DECOMPRESSION_FAILED</code>). If the peer
+resets a stream while it waits, the decoder sends a Stream Cancellation.</li>
+</ul>
+<pre><code class="language-kotlin">// guide:http3:qpack
+val settings = http3Settings { enableQpackDynamicTable() }   // advertise 4096 bytes / 16 blocked streams
+val client = Http3Connection.client(quicConnection, settings)
+</code></pre>
+<h2 id="messages-and-errors">Messages and errors</h2>
+<p>Requests and responses are validated as RFC 9114 sections 4.2-4.3 require. A malformed message (a field name that is
+not a lowercase token, a control character other than tab in a value (CR, LF and NUL anywhere), whitespace at either end of a value, a connection-specific field such
+as <code>transfer-encoding</code>, <code>te</code> other than <code>trailers</code> or <code>te</code> in a response, a missing or duplicated pseudo-header,
+<code>:authority</code> and <code>host</code> that disagree or are not <code>host[:port]</code>, a classic CONNECT without a port, DATA on a response
+to HEAD or with status 204 or 304) is a <em>stream</em> error: the stream is reset with <code>H3_MESSAGE_ERROR</code> and the connection
+keeps serving other requests.</p>
+<p>Failures surface as <code>Http3Exception</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Http3Exception.Protocol(h3Code, initiator, streamId)</code></td>
+<td>an HTTP/3 error code closed the connection (<code>streamId == null</code>) or reset a stream; unknown codes read as <code>H3_NO_ERROR</code></td>
+</tr>
+<tr>
+<td><code>Http3Exception.Qpack(code)</code></td>
+<td>a QPACK error (0x200-0x202)</td>
+</tr>
+<tr>
+<td><code>Http3Exception.RequestNotProcessed(retrySafe)</code></td>
+<td>the server did not process the request (<code>GOAWAY</code>, <code>H3_REQUEST_REJECTED</code>); safe to retry on a new connection</td>
+</tr>
+<tr>
+<td><code>Http3Exception.MessageError(streamId, reason)</code></td>
+<td>the peer's message on this stream was malformed</td>
+</tr>
+<tr>
+<td><code>Http3Exception.FieldSectionTooLarge(streamId, limit)</code></td>
+<td>headers or trailers above <code>maxFieldSectionSize</code> once decoded, or above the peer's limit when sending (<code>streamId</code> -1: no stream was opened)</td>
+</tr>
+<tr>
+<td><code>Http3Exception.Settings(message)</code></td>
+<td>an operation needs a setting the peer did not send (Extended CONNECT)</td>
+</tr>
+<tr>
+<td><code>Http3Exception.ConnectRejected(status, headers)</code></td>
+<td>Extended CONNECT answered with a non-2xx status</td>
+</tr>
+</tbody>
+</table>
+<p>Transport failures stay <code>QuicException</code>; <code>Http3Exception.fromQuic(e)</code> reads an HTTP/3 meaning out of an application
+close or a stream reset. Every exception is copyable (<code>CopyableThrowable</code>), and cancellation is never wrapped.</p>
+<h2 id="endpoints-and-connections">Endpoints and connections</h2>
+<p><code>Http3Endpoint</code> binds a QUIC endpoint and speaks HTTP/3 on it. Its TLS configurations must offer ALPN <code>h3</code>; a server
+closes accepted connections that negotiated anything else. <code>SETTINGS_H3_DATAGRAM</code> follows the transport: it is sent as
+1 only when <code>QuicConfig.maxDatagramFrameSize</code> is not 0.</p>
+<pre><code class="language-kotlin">// guide:http3:endpoints
+val server = Http3Endpoint.bind(
+    InetSocketAddress(&quot;0.0.0.0&quot;, 443),
+    QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls /* alpn = listOf(&quot;h3&quot;) */).build() }.build(),
+)
+val client = Http3Endpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 0))
+val connection = client.connect(serverAddress, clientTls /* alpn = listOf(&quot;h3&quot;) */)
+</code></pre>
+<p><code>Http3Connection.client(quic)</code> and <code>Http3Connection.server(quic)</code> also wrap a <code>QuicConnection</code> you already have. Either
+way the control stream, the two QPACK streams and SETTINGS go out at once, without waiting for the peer's; a reserved
+setting, frame and unidirectional stream are sent too (<code>Http3Settings.grease</code>, on by default) so peers stay tolerant of
+extensions. The peer's SETTINGS are in <code>peerSettings</code> once they arrive. The peer's transport parameters must let us open
+those three unidirectional streams (RFC 9114 section 6.2). <code>server</code> returns at once and opens them in the background, so
+an accept loop never waits on one client; <code>client</code> returns once its SETTINGS went out. A peer that does not allow them
+within three seconds has its connection closed with <code>H3_GENERAL_PROTOCOL_ERROR</code> (<code>client</code> throws it).</p>
+<h2 id="client-requests">Client requests</h2>
+<pre><code class="language-kotlin">// guide:http3:client-request
+val response = connection.request(http3Request(&quot;GET&quot;, &quot;example.com&quot;, &quot;/&quot;))
+println(response.status)
+val body = response.body            // a ByteReadChannel; reading it to the end completes response.trailers
+</code></pre>
+<p>A body ends only with the message: the peer's FIN after its DATA (and trailers, if any), with <code>content-length</code>
+matched. Then <code>isClosedForRead</code> is true and <code>readAvailable</code> returns -1. A body cut short — a reset, a connection that
+ended, a request abandoned, a frame error — fails every read with its cause (<code>Http3Exception</code>, or the
+<code>QuicException.ConnectionLost</code> of the connection) and is not <code>isClosedForRead</code>, so a read loop that stops at -1 never
+takes a truncated body for a complete one; <code>closedCause</code> says why. The same holds for the request body on the server.</p>
+<p>A request body is any <code>ByteReadChannel</code>; it is copied into DATA frames as the transport accepts it, so a slow peer
+slows the producer instead of filling memory. <code>trailers</code> is called after the body ends. Interim responses (1xx,
+103 Early Hints included) reach <code>onInformational</code>, any number of them (RFC 9110 section 15.2); once their fields together
+exceed <code>maxFieldSectionSize</code> (64 KiB) the request fails with <code>H3_EXCESSIVE_LOAD</code>. Both callbacks run on the dispatcher of the coroutine that called <code>request</code>, never on the
+connection's own single-threaded dispatcher, so a slow callback delays only its own request. There is no automatic
+<code>100-continue</code>. <code>Http3Response.cancel()</code> (or cancelling the calling
+coroutine) resets the stream with <code>H3_REQUEST_CANCELLED</code>; the connection keeps serving other requests.</p>
+<h2 id="0-rtt-opt-in-experimental">0-RTT (opt-in, experimental)</h2>
+<p><code>Http3Endpoint.connectEarly</code> resumes a ticket from an earlier connection and returns before the handshake completes
+(ADR-0015). A request goes out in 0-RTT only when it sets <code>allowEarlyData = true</code> <strong>and</strong> is a safe method (GET, HEAD,
+OPTIONS) without a body. Every other request waits for the handshake. If the server answers <code>425 Too Early</code>, the client
+repeats the request once after the handshake (RFC 8470 section 5.2).</p>
+<p>On the server, bind with <code>quicServerConfig(tls) { earlyData = true }</code>. The endpoint binds its SETTINGS into its tickets,
+so changed SETTINGS refuse 0-RTT (RFC 9114 section 7.2.4.2). A request that arrived in 0-RTT before the handshake
+completed is handled by <code>Http3Settings.earlyData</code>:</p>
+<ul>
+<li><code>Http3EarlyDataPolicy.WaitForHandshake()</code> (the default): requests that <code>replayable</code> admits (GET, HEAD and OPTIONS by
+default) run at once with <code>receivedEarly = true</code>. Every other request reaches <code>acceptRequest()</code> only after the
+handshake completed. A replayed flight never completes the handshake, so a replayed unsafe request never runs.</li>
+<li><code>Http3EarlyDataPolicy.Reject425()</code>: non-replayable early requests are answered with <code>425 Too Early</code> and never reach
+the application.</li>
+</ul>
+<blockquote>
+<p><strong>Replay warning.</strong> An early request may be a copy an attacker sent again (RFC 9846 section 8). Handlers of requests
+that run early, those with <code>receivedEarly = true</code>, must have no side effects. Narrow <code>replayable</code> if a GET handler
+of yours changes state.</p>
+</blockquote>
+<h2 id="serving-requests">Serving requests</h2>
+<pre><code class="language-kotlin">// guide:http3:serve
+val connection = server.accept()
+while (true) {
+    val request = connection.acceptRequest()
+    launch {
+        val writer = request.respond(200, Http3Headers.of(&quot;content-type&quot; to &quot;text/plain&quot;))
+        writer.output.writeStringUtf8(&quot;hello&quot;)
+        writer.finish()                  // or finish(Http3Headers.of(&quot;x-checksum&quot; to &quot;...&quot;)) to send trailers
+    }
+}
+</code></pre>
+<p>Malformed requests never reach <code>acceptRequest</code>: their stream is reset with <code>H3_MESSAGE_ERROR</code> (that includes a
+<code>content-length</code> that is not digits or conflicts with another; identical repeats collapse to one field). A response
+field the validator rejects makes <code>respond</code> throw and resets the stream with <code>H3_REQUEST_CANCELLED</code>. A response whose
+<code>output</code> the application cancels (with any cause) is abandoned: the stream is reset with <code>H3_REQUEST_CANCELLED</code> (RFC
+9114 section 4.1.1), never ended with a FIN. A request body the
+application has not finished reading when its response is complete is dropped with <code>STOP_SENDING H3_NO_ERROR</code>; the
+client's upload then ends with <code>QuicException.StreamError.Stopped</code> (code <code>H3_NO_ERROR</code>) in its body channel, and the
+stream is retired as soon as the client's FIN or reset arrives, so unread uploads never exhaust the stream credit. Field
+names and values are octets: a character above U+00FF is rejected rather than truncated. A response to HEAD may carry
+a <code>content-length</code> without a body; the server drops whatever the application writes to a HEAD, 204 or 304 response
+rather than sending DATA the client must treat as malformed. A request whose header
+section is above <code>maxFieldSectionSize</code> once decoded is answered with 431 and <code>STOP_SENDING H3_EXCESSIVE_LOAD</code> by the
+connection itself. The other way round, a section above the peer's <code>SETTINGS_MAX_FIELD_SECTION_SIZE</code> is never sent:
+<code>request</code> fails with <code>FieldSectionTooLarge</code> before it opens a stream, <code>respond</code> and <code>finish(trailers)</code> fail before
+writing; refused trailers also reset the stream with <code>H3_REQUEST_CANCELLED</code>, since the body already went out. Refused request
+trailers reset the stream with <code>H3_REQUEST_CANCELLED</code>, and <code>request</code> (or, once the response began, its body and
+<code>trailers</code>) fails with <code>FieldSectionTooLarge</code>. <code>request.remoteAddress</code> follows the client's path when it migrates.</p>
+<p>Slow and oversized heads (RFC 9114 section 10.5, RFC 9000 section 21.6): a request head must be complete within
+<code>Http3Settings.maxHeaderBlockTime</code> (10 s) of its stream's first byte, or the stream is reset with <code>H3_REQUEST_REJECTED</code>
+before the application sees it (the client may send it again); any other field section (trailers, and on a client each
+response head) must arrive within the same time of its frame header, or the request is cancelled with
+<code>H3_REQUEST_CANCELLED</code> and fails with <code>Http3Exception.Protocol</code>. The time before a response starts is not limited, so
+long polls are unaffected. A connection reads at most 8 × <code>maxFieldSectionSize</code> (512 KiB by default) of HEADERS frames
+at once: each frame's length is reserved before its first byte is taken, and frames that do not fit wait in order with
+their bytes left in the stream's flow-control window, so a peer cannot make the connection hold more by keeping heads
+unfinished. Those bytes still count against the connection's flow-control window; if waiting heads fill it, the others
+wait for it too, at most until <code>maxHeaderBlockTime</code> ends the waiting streams. With WebTransport on, a server's
+WebTransport streams must send their signal and Session ID within the same time, or are reset with
+<code>WT_BUFFERED_STREAM_REJECTED</code>. A peer's unidirectional stream must send its type within it too, or is stopped with
+<code>H3_STREAM_CREATION_ERROR</code>; one stalled stream per control or QPACK stream the peer has not opened yet is spared while
+its bytes so far could still be that stream's type. The Ktor server bounds <code>maxHeaderBlockTime</code> by <code>requestHeaderTimeoutSeconds</code>.</p>
+<h2 id="shutdown-and-goaway">Shutdown and GOAWAY</h2>
+<p><code>connection.goAway()</code> shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
+2^62-4 (&quot;no promises yet&quot;), waits about two round trips so requests already in flight arrive, then announces the first
+request id it will not process; such requests are reset with <code>H3_REQUEST_REJECTED</code>. Once every request below that id
+is answered — including one whose HEADERS were still arriving when GOAWAY went out — and every response has been
+acknowledged by the client's QUIC stack, the connection is closed with <code>H3_NO_ERROR</code>: by the client, which closes an
+idle connection after a GOAWAY once its responses are read (a Kuicksilver client always does; quic-go's server waits for
+exactly that), or by the server three seconds later if the client does not. A client that never closes (some other
+stacks) therefore has three seconds to read a response its QUIC stack has acknowledged; data still unread then is lost
+with the connection. A response handed to QUIC is not yet received, which is why the server waits for the client
+rather than closing a fixed time after the last answer. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
+<code>H3_REQUEST_REJECTED</code> (it was never processed) and no longer holds the connection open. (quic-go has no such
+per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
+new request, with <code>Http3Exception.RequestNotProcessed(retrySafe = true)</code>: they were never processed and can be sent
+again on a new connection (the Ktor engine does that by itself). Once the requests and responses it still has are done
+(bodies read, tunnels ended), a client that received GOAWAY closes the connection with <code>H3_NO_ERROR</code>. A client's own
+<code>goAway()</code> sends GOAWAY(0) and stops issuing requests. <code>goAway()</code> may be called from any thread; it runs on the connection's own dispatcher.</p>
+<p><code>Http3Endpoint.close()</code> ends every connection at once, without GOAWAY, with <code>H3_NO_ERROR</code> (a QUIC endpoint's <code>close()</code>
+sends application code 0, which HTTP/3 does not define); <code>Http3Endpoint.shutdown(grace)</code> is the graceful way.</p>
+<p>A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream; reserved
+GREASE frames and empty DATA frames beyond the first 8 of a stream, the control stream included;
+unidirectional streams that end or are reset before their type, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
+connection with <code>H3_EXCESSIVE_LOAD</code>. <code>Http3Settings.glitchProtection = false</code> turns this off.</p>
+<h2 id="qlog">qlog</h2>
+<p>A connection whose QUIC configuration has a qlog sink (<a href="quic.html#qlog">QUIC: qlog</a>) gets its HTTP/3 events in the same
+trace as the transport's, in the schema of that trace: qlog 0.3 with the events of draft-ietf-quic-qlog-h3-events-04
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/adr/0021-qlog-http3-events.md">ADR-0021</a>). Every frame sent and read is there as <code>http:frame_created</code> or
+<code>http:frame_parsed</code> with its stream, its length and its contents (the fields of a HEADERS frame, the settings of a
+SETTINGS frame, the identifier of a GOAWAY); unidirectional streams as <code>http:stream_type_set</code>; SETTINGS also as
+<code>http:parameters_set</code> and, for a 0-RTT client, the remembered ones as <code>http:parameters_restored</code>; the QPACK dynamic
+tables as <code>qpack:state_updated</code>, and a field section waiting for an insert as <code>qpack:stream_state_updated</code>.
+PRIORITY_UPDATE, which the draft does not define, is a <code>priority_update</code> frame; WebTransport's stream signals are
+<code>unknown</code> frames and stream types with their number (<code>frame_type_value</code>, <code>stream_type_value</code>) and a <code>session_id</code>;
+reserved (GREASE) frames are <code>reserved</code>. The trace's header names <code>[&quot;QUIC&quot;,&quot;HTTP3&quot;]</code> as its <code>protocol_type</code> when the
+connection's ALPN list offers <code>h3</code>; a connection without it gets no HTTP/3 events.</p>
+<p>Header and trailer values are not written: each field has its name and the value <code>[redacted]</code>, except <code>:method</code>,
+<code>:scheme</code>, <code>:status</code> and <code>:protocol</code>. A sink whose <code>logHeaderValues</code> is true (<code>DirectoryQlogSink(dir, maxOpenTraces, maxTotalBytes, logHeaderValues = true)</code>, <em>experimental</em>; <code>AsyncQlogSink</code> asks its delegate) gets every value as sent and
+received, cookies and credentials included: keep such traces as secrets (threat model 3.26). A connection without a
+sink formats no event; with one, events are queued (at most 4096 per connection) and written by the endpoint loop, so a
+sink is still called on the loop only.</p>
+<p>The traces were checked against the draft's definitions offline; open them in a qvis build that reads qlog 0.3.</p>
+<h2 id="priorities">Priorities</h2>
+<p>Requests carry RFC 9218 priorities: <code>Http3Request.priority</code> becomes the <code>priority</code> field when it differs from the
+default (<code>u=3</code>, not incremental), and <code>Http3Response.updatePriority(...)</code> sends a PRIORITY_UPDATE later. The client
+schedules its own request stream with the same signal, whether it came as <code>Http3Request.priority</code> or as a <code>priority</code>
+header. The server acts on the client's signal: <code>Http3ServerRequest.priority</code> follows the field and later updates, and
+the response stream is scheduled with it unless the server picks its own, with <code>respond(status, headers, priority)</code> or
+with a <code>priority</code> field in the response headers, which is merged into the stream's current priority (a parameter it
+leaves out keeps that value, the client's or the defaults; RFC 9218 section 8, as h2o does); the server's choice then
+stays. A CONNECT tunnel without a signal gets RFC 9218's defaults on both sides like any request (section 4: u=3, and
+section 4.2, &quot;The default value of the incremental parameter is false (0)&quot;); a client that wants it to share bandwidth
+with the incremental streams of its urgency signals <code>priority: i</code> (section 11: &quot;A client that issues multiple CONNECT
+requests can set the incremental parameter to true&quot;). The
+transport scheduler serves eight urgency levels in order and shares a level round-robin between incremental streams;
+within a level the incremental and the non-incremental streams take turns frame by frame, and a CONNECT tunnel gets one
+frame in 16 even behind more urgent streams (sections 10, 10.1); the control and QPACK streams always go first. A PRIORITY_UPDATE that arrives before its stream is remembered (up to 32
+of them); one that arrives after the field replaces it.</p>
+<h2 id="extended-connect-and-datagrams">Extended CONNECT and datagrams</h2>
+<p>A server that accepts Extended CONNECT (RFC 9220) sets <code>enableConnectProtocol = true</code>; a client calls <code>connect</code>, which
+waits for the server's SETTINGS and fails with <code>Http3Exception.Settings</code> if the server did not opt in. The result is an
+<code>Http3Stream</code>: a byte stream both ways (WebSocket frames for <code>:protocol = websocket</code>, the protocol's own framing otherwise,
+or capsules, see <a href="#capsules-experimental">Capsules</a>) plus HTTP datagrams bound to the stream (RFC 9297). <code>Http3Stream.headers</code> holds the peer's fields: the CONNECT request's on
+the server, the 2xx response's on the client (for example <code>sec-websocket-protocol</code>, RFC 9220 section 3). Each
+direction ends on its own: closing <code>output</code> sends FIN and leaves <code>input</code> readable until the peer's FIN (a TCP-style
+half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Once the
+CONNECT completed only DATA travels on the stream (RFC 9114 section 4.4): <code>finish(trailers)</code> on a 2xx to CONNECT throws
+<code>IllegalArgumentException</code> and sends nothing, and a CONNECT request with <code>trailers</code> is refused before it goes out.
+<code>:protocol</code> must be a token (RFC 8441 section 4) and is matched in any case (<code>websocket</code>, <code>WebSocket</code>). Datagrams
+follow the stream's state (RFC 9297 section 2.1): the <code>datagrams</code> flow ends when the receive side closes and later
+datagrams for the stream are dropped; once our send side is closed (<code>output</code> closed, or <code>reset</code>) <code>trySendDatagram</code>
+answers <code>Closed</code> and <code>sendDatagram</code> throws <code>IllegalStateException</code>.</p>
+<pre><code class="language-kotlin">// guide:http3:connect (server)
+val request = connection.acceptRequest()
+if (request.protocol == &quot;echo&quot;) {
+    val stream = request.acceptConnect()          // :status 200
+    stream.input.copyTo(stream.output)
+} else request.respond(501).finish()
+
+// guide:http3:connect (client)
+val stream = client.connect(http3Request(&quot;CONNECT&quot;, &quot;example.com&quot;, &quot;/chat&quot;), protocol = &quot;echo&quot;)
+stream.trySendDatagram(byteArrayOf(1, 2, 3))      // Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1
+stream.datagrams.collect { println(it.size) }
+</code></pre>
+<p><code>SETTINGS_H3_DATAGRAM</code> is always sent (its absence would be a fingerprint); it is 1 only when the QUIC connection has
+datagrams on. A peer that announces it without QUIC datagram support keeps its connection (RFC 9297 section 2.1.1 makes
+only a value other than 0 or 1 an error), but no datagram is sent to it: <code>trySendDatagram</code> answers <code>Unsupported</code>.
+Datagrams for streams nobody registered are dropped silently; a datagram whose quarter stream ID cannot be parsed
+closes the connection with <code>H3_DATAGRAM_ERROR</code>. Each stream keeps the newest 32 datagrams nobody has collected.</p>
+<h3 id="capsules-experimental">Capsules (experimental)</h3>
+<p>Protocols such as WebTransport and CONNECT-UDP frame the stream's data as capsules (RFC 9297 section 3): a type, a
+length and a value. <code>Http3Stream.useCapsuleProtocol(config)</code> turns a stream into a <code>CapsuleStream</code>; from then on the
+stream's <code>input</code>, <code>output</code> and <code>datagrams</code> belong to it. Only an Extended CONNECT whose protocol has datagram semantics
+speaks capsules: the Capsule Protocol &quot;only applies to definitions of new HTTP upgrade tokens&quot; (RFC 9297 section 3.2), so
+on a <code>websocket</code> stream or a classic CONNECT <code>useCapsuleProtocol</code> throws <code>IllegalStateException</code>. <code>capsules</code> delivers the capsule types listed in
+<code>CapsuleConfig.knownTypes</code> (64 KiB each at most by default) and skips every other type as its bytes arrive; <code>send</code>
+writes one capsule whole, never interleaved with another; <code>close()</code> writes what is queued and then sends FIN, while
+<code>capsules</code> keeps reading the peer's side.</p>
+<pre><code class="language-kotlin">// guide:http3:capsules (server)
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val config = capsuleConfig { knownTypes = setOf(0x2843) }   // the capsule types the protocol defines
+val tunnel = request.acceptConnect().useCapsuleProtocol(config)
+tunnel.capsules.collect { tunnel.send(it) }                 // echo each capsule until the client's FIN
+tunnel.close()                                              // the queued capsules, then FIN
+
+// guide:http3:capsules (client)
+val capsules = client.connect(http3Request(&quot;CONNECT&quot;, &quot;example.com&quot;, &quot;/chat&quot;), protocol = &quot;echo&quot;).useCapsuleProtocol(config)
+capsules.send(Capsule(0x2843, &quot;hello&quot;.encodeToByteArray()))
+capsules.close()
+val echoed = capsules.capsules.toList()                     // ends at the server's FIN
+</code></pre>
+<p>The stream is checked against RFC 9297 section 3.2 first: a peer message with <code>content-length</code>, <code>content-type</code> or
+<code>transfer-encoding</code>, or a 204, 205 or 206 response, is malformed, so the stream is reset with <code>H3_MESSAGE_ERROR</code> and
+<code>useCapsuleProtocol</code> throws <code>Http3Exception.MessageError</code>. A message that announces capsules with <code>Capsule-Protocol: ?1</code>
+is checked earlier: <code>acceptConnect</code> answers such a request that breaks section 3.2 with 400 (and STOP_SENDING
+<code>H3_MESSAGE_ERROR</code>) instead of 200 and throws <code>MessageError</code>, <code>connect</code> fails the same way on such a 2xx, and our own
+messages are refused with <code>IllegalArgumentException</code> before they are sent, <code>capsule-protocol</code> in a response outside 2xx
+included (section 3.4). The same happens later when the peer's FIN cuts a capsule in
+two or a known capsule is longer than <code>maxCapsuleLength</code>: <code>capsules</code> fails with <code>MessageError</code> instead of ending, so a cut
+stream is never mistaken for a clean end. A protocol whose last capsule closes the stream (WebTransport's
+WT_CLOSE_SESSION) lists it in <code>terminalTypes</code>: the capsule is delivered, and anything after it is malformed the same way.
+The connection lives on in every case.</p>
+<p>Datagrams work as on a plain stream, plus DATAGRAM capsules (RFC 9297 section 3.5): those the peer sends arrive in
+<code>datagrams</code> together with QUIC datagrams, and a DATAGRAM capsule longer than <code>maxDatagramLength</code> is dropped unread. When
+HTTP/3 datagrams are unsupported on the connection (either side's <code>SETTINGS_H3_DATAGRAM</code> is 0), <code>trySendDatagram</code> and
+<code>sendDatagram</code> send a DATAGRAM capsule instead, unless <code>datagramFallback = false</code> (until the peer's SETTINGS arrive,
+datagrams count as unsupported); a datagram too large for a QUIC
+DATAGRAM frame is answered <code>TooLarge</code>, not sent as a capsule. <code>CapsuleProtocol.isEnabled(headers)</code> reads the
+<code>Capsule-Protocol</code> header field (section 3.4) and <code>CapsuleProtocol.Enabled</code> writes it; the stream does not require it.</p>
+<p>Reading pauses while <code>receiveQueue</code> capsules (16) wait for the collector, which holds the peer back through flow control,
+so collect <code>capsules</code> even when only datagrams matter, or list no <code>knownTypes</code>. <code>send</code>, <code>close()</code> and a falling-back
+<code>sendDatagram</code> have no deadline of their own while the peer withholds flow-control credit; cancelling <code>close()</code> leaves
+the writer running in the connection, so bound them with <code>withTimeout</code> and <code>reset</code> the stream when it expires. Options:
+<a href="configuration.html#capsuleconfig-experimental">configuration reference</a>. The Capsule Protocol is only available on HTTP/3;
+HTTP/1.1 and HTTP/2 upgrades are not supported. CONNECT-UDP builds on it: <a href="#connect-udp-experimental">CONNECT-UDP</a>.</p>
+<h2 id="connect-udp-experimental">CONNECT-UDP (experimental)</h2>
+<p>CONNECT-UDP (RFC 9298, &quot;Proxying UDP in HTTP&quot;, the UDP part of MASQUE) tunnels UDP through an HTTP/3 proxy: the client
+sends an Extended CONNECT with <code>:protocol</code> <code>connect-udp</code> whose path names the target, and from then on UDP payloads
+travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
+and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (<code>Upgrade: connect-udp</code>, section 3.2)
+and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024), and the
+Ktor engines do not offer CONNECT-UDP yet.</p>
+<p>A server serves it with a <code>UdpProxy</code>; the HTTP/3 settings need <code>enableConnectProtocol</code> (and <code>h3Datagram</code>, on by
+default). Authenticate the client before <code>serve</code>: &quot;HTTP servers that support UDP proxying ought to restrict its use to
+authenticated users&quot; (section 7).</p>
+<pre><code class="language-kotlin">val proxy = UdpProxy(UdpProxyConfig())   // public targets only; the template /.well-known/masque/udp/{target_host}/{target_port}/
+// guide:http3:connect-udp (proxy)
+val request = connection.acceptRequest()
+if (ConnectUdp.isConnectUdp(request)) proxy.serve(request) else request.respond(404).finish()
+</code></pre>
+<p><code>serve</code> returns when the tunnel ended. It reads <code>target_host</code> and <code>target_port</code> from the request's path with
+<code>UdpProxyConfig.pathTemplate</code> (a path of another shape is answered 404, an invalid value 400: an empty one, a port outside
+1..65535, an IPv6 literal whose colons are not percent-encoded or that carries a zone ID) and wants <code>capsule-protocol: ?1</code> (400 without it; <code>requireCapsuleProtocolField = false</code> accepts clients that leave it out, which the RFC allows). A
+DNS name is resolved before the answer, as section 3.1 requires: a failure is 502 with <code>proxy-status: proxy; error=dns_error</code>, a timeout (<code>resolveTimeout</code>, 5 s) 504 with <code>dns_timeout</code>. Then <code>targetFilter</code> decides
+(<code>UdpTargetFilter.PublicOnly</code> by default): loopback, private, link-local, multicast, broadcast and the other special-purpose
+addresses are refused with 403 and <code>destination_ip_prohibited</code> before any socket exists, an IPv4-mapped, NAT64 or 6to4
+address is judged by its IPv4 address, and the socket sends to the very address the filter allowed, so a later DNS answer
+cannot move it. The proxy's own addresses are refused as well (<code>refuseOwnAddresses</code>: the address the request's
+connection reached, the listener's own); other addresses of the host (NAT aliases) go to <code>and UdpTargetFilter.excluding(...)</code>;
+<code>UdpTargetFilter.addresses</code>, <code>hosts</code> and <code>ports</code> build allow-lists. Only then the socket is opened (<code>socketFactory</code>, on a
+wildcard address of the target's family) and the request answered 200 with <code>capsule-protocol: ?1</code>; nothing goes to the
+target before that answer.</p>
+<p>While the tunnel lasts, datagrams with another Context ID are dropped (section 4), one whose UDP payload exceeds 65527
+bytes aborts the stream with <code>H3_DATAGRAM_ERROR</code> (section 5), a payload above what the link carries unfragmented
+(<code>linkMtu</code> 1500 less 28 for IPv4, 48 for IPv6) is dropped, a DATAGRAM capsule without being buffered, and only datagrams
+from the target's address and port are taken from the socket (section 3.1). Packets to the target are marked Not-ECT
+(section 6.2). A target payload too large for the client's QUIC DATAGRAM frames is dropped rather than sent as a capsule
+(section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
+with <code>CAP_NET_RAW</code>; <code>packetTooBig</code>, on by default; at most 10 a second per target and 100 over the proxy); <code>stats.packetTooBig</code> says whether it
+does (<code>Unavailable</code> without the privilege and on Apple platforms and Windows, where the payload is only dropped). The
+message leaves from the address the target sent to: the default sockets (wildcard, accelerated) report it per datagram,
+and a <code>socketFactory</code> binding one address answers from it; a wildcard portable socket cannot, so it sends none
+(<code>stats.packetTooBigNoSource</code>); one the raw socket does not send (no socket for the family opened, the kernel refused
+it, or the sender ruled out its addresses) is counted in <code>stats.packetTooBigFailed</code>. Against floods (section 7, CWE-400): <code>packetRate</code> (20 000 a second, a burst of <code>packetBurst</code> 2000) per
+tunnel and <code>clientPacketRate</code> (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+its IPv6 /64 (<code>clientIpv6Prefix</code>); <code>unansweredLimit</code> (256 payloads a client sends to a target that has not answered yet,
+across its tunnels); <code>maxTunnels</code> (4096; one more is 503) and <code>maxTunnelsPerClient</code> (64; one more is 429), both with
+<code>connection_limit_reached</code>. A target datagram above <code>linkMtu</code> bytes is dropped whole, never forwarded cut; an ICMP port
+unreachable for the target that quotes a payload the tunnel sent closes the tunnel (Linux and Android; a forged or host
+unreachable is ignored and counted in <code>stats.ignoredUnreachable</code>). The system resolver runs 16 lookups at once at most,
+4 of one client (a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
+with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
+socket fails (the stream is reset and stopped with <code>H3_CONNECT_ERROR</code>); or after <code>idleTimeout</code> without traffic (two
+minutes, the floor section 3.1 sets; FIN and <code>STOP_SENDING H3_NO_ERROR</code>). <code>activeTunnels</code> and <code>stats</code> show what it does.
+Options: <a href="configuration.html#udpproxyconfig-experimental">configuration reference</a>.</p>
+<p>A client opens a tunnel with <code>connectUdp</code> on a connection to the proxy. The template is checked against section 2 when
+it is parsed and the target against section 3 before anything is sent (<code>IllegalArgumentException</code>); an answer other than
+a 2xx fails with <code>Http3Exception.ConnectRejected</code>, whose <code>headers</code> carry the proxy's <code>proxy-status</code>.</p>
+<pre><code class="language-kotlin">// guide:http3:connect-udp (client)
+val template = UdpProxyTemplate.parse(&quot;https://proxy.example/.well-known/masque/udp/{target_host}/{target_port}/&quot;)
+val tunnel = connection.connectUdp(template, &quot;192.0.2.10&quot;, 443)   // an IPv6 target goes as 2001%3Adb8%3A%3A1
+tunnel.send(&quot;hello&quot;.encodeToByteArray())                           // one UDP payload, at most 65527 bytes
+val reply = tunnel.payloads.first()                                 // the target's answers, as they come
+tunnel.close()                                                      // FIN; the proxy closes its socket
+</code></pre>
+<p><code>UdpProxyTemplate.wellKnown(&quot;proxy.example:4443&quot;)</code> is the default template for a proxy known only by host and port.</p>
+<p><strong>Proxied QUIC.</strong> <code>tunnel.asDatagramIo()</code> is the tunnel as a UDP socket for a QUIC endpoint, so a QUIC or HTTP/3
+connection runs end to end through the proxy (TLS to the target, the proxy sees only UDP):</p>
+<pre><code class="language-kotlin">// guide:http3:connect-udp (proxied QUIC)
+val tunnel = connection.connectUdp(template, &quot;example.com&quot;, 443)    // the proxy resolves the name
+val inner = Http3Endpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 0), QuicEndpointConfig.Builder().apply { io = { tunnel.asDatagramIo() } }.build())
+val h3 = inner.connect(tunnel.remoteAddress, tls)                   // tls names example.com
+val response = h3.request(http3Request(&quot;GET&quot;, &quot;example.com&quot;, &quot;/&quot;))
+</code></pre>
+<p>Every datagram the inner endpoint sends goes to the tunnel's one target, and every one it receives is reported from
+<code>tunnel.remoteAddress</code> (the target's literal, or 192.0.2.1 for a name, which the client never resolves). The socket has
+no ECN, GSO or Don't Fragment, so the inner connection keeps to 1200-byte datagrams; those must fit the HTTP datagrams of
+the connection to the proxy, which needs that connection's path MTU above about 1250 bytes: the accelerated socket sets
+Don't Fragment and DPLPMTUD finds it within a few round trips, while over a 1200-byte path the inner handshake times out
+(RFC 9000 section 14 needs 1200-byte datagrams end to end). A server's preferred address is unreachable through a tunnel;
+closing the inner endpoint closes its tunnel.</p>
+<h2 id="webtransport-experimental">WebTransport (experimental)</h2>
+<p>WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is experimental (<code>@ExperimentalKuicksilverApi</code>): sessions,
+their streams and datagrams, close and drain. Both sides set <code>webTransport = true</code> in <code>http3Settings</code> (it needs
+<code>enableConnectProtocol</code> and <code>h3Datagram</code>; <code>Http3Endpoint.bind</code> refuses it when QUIC datagrams are off, and
+<code>Http3Endpoint</code> turns <code>QuicConfig.resetStreamAt</code> on with it). Browsers do not
+speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
+accepts both <code>:protocol</code> tokens, <code>webtransport-h3</code> and <code>webtransport</code>; a client picks the token from the server's
+SETTINGS. A request with either token is <code>isWebTransport</code>; <code>acceptWebTransport</code> answers 200 once the client's SETTINGS
+arrived (ten seconds at most; without them, without a WebTransport setting of the client's own, without HTTP datagrams,
+or, for draft-14 and later, without <code>reset_stream_at</code> on both sides, the request is answered with 400, stopped with
+<code>H3_MESSAGE_ERROR</code>, and <code>acceptWebTransport</code> throws <code>Http3Exception.Settings</code>), and a 4xx from <code>respond</code> refuses the
+session. A client throws <code>Http3Exception.Settings</code> before its CONNECT when the server lacks one of them; draft-02,
+which Chrome and Firefox speak, predates <code>reset_stream_at</code> and goes without it. The draft is the highest both sides
+announce (a client of ours announces draft-16 and draft-02). A peer that announces a newer draft without
+<code>reset_stream_at</code> but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request (<code>:protocol webtransport</code> with <code>sec-webtransport-http3-draft02: 1</code>, which our client then sends): this is our reading of section 7.1
+(&quot;the highest version supported by both endpoints&quot; taken as the highest both can actually run), not something the
+draft says. Its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft, are refused.
+Interop note: Safari speaks draft-14, which needs <code>reset_stream_at</code>; WebKit bugs 303152 and 305006 suggest Safari 26.4
+and later sends it, but that is not verified here (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23">interop</a>). The client waits
+ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (<code>WebTransportException.Timeout</code>). Check the <code>origin</code> field before accepting a browser's session. The client offers application
+protocols in <code>WT-Available-Protocols</code> and the server picks one of <code>availableProtocols</code>; a choice the client did not
+offer fails <code>webTransport</code> with <code>WebTransportException.Alpn</code> (a <code>WT-Protocol</code> that is not a valid Structured Field
+String is ignored).</p>
+<p>WebTransport flow control (draft-ietf-webtrans-http3-16 section 5) is on when both sides declare it in their SETTINGS,
+which <code>webTransport</code> does by default with <code>webTransportInitialMaxStreamsBidi</code>, <code>webTransportInitialMaxStreamsUni</code> and
+<code>webTransportInitialMaxData</code> (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
+limits; the receiver raises its own as the peer's streams end and as their bytes are consumed (WT_MAX_STREAMS,
+WT_MAX_DATA), a blocked sender says so once per limit, and a peer that breaks a limit gets its session closed with
+WT_FLOW_CONTROL_ERROR (<code>WebTransportException.FlowControl</code>). Several sessions then share a connection: a server takes up
+to <code>webTransportMaxSessions</code> (4) at once and refuses one more with <code>H3_REQUEST_REJECTED</code> before the application sees it
+(the client gets <code>Http3Exception.RequestNotProcessed</code> and can open it on another connection), and a client puts at most
+as many on one connection (<code>WebTransportException.ConnectionFull</code> beyond). A server also takes new sessions on a
+connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way.</p>
+<p>Credit comes back as the application takes the bytes, for a stream that ended cleanly once all of it was handed to its
+input (read or not), and for a reset or stopped stream once its final size is known; bytes of an open stream that nobody
+reads give none.</p>
+<p>How this library's sender shares a session's data credit between the session's streams follows the session's RFC 9218
+priority (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data), the <code>incremental</code>
+parameter of its CONNECT stream, read again at every grant, so a PRIORITY_UPDATE takes effect at the next one:</p>
+<p>The mode is chosen per direction: each side shares the credit for its own sending by its own view of the CONNECT
+stream's priority.</p>
+<ul>
+<li>The client's sending follows the session request's priority: <code>Http3Request.priority</code>, else a <code>priority</code> field among
+its headers, else RFC 9218's defaults (non-incremental). The server's sending follows the client's signal, the <code>priority</code> field
+of the CONNECT request and later PRIORITY_UPDATEs, unless the server overrides it with a <code>priority</code> field in its
+<code>acceptWebTransport</code> answer; that field changes only the server's sending. A priority set on the request
+(<code>Http3Request.priority</code>) always goes out as a <code>priority</code> field on a CONNECT, RFC 9218's defaults included
+(<code>StreamPriority(3, incremental = false)</code> is sent as <code>i=?0</code>), so a server with a tunnel default of its own does not
+apply it; an ordinary request at the defaults still sends no field. A <code>priority</code> field among the request's headers
+does the same.</li>
+<li>Non-incremental (<code>i=?0</code>, the default, as for any request without a signal, RFC 9218 section 4.2): in order. The
+streams are served in
+the order the session handed them to the application (<code>openUni</code> or <code>openBidi</code> returned; for the peer's bidirectional
+streams, <code>acceptBidi</code>): while a stream waits for credit, or writes what it was just given, no stream opened after it
+gets any. A stream that asks for more than there is gets what there is at once (one frame's worth, never a wait for
+all of it) and keeps its place for the rest; at most one chunk (16 KiB) is kept for it at a time, and a stream with
+nothing more to send keeps no place. So when the application writes the streams one after another, each written in
+full before the next, a peer that reads them one after another in that order gets their bytes in that order, and
+never waits on a stream that got no credit while credit sits in a later one. The cost: a stream that keeps writing
+holds every later stream of the session for as long as it writes, and when the peer raises the limit in small steps
+the later streams wait; mark the session incremental to share.</li>
+<li>Incremental (<code>i</code>, <code>priority: i</code> among the CONNECT's headers or <code>StreamPriority(u, incremental = true)</code>, or the
+server's own <code>priority: i</code> answer for its sending): shared. Each grant starts one stream further along the ring of the
+streams that wait for credit or are writing, and serves them in order from there, so of n streams that keep asking
+each leads, and gets credit, within n grants, and a busy stream never holds the others; the order between streams is
+not kept. A grant is not split evenly: the stream it starts with gets what it asks first, so a stream the peer does
+not read still gets all its bytes out and ends (its end gives the credit back).</li>
+</ul>
+<p>Opens waiting for the peer's stream limit are served in the order they asked, in both modes. The order holds within a
+session: the sessions of a connection still take their weighted turns (below), and one session waiting for its credit
+never holds up another.</p>
+<p>Section 5 sets no order, so a sender of another implementation may serve its streams in any order, and credit still
+comes back only as the application reads: when the peer is not this library, when its session is incremental, or when
+the application reads a session's streams out of the order they were opened, read them concurrently (a coroutine per accepted stream), or give the session
+enough data credit for what its peer sends at once; a strictly sequential reader under a tight
+<code>webTransportInitialMaxData</code> can otherwise stall the session.</p>
+<p>Sessions
+sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which
+a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
+but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
+of the connection's send buffer (<code>maxSendBuffer</code>): a reserve stays free for a session that joins, and the rest is split
+between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
+stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
+connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
+kept at what the open sessions may have in flight together. <code>Http3Endpoint</code> refuses settings whose sessions do not fit
+the QUIC limits (<code>maxBidiStreams</code>, <code>maxUniStreams</code>, <code>maxConnectionWindow</code>). All three initial limits at 0 turn flow
+control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.</p>
+<p>A draft-14 client (Safari) that declares flow control only with <code>SETTINGS_WT_MAX_SESSIONS</code> above 1 starts every
+limit it gives at 0 (draft-14 section 5.5): our streams and data to it wait for its WT_MAX_STREAMS and WT_MAX_DATA, and
+the Ktor server logs a warning once a session waited ten seconds. Turning flow control off (the three limits at 0) is
+the way out for such a peer.</p>
+<p>WebTransport streams that arrive before their session was accepted wait, 16 per connection for up to 5 s each; the
+others are rejected with <code>WT_BUFFERED_STREAM_REJECTED</code>, and still count against the session's limits once it exists.</p>
+<pre><code class="language-kotlin">// guide:http3:webtransport (server)
+val request = connection.acceptRequest()
+if (request.isWebTransport &amp;&amp; request.headers[&quot;origin&quot;] == &quot;https://app.example&quot;) {
+    val session = request.acceptWebTransport(protocol = request.availableProtocols.firstOrNull())
+} else request.respond(403).finish()
+
+// guide:http3:webtransport (client)
+val request = http3Request(&quot;CONNECT&quot;, &quot;example.com&quot;, &quot;/wt&quot;) { headers = Http3Headers.of(&quot;origin&quot; to &quot;https://app.example&quot;) }
+val session = client.webTransport(request, protocols = listOf(&quot;chat-v1&quot;))
+println(session.protocol)                          // &quot;chat-v1&quot; when the server chose it
+</code></pre>
+<p>A session opens and accepts streams (<code>openBidi</code>, <code>openUni</code>, <code>acceptBidi</code>, <code>acceptUni</code>) whose <code>input</code> and <code>output</code>
+are plain byte channels, and sends and receives datagrams (<code>trySendDatagram</code>, <code>sendDatagram</code>, <code>receiveDatagram</code>, the
+newest 32 kept), which may be lost like any QUIC datagram. Application error codes are 0..2^32-1, for streams
+(<code>reset</code>, <code>stopSending</code>, reported as <code>WebTransportException.StreamReset</code> and <code>StreamStopped</code>) and for the session;
+on the wire they travel mapped into the HTTP/3 code space (section 4.4). <code>close(code, reason)</code> sends
+WT_CLOSE_SESSION (the reason cut to 1024 bytes of UTF-8), then FIN, and waits for the peer's FIN (stopping the peer
+after five seconds without it); either side's close,
+the peer's FIN or a failure completes <code>closed</code> with the code, the reason or the cause, resets the session's streams
+with <code>WT_SESSION_GONE</code>, and frees the connection for a next session. <code>drain()</code> asks the peer to wind down;
+<code>drainRequested</code> turns true on the peer's request, an HTTP/3 GOAWAY, or this side's own <code>drain()</code> (the side that asks
+winds down too, draft-ietf-webtrans-http3 section 4.7). Writing the close waits at most five seconds
+for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
+it with <code>withTimeout</code>. With flow control the session's own limits bound it, besides the QUIC limits (<code>maxBidiStreams</code>,
+<code>maxUniStreams</code>, the stream and connection windows); without it the flow-control capsules are ignored and the QUIC
+limits alone do. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
+session (section 4.4); a session of draft-14 or later exists only with <code>reset_stream_at</code> on both sides, which
+<code>Http3Endpoint</code> and the Ktor engines turn on with <code>webTransport</code> (a draft-02 browser without it gets a plain
+RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
+<code>priority</code>, else its <code>priority</code> field, else urgency 3 incremental) and follow the client's PRIORITY_UPDATE for it
+(section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream, strictly in both
+directions: more urgent streams' data goes first, so a bulk download at a more urgent level holds the datagrams back
+(a request is urgency 3 by default, a WebTransport session too unless its CONNECT carries a <code>priority</code>), and a datagram
+goes ahead of streams of the same or a lower urgency, so a flood of datagrams can starve those streams.</p>
+<pre><code class="language-kotlin">// guide:http3:webtransport-echo (server)
+val stream = session.acceptBidi()                 // the client's stream
+stream.input.copyTo(stream.output)                // echo until its FIN
+stream.output.flushAndClose()
+session.sendDatagram(session.receiveDatagram())   // and one datagram back
+println(session.closed.await().reason)            // &quot;done&quot; once the client closed
+
+// guide:http3:webtransport-echo (client)
+val stream = session.openBidi()
+stream.output.writeFully(&quot;ping&quot;.encodeToByteArray())
+stream.output.flushAndClose()
+println(stream.input.readBuffer().readString())  // &quot;ping&quot;
+session.trySendDatagram(byteArrayOf(1, 2, 3))
+println(session.receiveDatagram().size)
+session.close(0, &quot;done&quot;)
+</code></pre>
+
+</main></div>
+</body>
+</html>

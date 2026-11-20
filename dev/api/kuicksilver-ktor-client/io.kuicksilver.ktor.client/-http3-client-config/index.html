@@ -1,0 +1,432 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http3ClientConfig</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client/Http3ClientConfig///PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">Http3ClientConfig</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Http3Client</span><wbr><span><span>Config</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Http3ClientConfig</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt#L64">source</a>)</span></span></div><p class="paragraph">HTTP/3 settings of the client engine.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="-1032483680%2FConstructors%2F-816330356" anchor-label="Http3ClientConfig" id="-1032483680%2FConstructors%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-http3-client-config.html"><span>Http3Client</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1032483680%2FConstructors%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="1005856014%2FProperties%2F-816330356" anchor-label="altSvcStore" id="1005856014%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alt-svc-store.html"><span>alt</span><wbr><span>Svc</span><wbr><span><span>Store</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1005856014%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="alt-svc-store.html">altSvcStore</a><span class="token operator">: </span><a href="../-alt-svc-store/index.html">AltSvcStore</a></div><div class="brief "><p class="paragraph">Where Alt-Svc records live; in memory by default.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-484320432%2FProperties%2F-816330356" anchor-label="clearOnNetworkChange" id="-484320432%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="clear-on-network-change.html"><span>clear</span><wbr><span>On</span><wbr><span>Network</span><wbr><span><span>Change</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-484320432%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="clear-on-network-change.html">clearOnNetworkChange</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Forget alternatives without <code class="lang-kotlin">persist=1</code> when the network changes, as RFC 7838 section 2.2 says a client SHOULD; true by default (before 0.2.1, false). False keeps them across networks. The network is <a href="network-id.html">networkId</a>, or the networks <a href="connection-migration.html">connectionMigration</a> follows while <a href="network-id.html">networkId</a> is not set. With <a href="network-id.html">networkId</a> a change is also seen across restarts, against the network the store's entries were learned on (<a href="../-alt-svc-store/network-id.html">AltSvcStore.networkId</a>); with the followed networks a start counts as a change (<a href="../-http3-connection-migration/networks.html">Http3ConnectionMigration.networks</a>). Without either source the engine sees no change.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="36566192%2FProperties%2F-816330356" anchor-label="connectionListener" id="36566192%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-listener.html"><span>connection</span><wbr><span><span>Listener</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="36566192%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="connection-listener.html">connectionListener</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-connection-listener/index.html">ConnectionListener</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Hears the lifecycle of every QUIC connection of the engine (<code class="lang-kotlin">QuicEndpointConfig.listener</code>); null keeps <a href="endpoint.html">endpoint</a>'s.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1429599592%2FProperties%2F-816330356" anchor-label="connectionMigration" id="1429599592%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-migration.html"><span>connection</span><wbr><span><span>Migration</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1429599592%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="connection-migration.html">connectionMigration</a><span class="token operator">: </span><a href="../-http3-connection-migration/index.html">Http3ConnectionMigration</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Lets pooled HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9; docs/guide/ktor.md, "Connection migration"): on a switch from Wi-Fi to the mobile network, a connection moves to a socket bound to the new network over a validated path with a fresh connection ID, so a download over HTTP/3 carries on. Null (the default) leaves every connection on the socket it was opened on, as in 0.2: it survives only if the system routes that unbound socket over the new network and the server takes it as a NAT rebinding, and may die at its idle timeout otherwise. <code class="lang-kotlin">Http3ConnectionMigration.followDefaultNetwork(connectivity)</code> on Android and <code class="lang-kotlin">Http3ConnectionMigration.followDefaultNetwork()</code> on iOS and macOS follow the system's default network; see <a href="../-http3-connection-migration/index.html">Http3ConnectionMigration</a> for other platforms and the rules. While <a href="network-id.html">networkId</a> is not set, the networks the hook follows (<a href="../-http3-connection-migration/networks.html">Http3ConnectionMigration.networks</a>) are the engine's network: a change resets broken marks and drops non-persistent alternatives as a <a href="network-id.html">networkId</a> change does.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-84562164%2FProperties%2F-816330356" anchor-label="diagnosticsLogLevel" id="-84562164%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="diagnostics-log-level.html"><span>diagnostics</span><wbr><span>Log</span><wbr><span><span>Level</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-84562164%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="diagnostics-log-level.html">diagnosticsLogLevel</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-log-level/index.html">LogLevel</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The level at which the engine's <code class="lang-kotlin">logger</code> gets one line per answered call that HTTP/3 could have served but did not (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): a lost race, a fallback, a broken alternative, a proxy, HTTP/3 turned off. <a href="../../../kuicksilver-quic/io.kuicksilver.quic/-log-level/-info/index.html">LogLevel.Info</a> by default, which the default logger (warnings and up) leaves out; calls over HTTP/3, and calls HTTP/3 was never a candidate for (<code class="lang-kotlin">http://</code>, <code class="lang-kotlin">H1Only</code>, <code class="lang-kotlin">Auto</code> without <code class="lang-kotlin">Alt-Svc</code>), are logged at <a href="../../../kuicksilver-quic/io.kuicksilver.quic/-log-level/-debug/index.html">LogLevel.Debug</a>. Null writes no line. The line names the method, scheme, host, port and path, never the query or the user info: <code class="lang-kotlin">kuicksilver: GET https://example.com/ -&gt; HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc, raced, headStart=10ms, h3Failure=Timeout, marked broken)</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1710088200%2FProperties%2F-816330356" anchor-label="discovery" id="1710088200%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="discovery.html"><span><span>discovery</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1710088200%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="discovery.html">discovery</a><span class="token operator">: </span><a href="../-http3-discovery-mode/index.html">Http3DiscoveryMode</a></div><div class="brief "><p class="paragraph">When <code class="lang-kotlin">https://</code> requests use HTTP/3; <a href="../-http3-discovery-mode/-auto/index.html">Http3DiscoveryMode.Auto</a> (learn from <code class="lang-kotlin">Alt-Svc</code>) by default. Proxied requests never do.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1618008747%2FProperties%2F-816330356" anchor-label="earlyData" id="1618008747%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="early-data.html"><span>early</span><wbr><span><span>Data</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1618008747%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="early-data.html">earlyData</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Resume HTTP/3 connections with 0-RTT (off by default; ADR-0015): the engine keeps the servers' session tickets for its lifetime and sends GET, HEAD and OPTIONS requests without a body before the handshake completes; every other request waits for it, and a 425 Too Early is retried once. Early requests can be replayed by an attacker (RFC 9846 section 8): turn this on only for servers whose safe methods are free of side effects.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1858625427%2FProperties%2F-816330356" anchor-label="endpoint" id="-1858625427%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="endpoint.html"><span><span>endpoint</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1858625427%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="endpoint.html">endpoint</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-quic-endpoint-config/index.html">QuicEndpointConfig</a></div><div class="brief "><p class="paragraph">The client QUIC endpoint (dispatcher, crypto provider, socket factory). Its <code class="lang-kotlin">connectionIdLength</code> and the one of <a href="../-kuicksilver-engine-config/quic.html">KuicksilverEngineConfig.quic</a> are kept equal: the one left at its default follows the other, and two different explicit values fail the engine's creation with <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a>. The engine binds it to the wildcard address (<code class="lang-kotlin">0.0.0.0:0</code>, dual-stack); connections to a loopback server leave from up to two more endpoints of this configuration, one per family, bound to 127.0.0.1 (for 127.0.0.0/8 and its IPv4-mapped form) and ::1, each created at its first use, so that no other local process holding that port on the loopback address gets the server's replies. The endpoints share the engine's session tickets.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-462573728%2FProperties%2F-816330356" anchor-label="hardDelay" id="-462573728%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="hard-delay.html"><span>hard</span><wbr><span><span>Delay</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-462573728%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="hard-delay.html">hardDelay</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Head start of HTTP/3 over HTTP/1.1 on a network where QUIC was confirmed; null: 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. An explicit value must be 10 ms..2 s (RFC 8305 section 5), or <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/-companion/-i-n-f-i-n-i-t-e.html">Duration.INFINITE</a> for HTTP/1.1 only after HTTP/3 failed, on every network; another one fails the engine's creation with <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a>. On a network where QUIC was never confirmed the head start is 10 ms, whatever finite value is set.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1340485125%2FProperties%2F-816330356" anchor-label="http3Allowed" id="1340485125%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="http3-allowed.html"><span><span>http3Allowed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1340485125%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="http3-allowed.html">http3Allowed</a><span class="token operator">: </span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">A kill switch for HTTP/3 (docs/guide/ktor.md, "Turning HTTP/3 off remotely"), called once per <code class="lang-kotlin">https://</code> request (not with <a href="../-http3-discovery-mode/-h1-only/index.html">Http3DiscoveryMode.H1Only</a>) on the call's coroutine before anything connects: it must be quick and must not block, such as reading an <code class="lang-kotlin">AtomicBoolean</code> or a <code class="lang-kotlin">StateFlow.value</code> that your remote configuration updates. While it returns false, requests go over TCP as with <code class="lang-kotlin">H1Only</code> (<code class="lang-kotlin">ProtocolReason.Http3Disabled</code>; HTTP/2 stays on: this switch is HTTP/3's only, <code class="lang-kotlin">http2 { enabled }</code> is HTTP/2's), open HTTP/3 connections take no new requests (calls running on them finish; idle ones close after <code class="lang-kotlin">idleTimeout</code>, or at once with <code class="lang-kotlin">HttpClient.closeHttp3Connections()</code>), and <code class="lang-kotlin">Alt-Svc</code> is still learned, so switching back needs no warm-up. With <a href="../-http3-discovery-mode/-h3-only/index.html">Http3DiscoveryMode.H3Only</a> a request fails with UnsupportedOperationException instead, before any connection: that mode never uses TCP, and so does <code class="lang-kotlin">HttpClient.webTransport</code> (WebTransport has no TCP fallback). A switch that throws an Exception counts as true (HTTP/3 allowed), so a broken configuration cannot break traffic; the engine logs that once per 5 minutes at most. <code class="lang-kotlin">HttpClient.closeHttp3Connections()</code> also drains open WebTransport sessions.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-766605031%2FProperties%2F-816330356" anchor-label="httpsRecordExtraWait" id="-766605031%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="https-record-extra-wait.html"><span>https</span><wbr><span>Record</span><wbr><span>Extra</span><wbr><span><span>Wait</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-766605031%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="https-record-extra-wait.html">httpsRecordExtraWait</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">How long a request waits for the HTTPS records after the origin's addresses resolved (50 ms by default, as Chromium): an answer that comes later is cached for the next request, and this one goes on without records. 50 ms (RFC 9460 section 5.1: an optimistic connection SHOULD wait that long) to 1 s; any other value fails the engine's creation with <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a>. The connect timeout bounds the whole wait.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1726976747%2FProperties%2F-816330356" anchor-label="httpsRecords" id="1726976747%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="https-records.html"><span>https</span><wbr><span><span>Records</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1726976747%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="https-records.html">httpsRecords</a><span class="token operator">: </span><a href="../-https-record-source/index.html">HttpsRecordSource</a></div><div class="brief "><p class="paragraph">Where <a href="../-http3-discovery-mode/-auto/index.html">Http3DiscoveryMode.Auto</a> looks up HTTPS resource records (RFC 9460; docs/guide/ktor.md, "HTTPS records"): <a href="../-https-record-source/-off/index.html">HttpsRecordSource.Off</a> (the default), the system resolver (<a href="../-https-record-source/-system/index.html">HttpsRecordSource.System</a>) or your DNS-over-HTTPS exchange (<a href="../-https-record-source/-exchange/index.html">HttpsRecordSource.Exchange</a>). An <code class="lang-kotlin">https://</code> request to a host name asks for the origin's records (the name for port 443, <code class="lang-kotlin">_&lt;port&gt;._https.&lt;name&gt;</code> otherwise), follows AliasMode records, and connects to their endpoints in priority order over the transports each allows (HTTP/3 and TCP racing for <code class="lang-kotlin">alpn=h3</code>, TCP to the record's target and <code class="lang-kotlin">port</code>), then to the origin as without records; the certificate is checked against the origin's name whatever the target. The address hints are not used, nor is <code class="lang-kotlin">ech</code> (a record that requires it is skipped). A cached <code class="lang-kotlin">Alt-Svc</code> alternative is tried first. No lookup is made for <a href="../-http3-discovery-mode/-preferred/index.html">Http3DiscoveryMode.Preferred</a>, <a href="../-http3-discovery-mode/-h3-only/index.html">Http3DiscoveryMode.H3Only</a>, <a href="quic-hints.html">quicHints</a>, IP addresses, requests through a proxy, or while <a href="http3-allowed.html">http3Allowed</a> says no. An <code class="lang-kotlin">http://</code> request (in every discovery mode) first asks for the records of its <code class="lang-kotlin">https</code> URL and, when the origin has any usable one, gets a <code class="lang-kotlin">307</code> to that URL from the engine instead (RFC 9460 section 9.5). Answers are cached for their TTL (at most 1 day; "no records" for the SOA's negative TTL, not at all without one; at most 1000 names) until the network changes, and only when the engine sees the network: <a href="network-id.html">networkId</a> is set, or <a href="connection-migration.html">connectionMigration</a> follows one (RFC 9460 section 12); a failed lookup is not cached.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1998177218%2FProperties%2F-816330356" anchor-label="maxWebTransportSessions" id="1998177218%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-web-transport-sessions.html"><span>max</span><wbr><span>Web</span><wbr><span>Transport</span><wbr><span><span>Sessions</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1998177218%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="max-web-transport-sessions.html">maxWebTransportSessions</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">WebTransport sessions (<code class="lang-kotlin">HttpClient.webTransport</code>) open at once on this client, over all its connections (they share the pooled ones, up to <code class="lang-kotlin">settings.webTransportMaxSessions</code> a connection); one more fails at once with IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-16 section 8: "a WebTransport client SHOULD limit the number of outgoing sessions it will open").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1492936721%2FProperties%2F-816330356" anchor-label="networkId" id="-1492936721%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="network-id.html"><span>network</span><wbr><span><span>Id</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1492936721%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="network-id.html">networkId</a><span class="token operator">: </span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache, and drops alternatives without <code class="lang-kotlin">persist=1</code> (<a href="clear-on-network-change.html">clearOnNetworkChange</a>). null: one network. While it is not set, the networks <a href="connection-migration.html">connectionMigration</a> follows (<a href="../-http3-connection-migration/networks.html">Http3ConnectionMigration.networks</a>) are the network, when it has them (the <code class="lang-kotlin">followDefaultNetwork</code> factories do); without either, the engine sees no network change and keeps no HTTPS records of its own (<a href="https-records.html">httpsRecords</a>): RFC 9460 section 12 requires that cache to be flushed on network changes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-787970801%2FProperties%2F-816330356" anchor-label="qlog" id="-787970801%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="qlog.html"><span><span>qlog</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-787970801%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="qlog.html">qlog</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-qlog-sink/index.html">QlogSink</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">A qlog trace per HTTP/3 connection (docs/guide/quic.md, "qlog"), added to <a href="../-kuicksilver-engine-config/quic.html">KuicksilverEngineConfig.quic</a>; null (the default) keeps that configuration's own. Wrap a file sink in <code class="lang-kotlin">AsyncQlogSink</code> so a slow disk never stalls the endpoint: <code class="lang-kotlin">qlog = AsyncQlogSink(DirectoryQlogSink(dir))</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1068771254%2FProperties%2F-816330356" anchor-label="quicHints" id="-1068771254%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic-hints.html"><span>quic</span><wbr><span><span>Hints</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1068771254%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="quic-hints.html">quicHints</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-set/index.html">Set</a><span class="token operator">&lt;</span><a href="../-host-port/index.html">HostPort</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Origins known to speak HTTP/3 (Cronet <code class="lang-kotlin">addQuicHint</code>): treated as <a href="../-http3-discovery-mode/-preferred/index.html">Http3DiscoveryMode.Preferred</a> in Auto mode.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="599121311%2FProperties%2F-816330356" anchor-label="settings" id="599121311%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="settings.html"><span><span>settings</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="599121311%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="settings.html">settings</a><span class="token operator">: </span><a href="../../../kuicksilver-http3/io.kuicksilver.http3/-http3-settings/index.html">Http3Settings</a></div><div class="brief "><p class="paragraph">HTTP/3 settings of the engine's connections.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1969609001%2FProperties%2F-816330356" anchor-label="webTransportIgnoresConnectUdpProxy" id="-1969609001%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="web-transport-ignores-connect-udp-proxy.html"><span>web</span><wbr><span>Transport</span><wbr><span>Ignores</span><wbr><span>Connect</span><wbr><span>Udp</span><wbr><span><span>Proxy</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1969609001%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="web-transport-ignores-connect-udp-proxy.html">webTransportIgnoresConnectUdpProxy</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">WebTransport (<code class="lang-kotlin">HttpClient.webTransport</code>) to a URL <code class="lang-kotlin">connectUdpProxy</code> applies to connects directly instead of being refused; false by default. WebTransport sessions do not go through the CONNECT-UDP tunnel, so this exposes the client's address to the origin, which the proxy otherwise hides. Separate from <a href="web-transport-ignores-proxy.html">webTransportIgnoresProxy</a>, which is about HTTP and SOCKS proxies only.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-220808256%2FProperties%2F-816330356" anchor-label="webTransportIgnoresProxy" id="-220808256%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="web-transport-ignores-proxy.html"><span>web</span><wbr><span>Transport</span><wbr><span>Ignores</span><wbr><span><span>Proxy</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-220808256%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="web-transport-ignores-proxy.html">webTransportIgnoresProxy</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">HttpClient.webTransport</code> connects directly even when a proxy applies to the URL; false by default, so such a call fails with UnsupportedOperationException (WebTransport runs over UDP, which an HTTP proxy does not carry). Turn it on only when a direct path to those servers is wanted despite the proxy.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

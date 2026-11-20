@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building from source - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li class="current"><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="building-from-source">Building from source</h1>
+<p><strong>What this page is for.</strong> It is for the person who builds Kuicksilver from a checkout instead of taking it from Maven
+Central: a snapshot of <code>main</code>, a patched copy, or a build with their own compiler and flags for the native code (for
+example to add hardening flags a distribution requires).</p>
+<p><strong>Before you start.</strong> The tools the build needs are listed in <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/CONTRIBUTING.md#building">CONTRIBUTING.md, Building</a>:
+a JDK, a C compiler, Docker for the Linux and Windows native code, the Android NDK for the AAR and, on macOS, Xcode for
+the Apple targets.</p>
+<h2 id="what-the-build-makes">What the build makes</h2>
+<p>Gradle builds the Kotlin code; the native code is built by scripts that the Gradle tasks call:</p>
+<table>
+<thead>
+<tr>
+<th>Native output</th>
+<th>Script</th>
+<th>Gradle task</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Static OpenSSL per target, in <code>build/openssl/&lt;target&gt;</code></td>
+<td><code>tools/openssl/build.sh</code> (Linux and Windows targets inside Docker: <code>tools/openssl/build-docker.sh</code>)</td>
+<td><code>:kuicksilver-native:opensslBuild&lt;Target&gt;</code></td>
+</tr>
+<tr>
+<td>The JVM's JNI library for this machine</td>
+<td><code>tools/build-jni.sh</code></td>
+<td><code>:kuicksilver-native:buildJniHost</code></td>
+</tr>
+<tr>
+<td>The Android <code>libksl.so</code> per ABI</td>
+<td><code>tools/build-android-so.sh</code></td>
+<td><code>:kuicksilver-native:buildAndroidJni</code></td>
+</tr>
+<tr>
+<td><code>libksl.a</code> for each Kotlin/Native target</td>
+<td><code>tools/build-ksl-a.sh</code></td>
+<td><code>:kuicksilver-native:buildKslA&lt;Target&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>To publish a build into the local Maven repository, run <code>./gradlew --max-workers=2 publishToMavenLocal</code> (every target),
+or the JVM-only variant in <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/install.md#versions">Install</a>.</p>
+<h2 id="your-compiler-and-flags">Your compiler and flags</h2>
+<p>The native build scripts take the standard variables from the environment and <strong>add</strong> them to their own flags; they
+never replace the project's flags with yours:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Where it goes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CPPFLAGS</code>, <code>CFLAGS</code></td>
+<td>after the project's compile flags, on every compile line of <code>libksl</code> and of OpenSSL</td>
+</tr>
+<tr>
+<td><code>LDFLAGS</code></td>
+<td>after the project's link flags, on the link line of the JNI library and of the Android <code>libksl.so</code>; OpenSSL and <code>libksl.a</code> are static archives and are not linked, so there it has no effect</td>
+</tr>
+<tr>
+<td><code>CC</code></td>
+<td>the compiler of the JNI library on macOS (default <code>clang</code>) and on Linux (default <code>gcc</code>), of <code>libksl.a</code> for macOS, and of OpenSSL for macOS and for Linux outside Docker (passed to <code>Configure</code>). Every other target has a compiler of its own and ignores it: Android (the NDK's clang), iOS (Xcode's SDK compilers), the Kotlin/Native Linux and Windows targets (Kotlin/Native's LLVM and sysroots), the OpenSSL builds in Docker (the images' compilers) and the Windows JNI library (<code>x86_64-w64-mingw32-gcc</code>). A glob character in <code>CC</code> (<code>*</code>, <code>?</code>, <code>[</code>) is refused.</td>
+</tr>
+</tbody>
+</table>
+<p>Because your flags come last, where one of them conflicts with a project flag, yours wins (the compiler takes the later
+one). The project compiles <code>libksl</code> with <code>-Werror</code>, so a flag of yours that makes the compiler warn fails the build;
+add <code>-Wno-error=&lt;warning&gt;</code> for it. A flag that a target's toolchain does not know fails that target's build.</p>
+<p>For example, to build the JNI library on a Linux host with stack protection, <code>_FORTIFY_SOURCE</code> and full RELRO:</p>
+<pre><code class="language-sh">export CFLAGS=&quot;-fstack-protector-strong -D_FORTIFY_SOURCE=2&quot; LDFLAGS=&quot;-Wl,-z,relro,-z,now&quot;
+./gradlew --max-workers=2 :kuicksilver-native:buildJniHost
+</code></pre>
+<p>What else to know:</p>
+<ul>
+<li><strong>OpenSSL.</strong> Its <code>Configure</code> would read <code>CPPFLAGS</code>, <code>CFLAGS</code> and <code>LDFLAGS</code> from the environment and use them <em>instead
+of</em> the target's own flags, so <code>tools/openssl/build.sh</code> takes them out of its environment and passes them as
+<code>Configure</code> options after the project's. Each must therefore be one word that starts with <code>-</code> (or <code>/</code>, the argument
+of the flag before it) and is not one of <code>Configure</code>'s own options (<code>-d</code>, <code>-v</code>, <code>-w</code>, <code>-t</code>, <code>-rpath</code>, <code>-R</code>,
+<code>-framework</code>, <code>--prefix=</code> and the other <code>--</code> options of <code>Configure</code>); a <code>%</code> is refused too (<code>Configure</code> decodes
+<code>%xx</code>). It also refuses <code>-no-&lt;feature&gt;</code> (other than <code>-no-integrated-as</code>), which <code>Configure</code> rewrites to <code>no-&lt;feature&gt;</code>
+and so would turn a feature off, <code>-shared</code> or <code>--shared</code>, which it rewrites to <code>enable-shared</code>, <code>-static</code>, which turns off static, PIC and thread
+support, and a word that starts with <code>/D</code> or <code>/I</code>, which it reads as a define or an include directory (the argument
+of <code>-include /Data/x.h</code>, say; write such paths another way, for example relative to the source). A <code>-D</code> or <code>-U</code> of an
+<code>OPENSSL_*</code> macro is refused as well: the libraries would no longer match the headers installed with them
+(<code>configure-flags.txt</code> decides those macros). The script refuses
+anything else before it starts. Every script reads your flags word by word and never expands a glob in them. <code>CXXFLAGS</code> and <code>LDLIBS</code> are not used. Your flags are
+recorded in <code>build/openssl/&lt;target&gt;/configure-target.txt</code> and <code>provenance.txt</code>, together with one word,
+<code>builder-flags-sha256=&lt;hash&gt;</code>, that stands for all of them and, for macOS and Linux, <code>CC</code> (for Linux, any <code>CC</code> but
+the Docker image's own compiler inside that image; on a bare Linux host the same path counts too), paths included; that word and the
+build cache's key change with any of them, so a build with other flags or another compiler is never taken from the
+cache or reused. The Docker builds get the same three variables.</li>
+<li><strong>Debug symbols.</strong> The JNI library and the Android <code>libksl.so</code> are stripped, as the release checks require. For a local
+build you want to debug or profile, <code>KSL_KEEP_DEBUG=1</code> skips the strip, and <code>CFLAGS=-g</code> adds debug information:
+<code>KSL_KEEP_DEBUG=1 CFLAGS=-g ./gradlew --max-workers=2 :kuicksilver-native:buildJniHost</code>. On Linux, Windows and Android
+the library then keeps its symbol table and its debug sections; on macOS the linker leaves no local symbols to strip,
+and clang writes the debug information next to the library as <code>libksl_*.dylib.dSYM</code>. A release never keeps them: it
+unsets <code>KSL_KEEP_DEBUG</code> like the variables above, and <code>tools/check/native-release.sh</code> refuses a library with debug
+sections. The static archives (<code>libksl.a</code>, OpenSSL) are never stripped.</li>
+<li><strong>Gradle.</strong> <code>CC</code>, <code>CPPFLAGS</code>, <code>CFLAGS</code>, <code>LDFLAGS</code> and <code>KSL_KEEP_DEBUG</code> are inputs of the native tasks: changing one rebuilds what it
+affects. With <code>-Pkuicksilver.openssl.prebuilt=true</code> an existing OpenSSL build is reused only when it was configured
+with the flags you have now; otherwise the build stops and says the directory is stale.</li>
+<li><strong>Reproducibility.</strong> The published artifacts are built with the project's own compiler, flags and paths only: the
+release script (<code>tools/release/local-release.sh</code>), the double build of the release gate (<code>tools/check/double-build.sh</code>)
+and the rebuild of <code>tools/verify/verify-release.sh</code> first unset every environment variable known to change a native
+build (<code>tools/clean-build-env.sh</code> lists them: the variables above, <code>OPT</code>, clang's and gcc's <code>CCC_OVERRIDE_OPTIONS</code>,
+<code>CPATH</code>, <code>C_INCLUDE_PATH</code>, <code>LIBRARY_PATH</code>, <code>SDKROOT</code> and the like, <code>AR</code> and <code>RANLIB</code>, OpenSSL's <code>__CNF_*</code> and
+<code>OPENSSL_LOCAL_CONFIG_DIR</code>, <code>CROSS_SYSROOT</code>, Perl's <code>PERL5OPT</code> and <code>PERL5LIB</code>, the loaders' <code>LD_PRELOAD</code> and
+<code>DYLD_INSERT_LIBRARIES</code>, <code>LD_RUN_PATH</code>, <code>MAKEFLAGS</code>, and the scripts' own <code>KSL_OPENSSL_*</code> locations: the variables we
+know of; one found later is added there), and the hosted jobs that
+build the libraries a release reuses fail if one is set (the pinned NDK's LLVM tools their setup names, and an
+<code>SDKROOT</code> that is the selected Xcode's macOS SDK, give the same build and pass). A build with your own flags is therefore not byte-identical to
+a release, and comparing it with one (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/verifying.md">verifying.md</a>) is expected to differ.</li>
+<li><strong>Tests.</strong> <code>tools/check/native-flags-test.sh</code> checks all of the above (it runs in the gate's reproducibility step).
+The C tests (<code>tools/c-test.sh</code>) are a test build with sanitizers: they honour <code>CC</code>, and take extra flags as their
+second argument instead of <code>CFLAGS</code>.</li>
+</ul>
+
+</main></div>
+</body>
+</html>

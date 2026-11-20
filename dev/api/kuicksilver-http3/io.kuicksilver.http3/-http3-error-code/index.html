@@ -1,0 +1,567 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http3ErrorCode</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/Http3ErrorCode///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">Http3ErrorCode</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Http3Error</span><wbr><span><span>Code</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="index.html">Http3ErrorCode</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Http3ErrorCode.kt#L10">source</a>)</span></span></div><p class="paragraph">HTTP/3, QPACK and WebTransport application error codes (RFC 9114 section 8.1, RFC 9204 section 6, RFC 9297 section 5.2, draft-ietf-webtrans-http3-16 section 9.5). They travel in CONNECTION_CLOSE 0x1d, RESET_STREAM and STOP_SENDING; an unknown code means <a href="-n-o_-e-r-r-o-r.html">NO_ERROR</a> (RFC 9114 section 9).</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-350589583%2FProperties%2F748033675" anchor-label="CLOSED_CRITICAL_STREAM" id="-350589583%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-c-l-o-s-e-d_-c-r-i-t-i-c-a-l_-s-t-r-e-a-m.html"><span>CLOSED_</span><wbr><span>CRITICAL_</span><wbr><span>STREAM</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-350589583%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-c-l-o-s-e-d_-c-r-i-t-i-c-a-l_-s-t-r-e-a-m.html">CLOSED_CRITICAL_STREAM</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">260</span></div><div class="brief "><p class="paragraph">H3_CLOSED_CRITICAL_STREAM: the peer closed or reset its control or QPACK stream (RFC 9114 section 6.2.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1411597463%2FProperties%2F748033675" anchor-label="CONNECT_ERROR" id="-1411597463%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-c-o-n-n-e-c-t_-e-r-r-o-r.html"><span>CONNECT_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1411597463%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-c-o-n-n-e-c-t_-e-r-r-o-r.html">CONNECT_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">271</span></div><div class="brief "><p class="paragraph">H3_CONNECT_ERROR: the tunnel of a CONNECT request was reset or closed abnormally (RFC 9114 section 4.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1429360844%2FProperties%2F748033675" anchor-label="DATAGRAM_ERROR" id="-1429360844%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-d-a-t-a-g-r-a-m_-e-r-r-o-r.html"><span>DATAGRAM_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1429360844%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-d-a-t-a-g-r-a-m_-e-r-r-o-r.html">DATAGRAM_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">51</span></div><div class="brief "><p class="paragraph">H3_DATAGRAM_ERROR: a malformed HTTP datagram or capsule, such as an unparsable quarter stream ID (RFC 9297 section 5.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1745657564%2FProperties%2F748033675" anchor-label="EXCESSIVE_LOAD" id="1745657564%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-e-x-c-e-s-s-i-v-e_-l-o-a-d.html"><span>EXCESSIVE_</span><wbr><span>LOAD</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1745657564%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-e-x-c-e-s-s-i-v-e_-l-o-a-d.html">EXCESSIVE_LOAD</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">263</span></div><div class="brief "><p class="paragraph">H3_EXCESSIVE_LOAD: the peer generates excessive load (a field section above the limit, too many 1xx, glitch flood).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="968217158%2FProperties%2F748033675" anchor-label="FRAME_ERROR" id="968217158%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-f-r-a-m-e_-e-r-r-o-r.html"><span>FRAME_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="968217158%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-f-r-a-m-e_-e-r-r-o-r.html">FRAME_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">262</span></div><div class="brief "><p class="paragraph">H3_FRAME_ERROR: a frame whose layout or size is invalid, or that a FIN cut short (RFC 9114 section 7.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-704363589%2FProperties%2F748033675" anchor-label="FRAME_UNEXPECTED" id="-704363589%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-f-r-a-m-e_-u-n-e-x-p-e-c-t-e-d.html"><span>FRAME_</span><wbr><span>UNEXPECTED</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-704363589%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-f-r-a-m-e_-u-n-e-x-p-e-c-t-e-d.html">FRAME_UNEXPECTED</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">261</span></div><div class="brief "><p class="paragraph">H3_FRAME_UNEXPECTED: a frame not permitted in the current state or on this stream (RFC 9114 section 7.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2005081786%2FProperties%2F748033675" anchor-label="GENERAL_PROTOCOL_ERROR" id="-2005081786%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-g-e-n-e-r-a-l_-p-r-o-t-o-c-o-l_-e-r-r-o-r.html"><span>GENERAL_</span><wbr><span>PROTOCOL_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2005081786%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-g-e-n-e-r-a-l_-p-r-o-t-o-c-o-l_-e-r-r-o-r.html">GENERAL_PROTOCOL_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">257</span></div><div class="brief "><p class="paragraph">H3_GENERAL_PROTOCOL_ERROR: a protocol violation no more specific code covers.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1874396314%2FProperties%2F748033675" anchor-label="ID_ERROR" id="1874396314%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-i-d_-e-r-r-o-r.html"><span>ID_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1874396314%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-i-d_-e-r-r-o-r.html">ID_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">264</span></div><div class="brief "><p class="paragraph">H3_ID_ERROR: a stream or push id used incorrectly, such as a GOAWAY id that grows (RFC 9114 section 5.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1218594296%2FProperties%2F748033675" anchor-label="INTERNAL_ERROR" id="1218594296%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-i-n-t-e-r-n-a-l_-e-r-r-o-r.html"><span>INTERNAL_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1218594296%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-i-n-t-e-r-n-a-l_-e-r-r-o-r.html">INTERNAL_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">258</span></div><div class="brief "><p class="paragraph">H3_INTERNAL_ERROR: a failure inside this endpoint, such as a response field the validator rejects.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="67932332%2FProperties%2F748033675" anchor-label="MESSAGE_ERROR" id="67932332%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-m-e-s-s-a-g-e_-e-r-r-o-r.html"><span>MESSAGE_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="67932332%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-m-e-s-s-a-g-e_-e-r-r-o-r.html">MESSAGE_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">270</span></div><div class="brief "><p class="paragraph">H3_MESSAGE_ERROR: a malformed message (RFC 9114 section 4.1.2); a stream error, the connection lives on.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="324471138%2FProperties%2F748033675" anchor-label="MISSING_SETTINGS" id="324471138%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-m-i-s-s-i-n-g_-s-e-t-t-i-n-g-s.html"><span>MISSING_</span><wbr><span>SETTINGS</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="324471138%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-m-i-s-s-i-n-g_-s-e-t-t-i-n-g-s.html">MISSING_SETTINGS</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">266</span></div><div class="brief "><p class="paragraph">H3_MISSING_SETTINGS: the control stream did not start with SETTINGS (RFC 9114 section 6.2.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1090359500%2FProperties%2F748033675" anchor-label="NO_ERROR" id="-1090359500%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-n-o_-e-r-r-o-r.html"><span>NO_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1090359500%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-n-o_-e-r-r-o-r.html">NO_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">256</span></div><div class="brief "><p class="paragraph">H3_NO_ERROR: no error; closes a connection or stream that is no longer needed, and stops an unread request body.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1293451749%2FProperties%2F748033675" anchor-label="QPACK_DECODER_STREAM_ERROR" id="1293451749%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-q-p-a-c-k_-d-e-c-o-d-e-r_-s-t-r-e-a-m_-e-r-r-o-r.html"><span>QPACK_</span><wbr><span>DECODER_</span><wbr><span>STREAM_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1293451749%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-q-p-a-c-k_-d-e-c-o-d-e-r_-s-t-r-e-a-m_-e-r-r-o-r.html">QPACK_DECODER_STREAM_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">514</span></div><div class="brief "><p class="paragraph">QPACK_DECODER_STREAM_ERROR: an invalid instruction on the peer's decoder stream (RFC 9204 section 6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-433615278%2FProperties%2F748033675" anchor-label="QPACK_DECOMPRESSION_FAILED" id="-433615278%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-q-p-a-c-k_-d-e-c-o-m-p-r-e-s-s-i-o-n_-f-a-i-l-e-d.html"><span>QPACK_</span><wbr><span>DECOMPRESSION_</span><wbr><span>FAILED</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-433615278%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-q-p-a-c-k_-d-e-c-o-m-p-r-e-s-s-i-o-n_-f-a-i-l-e-d.html">QPACK_DECOMPRESSION_FAILED</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">512</span></div><div class="brief "><p class="paragraph">QPACK_DECOMPRESSION_FAILED: a field section could not be decoded, or too many streams were blocked (RFC 9204 section 6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1039599427%2FProperties%2F748033675" anchor-label="QPACK_ENCODER_STREAM_ERROR" id="-1039599427%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-q-p-a-c-k_-e-n-c-o-d-e-r_-s-t-r-e-a-m_-e-r-r-o-r.html"><span>QPACK_</span><wbr><span>ENCODER_</span><wbr><span>STREAM_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1039599427%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-q-p-a-c-k_-e-n-c-o-d-e-r_-s-t-r-e-a-m_-e-r-r-o-r.html">QPACK_ENCODER_STREAM_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">513</span></div><div class="brief "><p class="paragraph">QPACK_ENCODER_STREAM_ERROR: an invalid instruction on the peer's encoder stream (RFC 9204 section 6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-690830725%2FProperties%2F748033675" anchor-label="REQUEST_CANCELLED" id="-690830725%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-r-e-q-u-e-s-t_-c-a-n-c-e-l-l-e-d.html"><span>REQUEST_</span><wbr><span>CANCELLED</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-690830725%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-r-e-q-u-e-s-t_-c-a-n-c-e-l-l-e-d.html">REQUEST_CANCELLED</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">268</span></div><div class="brief "><p class="paragraph">H3_REQUEST_CANCELLED: the request or its response is no longer needed; sent when a client call is cancelled.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-930275536%2FProperties%2F748033675" anchor-label="REQUEST_INCOMPLETE" id="-930275536%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-r-e-q-u-e-s-t_-i-n-c-o-m-p-l-e-t-e.html"><span>REQUEST_</span><wbr><span>INCOMPLETE</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-930275536%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-r-e-q-u-e-s-t_-i-n-c-o-m-p-l-e-t-e.html">REQUEST_INCOMPLETE</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">269</span></div><div class="brief "><p class="paragraph">H3_REQUEST_INCOMPLETE: the request stream ended (FIN) without a complete message (RFC 9114 section 4.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1680006064%2FProperties%2F748033675" anchor-label="REQUEST_REJECTED" id="-1680006064%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-r-e-q-u-e-s-t_-r-e-j-e-c-t-e-d.html"><span>REQUEST_</span><wbr><span>REJECTED</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1680006064%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-r-e-q-u-e-s-t_-r-e-j-e-c-t-e-d.html">REQUEST_REJECTED</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">267</span></div><div class="brief "><p class="paragraph">H3_REQUEST_REJECTED: the server did not process the request; read as <a href="../-http3-exception/-request-not-processed/index.html">Http3Exception.RequestNotProcessed</a>, safe to retry.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1791351854%2FProperties%2F748033675" anchor-label="SETTINGS_ERROR" id="-1791351854%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-s-e-t-t-i-n-g-s_-e-r-r-o-r.html"><span>SETTINGS_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1791351854%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-s-e-t-t-i-n-g-s_-e-r-r-o-r.html">SETTINGS_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">265</span></div><div class="brief "><p class="paragraph">H3_SETTINGS_ERROR: invalid SETTINGS content, such as a duplicate or an HTTP/2 setting (RFC 9114 section 7.2.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1470338549%2FProperties%2F748033675" anchor-label="STREAM_CREATION_ERROR" id="1470338549%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-s-t-r-e-a-m_-c-r-e-a-t-i-o-n_-e-r-r-o-r.html"><span>STREAM_</span><wbr><span>CREATION_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1470338549%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-s-t-r-e-a-m_-c-r-e-a-t-i-o-n_-e-r-r-o-r.html">STREAM_CREATION_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">259</span></div><div class="brief "><p class="paragraph">H3_STREAM_CREATION_ERROR: the peer opened a stream that is not allowed (a second control stream, a server bidi stream).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1569742219%2FProperties%2F748033675" anchor-label="VERSION_FALLBACK" id="-1569742219%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-v-e-r-s-i-o-n_-f-a-l-l-b-a-c-k.html"><span>VERSION_</span><wbr><span>FALLBACK</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1569742219%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-v-e-r-s-i-o-n_-f-a-l-l-b-a-c-k.html">VERSION_FALLBACK</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">272</span></div><div class="brief "><p class="paragraph">H3_VERSION_FALLBACK: the request should be retried over HTTP/1.1.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="108692616%2FProperties%2F748033675" anchor-label="WT_ALPN_ERROR" id="108692616%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-w-t_-a-l-p-n_-e-r-r-o-r.html"><span>WT_</span><wbr><span>ALPN_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="108692616%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-w-t_-a-l-p-n_-e-r-r-o-r.html">WT_ALPN_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">135771101</span></div><div class="brief "><p class="paragraph">WT_ALPN_ERROR: the server chose a <code class="lang-kotlin">WT-Protocol</code> the client did not offer (section 3.3).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-15184195%2FProperties%2F748033675" anchor-label="WT_BUFFERED_STREAM_REJECTED" id="-15184195%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-w-t_-b-u-f-f-e-r-e-d_-s-t-r-e-a-m_-r-e-j-e-c-t-e-d.html"><span>WT_</span><wbr><span>BUFFERED_</span><wbr><span>STREAM_</span><wbr><span>REJECTED</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-15184195%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-w-t_-b-u-f-f-e-r-e-d_-s-t-r-e-a-m_-r-e-j-e-c-t-e-d.html">WT_BUFFERED_STREAM_REJECTED</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">966049156</span></div><div class="brief "><p class="paragraph">WT_BUFFERED_STREAM_REJECTED: a WebTransport stream whose session is not there, over the buffering limits, or of a closed session (draft-ietf-webtrans-http3-16 section 4.6). Experimental, as WebTransport is.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1003221147%2FProperties%2F748033675" anchor-label="WT_FLOW_CONTROL_ERROR" id="-1003221147%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-w-t_-f-l-o-w_-c-o-n-t-r-o-l_-e-r-r-o-r.html"><span>WT_</span><wbr><span>FLOW_</span><wbr><span>CONTROL_</span><wbr><span>ERROR</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1003221147%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-w-t_-f-l-o-w_-c-o-n-t-r-o-l_-e-r-r-o-r.html">WT_FLOW_CONTROL_ERROR</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">73221255</span></div><div class="brief "><p class="paragraph">WT_FLOW_CONTROL_ERROR: WebTransport flow control was violated (section 5); the CONNECT stream is reset with it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1088330553%2FProperties%2F748033675" anchor-label="WT_REQUIREMENTS_NOT_MET" id="1088330553%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-w-t_-r-e-q-u-i-r-e-m-e-n-t-s_-n-o-t_-m-e-t.html"><span>WT_</span><wbr><span>REQUIREMENTS_</span><wbr><span>NOT_</span><wbr><span>MET</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1088330553%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-w-t_-r-e-q-u-i-r-e-m-e-n-t-s_-n-o-t_-m-e-t.html">WT_REQUIREMENTS_NOT_MET</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">556535112</span></div><div class="brief "><p class="paragraph">WT_REQUIREMENTS_NOT_MET: the peer does not meet a WebTransport requirement (section 3.1); not sent by this library.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="323951314%2FProperties%2F748033675" anchor-label="WT_SESSION_GONE" id="323951314%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-w-t_-s-e-s-s-i-o-n_-g-o-n-e.html"><span>WT_</span><wbr><span>SESSION_</span><wbr><span>GONE</span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="323951314%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">const </span><span class="token keyword">val </span><a href="-w-t_-s-e-s-s-i-o-n_-g-o-n-e.html">WT_SESSION_GONE</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span><span class="token constant">386759528</span></div><div class="brief "><p class="paragraph">WT_SESSION_GONE: resets and stops the streams of a WebTransport session that closed (section 6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="797484022%2FFunctions%2F748033675" anchor-label="isKnown" id="797484022%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="is-known.html"><span>is</span><wbr><span><span>Known</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="797484022%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="is-known.html"><span class="token function">isKnown</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True for the codes this library knows; others (including GREASE <code class="lang-kotlin">0x1f * N + 0x21</code>) are treated as <a href="-n-o_-e-r-r-o-r.html">NO_ERROR</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1344870618%2FFunctions%2F748033675" anchor-label="name" id="-1344870618%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="name.html"><span><span>name</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1344870618%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="name.html"><span class="token function">name</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">The registry name, or <code class="lang-kotlin">"0x…"</code> for an unknown code.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="192365706%2FFunctions%2F748033675" anchor-label="normalize" id="192365706%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="normalize.html"><span><span>normalize</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="192365706%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="normalize.html"><span class="token function">normalize</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph"><a href="normalize.html">code</a> when known, else <a href="-n-o_-e-r-r-o-r.html">NO_ERROR</a> (RFC 9114 section 9: unknown codes are equivalent to H3_NO_ERROR).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

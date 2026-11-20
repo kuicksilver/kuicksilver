@@ -1,0 +1,177 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>ReloadableCa</title>
+<link href="../../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../../styles/style.css" rel="Stylesheet">
+<link href="../../../../styles/main.css" rel="Stylesheet">
+<link href="../../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/commonMain" data-filter=":kuicksilver-tls/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-tls::io.kuicksilver.tls/TrustConfig.ReloadableCa///PointingToDeclaration//-1635407269">
+  <div class="breadcrumbs"><a href="../../../index.html">kuicksilver-tls</a><span class="delimiter">/</span><a href="../../index.html">io.kuicksilver.tls</a><span class="delimiter">/</span><a href="../index.html">TrustConfig</a><span class="delimiter">/</span><span class="current">ReloadableCa</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Reloadable</span><wbr><span><span>Ca</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">ReloadableCa</a> : <a href="../index.html">TrustConfig</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt#L197">source</a>)</span></span></div><p class="paragraph">A server's client-certificate CA bundle that can be replaced at run time (made by <a href="../-companion/reloadable.html">TrustConfig.reloadable</a>): the client CA rotates without a restart, as <a href="../../-tls-identity/-reloadable/index.html">TlsIdentity.Reloadable</a> rotates the server certificate. Servers only: wherever an <a href="../-anchored-ca/index.html">AnchoredCa</a> verifies client certificates (<code class="lang-kotlin">clientAuth</code> Optional or Required), alone or as the base of <a href="../-pinned/index.html">Pinned</a>; a client configuration with one throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a>.</p><p class="paragraph"><strong>The rule.</strong> After <a href="reload.html">reload</a> returns, no handshake accepts a client certificate that only a removed CA vouches for, over TCP and QUIC alike and however the client times its flights; connections established before are not affected. A handshake takes the <a href="current.html">current</a> bundle when the client's ClientHello arrives (over TCP when its first bytes are there, not at the accept; over QUIC with its first Initial) and OpenSSL verifies the client's certificate against it; when the handshake completes and a <a href="reload.html">reload</a> has replaced that bundle with other certificates meanwhile, the certificate is verified again against the bundle current then, as a handshake would (OpenSSL's security level included), the pins of a <a href="../-pinned/index.html">Pinned</a> around this trust are checked on the path built under it, and the handshake fails unless both pass. A reload to the same certificates changes nothing. The one case this refuses that a fresh handshake would accept: a session resumed across a reload that changed the certificates carries only the client's leaf, so it passes only if that leaf chains to the new bundle without intermediates. Close connections of a compromised CA yourself. The handshakes of one server configuration share one OpenSSL context per identity and bundle; the first handshake after a <a href="reload.html">reload</a> builds one with the new bundle and drops the old one from the shared contexts, which is freed once that has happened and its last connection is gone (a handshake that read the old bundle while the new one's context was built gets a context of its own, freed with it). With <code class="lang-kotlin">clientAuth</code> None the bundle plays no part: a reload changes nothing then. The server's CertificateRequest carries no <code class="lang-kotlin">certificate_authorities</code> extension (RFC 9846 section 4.3.4: "The server MAY send it"), so no CA list is announced that a reload would have to change.</p><p class="paragraph"><strong>Resumption.</strong> A session resumes only under the bundle it was authenticated with: after a <a href="reload.html">reload</a> a ticket issued before it resumes nothing (RFC 9846 section 4.7.1: "A server MAY treat a ticket as valid for a shorter period"); the client runs a full handshake, and its certificate is verified against the new bundle. A client whose CA was dropped cannot get back in with a ticket.</p><p class="paragraph"><strong>Checks.</strong> <a href="reload.html">reload</a> refuses a bundle in which no certificate is valid now (each expired, or not valid yet beyond 5 minutes of clock skew): it could accept no client. A bundle with some expired certificates is accepted (they anchor nothing). The pins of a <a href="../-pinned/index.html">Pinned</a> around this trust do not change with a reload.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="1583838328%2FProperties%2F-1635407269" anchor-label="current" id="1583838328%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="current.html"><span><span>current</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1583838328%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="current.html">current</a><span class="token operator">: </span><a href="../-anchored-ca/index.html">TrustConfig.AnchoredCa</a></div><div class="brief "><p class="paragraph">The bundle handshakes whose ClientHello arrives now verify client certificates against; a snapshot a later <a href="reload.html">reload</a> does not change.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="2042071767%2FFunctions%2F-1635407269" anchor-label="reload" id="2042071767%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="reload.html"><span><span>reload</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2042071767%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="reload.html"><span class="token function">reload</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">next<span class="token operator">: </span><a href="../-anchored-ca/index.html">TrustConfig.AnchoredCa</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Makes <a href="reload.html">next</a> the bundle client certificates are verified against: once this returns, no handshake completes with a certificate that only a CA missing from <a href="reload.html">next</a> vouches for; established connections are not affected.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1713406269%2FFunctions%2F-1635407269" anchor-label="toString" id="1713406269%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-string.html"><span>to</span><wbr><span><span>String</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1713406269%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="to-string.html"><span class="token function">toString</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">For logs.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

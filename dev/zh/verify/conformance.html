@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一致性测试套件 - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/conformance.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/conformance.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/conformance.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/conformance.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/conformance.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../../index.html">Kuicksilver</a><a href="../../guide/index.html">指南</a> <a href="../../api/index.html">API 参考</a> <a href="../../zh/verify/index.html">我们如何验证</a><nav class="lang" aria-label="语言"><a hreflang="en" lang="en" href="../../verify/conformance.html">English</a> <a hreflang="ru" lang="ru" href="../../ru/verify/conformance.html">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../../zh/verify/conformance.html" aria-current="page">简体中文</a></nav></header>
+<div class="snapshot" role="note">提交 612511494c503adf8ad86282557ae3f808ee935c（2026-11-20T09:32:18Z）的开发快照（development snapshot），不是发布版本。 <a href="../../../index.html">所有发布版本</a></div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">我们如何验证</a></li><li><a href="platforms.html">平台矩阵</a></li><li><a href="interop.html">引擎互操作（engine interop）</a></li><li class=current><a href="conformance.html">一致性测试套件</a></li><li><a href="fuzzing.html">模糊测试与变异测试</a></li><li><a href="sizes.html">构件大小</a></li><li><a href="benchmarks.html">基准测试</a></li><li><a href="rfc.html">RFC 合规性</a></li><li><a href="how.html">流程</a></li></ul></nav><main>
+<p class="note">本译文未经母语者审校。以英文页面为准： <a href="../../verify/conformance.html" hreflang="en" lang="en">English</a></p>
+<h1>一致性测试套件</h1>
+<p class="prov">数据来自提交 612511494c503adf8ad86282557ae3f808ee935c 的成功 build.yml 运行，开始于 2026-11-20 10:11 UTC。 <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">CI 运行 44717133396</a></p><p>依据规范检查协议实现的第三方测试套件。</p>
+<table><thead><tr><th>套件</th><th>CI 主机</th><th class=num>测试</th><th class=num>通过</th><th class=num>跳过</th><th class=num>失败</th><th>状态</th></tr></thead><tbody><tr><td>h2spec (tls)</td><td>Linux x64 (manylinux2014 container) (linux-x64 server)</td><td class=num>146</td><td class=num>146</td><td class=num>0</td><td class=num>0</td><td><span class="pass">通过</span></td></tr><tr><td>h2spec (h2c)</td><td>Linux x64 (manylinux2014 container) (linux-x64 server)</td><td class=num>146</td><td class=num>146</td><td class=num>0</td><td class=num>0</td><td><span class="pass">通过</span></td></tr><tr><td>h3spec</td><td></td><td class=num></td><td class=num></td><td class=num></td><td class=num></td><td><span class="nodata">尚未提供</span></td></tr><tr><td>Autobahn</td><td></td><td class=num></td><td class=num></td><td class=num></td><td class=num></td><td><span class="nodata">尚未提供</span></td></tr></tbody></table>
+<p class="note">h2spec 在 CI 中针对 linuxX64 服务器运行，也在本地发布门禁中运行（tools/interop/h2spec.sh，所有用例必须通过）；早先使用 JVM 和 macOS 服务器的结果记录在 <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/spec/interop.md">docs/spec/interop.md</a></p>
+</main></div>
+</body>
+</html>

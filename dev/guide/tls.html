@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TLS with Kuicksilver - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li class="current"><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="tls-with-kuicksilver">TLS with Kuicksilver</h1>
+<p><strong>What this page is for.</strong> It explains the TLS layer on its own: building a <code>TlsConfig</code>, trust and certificate checks, TLS
+over a socket or any channel, session resumption, key logging and key exchange groups. QUIC, Ktor and the socket wrapper all
+use the same configuration object.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Dependency: <code>io.kuicksilver:kuicksilver-tls:0.3.0</code> or newer (the socket wrapper is <code>io.kuicksilver:kuicksilver-ktor-network</code>).
+Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#kotlin-version">Kotlin version</a>).</li>
+<li>Platforms: JVM 17 or newer, Android <code>minSdk</code> 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>A client needs the server's name and a trust configuration; a server needs a <code>TlsIdentity</code> (certificate chain and
+private key).</li>
+</ul>
+<p><strong>Minimal example.</strong> <a href="#configuration">Configuration</a> builds a client and a server <code>TlsConfig</code>; <a href="#tls-over-a-socket">TLS over a socket</a>
+runs a handshake over TCP.</p>
+<p><a id="imports"></a>
+<strong>Imports.</strong> The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. <code>Dispatchers.IO</code> needs <code>kotlinx.coroutines.IO</code> in common and Native code.
+Experimental and delicate API needs <code>@file:OptIn(...)</code> or the module-wide opt-in (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#stability-levels">stability</a>).</p>
+<pre><code class="language-kotlin">// guide:tls:imports
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.network.tls
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.KeyExchangeGroups
+import io.kuicksilver.tls.PinScope
+import io.kuicksilver.tls.SpkiSha256
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.keylogFile
+import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.seconds
+</code></pre>
+<p>Kuicksilver's TLS layer (<code>io.kuicksilver:kuicksilver-tls</code>) runs TLS 1.3 (RFC 9846; the default, as RFC 9852 asks) and,
+when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 3.5 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
+TLS over TCP and the <code>ktor-network</code> socket wrapper. The code blocks below compile and run as <code>GuideSamplesTest</code>.</p>
+<h2 id="native-library-availability">Native library availability</h2>
+<p>The TLS layer runs on the native library <code>libksl</code>, shipped for the platforms listed in the README. An application that
+must also run elsewhere (another OS or CPU architecture) checks once at startup and keeps another transport, instead of
+catching <code>KslException</code> from the first connection:</p>
+<pre><code class="language-kotlin">// guide:tls:availability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is cached for the process
+</code></pre>
+<p><code>KslLoader.isAvailable()</code> and <code>KslLoader.availability()</code> are experimental (<code>@ExperimentalKuicksilverApi</code>); the latter says why: <code>NativeAvailability.Unavailable.reason</code> is
+<code>NoLibraryForPlatform</code>, <code>LoadFailed</code>, <code>IntegrityMismatch</code> (the SHA-256 manifest check refused the library) or
+<code>AbiMismatch</code>, with the original exception as <code>cause</code>. The check makes the same single load attempt as
+<code>KslLoader.ensureLoaded()</code>; after a failure, <code>ensureLoaded()</code> throws that same exception without retrying.</p>
+<p>On the JVM the library is extracted once into <code>&lt;java.io.tmpdir&gt;/kuicksilver-native-&lt;user&gt;</code> (or
+<code>-Dkuicksilver.native.workdir=&lt;dir&gt;</code>, for a <code>noexec</code> temp directory) and verified against the jar's SHA-256 manifest on
+every start. The loader creates the directory, and any missing parent, owner-only (<code>rwx------</code>, or on Windows an ACL with
+one entry for you) and checks it: it must be a real directory that you own and that nobody else can write. A
+<code>-Dkuicksilver.native.workdir</code> that fails the check gives <code>IntegrityMismatch</code>; when the default directory fails it
+(another user created it first, or it is a link), the process uses a new private directory next to it and prints a
+warning. An elevated Windows process uses <code>kuicksilver-native-&lt;user&gt;-admin</code>. When a directory above the default one lets
+another user rename it (writable by others without the sticky bit <code>/tmp</code> has, or owned by another user), the library
+goes to <code>$XDG_RUNTIME_DIR/kuicksilver-native</code> or the user's cache directory instead, and when neither can be used it
+stays in the temporary directory with a warning (<a href="troubleshooting.html#kslexceptionnativeload-or-kslloaderavailability-is-unavailable">troubleshooting</a>).
+The library is written owner-only (<code>rw-------</code>) through a new file and an atomic rename; a copy that another user owns or
+may write is replaced, not reused, and one that cannot be replaced (Windows, another process has it loaded) is written
+next to it under a name with its hash. The file is kept between runs and shared between JVMs of the same user: its name
+carries the <code>ksl</code> ABI version.</p>
+<h2 id="configuration">Configuration</h2>
+<p>A <code>TlsConfig</code> is immutable; build it with the <code>tlsConfig</code> DSL. A client needs a server name (its reference identifier)
+and a trust configuration; a server needs an identity or an SNI selector.</p>
+<pre><code class="language-kotlin">// guide:tls:client-config
+val client = tlsConfig(TlsRole.Client) {
+    serverName = &quot;server.test&quot;          // SNI and the name the certificate must match
+    alpn = listOf(&quot;h2&quot;, &quot;http/1.1&quot;)
+    trust = TrustConfig.Platform        // the OS trust store (JDK, Android NSC, SecTrust, Windows)
+}
+</code></pre>
+<pre><code class="language-kotlin">// guide:tls:server-config
+val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())   // the key array is zeroed; the key now lives in OpenSSL only
+val server = tlsConfig(TlsRole.Server) {
+    alpn = listOf(&quot;http/1.1&quot;)
+    this.identity = identity
+}
+</code></pre>
+<p>A TLS-over-TCP client that sends no ALPN extension completes the handshake without ALPN by default, as with OpenSSL and
+Go's <code>crypto/tls</code>. A server whose protocols imply one for such a client sets <code>alpnFallback</code> (experimental), e.g.
+<code>http/1.1</code>: RFC 9113 section 3.3 says &quot;HTTP/2 connections over TLS MUST use protocol negotiation in TLS&quot;, so a client
+without ALPN speaks HTTP/1.1. Such a client then completes the handshake only where the protocols in effect for its
+connection (<code>alpn</code>, or the <code>sniSelector</code> answer's) name the fallback; elsewhere the handshake ends with
+<code>no_application_protocol</code> (120). That is the alert RFC 7301 section 3.2 gives a server that &quot;supports no protocols that
+the client advertises&quot;, and the one RFC 9001 section 8.1 requires when &quot;an application protocol is not negotiated&quot; over
+QUIC; <code>missing_extension</code> (109) is for an extension &quot;mandatory to send for the offered TLS version&quot; (RFC 9846 section
+6.2), which ALPN over TCP is not. The rule holds at every ClientHello, the second one after a HelloRetryRequest included:
+RFC 9846 section 4.2.2 has the client &quot;send the same ClientHello without modification&quot; there but does not tell a server
+to compare the two, and OpenSSL does not, so a client that drops ALPN from its second ClientHello is judged as one that
+never sent it; the handshake is checked once more when it completes. A ClientHello whose ALPN extension is present but
+malformed (RFC 7301 section 3.1: a non-empty list of non-empty names) gets <code>decode_error</code> (50), with or without the
+fallback, as OpenSSL answers it. An empty list in effect (no ALPN) takes any client. The fallback cannot be <code>h3</code>, and a
+server over TCP selects from its <code>alpn</code> without <code>h3</code> (RFC 9114 section 3.1: HTTP/3 runs over QUIC only); a list of <code>h3</code>
+alone serves nothing over TCP, and every TCP handshake ends with <code>no_application_protocol</code>. QUIC ignores <code>alpnFallback</code>:
+a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The Ktor server's TLS connector sets it to <code>http/1.1</code>.</p>
+<h3 id="rotating-the-server-certificate">Rotating the server certificate</h3>
+<p>A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
+<code>TlsIdentity.reloadable(identity)</code>, use the result as the <code>identity</code>, and call <code>reload(TlsIdentity.fromPem(...))</code> when a
+renewed certificate arrives. Every handshake whose ClientHello arrives afterwards, over TCP and QUIC alike, presents the new
+chain and key, also on a TCP connection accepted before the reload; handshakes in progress and established connections
+keep the identity they started with, and nothing they hold is freed under them.</p>
+<ul>
+<li><strong>Bad input never replaces the identity in use.</strong> A key that does not match the leaf already fails in <code>fromPem</code> or
+<code>fromDer</code>; <code>reload</code> refuses a closed identity, a leaf certificate that has expired, and one that is not valid yet
+(notBefore more than 5 minutes ahead: a certificate staged for later is never served early), all with
+<code>TlsException.Config</code>, and the old identity goes on serving.</li>
+<li><strong>Ownership.</strong> The reloadable identity owns what it serves: <code>reload</code> closes the identity it replaces, <code>close()</code> the
+current one. An identity <code>reload</code> refused is still yours to close.</li>
+<li><strong>Resumption.</strong> Every server binds its session tickets to the leaf certificate they were issued under, so after a
+reload to another certificate a ticket from before it resumes nothing: the client runs a full handshake and sees the new
+certificate, and that ticket's 0-RTT is refused. A resumed connection carries no certificate (RFC 9846 section 2.2) and
+keeps the identity of its session, which is therefore the current one. After a key compromise, a reload stops both new
+handshakes and resumptions with the old key; connections already established run until they close.</li>
+</ul>
+<p>Independently of reloads, resumption is bounded on every server (RFC 9846 section 4.7.1 recommends limiting the total
+lifetime of resumption keying material and taking the certificate's lifetime into account): each resumption renews the
+ticket, but a chain of renewals ends 7 days after the full handshake that authenticated it (BoringSSL's
+<code>SSL_DEFAULT_SESSION_AUTH_TIMEOUT</code>) and at the leaf's notAfter; then the client runs a full handshake.</p>
+<p>The Ktor server engine can also watch the PEM files itself; see <a href="ktor.html#certificate-rotation">Certificate rotation</a>.</p>
+<h3 id="rotating-the-client-ca">Rotating the client CA</h3>
+<p>The CA bundle a server verifies client certificates with (<code>clientAuth</code> <code>Optional</code> or <code>Required</code>) can also be replaced
+while the server runs (experimental, 0.3.0). Wrap the bundle with <code>TrustConfig.reloadable(TrustConfig.AnchoredCa(roots))</code>
+and use the result as the server's <code>trust</code>, alone or as the <code>base</code> of <code>Pinned</code>. Call <code>reload(TrustConfig.AnchoredCa(newRoots))</code>
+when the bundle changes. It follows the rules of the identity above:</p>
+<ul>
+<li><strong>The rule.</strong> After <code>reload</code> returns, no handshake accepts a client certificate that only a removed CA vouches for,
+over TCP and QUIC alike, however the client times its flights. A handshake takes the bundle current when its ClientHello
+arrives (over TCP when its first bytes are there, not at the accept) and OpenSSL verifies against it; if a reload replaced
+that bundle with other certificates before the handshake completes, the certificate is verified again against the bundle
+current then, as a fresh handshake would (OpenSSL's security level, and the pins of a <code>Pinned</code> around the bundle on the
+path built under it), and the handshake fails unless it passes. A reload to the same certificates changes nothing. One
+case is refused that a fresh handshake would accept: a session resumed across a reload that changed the certificates
+holds only the client's leaf, so it passes only if that leaf chains to the new bundle without intermediates (the client
+then runs a full handshake on its next connection). Connections established before the reload are not affected: a client of a CA you
+dropped that is already connected stays connected until its connection closes. Close such connections yourself if the
+CA was compromised.</li>
+<li><strong>Shared contexts.</strong> The first handshake under the new bundle replaces the old bundle's shared OpenSSL context, which is
+freed with its last connection. With <code>clientAuth</code> <code>None</code> the bundle plays no part, and a reload changes nothing.</li>
+<li><strong>Non-CA certificates.</strong> Every certificate of the bundle is a trust anchor, also a leaf: a client presenting exactly that
+certificate is accepted. <code>EngineMain</code> warns about such certificates in its CA file.</li>
+<li><strong>Bad input never replaces the bundle in use.</strong> <code>reload</code> refuses a bundle in which no certificate is valid now (each
+expired, or not valid yet beyond 5 minutes of clock skew) with <code>TlsException.Config</code>, and the old bundle stays.</li>
+<li><strong>Resumption.</strong> A session resumes only under the bundle it was authenticated with. After a reload, a ticket from before
+it resumes nothing (RFC 9846 section 4.7.1: &quot;A server MAY treat a ticket as valid for a shorter period&quot;). The client
+runs a full handshake and its certificate is verified against the new bundle, so a ticket never lets a client of a
+dropped CA back in.</li>
+<li><strong>What the client sees.</strong> The server sends no <code>certificate_authorities</code> extension in its CertificateRequest (RFC 9846
+section 4.3.4: &quot;The server MAY send it in the CertificateRequest message&quot;), so clients pick their certificate without a
+CA list from the server, before and after a reload.</li>
+<li><strong>Servers only.</strong> A client configuration with a <code>ReloadableCa</code> throws <code>TlsException.Config</code>; a client trusts its server
+through <code>AnchoredCa</code>.</li>
+</ul>
+<pre><code class="language-kotlin">// guide:tls:client-ca-rotation
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
+val mtlsServer = tlsConfig(TlsRole.Server) {
+    alpn = listOf(&quot;h3&quot;)
+    identity = serverIdentity
+    clientAuth = ClientAuth.Required
+    trust = clientCa
+}
+// later, when the bundle changes:
+clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
+</code></pre>
+<p>The Ktor server engine can watch the CA file too: <code>EngineMain</code>'s <code>kuicksilver.tls.clientCa</code> with
+<code>kuicksilver.tls.reloadInterval</code> (<a href="ktor.html#certificate-rotation">Certificate rotation</a>).</p>
+<h3 id="certificate-per-name-sni">Certificate per name (SNI)</h3>
+<p>A server's <code>sniSelector</code> chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
+(<code>TlsConnection</code>) and QUIC (<code>QuicTlsSession</code>, HTTP/3) alike. It sees a <code>ClientHelloInfo</code> (the server name, null without
+SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
+<code>ServerTlsOverride(identity, alpn, clientAuth, trust)</code> (with <code>ocspStapling</code> and <code>keyExchangeGroups</code>, experimental) or
+null:</p>
+<ul>
+<li>an override: its chain and key answer, and its <code>alpn</code>, <code>clientAuth</code>, <code>trust</code>, staple and key-exchange groups replace
+the configuration's for that connection (<code>localCertificates</code> reports the chosen chain). Over TCP its <code>alpn</code> goes without <code>h3</code>, which
+identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of <code>h3</code> alone serves the name over QUIC only, and its
+TCP handshake ends with <code>no_application_protocol</code> (120, RFC 7301 section 3.2), as does that of a client without ALPN
+where <code>alpnFallback</code> is set and the list leaves it out (<a href="#configuration">Configuration</a>);</li>
+<li>null for a ClientHello with a server name: the handshake ends with <code>unrecognized_name</code> (112), the fatal choice RFC 6066
+section 3 offers for a name the server does not recognize;</li>
+<li>null for a ClientHello without one: the configuration's own <code>identity</code>; a configuration without one ends the handshake
+with <code>missing_extension</code> (109, RFC 9846 section 9.2; TLS 1.2 has no such alert and gets <code>handshake_failure</code>).</li>
+</ul>
+<p>A selector that throws, or an override the configuration's rules refuse, ends that handshake: over TCP with the
+exception, over QUIC with <code>internal_error</code> (80) and the exception as the cause of the failure (the CONNECTION_CLOSE reason
+the client reads carries none of its text). Over QUIC the handshake pauses at <code>DriveResult.WantSni</code>; the QUIC endpoint runs
+the selector off the connection's loop (<code>QuicTlsSession.selectSni</code>, then <code>resumeSni</code> on the loop), and a connection that
+ends meanwhile cancels it and frees what it built. A QUIC override needs a non-empty <code>alpn</code> like any QUIC configuration,
+and one with client certificates gets neither tickets nor 0-RTT, as a QUIC server with client certificates never does.</p>
+<p>Session tickets are bound to the server name and to the certificate they were issued under: a ticket resumes, and its
+0-RTT is accepted, only when the same name selects the same certificate again (RFC 6066 section 3, RFC 9846 section
+4.7.1). Otherwise the handshake is a full one and issues a new ticket. A Kuicksilver client does not even offer a ticket
+under another name than its own.</p>
+<p>The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
+trust and <code>OcspStapling</code> objects, equal <code>alpn</code>, <code>clientAuth</code> and <code>keyExchangeGroups</code>), so a selector that returns <code>ServerTlsOverride(identity)</code>
+for a known identity costs a handshake little; a <code>TlsIdentity.Reloadable</code> still reaches the next handshake after a
+reload. Hand out the same <code>TrustConfig</code> and <code>OcspStapling</code> objects for a name: a new object per call is a new answer
+and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
+their contexts are counted apart from the configuration's own, so many answers never push those out.</p>
+<h2 id="trust">Trust</h2>
+<p>Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with <code>ExpectedName</code>
+for proxies (<code>ExpectedName</code> wraps <code>Platform</code>, <code>AnchoredCa</code> or <code>Custom</code>; to pin as well, put it inside <code>Pinned</code> — except
+around <code>Custom</code>, which <code>Pinned</code> refuses directly and through <code>ExpectedName</code>:
+<code>Pinned(pins, base = ExpectedName(name, base))</code>). Pins are an additional check against the validated chain, never a
+replacement for it.</p>
+<pre><code class="language-kotlin">// guide:tls:trust
+val pinned = TrustConfig.Pinned(
+    pins = setOf(SpkiSha256.parse(&quot;sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=&quot;)),
+    scope = PinScope.Leaf,
+    base = TrustConfig.AnchoredCa(listOf(rootCertificate)),   // or Platform
+)
+</code></pre>
+<p>Private CAs usually arrive as PEM files. <code>Certificate.parsePem</code> returns every <code>CERTIFICATE</code> block of a file in order
+(a bundle, a chain), skips other blocks such as keys, and parses each certificate on the spot, so a damaged file fails
+at startup with <code>TlsException.Config</code> rather than at the first handshake:</p>
+<pre><code class="language-kotlin">// guide:tls:pem-roots
+val roots = Certificate.parsePem(caPem)   // every CERTIFICATE block, in order; TlsException.Config if none
+val trust = TrustConfig.AnchoredCa(roots)
+</code></pre>
+<p>Every certificate given to <code>AnchoredCa</code> is a trust anchor, also one that is not self-signed: anchoring at an
+intermediate CA accepts the chains that reach it, without its issuers (OpenSSL <code>X509_V_FLAG_PARTIAL_CHAIN</code>, as JDK
+<code>TrustAnchor</code>s, Apple anchor certificates and Go's root pools behave).</p>
+<h3 id="platform-trust">Platform trust</h3>
+<p><code>TrustConfig.Platform</code> hands the chain to the platform's own verifier. <code>ksl</code> checks the reference identifier with the
+shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
+(<code>Pinned</code>) are compared against the chain the platform built, never against certificates the peer merely sent.</p>
+<p>Every peer chain is held to OpenSSL's security level 2 (RFC 9325 section 4.5): every key needs 112 security bits (RSA
+2048 bits, an elliptic curve 224 bits), and every certificate signature too, except the trust anchor's: no SHA-1 or MD5
+(RFC 9846 section 4.5.1.3). A weaker chain ends the handshake with <code>bad_certificate</code> and <code>TlsException.Verify</code> with
+<code>VerifyReason.WeakKey</code> or <code>VerifyReason.WeakSignature</code>; there is no switch to turn it off. The JDK, Android and Windows
+verifiers would accept 1024-bit RSA on their own. Which certificates count depends on the trust:</p>
+<ul>
+<li><strong><code>Platform</code></strong> (also under <code>Pinned</code> and <code>ExpectedName</code>): the platform is asked first, and after its yes <code>ksl</code> checks the
+path the platform built, leaf first and its trust anchor last (Android's <code>X509TrustManagerExtensions</code>, Apple's
+<code>SecTrustCopyCertificateChain</code>, Windows' chain, and on the JVM the path rebuilt with the JDK's PKIX builder to the trust
+manager's roots), as OpenSSL checks its own path: every key, the anchor's included, and every signature but the
+anchor's. A certificate the server sends that the platform does not use, such as an extra cross-certificate above the
+root the platform trusts (signed with SHA-1 by an old root, say), does not count, as with OpenSSL. If the platform does
+not say which path it took, the certificates the server sent are checked as for <code>Custom</code>. When the platform itself
+refuses a chain with an MD5, SHA-1 or small-key certificate in it (the JDK, Apple and Windows do), the refusal is still
+reported as <code>WeakSignature</code> or <code>WeakKey</code> with <code>bad_certificate</code>. This holds even when the chain is not trusted at all
+(RFC 9846 section 4.5.1.3 does not depend on trust; OpenSSL would send <code>unknown_ca</code>), and it takes precedence over the
+platform's own reason: an expired or revoked chain that also has a weak certificate among those sent is reported as
+<code>WeakKey</code> or <code>WeakSignature</code>. The chain is refused either way. On Linux Native <code>Platform</code> is
+OpenSSL's own verifier with the system store, which checks its own path the same way.</li>
+<li><strong><code>AnchoredCa</code></strong>: OpenSSL checks the path it builds to your roots.</li>
+<li><strong><code>Custom</code> and <code>Tofu</code></strong>: the certificates the peer sent are checked before your verifier or the TOFU store is asked:
+every presented certificate reachable from the leaf through issuers whose key verifies the signature (each such issuer
+is followed, so cross-certificates are all checked), only a really self-signed certificate's own signature exempt. This
+is stricter than OpenSSL for an extra cross-certificate the server sends above the anchor your verifier trusts: it is
+checked and refuses the chain. A certificate on no verified path from the leaf is not looked at.</li>
+</ul>
+<p>The endpoint's own chain is held to the same rules when the identity is made (<code>TlsIdentity.fromDer</code>, <code>fromPem</code> and the
+JVM key store factories throw <code>TlsException.Config</code> for a SHA-1- or MD5-signed certificate or a key under 112 bits), for
+a server and for a client certificate alike.</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Verifier and store</th>
+<th>Revocation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JVM</td>
+<td>the default <code>X509TrustManager</code>: the JDK's <code>cacerts</code> or <code>javax.net.ssl.trustStore</code>, not the OS store</td>
+<td>as the JDK is configured (off by default)</td>
+</tr>
+<tr>
+<td>Android</td>
+<td>the platform <code>TrustManager</code>, including the app's Network Security Config (whose <code>cleartextTrafficPermitted</code> the Ktor client also honours for <code>http://</code>)</td>
+<td>the platform's policy</td>
+</tr>
+<tr>
+<td>Apple (macOS, iOS)</td>
+<td><code>SecTrust</code> with the SSL policy for the host name: the keychain and the system roots</td>
+<td>the platform's policy; an incomplete required check is <code>UnknownRevocationStatus</code></td>
+</tr>
+<tr>
+<td>Windows (mingwX64)</td>
+<td>CryptoAPI: <code>CertGetCertificateChain</code> for the <code>serverAuth</code> (or, for a client certificate, <code>clientAuth</code>) usage with the presented intermediates, then <code>CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)</code> with the host name: the Windows root store, missing intermediates fetched through AIA</td>
+<td>the leaf's status is checked; a revoked leaf is <code>Revoked</code>, an unknown status is ignored (soft fail, as browsers); network fetches share a 10 s budget and run off the handshake's thread</td>
+</tr>
+<tr>
+<td>Linux (Native)</td>
+<td>OpenSSL inside <code>ksl</code> with the system CA bundle (<a href="#linux-trust-store">Linux trust store</a>)</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<p>Windows errors map to <code>VerifyReason</code>: <code>CERT_E_UNTRUSTEDROOT</code> and chaining failures to <code>UnknownIssuer</code>, <code>CERT_E_EXPIRED</code> to
+<code>Expired</code> or <code>NotYetValid</code>, <code>CERT_E_CN_NO_MATCH</code> to <code>HostnameMismatch</code>, <code>CRYPT_E_REVOKED</code> and <code>CERT_E_REVOKED</code> to <code>Revoked</code>,
+<code>CRYPT_E_NO_REVOCATION_CHECK</code>, <code>CRYPT_E_REVOCATION_OFFLINE</code> and <code>CERT_E_REVOCATION_FAILURE</code> to <code>UnknownRevocationStatus</code>,
+<code>CERT_E_WRONG_USAGE</code> and <code>CERT_E_PURPOSE</code> to <code>InvalidPurpose</code>, <code>TRUST_E_CERT_SIGNATURE</code> to <code>BadSignature</code>,
+<code>CERT_E_MALFORMED</code> to <code>BadEncoding</code>; anything else is <code>UnknownIssuer</code>.</p>
+<h3 id="linux-trust-store">Linux trust store</h3>
+<p>On Linux Native the bundled OpenSSL has no built-in certificate directory, so <code>ksl</code> looks for the system store when a
+client context with <code>TrustConfig.Platform</code> is built, in this order:</p>
+<ol>
+<li><code>SSL_CERT_FILE</code> (a PEM bundle) and <code>SSL_CERT_DIR</code> (a directory of PEM certificates, hashed with <code>c_rehash</code> or not). When
+either variable is set, only these are used, as in Go's <code>crypto/x509</code>: a configured store never silently becomes another
+one.</li>
+<li>Otherwise the first bundle that loads, from Go's list: <code>/etc/ssl/certs/ca-certificates.crt</code> (Debian, Ubuntu, Gentoo),
+<code>/etc/pki/tls/certs/ca-bundle.crt</code> (Fedora, RHEL 6), <code>/etc/ssl/ca-bundle.pem</code> (openSUSE), <code>/etc/pki/tls/cacert.pem</code>,
+<code>/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem</code> (CentOS, RHEL 7 and later), <code>/etc/ssl/cert.pem</code> (Alpine), and
+<code>/usr/local/etc/openssl/cert.pem</code>.</li>
+<li>Otherwise the first of <code>/etc/ssl/certs</code> and <code>/etc/pki/tls/certs</code> that holds certificates. A directory with <code>c_rehash</code>
+links is searched by OpenSSL's hash lookup; any other directory is read like Go reads it: every PEM file in it loads.
+A directory without either does not count.</li>
+</ol>
+<p>When nothing is found (a distroless or <code>scratch</code> image without <code>ca-certificates</code>), building the configuration fails with
+<code>TlsException.Config</code> naming every path searched:</p>
+<pre><code class="language-text">invalid TLS configuration: ksl: no CA certificates for TrustConfig.Platform; searched /etc/ssl/certs/ca-certificates.crt, ...,
+/etc/pki/tls/certs/; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or use AnchoredCa
+</code></pre>
+<p>Install the distribution's <code>ca-certificates</code> package, copy a bundle into the image and point <code>SSL_CERT_FILE</code> at it, or
+ship your roots with <code>TrustConfig.AnchoredCa</code>.</p>
+<p><code>TrustConfig.Tofu</code> stores the first key seen for a name; <code>TrustConfig.Custom</code> hands trust to your verifier and still
+runs the shared name check afterwards (it is marked <code>@DelicateKuicksilverApi</code> for that reason).</p>
+<h3 id="certificate-revocation">Certificate revocation</h3>
+<p>RFC 9325 section 7.5 requires &quot;a strategy to distrust revoked certificates&quot;. Kuicksilver has three parts, all
+experimental in 0.3.0:</p>
+<ul>
+<li><strong>Stapled OCSP (clients).</strong> <code>TlsConfig.revocation</code> (<code>RevocationPolicy</code>, default <code>StapledIfPresent</code>) asks the server
+for a stapled OCSP response (<code>status_request</code>, RFC 6066 section 8) and checks it as RFC 6960 section 3.2 says: it must
+name the server's certificate and the issuer the verifier trusted, be signed by that issuer or by a responder the
+issuer delegated (id-kp-OCSPSigning), and be inside its validity interval (5 minutes of clock skew). A response saying
+revoked fails with <code>VerifyReason.Revoked</code>; one that fails a check fails with <code>VerifyReason.InvalidStatusResponse</code>; both
+send <code>bad_certificate_status_response</code> (113), also with <code>genericAlerts</code> (OpenSSL chooses that alert). A delegated
+responder must also carry no unknown critical extension, meet the security level, and not be listed on a configured CRL
+of the issuer. A server that staples nothing, or a response saying &quot;unknown&quot;, passes under
+<code>StapledIfPresent</code> (OCSP clients &quot;typically 'soft-fail'&quot;, RFC 9325 section 7.5) and fails under <code>RequireStapled</code>
+(<code>VerifyReason.UnknownRevocationStatus</code>, alert 113); a certificate marked must-staple (RFC 7633) fails without one
+under every policy but <code>Off</code>, and so does a required staple for a leaf that is itself the trust anchor (no issuer to
+check a response against). The check runs where <code>ksl</code> verifies the chain: <code>AnchoredCa</code>, and <code>Platform</code> on Linux Native, also
+inside <code>Pinned</code> and <code>ExpectedName</code>. Elsewhere under <code>Platform</code> the OS verifier decides: Apple and Windows apply their
+own revocation policy, while on Android (its blocklist only) and the JVM (off unless the application enables it, e.g.
+<code>com.sun.net.ssl.checkRevocation</code>) nothing checks revocation; use <code>AnchoredCa</code> where that matters. A <code>Custom</code> or <code>Tofu</code>
+verifier decides alone; <code>RequireStapled</code> with them is refused (<code>TlsException.Config</code>). A
+session resumes only while the response its full handshake checked is fresh.</li>
+<li><strong>CRLs (clients and servers).</strong> <code>TrustConfig.AnchoredCa(roots, crls)</code> checks every certificate on the verified path
+against its issuer's CRL when one of <code>crls</code> is from that issuer (<code>CertificateRevocationList.parsePem</code> reads
+<code>X509 CRL</code> blocks). Revoked fails with <code>VerifyReason.Revoked</code> (alert 44); a CRL that expired fails with
+<code>VerifyReason.UnknownRevocationStatus</code> (alert 45), so replace CRLs before their nextUpdate; a CRL whose signature does
+not verify (alert 51), a configured CRL of the issuer that OpenSSL cannot use for the certificate (alert 48) or that does
+not cover it (a distribution point it does not name, alert 46) fails with <code>VerifyReason.UnknownRevocationStatus</code> as
+well. So does a configured CRL whose issuer is neither among the roots nor on the path: with
+<code>AnchoredCa(roots = [intermediate], crls = [the root's CRL, ...])</code> the intermediate's own status cannot be verified,
+and its certificates fail (fail closed; leave that CRL out, or anchor at the root). A certificate whose issuer has none
+of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
+indirect CRLs and CRLs limited to some revocation reasons are refused when the trust is made (<code>TlsException.Config</code>). On a server, a
+<code>TrustConfig.ReloadableCa</code> reload to the same roots with new CRLs applies them to the next handshakes, as a CA reload
+does (tickets authenticated under the old CRLs resume nothing).</li>
+<li><strong>Stapling (servers).</strong> <code>TlsConfig.ocspStapling</code> (or <code>ocspStapling</code> of the Ktor TLS connector) holds the OCSP
+response for the server's certificate, fetched by the application from its CA's responder. It is stapled over TCP and
+QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
+issuer) and fresh at that moment; a stale response is silently not sent. A response is at most 2^24-5 bytes, and
+TLS 1.3 and QUIC staple one only up to 65527 bytes (it must fit the certificate's extensions, RFC 8446 section 4.4.2);
+a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Over QUIC a
+large staple makes the server's first flight exceed three times what the client sent before its address is validated
+(RFC 9000 section 8.1), so the server sends the rest only as more client packets arrive: each such limit costs extra
+round trips. Call <code>update</code> with a fresh response before
+the current one's nextUpdate; <code>isUsableFor(chain)</code> says whether the current one would be stapled. An identity chosen
+by <code>sniSelector</code> staples the response of its own <code>ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)</code>,
+and never the default identity's, over TCP and QUIC alike.</li>
+</ul>
+<pre><code class="language-kotlin">// guide:tls:revocation
+val crls = CertificateRevocationList.parsePem(crlPem)
+val client = tlsConfig(TlsRole.Client) {
+    serverName = &quot;api.example.com&quot;
+    trust = TrustConfig.AnchoredCa(roots, crls)
+    revocation = RevocationPolicy.StapledIfPresent   // the default
+}
+val stapling = OcspStapling(ocspResponseDer)      // later: stapling.update(fresher)
+val server = tlsConfig(TlsRole.Server) {
+    identity = serverIdentity                       // leaf and its issuer
+    ocspStapling = stapling
+}
+</code></pre>
+<p>Not offered: OCSP requests from the client itself, OCSP for intermediate certificates, fetching CRLs from their
+distribution points.</p>
+<h2 id="tls-over-a-socket">TLS over a socket</h2>
+<pre><code class="language-kotlin">// guide:tls:socket
+val selector = SelectorManager(Dispatchers.IO)
+val socket = aSocket(selector).tcp().connect(&quot;server.test&quot;, 443).tls(client)
+val write = socket.openWriteChannel(autoFlush = true)
+val read = socket.openReadChannel()
+write.writeStringUtf8(&quot;GET / HTTP/1.1\r\nHost: server.test\r\n\r\n&quot;)
+val status = withTimeout(10.seconds) { read.readLine(LineEnding.Lenient) }   // the status line
+socket.close()   // sends close_notify, then closes the TCP socket
+</code></pre>
+<p><code>close()</code> returns at once and finishes in the background: it sends what is queued and <code>close_notify</code>, then closes the
+TCP socket. On a client (<code>Socket.tls</code>) it drops what is left after 3 s in all (a peer that stopped reading) and closes the
+socket anyway; on a server (<code>Socket.tlsServer</code>) it waits for the client to take everything, however slowly it reads, so
+bound the connection yourself (an idle or stall timeout) where a client may never read.</p>
+<p>The same works on the server side with <code>Socket.tlsServer(config)</code> after <code>ServerSocket.accept()</code>.</p>
+<h3 id="middleboxes">Middleboxes</h3>
+<p>A TLS 1.3 client over TCP (<code>Socket.tls</code>, <code>TlsConnection.client</code>, the Ktor client's HTTP/1.1 and HTTP/2) runs without
+middlebox compatibility mode (RFC 9846 appendix E.4): its ClientHello has an empty session ID and it sends no dummy
+<code>change_cipher_spec</code>. That way it switches to the handshake keys with the ServerHello, and an alert it sends after that
+(a refused certificate, name or pin) is encrypted, as RFC 9846 appendix A.1 asks; in compatibility mode the alert went
+out in the clear and a server reading under the handshake keys (the JDK's, for one) could not read it. The cost: a
+firewall or inspection box that lets TLS 1.3 through only when it looks like a TLS 1.2 session resumption can drop these
+handshakes (a reset or a timeout right after the ClientHello or ServerHello). The field measurements behind appendix
+E.4 date from 2017; such boxes are rare now, and there is no setting to turn the mode back on. On such a network,
+update or bypass the box, or use HTTP/3 (QUIC never uses the mode). Servers are not affected: a ksl server keeps the
+mode and answers a client that sends a session ID with <code>change_cipher_spec</code>, as appendix E.4 requires.</p>
+<h3 id="resumption-and-trust">Resumption and trust</h3>
+<p>A resumed handshake carries no certificates, so the client checks the chain it cached from the full handshake again
+before it offers the ticket (ADR-0011): under <code>AnchoredCa</code> and the Linux <code>Platform</code> store <code>ksl</code> verifies it again
+against the trust store, the current time, the name and the purpose; under the other platform verifiers and <code>Custom</code>
+the verifier runs again on it. Pins are then checked against the cached validated chain. A chain that no longer passes
+(an expired leaf, for example) means a full handshake, not a failure. A server holds only the client's leaf of a
+resumed session: its verdict travels with the ticket, which resumes only under the same trust configuration and lives
+at most <code>SessionTicketConfig.ticketLifetime</code>.</p>
+<h2 id="tls-over-any-channel">TLS over any channel</h2>
+<p><code>TlsConnection.client(transportIn, transportOut, config)</code> and <code>TlsConnection.server(...)</code> run TLS over any pair of
+ktor-io channels, so a TLS session can live inside a QUIC stream or a test harness. <code>input</code> and <code>output</code> carry
+plaintext; <code>shutdown()</code> sends what is still queued and <code>close_notify</code>, waits for the peer's, and closes after 3 s in
+all at the latest, also when the peer stopped reading. <code>close()</code> ends the connection at once. Cancelling the job of the
+<code>context</code> passed to <code>client</code>/<code>server</code> ends it the same way: <code>input</code> and <code>output</code> fail and the native session is freed,
+without a <code>close()</code>. When the transport fails (a reset), the <code>TlsException.Protocol</code> of the handshake or of the input
+carries the transport's failure as its cause.</p>
+<h2 id="key-logging">Key logging</h2>
+<p>Secrets never leave native memory unless you ask. That includes the TCP client's session cache: a ticket kept for
+resumption is a handle to a native OpenSSL session, never its serialized bytes, and the secret is wiped when the
+entry is used, replaced, evicted or expires, or when the engine that owns the cache closes. Each Ktor client engine
+keeps its own cache of at most 384 sessions, six tickets for each of 64 origins (the least recently stored one is
+evicted first); <code>Socket.tls</code> and
+<code>TlsConnection.client</code> share one process-wide cache with the same bound (the cache itself is internal API). <code>TlsConfig.keylog</code> accepts a <code>KeylogSink</code> (RFC 9850 lines); the
+<code>SSLKEYLOGFILE</code> variable is not read on the library's own and is ignored by the bundled OpenSSL; only
+<code>keylogFromEnvironment()</code>, called by the application, turns it into a sink. A <code>libksl</code> built against the system
+OpenSSL (Linux only, loaded with <code>-Dkuicksilver.native.path</code> or <code>-Dkuicksilver.native.system=true</code>) refuses to load while
+it is set, since that libssl might honour it (<code>KslException.NativeLoad</code> &quot;SSLKEYLOGFILE is set and the system libssl may honour it; unset it (keylog)&quot;). <code>keylogFile(path)</code> creates the file
+with mode 0600 and checks it before the first line: a symlink at the path, a file that is not a regular file, has more than one
+hard link or belongs to another user, or a file system without POSIX permissions is refused with an <code>IllegalArgumentException</code>, and an existing
+file that is readable by the group or others is tightened to 0600 (on the JVM, Linux and Apple). The JVM on Windows has
+no POSIX permission view and refuses the file; on Kotlin/Native Windows the file is only created, so keep it in a
+directory that only you can write. On the JVM the file is opened once, when the sink is
+created, and every line goes through that descriptor, so a file removed and recreated at the path later receives nothing;
+the JVM sink is also <code>java.io.Closeable</code> (close it when you are done, otherwise the descriptor stays open until the
+channel is collected or the process exits). Kotlin/Native reopens the file without following links for every line and
+repeats the checks on the new descriptor. A FIFO at the path is refused without waiting for a reader (Native opens with
+<code>O_NONBLOCK</code>; the JVM checks the path before it opens it), so a planted FIFO cannot stall <code>keylogFile</code> or the endpoint loop.</p>
+<pre><code class="language-kotlin">val path = &quot;debug/kuicksilver-keys.txt&quot;   // a directory only you can write
+// guide:tls:keylog
+val debugClient = tlsConfig(TlsRole.Client) {
+    serverName = &quot;server.test&quot;
+    keylog = keylogFile(path)   // @DelicateKuicksilverApi
+}
+</code></pre>
+<h2 id="key-exchange-groups">Key exchange groups</h2>
+<p>By default both roles negotiate key exchange from one list: <code>X25519MLKEM768</code>, <code>X25519</code>, <code>secp256r1</code>, <code>X448</code>,
+<code>secp384r1</code>, <code>secp521r1</code> (<code>KeyExchangeGroups.Default</code>). A client sends key shares for the post-quantum hybrid and for
+X25519, so a server of either kind picks its group in one flight.</p>
+<p>A server picks by its own order, a group the client sent a key share for first: among the client's shares it takes the
+first group of its list, so it takes the client's X25519 share when that is all the client sent, even if the client
+also lists the hybrid as supported (OpenSSL's default would answer with a HelloRetryRequest for <code>X25519MLKEM768</code>, and that
+extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche, interop <code>handshakeloss</code>). With no
+usable share it asks with a HelloRetryRequest for the first group of its list the client supports (RFC 9846 section
+4.2.1); with no group in common the handshake ends with <code>handshake_failure</code> (40; over QUIC, CRYPTO_ERROR 0x0128). A
+server that took another group than its first names its list in its EncryptedExtensions (RFC 9846 section 4.3.7).</p>
+<p><code>keyExchangeGroups</code> (experimental) replaces the list, most preferred first, for clients, servers and <code>sniSelector</code>
+answers (<code>ServerTlsOverride.keyExchangeGroups</code>). A client's <code>keyShares</code> are the groups it sends shares for in its first
+ClientHello, 1 to 4 of them; left out, the first group and the first later one of the other kind (hybrid or classical),
+as BoringSSL does:</p>
+<pre><code class="language-kotlin">// guide:tls:key-exchange-groups
+val client = tlsConfig(TlsRole.Client) {
+    serverName = &quot;server.test&quot;
+    keyExchangeGroups = KeyExchangeGroups(
+        groups = listOf(KeyExchangeGroups.X25519MLKEM768, KeyExchangeGroups.X25519, KeyExchangeGroups.SECP256R1),
+        keyShares = setOf(KeyExchangeGroups.X25519),   // one small share; a server that wants the hybrid asks again
+    )
+}
+</code></pre>
+<p>The names are <code>X25519MLKEM768</code>, <code>SecP256r1MLKEM768</code>, <code>SecP384r1MLKEM1024</code>, <code>x25519</code>, <code>x448</code>, <code>secp256r1</code>, <code>secp384r1</code> and
+<code>secp521r1</code> (the constants of <code>KeyExchangeGroups</code>, case ignored). An unknown name, a duplicate, an empty list or key shares
+outside the list throw <code>TlsException.Config</code> when the <code>KeyExchangeGroups</code> is made; <code>build()</code> throws it for a group the
+OpenSSL in use does not provide (a system OpenSSL built without one, a FIPS provider), for <code>keyShares</code> on a server and
+for <code>Tls12And13</code> without an elliptic curve in the list (TLS 1.2 has no hybrid). In TLS 1.2 the list also names the
+curves of the peer's ECDSA certificates an endpoint accepts (RFC 8422 section 5.1): a client without <code>secp256r1</code> refuses a
+TLS 1.2 server's P-256 certificate with <code>handshake_failure</code>, and a server without it refuses a TLS 1.2 client's P-256
+certificate with <code>illegal_parameter</code> (47; OpenSSL holds client certificates to the server's own list). TLS 1.3 negotiates
+signatures apart. A HelloRetryRequest costs a round trip
+and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other groups, its key exchange being fresh.
+<code>TlsConnection.keyExchangeGroup</code>, <code>QuicTlsSession.keyExchangeGroup</code> and <code>QuicConnection.keyExchangeGroup</code> report the
+group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none.</p>
+<h2 id="certificate-compression">Certificate compression</h2>
+<p>Both roles compress certificate chains with TLS certificate compression (RFC 8879) by default, over QUIC and TCP alike,
+TLS 1.3 only: a client offers brotli, then zlib, and a server sends its chain compressed with the first of the client's
+algorithms; a server that asks for a client certificate offers the same two, and the client compresses its certificate.
+A peer without it sends and gets plain certificates. Over QUIC a smaller chain keeps more of a server's first flight
+inside the amplification limit before the client's address is validated (RFC 9000 section 8.1): measured with the test
+chains, a 13.7 KB leaf and its intermediate shrink the server's first flight from 15,523 to 2,689 bytes, and a
+WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes of Certificate message).</p>
+<ul>
+<li>A server compresses its chain once, when the context for its identity is built; a chain neither algorithm makes
+smaller goes out uncompressed. A session that staples an OCSP response sends its Certificate uncompressed: over TLS
+1.3 the response is part of the message, and the chain compressed beforehand has none.</li>
+<li>What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an announced uncompressed
+length above it, data that does not decompress to exactly that length, or a decompression that runs past it ends the
+handshake with <code>bad_certificate</code> (42); an algorithm that was not offered with <code>illegal_parameter</code> (47).</li>
+<li><code>TlsConnection.peerCertificateCompression</code> and <code>QuicConnection.peerCertificateCompression</code> (experimental) tell which
+algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).</li>
+<li><code>certificateCompression = false</code> (experimental) turns it off for a configuration: no offer, and a compressed
+certificate from the peer is an <code>unexpected_message</code> (10).</li>
+</ul>
+<p>The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/adr/0025-zlib-and-brotli-in-libcrypto.md">ADR-0025</a>). On Android and iOS only brotli's decoder is built, to keep the
+library small (about 230 KB added, against about 510 KB with the encoder elsewhere): there a server compresses its chain with
+zlib, and a client sends its own certificate uncompressed; both still take brotli and zlib from the peer.</p>
+
+</main></div>
+</body>
+</html>

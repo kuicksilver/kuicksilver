@@ -1,0 +1,1366 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>io.kuicksilver.quic</title>
+<link href="../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../styles/style.css" rel="Stylesheet">
+<link href="../../styles/main.css" rel="Stylesheet">
+<link href="../../styles/prism.css" rel="Stylesheet">
+<link href="../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector jvm-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/androidMain">android</button>
+                <button class="platform-tag platform-selector native-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/appleMain">apple</button>
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option jvm-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/androidMain" data-filter=":kuicksilver-quic/androidMain">
+                                <span class="checkbox--icon"></span>
+                                android
+                            </label>
+                        </li>
+                        <li role="option" class="dropdown--option platform-selector-option native-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/appleMain" data-filter=":kuicksilver-quic/appleMain">
+                                <span class="checkbox--icon"></span>
+                                apple
+                            </label>
+                        </li>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="package" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic////PointingToDeclaration//1059285658">
+  <div class="breadcrumbs"><a href="../index.html">kuicksilver-quic</a><span class="delimiter">/</span><span class="current">io.kuicksilver.quic</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Package-level</span></span> <span><span>declarations</span></span></h1>
+    <div class="platform-hinted UnderCoverText with-platform-tabs" data-platform-hinted="data-platform-hinted">
+      <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/androidMain" data-filterable-set=":kuicksilver-quic/androidMain" data-active="" data-toggle=":kuicksilver-quic/androidMain">android</button><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-toggle=":kuicksilver-quic/appleMain">apple</button><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain" data-toggle=":kuicksilver-quic/commonMain">common</button></div>
+<div class="content sourceset-dependent-content" data-togglable=":kuicksilver-quic/androidMain"><p class="paragraph"><code class="lang-kotlin">QuicEndpoint.bind</code>, <code class="lang-kotlin">QuicConnection</code>, <code class="lang-kotlin">QuicStream</code>, the configuration builders (<code class="lang-kotlin">quicConfig { }</code>, <code class="lang-kotlin">quicClientConfig</code>, <code class="lang-kotlin">quicServerConfig</code>, <code class="lang-kotlin">quicEndpointConfig</code>), connection events and statistics, <code class="lang-kotlin">QuicException</code>, and the sans-IO level (<code class="lang-kotlin">ConnectionCore</code>, <code class="lang-kotlin">EndpointCore</code>) for callers with their own event loop.</p></div><div class="content sourceset-dependent-content" data-togglable=":kuicksilver-quic/appleMain"><p class="paragraph"><code class="lang-kotlin">QuicEndpoint.bind</code>, <code class="lang-kotlin">QuicConnection</code>, <code class="lang-kotlin">QuicStream</code>, the configuration builders (<code class="lang-kotlin">quicConfig { }</code>, <code class="lang-kotlin">quicClientConfig</code>, <code class="lang-kotlin">quicServerConfig</code>, <code class="lang-kotlin">quicEndpointConfig</code>), connection events and statistics, <code class="lang-kotlin">QuicException</code>, and the sans-IO level (<code class="lang-kotlin">ConnectionCore</code>, <code class="lang-kotlin">EndpointCore</code>) for callers with their own event loop.</p></div><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><p class="paragraph"><code class="lang-kotlin">QuicEndpoint.bind</code>, <code class="lang-kotlin">QuicConnection</code>, <code class="lang-kotlin">QuicStream</code>, the configuration builders (<code class="lang-kotlin">quicConfig { }</code>, <code class="lang-kotlin">quicClientConfig</code>, <code class="lang-kotlin">quicServerConfig</code>, <code class="lang-kotlin">quicEndpointConfig</code>), connection events and statistics, <code class="lang-kotlin">QuicException</code>, and the sans-IO level (<code class="lang-kotlin">ConnectionCore</code>, <code class="lang-kotlin">EndpointCore</code>) for callers with their own event loop.</p></div>    </div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="TYPE">Types</button><button class="section-tab" data-togglable="FUNCTION,EXTENSION_FUNCTION">Functions</button><button class="section-tab" data-togglable="PROPERTY,EXTENSION_PROPERTY">Properties</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="-1865432229%2FClasslikes%2F42191490" anchor-label="AdmissionDecision" id="-1865432229%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-admission-decision/index.html"><span>Admission</span><wbr><span><span>Decision</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1865432229%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-admission-decision/index.html">AdmissionDecision</a></div><div class="brief "><p class="paragraph">The policy's answer to a <a href="-connection-attempt/index.html">ConnectionAttempt</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-222155506%2FClasslikes%2F42191490" anchor-label="Bbr" id="-222155506%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-bbr/index.html"><span><span>Bbr</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-222155506%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-bbr/index.html">Bbr</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">maxDatagramSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">1200</span><span class="token punctuation">, </span></span><span class="parameter ">random<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/-random/index.html">Random</a><span class="token operator">?</span><span class="token operator"> = </span>null</span></span><span class="token punctuation">)</span> : <a href="-congestion-controller/index.html">CongestionController</a></div><div class="brief "><p class="paragraph">BBR congestion control as specified by draft-ietf-ccwg-bbr (BBRv3): a model-based controller that paces at its estimate of the bottleneck bandwidth and keeps about one bandwidth-delay product in flight, instead of reacting to every loss.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1046561151%2FClasslikes%2F42191490" anchor-label="CongestionController" id="1046561151%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-congestion-controller/index.html"><span>Congestion</span><wbr><span><span>Controller</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1046561151%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-subclass-opt-in-required/index.html"><span class="token annotation builtin">SubclassOptInRequired</span></a><span class="token punctuation">(</span><span>markerClass<span class="token operator"> = </span><span class="token punctuation">[</span><span><a href="../../kuicksilver-native/io.kuicksilver.annotations/-experimental-kuicksilver-api/index.html">ExperimentalKuicksilverApi::class</a></span><wbr><span class="token punctuation">]</span></span><wbr><span class="token punctuation">)</span></div></div><span class="token keyword">interface </span><a href="-congestion-controller/index.html">CongestionController</a></div><div class="brief "><p class="paragraph">Congestion control of one path (RFC 9002 section 7). The core calls these from its single-threaded loop; a controller never blocks and never allocates on the hot path. <a href="-cubic/index.html">Cubic</a> with HyStart++ is the default; <a href="-new-reno/index.html">NewReno</a> and the experimental <a href="-bbr/index.html">Bbr</a> are choices.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="512493205%2FClasslikes%2F42191490" anchor-label="ConnectionAdmission" id="512493205%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-admission/index.html"><span>Connection</span><wbr><span><span>Admission</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="512493205%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><span class="token keyword">interface </span><a href="-connection-admission/index.html">ConnectionAdmission</a></div><div class="brief "><p class="paragraph">Decides, per new client Initial, whether the endpoint creates a connection, asks for address validation, drops or refuses (like s2n-quic's <code class="lang-kotlin">endpoint::Limiter</code> and quinn's <code class="lang-kotlin">Incoming</code>). Called on the endpoint loop for every queued Initial, so it must be cheap and must not block. An exception from <a href="-connection-admission/admit.html">admit</a> counts as <a href="-admission-decision/-drop/index.html">AdmissionDecision.Drop</a> and is recorded in <code class="lang-kotlin">EndpointStats.admissionContractViolations</code>: the endpoint fails closed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-483729519%2FClasslikes%2F42191490" anchor-label="ConnectionAttempt" id="-483729519%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-attempt/index.html"><span>Connection</span><wbr><span><span>Attempt</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-483729519%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-connection-attempt/index.html">ConnectionAttempt</a></div><div class="brief "><p class="paragraph">What the endpoint knows about a new client when it asks <a href="-connection-admission/admit.html">ConnectionAdmission.admit</a> (docs/guide/quic.md, "Admission and endpoint limits").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-958066939%2FClasslikes%2F42191490" anchor-label="ConnectionCore" id="-958066939%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-core/index.html"><span>Connection</span><wbr><span><span>Core</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-958066939%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-connection-core/index.html">ConnectionCore</a></div><div class="brief "><p class="paragraph">The sans-IO state machine of one QUIC connection (ADR-0004): datagrams in through <a href="-connection-core/handle-datagram.html">handleDatagram</a>, datagrams out through <a href="-connection-core/poll.html">poll</a>, time through <a href="-connection-core/next-timeout.html">nextTimeout</a>/<a href="-connection-core/on-timeout.html">onTimeout</a>, everything else through <a href="-connection-core/next-event.html">nextEvent</a>. Never touches a socket, a clock or a coroutine.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-24825948%2FClasslikes%2F42191490" anchor-label="ConnectionEvent" id="-24825948%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-event/index.html"><span>Connection</span><wbr><span><span>Event</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-24825948%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-connection-event/index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">What the core tells its runtime through <a href="-connection-core/next-event.html">ConnectionCore.nextEvent</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="816044246%2FClasslikes%2F42191490" anchor-label="ConnectionInfo" id="816044246%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-info/index.html"><span>Connection</span><wbr><span><span>Info</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="816044246%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-connection-info/index.html">ConnectionInfo</a></div><div class="brief "><p class="paragraph">The connection a <a href="-connection-listener/index.html">ConnectionListener</a> callback is about. One instance per connection, so it can key a map from <a href="-connection-listener/on-opened.html">ConnectionListener.onOpened</a> to <a href="-connection-listener/on-closed.html">ConnectionListener.onClosed</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1997040144%2FClasslikes%2F42191490" anchor-label="ConnectionListener" id="1997040144%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-listener/index.html"><span>Connection</span><wbr><span><span>Listener</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1997040144%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-connection-listener/index.html">ConnectionListener</a></div><div class="brief "><p class="paragraph">Hears the lifecycle of every connection of an endpoint (docs/guide/quic.md, "Observability"), set with <code class="lang-kotlin">QuicEndpointConfig.listener</code>. Each connection reports <a href="-connection-listener/on-opened.html">onOpened</a> first and <a href="-connection-listener/on-closed.html">onClosed</a> last, exactly once each.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="775762317%2FClasslikes%2F42191490" anchor-label="ConnectionState" id="775762317%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-state/index.html"><span>Connection</span><wbr><span><span>State</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="775762317%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-connection-state/index.html">ConnectionState</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-connection-state/index.html">ConnectionState</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Lifecycle of a connection as the core reports it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1210039615%2FClasslikes%2F42191490" anchor-label="ConnectionStats" id="1210039615%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-connection-stats/index.html"><span>Connection</span><wbr><span><span>Stats</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1210039615%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-connection-stats/index.html">ConnectionStats</a></div><div class="brief "><p class="paragraph">A snapshot of the connection's recovery and path state (docs/architecture.md, "Cross-Cutting Concerns"). Counters run since the connection started; RTT, window and MTU values belong to the active path. <code class="lang-kotlin">QuicConnection.stats</code> builds it from any thread while the endpoint loop goes on updating the connection, without a lock: each field is a value the loop held, but two fields need not come from the same instant (bytesSent may already count a packet that packetsSent does not).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1509759286%2FClasslikes%2F42191490" anchor-label="Cubic" id="1509759286%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-cubic/index.html"><span><span>Cubic</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1509759286%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-cubic/index.html">Cubic</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">maxDatagramSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">1200</span><span class="token punctuation">, </span></span><span class="parameter ">hystart<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator"> = </span><span class="token boolean">true</span></span></span><span class="token punctuation">)</span> : <a href="-congestion-controller/index.html">CongestionController</a></div><div class="brief "><p class="paragraph">CUBIC congestion control (RFC 9438) with HyStart++ (RFC 9406), the default controller. Byte arithmetic throughout: C = 0.4, beta = 0.7, fast convergence, and the Reno-friendly region (alpha = 3(1 - beta)/(1 + beta)) so a short-RTT flow never grows slower than Reno. The initial slow start ends by HyStart++ (an RTT increase enters Conservative Slow Start, five CSS rounds end slow start, an RTT drop returns to slow start) or by the first congestion event; a later slow start (after persistent congestion) is plain slow start up to the ssthresh the loss set (RFC 9406 section 4.3). Pacing and the send quantum are those of <a href="-new-reno/index.html">NewReno</a>. Nothing here allocates after construction.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1105135329%2FClasslikes%2F42191490" anchor-label="Datagram" id="1105135329%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram/index.html"><span><span>Datagram</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1105135329%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-datagram/index.html">Datagram</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>data<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">One received DATAGRAM payload (RFC 9221).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1020161115%2FClasslikes%2F42191490" anchor-label="DatagramIo" id="1020161115%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-io/index.html"><span>Datagram</span><wbr><span><span>Io</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1020161115%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-subclass-opt-in-required/index.html"><span class="token annotation builtin">SubclassOptInRequired</span></a><span class="token punctuation">(</span><span>markerClass<span class="token operator"> = </span><span class="token punctuation">[</span><span><a href="../../kuicksilver-native/io.kuicksilver.annotations/-experimental-kuicksilver-api/index.html">ExperimentalKuicksilverApi::class</a></span><wbr><span class="token punctuation">]</span></span><wbr><span class="token punctuation">)</span></div></div><span class="token keyword">interface </span><a href="-datagram-io/index.html">DatagramIo</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">UDP in batches (ADR-0006): the only thing the runtime needs from a platform.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-920364026%2FClasslikes%2F42191490" anchor-label="DatagramPacketWriter" id="-920364026%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-packet-writer/index.html"><span>Datagram</span><wbr><span>Packet</span><wbr><span><span>Writer</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-920364026%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-datagram-packet-writer/index.html">DatagramPacketWriter</a></div><div class="brief "><p class="paragraph">Room for DATAGRAM frames in the packet being built.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="855830991%2FClasslikes%2F42191490" anchor-label="DatagramPolicy" id="855830991%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-policy/index.html"><span>Datagram</span><wbr><span><span>Policy</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="855830991%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-datagram-policy/index.html">DatagramPolicy</a></div><div class="brief "><p class="paragraph">What happens when the send queue of <a href="-quic-connection/send-datagram.html">QuicConnection.sendDatagram</a> is full (docs/guide/quic.md, "Datagrams (RFC 9221)").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1866077740%2FClasslikes%2F42191490" anchor-label="DatagramSender" id="1866077740%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-sender/index.html"><span>Datagram</span><wbr><span><span>Sender</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1866077740%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-subclass-opt-in-required/index.html"><span class="token annotation builtin">SubclassOptInRequired</span></a><span class="token punctuation">(</span><span>markerClass<span class="token operator"> = </span><span class="token punctuation">[</span><span><a href="../../kuicksilver-native/io.kuicksilver.annotations/-experimental-kuicksilver-api/index.html">ExperimentalKuicksilverApi::class</a></span><wbr><span class="token punctuation">]</span></span><wbr><span class="token punctuation">)</span></div></div><span class="token keyword">interface </span><a href="-datagram-sender/index.html">DatagramSender</a></div><div class="brief "><p class="paragraph">The core's hook for RFC 9221 DATAGRAM frames: while a 1-RTT packet is assembled and the congestion window is open, <a href="-datagram-sender/on-transmit.html">onTransmit</a> is called with a writer for the room left in that packet. Datagrams are ack-eliciting, counted by congestion control and never retransmitted; <a href="-datagram-sender/on-acked.html">onAcked</a> / <a href="-datagram-sender/on-lost.html">onLost</a> report what happened to each id handed to <a href="-datagram-packet-writer/write.html">DatagramPacketWriter.write</a>. The coroutine API of <code class="lang-kotlin">QuicConnection</code> builds its queues on this.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-836711268%2FClasslikes%2F42191490" anchor-label="DatagramSendResult" id="-836711268%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-send-result/index.html"><span>Datagram</span><wbr><span>Send</span><wbr><span><span>Result</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-836711268%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-datagram-send-result/index.html">DatagramSendResult</a></div><div class="brief "><p class="paragraph">The answer of <a href="-quic-connection/try-send-datagram.html">QuicConnection.trySendDatagram</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="935790824%2FClasslikes%2F42191490" anchor-label="DatagramUnsupportedReason" id="935790824%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagram-unsupported-reason/index.html"><span>Datagram</span><wbr><span>Unsupported</span><wbr><span><span>Reason</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="935790824%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-datagram-unsupported-reason/index.html">DatagramUnsupportedReason</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-datagram-unsupported-reason/index.html">DatagramUnsupportedReason</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Why datagrams cannot be sent on this connection.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-148830352%2FClasslikes%2F42191490" anchor-label="Ecn" id="-148830352%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-ecn/index.html"><span><span>Ecn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-148830352%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-ecn/index.html">Ecn</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-ecn/index.html">Ecn</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">ECN codepoint of a datagram (RFC 9000 section 13.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1768427263%2FClasslikes%2F42191490" anchor-label="EcnState" id="-1768427263%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-ecn-state/index.html"><span>Ecn</span><wbr><span><span>State</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1768427263%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-ecn-state/index.html">EcnState</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-ecn-state/index.html">EcnState</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">ECN validation state of a path (RFC 9000 section 13.4.2 and appendix A.4), as reported by <a href="-connection-stats/ecn-state.html">ConnectionStats.ecnState</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1193402386%2FClasslikes%2F42191490" anchor-label="EndpointCore" id="-1193402386%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-endpoint-core/index.html"><span>Endpoint</span><wbr><span><span>Core</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1193402386%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-endpoint-core/index.html">EndpointCore</a></div><div class="brief "><p class="paragraph">The sans-IO endpoint (ADR-0004): routes datagrams to connections by keyed connection ID, queues client Initials for <a href="-connection-admission/index.html">ConnectionAdmission</a>, creates server connections in <a href="-endpoint-core/process-pending.html">processPending</a>, and answers unknown versions, forged tokens and unknown short-header CIDs statelessly under a rate limit. One endpoint loop drives it; nothing here is thread-safe.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1790391946%2FClasslikes%2F42191490" anchor-label="EndpointStats" id="-1790391946%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-endpoint-stats/index.html"><span>Endpoint</span><wbr><span><span>Stats</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1790391946%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-endpoint-stats/index.html">EndpointStats</a></div><div class="brief "><p class="paragraph">A snapshot of an endpoint's stateless work, admission outcomes and connection lifecycle; every counter counts since the endpoint started. <code class="lang-kotlin">QuicEndpoint.stats</code> sums it over every loop of the endpoint (docs/guide/quic.md, "Observability"). The loops keep plain counters, so taking a snapshot allocates this object only and costs nothing per packet; values are read without a lock and may lag the loops by a few events.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-783608207%2FClasslikes%2F42191490" anchor-label="Initiator" id="-783608207%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-initiator/index.html"><span><span>Initiator</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-783608207%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-initiator/index.html">Initiator</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-initiator/index.html">Initiator</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Which side initiated a close or a stream reset.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1837530234%2FClasslikes%2F42191490" anchor-label="IoCapabilities" id="-1837530234%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-io-capabilities/index.html"><span>Io</span><wbr><span><span>Capabilities</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1837530234%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-io-capabilities/index.html">IoCapabilities</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>ecnSend<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>ecnReceive<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>gsoMaxSegments<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>gro<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>df<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>batch<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">What a <a href="-datagram-io/index.html">DatagramIo</a> can do (ADR-0006); the portable implementations report none of the accelerated features except, on the JVM, <code class="lang-kotlin">ecnSend</code> through IP_TOS.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-594407231%2FClasslikes%2F42191490" anchor-label="IoPreference" id="-594407231%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-io-preference/index.html"><span>Io</span><wbr><span><span>Preference</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-594407231%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-io-preference/index.html">IoPreference</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-io-preference/index.html">IoPreference</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Which implementation <a href="-datagram-io/-companion/open.html">DatagramIo.open</a> prefers: the accelerated <code class="lang-kotlin">ksl</code> socket where it exists (Linux, Android, Apple, Windows), the portable one otherwise or on request.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="134644188%2FClasslikes%2F42191490" anchor-label="KuicksilverLogger" id="134644188%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-kuicksilver-logger/index.html"><span>Kuicksilver</span><wbr><span><span>Logger</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="134644188%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-kuicksilver-logger/index.html">KuicksilverLogger</a></div><div class="brief "><p class="paragraph">Where the library's diagnostics go (docs/guide/quic.md, "Observability"), set per endpoint with <code class="lang-kotlin">QuicEndpointConfig.logger</code> and per Ktor engine with its <code class="lang-kotlin">logger</code> setting. No SLF4J or other dependency: bridge it to the logging framework of your application in a few lines.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-648844766%2FClasslikes%2F42191490" anchor-label="LogLevel" id="-648844766%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-log-level/index.html"><span>Log</span><wbr><span><span>Level</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-648844766%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-log-level/index.html">LogLevel</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-log-level/index.html">LogLevel</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Severity of a <a href="-kuicksilver-logger/index.html">KuicksilverLogger</a> line, from the most verbose to the most severe.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1575243161%2FClasslikes%2F42191490" anchor-label="MemoryTokenStore" id="1575243161%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-memory-token-store/index.html"><span>Memory</span><wbr><span>Token</span><wbr><span><span>Store</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1575243161%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-memory-token-store/index.html">MemoryTokenStore</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>maxServers<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">256</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>tokensPerServer<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">4</span></span></span><span class="token punctuation">)</span> : <a href="-quic-token-store/index.html">QuicTokenStore</a></div><div class="brief "><p class="paragraph">A <a href="-quic-token-store/index.html">QuicTokenStore</a> in memory, bounded to <a href="-memory-token-store/max-servers.html">maxServers</a> keys of <a href="-memory-token-store/tokens-per-server.html">tokensPerServer</a> tokens each: the newest token is taken first, the oldest one beyond <a href="-memory-token-store/tokens-per-server.html">tokensPerServer</a> is dropped, and the server not used for longest is evicted beyond <a href="-memory-token-store/max-servers.html">maxServers</a> (as quic-go's <code class="lang-kotlin">NewLRUTokenStore</code>). Safe to share between endpoints; its contents end with the process.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1247663594%2FClasslikes%2F42191490" anchor-label="MigrationEvent" id="-1247663594%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-migration-event/index.html"><span>Migration</span><wbr><span><span>Event</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1247663594%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-migration-event/index.html">MigrationEvent</a><span class="token operator">&lt;</span><span class="token keyword">out </span><a href="-migration-event/index.html">N</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">What a <a href="-network-migrator/index.html">NetworkMigrator</a> did.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-563346220%2FClasslikes%2F42191490" anchor-label="MigrationRefusal" id="-563346220%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-migration-refusal/index.html"><span>Migration</span><wbr><span><span>Refusal</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-563346220%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-migration-refusal/index.html">MigrationRefusal</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-migration-refusal/index.html">MigrationRefusal</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Why the transport refused a client's new path (<a href="-migration-refused-exception/index.html">MigrationRefusedException</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-426203885%2FClasslikes%2F42191490" anchor-label="MigrationRefusedException" id="-426203885%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-migration-refused-exception/index.html"><span>Migration</span><wbr><span>Refused</span><wbr><span><span>Exception</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-426203885%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-migration-refused-exception/index.html">MigrationRefusedException</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>reason<span class="token operator">: </span><a href="-migration-refusal/index.html">MigrationRefusal</a></span></span><span class="token punctuation">)</span> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a></div><div class="brief "><p class="paragraph">Thrown by <a href="-quic-connection/add-path.html">QuicConnection.addPath</a> (and so <a href="-quic-connection/migrate.html">QuicConnection.migrate</a> and a <a href="-network-migrator/index.html">NetworkMigrator</a>) when the transport refuses a new path before anything is sent on it; <a href="-migration-refused-exception/reason.html">reason</a> says why. An IllegalStateException, as the refusal was before this type existed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-868531403%2FClasslikes%2F42191490" anchor-label="NetworkMigrator" id="-868531403%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-network-migrator/index.html"><span>Network</span><wbr><span><span>Migrator</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-868531403%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-network-migrator/index.html">NetworkMigrator</a><span class="token operator">&lt;</span><a href="-network-migrator/index.html">N</a><span class="token operator"> : </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-any/index.html">Any</a><span class="token operator">&gt;</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">connection<span class="token operator">: </span><a href="-quic-connection/index.html">QuicConnection</a><span class="token punctuation">, </span></span><span class="parameter ">networks<span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="-network-migrator/index.html">N</a><span class="token operator">?</span><span class="token operator">&gt;</span><span class="token punctuation">, </span></span><span class="parameter ">openIo<span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span><a href="-network-migrator/index.html">N</a><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="-datagram-io/index.html">DatagramIo</a><span class="token punctuation">, </span></span><span class="parameter ">scope<span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-coroutine-scope/index.html">CoroutineScope</a></span></span><span class="token punctuation">)</span> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">Keeps a client <code class="lang-kotlin">connection</code> on the current network: whenever <code class="lang-kotlin">networks</code> reports a different network, it opens a socket on it through <code class="lang-kotlin">openIo</code> and migrates the connection there (RFC 9000 section 9), then closes the path it left.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-745701620%2FClasslikes%2F42191490" anchor-label="NewReno" id="-745701620%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-new-reno/index.html"><span>New</span><wbr><span><span>Reno</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-745701620%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-new-reno/index.html">NewReno</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">maxDatagramSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">1200</span></span></span><span class="token punctuation">)</span> : <a href="-congestion-controller/index.html">CongestionController</a></div><div class="brief "><p class="paragraph">NewReno congestion control (RFC 9002 section 7, appendix B): slow start, halving on a congestion event, one datagram of growth per window in congestion avoidance, collapse to the minimum window on persistent congestion.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="85231862%2FClasslikes%2F-514386152" anchor-label="NwInterfaceType" id="85231862%2FClasslikes%2F-514386152" data-filterable-set=":kuicksilver-quic/appleMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-nw-interface-type/index.html"><span>Nw</span><wbr><span>Interface</span><wbr><span><span>Type</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="85231862%2FClasslikes%2F-514386152"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-active="" data-toggle=":kuicksilver-quic/appleMain">apple</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/appleMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-nw-interface-type/index.html">NwInterfaceType</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-nw-interface-type/index.html">NwInterfaceType</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">The kind of interface an <a href="-nw-path-key/index.html">NwPathKey</a> names (<code class="lang-kotlin">nw_interface_type_t</code>).</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-60195601%2FClasslikes%2F-514386152" anchor-label="NwPathKey" id="-60195601%2FClasslikes%2F-514386152" data-filterable-set=":kuicksilver-quic/appleMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-nw-path-key/index.html"><span>Nw</span><wbr><span>Path</span><wbr><span><span>Key</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-60195601%2FClasslikes%2F-514386152"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-active="" data-toggle=":kuicksilver-quic/appleMain">apple</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/appleMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-nw-path-key/index.html">NwPathKey</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>interfaceIndex<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>interfaceType<span class="token operator">: </span><a href="-nw-interface-type/index.html">NwInterfaceType</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>interfaceName<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The network a satisfied default path runs over, as <a href="nw-path-updates.html">nwPathUpdates</a> reports it: the path's preferred interface, the first one <code class="lang-kotlin">nw_path_enumerate_interfaces</code> lists (the order of preference, as <code class="lang-kotlin">NWPath.availableInterfaces</code>). Two keys are equal when <a href="-nw-path-key/interface-index.html">interfaceIndex</a> and <a href="-nw-path-key/interface-type.html">interfaceType</a> are, which makes it the <code class="lang-kotlin">N</code> of a <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a>: a change of key is a change of network, a path update that keeps the interface (a new address, a DNS change) is not.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1781778094%2FClasslikes%2F42191490" anchor-label="PacketBatch" id="1781778094%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-packet-batch/index.html"><span>Packet</span><wbr><span><span>Batch</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1781778094%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-packet-batch/index.html">PacketBatch</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">A fixed set of datagram slots the core fills on <a href="-connection-core/poll.html">ConnectionCore.poll</a> and the I/O layer sends or receives (ADR-0006).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="122095369%2FClasslikes%2F42191490" anchor-label="PathChangeReason" id="122095369%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-change-reason/index.html"><span>Path</span><wbr><span>Change</span><wbr><span><span>Reason</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="122095369%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-path-change-reason/index.html">PathChangeReason</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-path-change-reason/index.html">PathChangeReason</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Why the connection moved to another path (RFC 9000 section 9).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-238680597%2FClasslikes%2F42191490" anchor-label="PathEvent" id="-238680597%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-event/index.html"><span>Path</span><wbr><span><span>Event</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-238680597%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="-path-event/index.html">PathEvent</a></div><div class="brief "><p class="paragraph">What happens to a connection's paths; collect <a href="-quic-connection/path-events.html">QuicConnection.pathEvents</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1546143081%2FClasslikes%2F42191490" anchor-label="PathFailureReason" id="-1546143081%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-failure-reason/index.html"><span>Path</span><wbr><span>Failure</span><wbr><span><span>Reason</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1546143081%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-path-failure-reason/index.html">PathFailureReason</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-path-failure-reason/index.html">PathFailureReason</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Why a path failed validation (<a href="-connection-event/-path-failed/index.html">ConnectionEvent.PathFailed</a>, <a href="-path-event/-failed/index.html">PathEvent.Failed</a>, <a href="-path-validation-exception/index.html">PathValidationException</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-335903518%2FClasslikes%2F42191490" anchor-label="PathId" id="-335903518%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-id/index.html"><span>Path</span><wbr><span><span>Id</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-335903518%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.jvm/-jvm-inline/index.html"><span class="token annotation builtin">JvmInline</span></a></div></div><span class="token keyword">value </span><span class="token keyword">class </span><a href="-path-id/index.html">PathId</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>value<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Identifies a network path of a connection; an identifier rather than an index keeps the door open for multipath.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="561907668%2FClasslikes%2F42191490" anchor-label="PathState" id="561907668%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-state/index.html"><span>Path</span><wbr><span><span>State</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="561907668%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-path-state/index.html">PathState</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-path-state/index.html">PathState</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Validation state of a path (RFC 9000 section 8.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1089666769%2FClasslikes%2F42191490" anchor-label="PathValidationException" id="-1089666769%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-validation-exception/index.html"><span>Path</span><wbr><span>Validation</span><wbr><span><span>Exception</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1089666769%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-path-validation-exception/index.html">PathValidationException</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>reason<span class="token operator">: </span><a href="-path-failure-reason/index.html">PathFailureReason</a></span></span><span class="token punctuation">)</span> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a></div><div class="brief "><p class="paragraph">Thrown by <a href="-quic-connection/migrate.html">QuicConnection.migrate</a> when the new path could not be validated; <a href="-path-validation-exception/reason.html">reason</a> says why. An IllegalStateException, as the failure was before this type existed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1952273135%2FClasslikes%2F42191490" anchor-label="PreferredAddress" id="1952273135%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-preferred-address/index.html"><span>Preferred</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1952273135%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-preferred-address/index.html">PreferredAddress</a></div><div class="brief "><p class="paragraph">A server's preferred address (RFC 9000 sections 9.6 and 18.2): where it asks clients to move after the handshake, one address per family it offers. Each is bound literally (no NAT indirection: the address advertised is the address the socket binds), must differ from the endpoint's own address, and may not use a reflection port (53, 123, 1900, 5353, 11211). The endpoint opens a socket on each (with every loop of a group sharing the port, as for the main socket) and advertises them with its sequence-1 connection ID. A client moves only to the address of the family it already uses, only after it validated the path, and only from a server whose own address is public when the preferred one is local (threat-model 3.14).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1329235228%2FClasslikes%2F42191490" anchor-label="QlogSink" id="1329235228%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-qlog-sink/index.html"><span>Qlog</span><wbr><span><span>Sink</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1329235228%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-qlog-sink/index.html">QlogSink</a></div><div class="brief "><p class="paragraph">Where qlog traces go (docs/guide/quic.md, "qlog"); <code class="lang-kotlin">open</code> returns null to skip tracing for a connection.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-390881746%2FClasslikes%2F42191490" anchor-label="QlogTrace" id="-390881746%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-qlog-trace/index.html"><span>Qlog</span><wbr><span><span>Trace</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-390881746%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-qlog-trace/index.html">QlogTrace</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">One connection's trace; records are JSON-SEQ lines.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1823062487%2FClasslikes%2F42191490" anchor-label="QuicClientConfig" id="1823062487%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-client-config/index.html"><span>Quic</span><wbr><span>Client</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1823062487%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-quic-client-config/index.html">QuicClientConfig</a></div><div class="brief "><p class="paragraph">Client side of a connection: TLS plus transport settings. <a href="-quic-client-config/-builder/build.html">Builder.build</a> throws <code class="lang-kotlin">TlsException.Config</code> for a TLS config QUIC cannot use (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305; RFC 9001 section 4); build one with <code class="lang-kotlin">quicClientConfig(tls) { }</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1873567390%2FClasslikes%2F42191490" anchor-label="QuicConfig" id="-1873567390%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-config/index.html"><span>Quic</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1873567390%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-quic-config/index.html">QuicConfig</a></div><div class="brief "><p class="paragraph">Transport settings of a connection (docs/guide/quic.md, "Configuration"); build one with <a href="quic-config.html">quicConfig</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1712085958%2FClasslikes%2F42191490" anchor-label="QuicConnection" id="1712085958%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-connection/index.html"><span>Quic</span><wbr><span><span>Connection</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1712085958%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-connection/index.html">QuicConnection</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">One QUIC connection as the application sees it (docs/guide/quic.md).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1792804433%2FClasslikes%2F42191490" anchor-label="QuicEndpoint" id="-1792804433%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-endpoint/index.html"><span>Quic</span><wbr><span><span>Endpoint</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1792804433%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-endpoint/index.html">QuicEndpoint</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a></div><div class="brief "><p class="paragraph">A bound UDP endpoint hosting QUIC connections: one endpoint loop, or <code class="lang-kotlin">QuicEndpointConfig.loops</code> of them on one port (docs/architecture.md, <code class="lang-kotlin">kuicksilver-quic</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-544791027%2FClasslikes%2F42191490" anchor-label="QuicEndpointConfig" id="-544791027%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-endpoint-config/index.html"><span>Quic</span><wbr><span>Endpoint</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-544791027%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-quic-endpoint-config/index.html">QuicEndpointConfig</a></div><div class="brief "><p class="paragraph">An endpoint: optionally a server, the crypto provider, and the admission limits (docs/guide/quic.md, "Admission and endpoint limits").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1911839663%2FClasslikes%2F42191490" anchor-label="QuicException" id="1911839663%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-exception/index.html"><span>Quic</span><wbr><span><span>Exception</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1911839663%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">class </span><a href="-quic-exception/index.html">QuicException</a> : <a href="https://kotlinlang.org/api/kotlinx-io/kotlinx-io-core/kotlinx.io/-i-o-exception/index.html">IOException</a>, <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-copyable-throwable/index.html">CopyableThrowable</a><span class="token operator">&lt;</span><a href="-quic-exception/index.html">QuicException</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">Error model of the QUIC layer (docs/guide/quic.md, "Lifecycle and errors"). Every failure the application sees is a <a href="-quic-exception/index.html">QuicException</a>; cancellation is never wrapped in one. Exceptions are copyable so coroutine machinery keeps the stack of the receiving side.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1095295924%2FClasslikes%2F42191490" anchor-label="QuicLbConfig" id="-1095295924%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-lb-config/index.html"><span>Quic</span><wbr><span>Lb</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1095295924%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-quic-lb-config/index.html">QuicLbConfig</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>configId<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">serverId<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>nonceLength<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>key<span class="token operator">: </span><a href="../../kuicksilver-tls/io.kuicksilver.tls/-load-balancer-key/index.html">LoadBalancerKey</a><span class="token operator">?</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>nonceReservation<span class="token operator">: </span><a href="-quic-lb-nonce-reservation/index.html">QuicLbNonceReservation</a><span class="token operator">?</span><span class="token operator"> = </span>null</span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">A QUIC-LB configuration (draft-ietf-quic-load-balancers-21, experimental: the draft is not an RFC yet and may change): the server connection IDs this endpoint issues carry <a href="-quic-lb-config/server-id.html">serverId</a>, so a QUIC-LB load balancer in front of a pool of servers routes every packet of a connection to the server that holds it, also after the client's address changed (docs/guide/quic.md, "Behind a load balancer").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="834980689%2FClasslikes%2F42191490" anchor-label="QuicLbNonceReservation" id="834980689%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-lb-nonce-reservation/index.html"><span>Quic</span><wbr><span>Lb</span><wbr><span>Nonce</span><wbr><span><span>Reservation</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="834980689%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-lb-nonce-reservation/index.html">QuicLbNonceReservation</a></div><div class="brief "><p class="paragraph">Keeps the nonce counter of one QUIC-LB nonce space across process restarts, so no restart reuses a nonce (draft-ietf-quic-load-balancers-21 section 9.6). With it, the nonce sequence is fixed (derived from the configuration key, or in clear from <a href="-quic-lb-nonce-reservation/secret.html">secret</a>), and the endpoint reserves nonces in blocks of <a href="-quic-lb-nonce-reservation/-companion/-b-l-o-c-k.html">BLOCK</a>: it uses nonces only below the mark it stored last, and stores the end of the next block once half of the current one is drawn; a new process starts at <a href="-quic-lb-nonce-reservation/load.html">load</a>. A crash skips the rest of a block, never reuses one. Every process that uses the nonce space must share the store (one file per key, say), and only one process may use it at a time.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-391649633%2FClasslikes%2F42191490" anchor-label="QuicPath" id="-391649633%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-path/index.html"><span>Quic</span><wbr><span><span>Path</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-391649633%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-path/index.html">QuicPath</a></div><div class="brief "><p class="paragraph">One network path of a <a href="-quic-connection/index.html">QuicConnection</a> (RFC 9000 section 9): a local socket and the peer address it talks to. The first path is the one the connection was established on; a client adds more with <a href="-quic-connection/add-path.html">QuicConnection.addPath</a>, validates them with <a href="-quic-path/probe.html">probe</a> and moves the connection with <a href="-quic-path/switch-to.html">switchTo</a>. A server only observes paths its client moves to.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1456402593%2FClasslikes%2F42191490" anchor-label="QuicServerConfig" id="-1456402593%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-server-config/index.html"><span>Quic</span><wbr><span>Server</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1456402593%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-quic-server-config/index.html">QuicServerConfig</a></div><div class="brief "><p class="paragraph">Server side of an endpoint: TLS identity plus transport settings. <a href="-quic-server-config/-builder/build.html">Builder.build</a> rejects a TLS config QUIC cannot use, like <a href="-quic-client-config/index.html">QuicClientConfig</a>; build one with <code class="lang-kotlin">quicServerConfig(tls) { }</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-683837724%2FClasslikes%2F42191490" anchor-label="QuicStream" id="-683837724%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-stream/index.html"><span>Quic</span><wbr><span><span>Stream</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-683837724%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-stream/index.html">QuicStream</a></div><div class="brief "><p class="paragraph">A QUIC stream as two ktor-io channels. Closing <a href="-quic-stream/output.html">output</a> sends FIN; closing it with a cause sends RESET_STREAM; cancelling <a href="-quic-stream/input.html">input</a> sends STOP_SENDING. A peer reset or stop surfaces as <a href="-quic-exception/-stream-error/index.html">QuicException.StreamError</a> in the channel's cause chain; a lost connection surfaces as its <a href="-quic-exception/-connection-lost/index.html">QuicException.ConnectionLost</a>. A unidirectional stream has one half (see <a href="is-unidirectional.html">isUnidirectional</a>): <a href="-quic-stream/input.html">input</a> of our own one and <a href="-quic-stream/output.html">output</a> of the peer's throw IllegalStateException.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-388929668%2FClasslikes%2F42191490" anchor-label="QuicTokenStore" id="-388929668%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-quic-token-store/index.html"><span>Quic</span><wbr><span>Token</span><wbr><span><span>Store</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-388929668%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="-quic-token-store/index.html">QuicTokenStore</a></div><div class="brief "><p class="paragraph">Where a client keeps the address-validation tokens servers send in NEW_TOKEN frames (RFC 9000 section 8.1.3), so that its next connection to the same server skips the Retry round trip and the server's anti-amplification limit (<code class="lang-kotlin">QuicClientConfig.Builder.tokenStore</code>; off by default).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1163224591%2FClasslikes%2F42191490" anchor-label="SocketDefunctException" id="1163224591%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-socket-defunct-exception/index.html"><span>Socket</span><wbr><span>Defunct</span><wbr><span><span>Exception</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1163224591%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-socket-defunct-exception/index.html">SocketDefunctException</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">message<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>errno<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">0</span><span class="token punctuation">, </span></span><span class="parameter ">cause<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a><span class="token operator">?</span><span class="token operator"> = </span>null</span></span><span class="token punctuation">)</span> : <a href="https://kotlinlang.org/api/kotlinx-io/kotlinx-io-core/kotlinx.io/-i-o-exception/index.html">IOException</a></div><div class="brief "><p class="paragraph">A <a href="-datagram-io/index.html">DatagramIo</a> can no longer carry datagrams: the system took the socket away or the network under it went down, so neither a retry nor waiting brings it back. iOS does this to the sockets of a suspended app (<code class="lang-kotlin">ENOTCONN</code>, <code class="lang-kotlin">EBADF</code>, <code class="lang-kotlin">EPIPE</code> after the app returns to the foreground); <code class="lang-kotlin">ENETDOWN</code>, <code class="lang-kotlin">ENETUNREACH</code> and <code class="lang-kotlin">EHOSTUNREACH</code> on receive mean the interface went away.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1623703358%2FClasslikes%2F42191490" anchor-label="StreamPriority" id="1623703358%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-priority/index.html"><span>Stream</span><wbr><span><span>Priority</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1623703358%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-priority/index.html">StreamPriority</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>urgency<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">3</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>incremental<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator"> = </span><span class="token boolean">false</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Send priority of a stream (RFC 9218 semantics at the transport): lower <a href="-stream-priority/urgency.html">urgency</a> first; <a href="-stream-priority/incremental.html">incremental</a> streams share their level round-robin.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1810022088%2FClasslikes%2F42191490" anchor-label="TimeMark" id="1810022088%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-time-mark/index.html"><span>Time</span><wbr><span><span>Mark</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1810022088%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.jvm/-jvm-inline/index.html"><span class="token annotation builtin">JvmInline</span></a></div></div><span class="token keyword">value </span><span class="token keyword">class </span><a href="-time-mark/index.html">TimeMark</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>nanos<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-comparable/index.html">Comparable</a><span class="token operator">&lt;</span><a href="-time-mark/index.html">TimeMark</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">A point on a monotonic clock, in nanoseconds (ADR-0004). The core never reads a clock: every call takes the current mark as a parameter, so tests and the simulator drive virtual time.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-202888437%2FClasslikes%2F42191490" anchor-label="TimeoutKind" id="-202888437%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-timeout-kind/index.html"><span>Timeout</span><wbr><span><span>Kind</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-202888437%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-timeout-kind/index.html">TimeoutKind</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-timeout-kind/index.html">TimeoutKind</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">The timer whose expiry closed the connection. A failed path validation is not a timeout of the connection: the path is dropped, and when no validated path remains the connection ends with <a href="-quic-exception/-connection-lost/-no-viable-path/index.html">QuicException.ConnectionLost.NoViablePath</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1953698947%2FClasslikes%2F42191490" anchor-label="TransportError" id="1953698947%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-transport-error/index.html"><span>Transport</span><wbr><span><span>Error</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1953698947%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-transport-error/index.html">TransportError</a></div><div class="brief "><p class="paragraph">Transport error codes (RFC 9000 section 20.1; 0x11 from RFC 9368 section 4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1707413647%2FClasslikes%2F42191490" anchor-label="VersionProfile" id="-1707413647%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-version-profile/index.html"><span>Version</span><wbr><span><span>Profile</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1707413647%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-version-profile/index.html">VersionProfile</a></div><div class="brief "><p class="paragraph">Wire constants of a QUIC version: QUIC v1 (RFC 9000/9001) and QUIC v2 (RFC 9369). v1 is the default; v2 is opt-in through <code class="lang-kotlin">QuicConfig.versions</code> and is negotiated per RFC 9368.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-257495110%2FClasslikes%2F42191490" anchor-label="ZeroRttOutcome" id="-257495110%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-zero-rtt-outcome/index.html"><span>Zero</span><wbr><span>Rtt</span><wbr><span><span>Outcome</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-257495110%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">enum </span><a href="-zero-rtt-outcome/index.html">ZeroRttOutcome</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-enum/index.html">Enum</a><span class="token operator">&lt;</span><a href="-zero-rtt-outcome/index.html">ZeroRttOutcome</a><span class="token operator">&gt; </span></div><div class="brief "><p class="paragraph">The 0-RTT outcome a <a href="-connection-listener/index.html">ConnectionListener</a> hears (RFC 9001 section 4.6.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="EXTENSION_PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="1972353660%2FProperties%2F42191490" anchor-label="activePath" id="1972353660%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="active-path.html"><span>active</span><wbr><span><span>Path</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1972353660%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-quic-connection/index.html">QuicConnection</a><span class="token punctuation">.</span><a href="active-path.html">activePath</a><span class="token operator">: </span><a href="-quic-path/index.html">QuicPath</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The path the connection sends on now (<code class="lang-kotlin">stats.currentPath</code>; after a migration that is the new path, not <code class="lang-kotlin">paths.first()</code>), or null when no live path is left. A snapshot: the loop may switch paths right after.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="852389875%2FProperties%2F42191490" anchor-label="isClientInitiated" id="852389875%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="is-client-initiated.html"><span>is</span><wbr><span>Client</span><wbr><span><span>Initiated</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="852389875%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-quic-stream/index.html">QuicStream</a><span class="token punctuation">.</span><a href="is-client-initiated.html">isClientInitiated</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True when the client opened the stream (RFC 9000 section 2.1, bit 0x1 of the id is 0).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1200879483%2FProperties%2F42191490" anchor-label="isUnidirectional" id="-1200879483%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="is-unidirectional.html"><span>is</span><wbr><span><span>Unidirectional</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1200879483%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-quic-stream/index.html">QuicStream</a><span class="token punctuation">.</span><a href="is-unidirectional.html">isUnidirectional</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True for a unidirectional stream (RFC 9000 section 2.1, bit 0x2 of the id): ours has only <code class="lang-kotlin">output</code>, the peer's only <code class="lang-kotlin">input</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="693836683%2FFunctions%2F-1650180328" anchor-label="defaultNetworks" id="693836683%2FFunctions%2F-1650180328" data-filterable-set=":kuicksilver-quic/androidMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/androidMain" data-filterable-set=":kuicksilver-quic/androidMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="default-networks.html"><span>default</span><wbr><span><span>Networks</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="693836683%2FFunctions%2F-1650180328"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/androidMain" data-filterable-set=":kuicksilver-quic/androidMain" data-active="" data-toggle=":kuicksilver-quic/androidMain">android</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/androidMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="https://developer.android.com/reference/kotlin/android/net/ConnectivityManager.html">ConnectivityManager</a><span class="token punctuation">.</span><a href="default-networks.html"><span class="token function">defaultNetworks</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="https://developer.android.com/reference/kotlin/android/net/Network.html">Network</a><span class="token operator">?</span><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The device's default network (<code class="lang-kotlin">ConnectivityManager.registerDefaultNetworkCallback</code>, API 24) as a <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a> source: the current default first, then each new one, null while there is none. All collectors of one manager share a single callback (Android allows about 100 per app, so one per connection would run out in a large pool); it is registered with the first collector and unregistered when the last one stops. When registering throws (<code class="lang-kotlin">TooManyRequestsException</code>), every current collection ends with that exception and the next collection tries again; a <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a> reports it as <a href="../../kuicksilver-quic/io.kuicksilver.quic/-migration-event/-source-failed/index.html">MigrationEvent.SourceFailed</a>. Needs <code class="lang-kotlin">ACCESS_NETWORK_STATE</code>, which the library manifest declares.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-511444593%2FFunctions%2F621838756" anchor-label="followDefaultNetwork" id="-511444593%2FFunctions%2F621838756" data-filterable-set=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="follow-default-network.html"><span>follow</span><wbr><span>Default</span><wbr><span><span>Network</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-511444593%2FFunctions%2F621838756"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/androidMain" data-filterable-set=":kuicksilver-quic/androidMain" data-active="" data-toggle=":kuicksilver-quic/androidMain">android</button><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-toggle=":kuicksilver-quic/appleMain">apple</button></div>
+<div class="content sourceset-dependent-content" data-togglable=":kuicksilver-quic/androidMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="-quic-connection/index.html#1712085958%2FMain%2F-1650180328">QuicConnection</a><span class="token punctuation">.</span><a href="follow-default-network.html"><span class="token function">followDefaultNetwork</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">connectivity<span class="token operator">: </span><a href="https://developer.android.com/reference/kotlin/android/net/ConnectivityManager.html">ConnectivityManager</a><span class="token punctuation">, </span></span><span class="parameter ">scope<span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-coroutine-scope/index.html">CoroutineScope</a><span class="token punctuation">, </span></span><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token operator">?</span><span class="token operator"> = </span>null<span class="token punctuation">, </span></span><span class="parameter ">prefer<span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-io-preference/index.html">IoPreference</a><span class="token operator"> = </span>IoPreference.Accelerated</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a><span class="token operator">&lt;</span><a href="https://developer.android.com/reference/kotlin/android/net/Network.html">Network</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Keeps this client connection on the device's default network: a started <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a> over <a href="default-networks.html">ConnectivityManager.defaultNetworks</a> that opens each new socket with <a href="../../kuicksilver-quic/io.kuicksilver.quic/-datagram-io/-companion/open.html">DatagramIo.Companion.open</a> bound to the new network (at <a href="follow-default-network.html">local</a>: by default <code class="lang-kotlin">rebindLocal</code>, the loopback address of a loopback server's family, else the wildcard address of the server's family, any port). The default network when this is called is taken as the one the connection is on (an unbound socket follows the default network). Collect <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/events.html">NetworkMigrator.events</a> right after this call to see every event; <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/close.html">NetworkMigrator.close</a> stops following.</p></div></div><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/appleMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="-quic-connection/index.html#1712085958%2FMain%2F-514386152">QuicConnection</a><span class="token punctuation">.</span><a href="follow-default-network.html"><span class="token function">followDefaultNetwork</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">scope<span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-coroutine-scope/index.html">CoroutineScope</a><span class="token punctuation">, </span></span><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token operator">?</span><span class="token operator"> = </span>null<span class="token punctuation">, </span></span><span class="parameter ">prefer<span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-io-preference/index.html">IoPreference</a><span class="token operator"> = </span>IoPreference.Accelerated</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a><span class="token operator">&lt;</span><a href="-nw-path-key/index.html">NwPathKey</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Keeps this client connection on the system's default network (iOS, macOS): a started <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a> over <a href="nw-path-updates.html">nwPathUpdates</a> that opens each new socket with <a href="../../kuicksilver-quic/io.kuicksilver.quic/-datagram-io/-companion/open.html">DatagramIo.Companion.open</a> bound to the new path's interface (at <a href="follow-default-network.html">local</a>: by default <code class="lang-kotlin">rebindLocal</code>, the loopback address of a loopback server's family, else the wildcard address of the server's family, any port). The path when this is called is taken as the one the connection is on (an unbound socket follows the default route). It also replaces a socket iOS reclaimed while the app was suspended (<a href="../../kuicksilver-quic/io.kuicksilver.quic/-path-event/-socket-lost/index.html">PathEvent.SocketLost</a>). Collect <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/events.html">NetworkMigrator.events</a> right after this call to see every event; <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/close.html">NetworkMigrator.close</a> stops following.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1567000209%2FFunctions%2F42191490" anchor-label="incomingConnections" id="-1567000209%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="incoming-connections.html"><span>incoming</span><wbr><span><span>Connections</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1567000209%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="-quic-endpoint/index.html">QuicEndpoint</a><span class="token punctuation">.</span><a href="incoming-connections.html"><span class="token function">incomingConnections</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="-quic-connection/index.html">QuicConnection</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The endpoint's accepted connections, in order, until it closes: the flow completes normally on <a href="-quic-exception/-endpoint-closing/index.html">QuicException.EndpointClosing</a>. Collect it once; each <a href="-quic-endpoint/accept.html">QuicEndpoint.accept</a> hands a connection to one collector.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1599729318%2FFunctions%2F42191490" anchor-label="incomingStreams" id="-1599729318%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="incoming-streams.html"><span>incoming</span><wbr><span><span>Streams</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1599729318%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="-quic-connection/index.html">QuicConnection</a><span class="token punctuation">.</span><a href="incoming-streams.html"><span class="token function">incomingStreams</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="-quic-stream/index.html">QuicStream</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Streams the peer opened, in id order, until the connection ends for any reason; the flow then completes normally and the reason is in <a href="-quic-connection/closed.html">QuicConnection.closed</a>. Cancelling the collector does not touch the connection.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1490932031%2FFunctions%2F-514386152" anchor-label="nwPathUpdates" id="-1490932031%2FFunctions%2F-514386152" data-filterable-set=":kuicksilver-quic/appleMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="nw-path-updates.html"><span>nw</span><wbr><span>Path</span><wbr><span><span>Updates</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1490932031%2FFunctions%2F-514386152"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-active="" data-toggle=":kuicksilver-quic/appleMain">apple</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/appleMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="nw-path-updates.html"><span class="token function">nwPathUpdates</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="-nw-path-key/index.html">NwPathKey</a><span class="token operator">?</span><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The system's default path (<code class="lang-kotlin">NWPathMonitor</code> through the Network framework's C API) as a <a href="../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">NetworkMigrator</a> source on iOS and macOS: the key of the current path first, then each change, null while the path is not satisfied (no usable network). Equal consecutive keys are reported once. All collectors in the process share one monitor, started with the first collector on its own dispatch queue and cancelled when the last one stops; a later collector gets the latest key first.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-632840542%2FFunctions%2F621838756" anchor-label="open" id="-632840542%2FFunctions%2F621838756" data-filterable-set=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/androidMain,:kuicksilver-quic/appleMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="open.html"><span><span>open</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-632840542%2FFunctions%2F621838756"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/androidMain" data-filterable-set=":kuicksilver-quic/androidMain" data-active="" data-toggle=":kuicksilver-quic/androidMain">android</button><button class="platform-bookmark" data-filterable-current=":kuicksilver-quic/appleMain" data-filterable-set=":kuicksilver-quic/appleMain" data-toggle=":kuicksilver-quic/appleMain">apple</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/androidMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="-datagram-io/-companion/index.html#-1629121763%2FMain%2F-1650180328">DatagramIo.Companion</a><span class="token punctuation">.</span><a href="open.html"><span class="token function">open</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">network<span class="token operator">: </span><a href="https://developer.android.com/reference/kotlin/android/net/Network.html">Network</a><span class="token punctuation">, </span></span><span class="parameter ">prefer<span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-io-preference/index.html">IoPreference</a><span class="token operator"> = </span>IoPreference.Accelerated</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-datagram-io/index.html">DatagramIo</a></div><div class="brief "><p class="paragraph">Binds <a href="open.html">local</a> on <a href="open.html">network</a> (Android): every datagram of the socket leaves through that network whatever the default network is (<code class="lang-kotlin">Network.bindSocket</code>), so a connection can move to a network before the system switches to it. The accelerated transport when <a href="open.html">prefer</a> asks for it and the device has it, the portable one otherwise; throws the <code class="lang-kotlin">IOException</code> of <code class="lang-kotlin">bindSocket</code> when the network is gone, the socket closed.</p></div></div><div class="content sourceset-dependent-content" data-togglable=":kuicksilver-quic/appleMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="-datagram-io/-companion/index.html#-1629121763%2FMain%2F-514386152">DatagramIo.Companion</a><span class="token punctuation">.</span><a href="open.html"><span class="token function">open</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">interfaceIndex<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">prefer<span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-io-preference/index.html">IoPreference</a><span class="token operator"> = </span>IoPreference.Accelerated</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../kuicksilver-quic/io.kuicksilver.quic/-datagram-io/index.html">DatagramIo</a></div><div class="brief "><p class="paragraph">Binds <a href="open.html">local</a> to interface <a href="open.html">interfaceIndex</a> (iOS, macOS; an <a href="-nw-path-key/interface-index.html">NwPathKey.interfaceIndex</a> or <code class="lang-kotlin">if_nametoindex</code>): every datagram of the socket leaves through that interface whatever the default route is (<code class="lang-kotlin">IP_BOUND_IF</code>; <code class="lang-kotlin">IPV6_BOUND_IF</code> on an IPv6 socket, which a wildcard address opens dual-stack), so a connection can move to a network before the system prefers it. The accelerated transport when <a href="open.html">prefer</a> asks for it; the portable socket cannot be bound to an interface, so when the accelerated one is refused (or <a href="open.html">prefer</a> is <a href="../../kuicksilver-quic/io.kuicksilver.quic/-io-preference/-portable/index.html">IoPreference.Portable</a>) the socket is unbound and follows the default route. Throws <a href="https://kotlinlang.org/api/kotlinx-io/kotlinx-io-core/kotlinx.io/-i-o-exception/index.html">IOException</a> when the system refuses the binding (an index that names no interface); the socket is closed then.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="182457810%2FFunctions%2F42191490" anchor-label="quicClientConfig" id="182457810%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic-client-config.html"><span>quic</span><wbr><span>Client</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="182457810%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">inline </span><span class="token keyword">fun </span><a href="quic-client-config.html"><span class="token function">quicClientConfig</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">tls<span class="token operator">: </span><a href="../../kuicksilver-tls/io.kuicksilver.tls/-tls-config/index.html">TlsConfig</a><span class="token punctuation">, </span></span><span class="parameter ">block<span class="token operator">: </span><a href="-quic-client-config/-builder/index.html">QuicClientConfig.Builder</a><span class="token punctuation">.</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-unit/index.html">Unit</a><span class="token operator"> = </span>{}</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-quic-client-config/index.html">QuicClientConfig</a></div><div class="brief "><p class="paragraph">Builds a <a href="-quic-client-config/index.html">QuicClientConfig</a> for <a href="quic-client-config.html">tls</a> (a client <code class="lang-kotlin">TlsConfig</code> QUIC can use); <code class="lang-kotlin">quic</code> defaults to <a href="-quic-config/-companion/-default.html">QuicConfig.Default</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-335054833%2FFunctions%2F42191490" anchor-label="quicConfig" id="-335054833%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic-config.html"><span>quic</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-335054833%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">inline </span><span class="token keyword">fun </span><a href="quic-config.html"><span class="token function">quicConfig</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">block<span class="token operator">: </span><a href="-quic-config/-builder/index.html">QuicConfig.Builder</a><span class="token punctuation">.</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-unit/index.html">Unit</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-quic-config/index.html">QuicConfig</a></div><div class="brief "><p class="paragraph">Builds a <a href="-quic-config/index.html">QuicConfig</a> from the defaults.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1801474223%2FFunctions%2F42191490" anchor-label="quicEndpointConfig" id="1801474223%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic-endpoint-config.html"><span>quic</span><wbr><span>Endpoint</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1801474223%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">inline </span><span class="token keyword">fun </span><a href="quic-endpoint-config.html"><span class="token function">quicEndpointConfig</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">block<span class="token operator">: </span><a href="-quic-endpoint-config/-builder/index.html">QuicEndpointConfig.Builder</a><span class="token punctuation">.</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-unit/index.html">Unit</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-quic-endpoint-config/index.html">QuicEndpointConfig</a></div><div class="brief "><p class="paragraph">Builds a <a href="-quic-endpoint-config/index.html">QuicEndpointConfig</a> from the defaults; set <code class="lang-kotlin">server</code> for an endpoint that accepts connections.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2133605182%2FFunctions%2F42191490" anchor-label="quicServerConfig" id="-2133605182%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic-server-config.html"><span>quic</span><wbr><span>Server</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2133605182%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">inline </span><span class="token keyword">fun </span><a href="quic-server-config.html"><span class="token function">quicServerConfig</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">tls<span class="token operator">: </span><a href="../../kuicksilver-tls/io.kuicksilver.tls/-tls-config/index.html">TlsConfig</a><span class="token punctuation">, </span></span><span class="parameter ">block<span class="token operator">: </span><a href="-quic-server-config/-builder/index.html">QuicServerConfig.Builder</a><span class="token punctuation">.</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-unit/index.html">Unit</a><span class="token operator"> = </span>{}</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-quic-server-config/index.html">QuicServerConfig</a></div><div class="brief "><p class="paragraph">Builds a <a href="-quic-server-config/index.html">QuicServerConfig</a> for <a href="quic-server-config.html">tls</a> (a server <code class="lang-kotlin">TlsConfig</code> QUIC can use); <code class="lang-kotlin">quic</code> defaults to <a href="-quic-config/-companion/-default.html">QuicConfig.Default</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2114992141%2FFunctions%2F42191490" anchor-label="rebind" id="-2114992141%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="rebind.html"><span><span>rebind</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2114992141%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="-quic-connection/index.html">QuicConnection</a><span class="token punctuation">.</span><a href="rebind.html"><span class="token function">rebind</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token operator">?</span><span class="token operator"> = </span>null<span class="token punctuation">, </span></span><span class="parameter ">prefer<span class="token operator">: </span><a href="-io-preference/index.html">IoPreference</a><span class="token operator"> = </span>IoPreference.Accelerated</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-path-event/-changed/index.html">PathEvent.Changed</a></div><div class="brief "><p class="paragraph">Moves this client connection to a fresh socket: the recovery after <a href="-path-event/-socket-lost/index.html">PathEvent.SocketLost</a> (iOS took the socket while the app was suspended) or whenever the socket under the active path should be replaced. Opens <a href="-datagram-io/-companion/open.html">DatagramIo.open</a> at <a href="rebind.html">local</a> (the by default <code class="lang-kotlin">rebindLocal</code>: the loopback address of a loopback peer's family, else the wildcard address of its family, any port; <a href="rebind.html">prefer</a> picks the transport), <a href="-quic-connection/migrate.html">migrates</a> there (RFC 9000 section 9: the new path is validated before the connection sends on it) and closes the path it left, with its socket unless that is the endpoint's own.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1641289429%2FFunctions%2F42191490" anchor-label="server" id="-1641289429%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="server.html"><span><span>server</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1641289429%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="-connection-core/-companion/index.html">ConnectionCore.Companion</a><span class="token punctuation">.</span><a href="server.html"><span class="token function">server</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">config<span class="token operator">: </span><a href="-quic-config/index.html">QuicConfig</a><span class="token punctuation">, </span></span><span class="parameter ">tls<span class="token operator">: </span><a href="../../kuicksilver-tls/io.kuicksilver.tls/-tls-config/index.html">TlsConfig</a><span class="token punctuation">, </span></span><span class="parameter ">crypto<span class="token operator">: </span><a href="../../kuicksilver-tls/io.kuicksilver.tls/-quic-crypto/index.html">QuicCrypto</a><span class="token punctuation">, </span></span><span class="parameter ">remote<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">random<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/-random/index.html">Random</a><span class="token punctuation">, </span></span><span class="parameter ">now<span class="token operator">: </span><a href="-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">data<span class="token operator">: </span><a href="../../kuicksilver-native/io.kuicksilver.native/-packet-buffer/index.html">PacketBuffer</a><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">localCidBytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">?</span><span class="token operator"> = </span>null</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-connection-core/index.html">ConnectionCore</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">A server connection from the client's first Initial datagram, or null when the datagram cannot start one (too short, not an Initial, unsupported version). The datagram itself is then fed with <a href="-connection-core/handle-datagram.html">ConnectionCore.handleDatagram</a>; an endpoint (<a href="-endpoint-core/index.html">EndpointCore</a>) passes the connection ID it registered in <a href="server.html">localCidBytes</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

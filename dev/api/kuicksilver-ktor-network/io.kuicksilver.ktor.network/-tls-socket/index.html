@@ -1,0 +1,342 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>TlsSocket</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-network/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-network/commonMain" data-filter=":kuicksilver-ktor-network/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-network::io.kuicksilver.ktor.network/TlsSocket///PointingToDeclaration//-456752591">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-network</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.network</a><span class="delimiter">/</span><span class="current">TlsSocket</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Tls</span><wbr><span><span>Socket</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">TlsSocket</a> : <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-network/src/commonMain/kotlin/io/kuicksilver/ktor/network/SocketTls.kt#L109">source</a>)</span></span></div><p class="paragraph">A <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a> over a <a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-connection/index.html">TlsConnection</a>; closing it sends <code class="lang-kotlin">close_notify</code> and closes the underlying socket.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button><button class="section-tab" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION,EXTENSION_PROPERTY,EXTENSION_FUNCTION">Members &amp; Extensions</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="602738628%2FProperties%2F-456752591" anchor-label="coroutineContext" id="602738628%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="coroutine-context.html"><span>coroutine</span><wbr><span><span>Context</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="602738628%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">val </span><a href="coroutine-context.html">coroutineContext</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.coroutines/-coroutine-context/index.html">CoroutineContext</a></div><div class="brief "><p class="paragraph">The context of the coroutines of this socket.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1762623666%2FProperties%2F-456752591" anchor-label="localAddress" id="1762623666%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="local-address.html"><span>local</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1762623666%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">val </span><a href="local-address.html">localAddress</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket-address/index.html">SocketAddress</a></div><div class="brief "><p class="paragraph">The local address of the underlying TCP socket.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1122461512%2FProperties%2F-456752591" anchor-label="localCertificates" id="-1122461512%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="local-certificates.html"><span>local</span><wbr><span><span>Certificates</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1122461512%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="local-certificates.html">localCertificates</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-certificate/index.html">Certificate</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The chain this side presents on the connection, leaf first (see <a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-connection/local-certificates.html">TlsConnection.localCertificates</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-576055348%2FProperties%2F-456752591" anchor-label="negotiatedAlpn" id="-576055348%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="negotiated-alpn.html"><span>negotiated</span><wbr><span><span>Alpn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-576055348%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="negotiated-alpn.html">negotiatedAlpn</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="255613213%2FProperties%2F-456752591" anchor-label="peerCertificates" id="255613213%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="peer-certificates.html"><span>peer</span><wbr><span><span>Certificates</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="255613213%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="peer-certificates.html">peerCertificates</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-certificate/index.html">Certificate</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The peer's verified certificate chain, leaf first; empty when it sent none (see <a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-connection/peer-certificates.html">TlsConnection.peerCertificates</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1529185391%2FProperties%2F-456752591" anchor-label="remoteAddress" id="-1529185391%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="remote-address.html"><span>remote</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1529185391%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">val </span><a href="remote-address.html">remoteAddress</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket-address/index.html">SocketAddress</a></div><div class="brief "><p class="paragraph">The remote address of the underlying TCP socket.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-539628189%2FProperties%2F-456752591" anchor-label="socketContext" id="-539628189%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="socket-context.html"><span>socket</span><wbr><span><span>Context</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-539628189%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">val </span><a href="socket-context.html">socketContext</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-job/index.html">Job</a></div><div class="brief "><p class="paragraph">The job of the underlying TCP socket.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1404753276%2FProperties%2F-456752591" anchor-label="tls" id="-1404753276%2FProperties%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="tls.html"><span><span>tls</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1404753276%2FProperties%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="tls.html">tls</a><span class="token operator">: </span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-connection/index.html">TlsConnection</a></div><div class="brief "><p class="paragraph">the TLS session underneath, for what <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a> cannot express: the protocol version, the exporter (RFC 9846 section 7.5), the <code class="lang-kotlin">tls-exporter</code> channel binding (RFC 9266) and key updates. Read and write through the socket's channels, not through <code class="lang-kotlin">tls.input</code>/<code class="lang-kotlin">tls.output</code> as well.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-1815189751%2FFunctions%2F-456752591" anchor-label="attachForReading" id="-1815189751%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="attach-for-reading.html"><span>attach</span><wbr><span>For</span><wbr><span><span>Reading</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1815189751%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="attach-for-reading.html"><span class="token function">attachForReading</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">channel<span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-byte-channel/index.html">ByteChannel</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-writer-job/index.html">WriterJob</a></div><div class="brief "><p class="paragraph">The peer's plaintext goes to the application's channel. A session that failed (a reset, a TLS error) fails that channel, not ends it: ktor's <code class="lang-kotlin">copyTo</code> ends its loop on a source closed with a failure as on one closed cleanly and returns normally, so a reset before the application opened its channel, or landing between two of its reads after the last bytes, reached the application as a clean end, and a body delimited by the connection's close passed cut for whole. The channel fails with the session's <a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-exception/index.html">TlsException</a> itself: ktor's channels wrap a failure in <code class="lang-kotlin">ClosedByteChannelException</code> where they hand it on, and a second wrapping (ktor's <code class="lang-kotlin">copyTo</code> closed the channel with the wrapped failure it caught) hid the <a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-exception/index.html">TlsException</a> two causes deep. A channel opened with <a href="../../../kuicksilver-ktor-network/io.kuicksilver.ktor.network/index.html">openDeliveringReadChannel</a> keeps the plaintext relayed before the failure readable (<code class="lang-kotlin">ReadDelivery</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1271271097%2FFunctions%2F-456752591" anchor-label="attachForWriting" id="1271271097%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="attach-for-writing.html"><span>attach</span><wbr><span>For</span><wbr><span><span>Writing</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1271271097%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="attach-for-writing.html"><span class="token function">attachForWriting</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">channel<span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-byte-channel/index.html">ByteChannel</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-reader-job/index.html">ReaderJob</a></div><div class="brief "><p class="paragraph">The application's plaintext goes through the TLS session to the raw socket. When the application's channel fails (a handler that threw mid-response), or the pump does, the connection never ends with <code class="lang-kotlin">close_notify</code>: a <code class="lang-kotlin">close_notify</code> and a FIN would end the stream as if complete, and a peer reading a body delimited by the connection's close would take the cut one for the whole. It ends with the fatal alert internal_error after what was sent, then a FIN, where OpenSSL can send one (RFC 9846 section 6.1; <code class="lang-kotlin">failTls</code>), else with a reset (<code class="lang-kotlin">abortTls</code>). A channel closed normally ends with <code class="lang-kotlin">close_notify</code> on <a href="close.html">close</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1919640487%2FFunctions%2F-456752591" anchor-label="close" id="1919640487%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="close.html"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1919640487%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Graceful: pending plaintext is encrypted and flushed, <code class="lang-kotlin">close_notify</code> is sent, then the raw socket closes; on a server the raw socket's write side ends right after <code class="lang-kotlin">close_notify</code> (its FIN), and the client's <code class="lang-kotlin">close_notify</code> or FIN is awaited only after that (at most 3 s), so a client that never answers does not hold the FIN back. Runs in the socket's scope. On a client (<a href="../tls.html">Socket.tls</a>) bounded: when the raw socket has not closed after 3 s in all (a peer that stopped reading holds the flush, <code class="lang-kotlin">close_notify</code> and the raw socket's last write), what is still queued is dropped, the TLS session is freed and the raw socket is aborted as by <a href="../../../kuicksilver-ktor-network/io.kuicksilver.ktor.network/index.html">abort</a>, which releases its descriptor. On a server (<a href="../tls-server.html">Socket.tlsServer</a>) the close waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1325831392%2FFunctions%2F-456752591" anchor-label="dispose" id="1325831392%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dispose.html"><span><span>dispose</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1325831392%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="dispose.html"><span class="token function">dispose</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Closes the socket, like <a href="close.html">close</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1853036639%2FFunctions%2F-456752591" anchor-label="tls" id="1853036639%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../tls.html"><span><span>tls</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1853036639%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a><span class="token punctuation">.</span><a href="../tls.html"><span class="token function">tls</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">config<span class="token operator">: </span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-config/index.html">TlsConfig</a><span class="token punctuation">, </span></span><span class="parameter ">context<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.coroutines/-coroutine-context/index.html">CoroutineContext</a><span class="token operator"> = </span>EmptyCoroutineContext</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="index.html">TlsSocket</a></div><div class="brief "><p class="paragraph">Wraps a connected ktor-network <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a> in TLS as a client (module <code class="lang-kotlin">kuicksilver-ktor-network</code>, ADR-0005): the handshake completes before this returns; the result is a <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a> whose channels carry plaintext. Unlike ktor's own <code class="lang-kotlin">Socket.tls</code>, this works on every platform and offers TLS 1.3, ALPN and pins.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1424774594%2FFunctions%2F-456752591" anchor-label="tlsServer" id="1424774594%2FFunctions%2F-456752591" data-filterable-set=":kuicksilver-ktor-network/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-ktor-network/commonMain" data-filterable-set=":kuicksilver-ktor-network/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../tls-server.html"><span>tls</span><wbr><span><span>Server</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1424774594%2FFunctions%2F-456752591"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-network/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a><span class="token punctuation">.</span><a href="../tls-server.html"><span class="token function">tlsServer</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">config<span class="token operator">: </span><a href="../../../kuicksilver-tls/io.kuicksilver.tls/-tls-config/index.html">TlsConfig</a><span class="token punctuation">, </span></span><span class="parameter ">context<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.coroutines/-coroutine-context/index.html">CoroutineContext</a><span class="token operator"> = </span>EmptyCoroutineContext</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="index.html">TlsSocket</a></div><div class="brief "><p class="paragraph">Accepts TLS on a server-side <a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-socket/index.html">Socket</a> (after <code class="lang-kotlin">ServerSocket.accept()</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

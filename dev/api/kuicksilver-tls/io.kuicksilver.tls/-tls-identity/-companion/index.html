@@ -1,0 +1,215 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Companion</title>
+<link href="../../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../../styles/style.css" rel="Stylesheet">
+<link href="../../../../styles/main.css" rel="Stylesheet">
+<link href="../../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/commonMain">common</button>
+                <button class="platform-tag platform-selector jvm-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/jvmMain">jvm</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/commonMain" data-filter=":kuicksilver-tls/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                        <li role="option" class="dropdown--option platform-selector-option jvm-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/jvmMain" data-filter=":kuicksilver-tls/jvmMain">
+                                <span class="checkbox--icon"></span>
+                                jvm
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-tls::io.kuicksilver.tls/TlsIdentity.Companion///PointingToDeclaration//-1635407269">
+  <div class="breadcrumbs"><a href="../../../index.html">kuicksilver-tls</a><span class="delimiter">/</span><a href="../../index.html">io.kuicksilver.tls</a><span class="delimiter">/</span><a href="../index.html">TlsIdentity</a><span class="delimiter">/</span><span class="current">Companion</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Companion</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="index.html">Companion</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TlsIdentity.kt#L247">source</a>)</span></span></div><p class="paragraph">Factories: <a href="from-pem.html">fromPem</a>, <a href="from-der.html">fromDer</a>, and on the JVM <code class="lang-kotlin">fromKeyStore</code> and <code class="lang-kotlin">fromPkcs12</code>. Each throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a> on bad input. <a href="reloadable.html">reloadable</a> wraps one for certificate rotation.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button><button class="section-tab" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION,EXTENSION_PROPERTY,EXTENSION_FUNCTION">Members &amp; Extensions</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="1061423775%2FFunctions%2F-1635407269" anchor-label="fromDer" id="1061423775%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="from-der.html"><span>from</span><wbr><span><span>Der</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1061423775%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="from-der.html"><span class="token function">fromDer</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">chain<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">&gt;</span><span class="token punctuation">, </span></span><span class="parameter ">keyDer<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-in-memory/index.html">TlsIdentity.InMemory</a></div><div class="brief "><p class="paragraph">DER chain (leaf first) + PKCS#8 DER key; <a href="from-der.html">keyDer</a> is zeroed after import, the key then lives in OpenSSL only.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="49912494%2FFunctions%2F561745467" anchor-label="fromKeyStore" id="49912494%2FFunctions%2F561745467" data-filterable-set=":kuicksilver-tls/jvmMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-tls/jvmMain" data-filterable-set=":kuicksilver-tls/jvmMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../../from-key-store.html"><span>from</span><wbr><span>Key</span><wbr><span><span>Store</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="49912494%2FFunctions%2F561745467"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-tls/jvmMain" data-filterable-set=":kuicksilver-tls/jvmMain" data-active="" data-toggle=":kuicksilver-tls/jvmMain">jvm</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/jvmMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="index.html#-451511568%2FMain%2F561745467">TlsIdentity.Companion</a><span class="token punctuation">.</span><a href="../../from-key-store.html"><span class="token function">fromKeyStore</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">keyStore<span class="token operator">: </span><a href="https://developer.android.com/reference/kotlin/java/security/KeyStore.html">KeyStore</a><span class="token punctuation">, </span></span><span class="parameter ">alias<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">password<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-char-array/index.html">CharArray</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-in-memory/index.html">TlsIdentity.InMemory</a></div><div class="brief "><p class="paragraph">JVM: import an identity from a <code class="lang-kotlin">KeyStore</code> (migration path from Ktor's <code class="lang-kotlin">sslConnector { keyStore }</code>); the key is exported as PKCS#8 and that copy is zeroed after import. The <code class="lang-kotlin">KeyStore</code>'s own <code class="lang-kotlin">PrivateKey</code> objects cannot be wiped and stay on the heap while the key store lives (and as garbage after); use <a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-companion/from-pem.html">fromPem</a> or <a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-companion/from-der.html">fromDer</a> when a heap dump must not contain the key.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1633849700%2FFunctions%2F-1635407269" anchor-label="fromPem" id="-1633849700%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="from-pem.html"><span>from</span><wbr><span><span>Pem</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1633849700%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="from-pem.html"><span class="token function">fromPem</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">chainPem<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">keyPem<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-char-array/index.html">CharArray</a><span class="token punctuation">, </span></span><span class="parameter ">password<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-char-array/index.html">CharArray</a><span class="token operator">?</span><span class="token operator"> = </span>null</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-in-memory/index.html">TlsIdentity.InMemory</a></div><div class="brief "><p class="paragraph">PEM chain (leaf first) + PKCS#8 PEM key as a <code class="lang-kotlin">CharArray</code>, zeroed after import; encrypted keys are not supported in v1. The key is decoded straight from the array (no <code class="lang-kotlin">String</code> of it is made) and every decoded block is wiped, on failure too; a <code class="lang-kotlin">String</code> the caller read the key into is outside the library's reach.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-118839139%2FFunctions%2F561745467" anchor-label="fromPkcs12" id="-118839139%2FFunctions%2F561745467" data-filterable-set=":kuicksilver-tls/jvmMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-tls/jvmMain" data-filterable-set=":kuicksilver-tls/jvmMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../../from-pkcs12.html"><span>from</span><wbr><span><span>Pkcs12</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-118839139%2FFunctions%2F561745467"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted  with-platform-tabs" data-platform-hinted="data-platform-hinted">
+                    <div class="platform-bookmarks-row" data-toggle-list="data-toggle-list"><button class="platform-bookmark" data-filterable-current=":kuicksilver-tls/jvmMain" data-filterable-set=":kuicksilver-tls/jvmMain" data-active="" data-toggle=":kuicksilver-tls/jvmMain">jvm</button></div>
+<div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/jvmMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="index.html#-451511568%2FMain%2F561745467">TlsIdentity.Companion</a><span class="token punctuation">.</span><a href="../../from-pkcs12.html"><span class="token function">fromPkcs12</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">bytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token punctuation">, </span></span><span class="parameter ">password<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-char-array/index.html">CharArray</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-in-memory/index.html">TlsIdentity.InMemory</a></div><div class="brief "><p class="paragraph">JVM: PKCS#12 bundles through the JDK keystore provider. The JDK decrypts the key into objects that cannot be wiped and that stay on the heap as garbage until collected (threat model 3.7); use <a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-companion/from-pem.html">fromPem</a> or <a href="../../../../kuicksilver-tls/io.kuicksilver.tls/-tls-identity/-companion/from-der.html">fromDer</a> when a heap dump must not contain the key.</p></div></div>                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="486928566%2FFunctions%2F-1635407269" anchor-label="reloadable" id="486928566%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="reloadable.html"><span><span>reloadable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="486928566%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="reloadable.html"><span class="token function">reloadable</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">initial<span class="token operator">: </span><a href="../-in-memory/index.html">TlsIdentity.InMemory</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-reloadable/index.html">TlsIdentity.Reloadable</a></div><div class="brief "><p class="paragraph">A <a href="../-reloadable/index.html">Reloadable</a> identity that starts with <a href="reloadable.html">initial</a> and owns it from now on (see <a href="../-reloadable/index.html">Reloadable</a> for ownership, resumption and the checks).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>CapsuleStream</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/CapsuleStream///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">CapsuleStream</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Capsule</span><wbr><span><span>Stream</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="index.html">CapsuleStream</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Capsules.kt#L174">source</a>)</span></span></div><p class="paragraph">An Extended CONNECT stream speaking the Capsule Protocol (RFC 9297 section 3), from <a href="../-http3-stream/use-capsule-protocol.html">Http3Stream.useCapsuleProtocol</a>. The stream's data is a sequence of capsules both ways; HTTP datagrams arrive and leave as QUIC DATAGRAM frames or as DATAGRAM capsules. Once this object exists, <a href="stream.html">stream</a>'s <code class="lang-kotlin">input</code>, <code class="lang-kotlin">output</code> and <code class="lang-kotlin">datagrams</code> belong to it: use <a href="capsules.html">capsules</a>, <a href="send.html">send</a>, <a href="datagrams.html">datagrams</a> and the datagram senders here instead.</p><p class="paragraph"><a href="send.html">send</a>, <a href="send-datagram.html">sendDatagram</a> when it falls back to a capsule, and <a href="close.html">close</a> have no deadline of their own: they wait for the peer's flow-control credit, which a peer that stops reading may withhold for as long as it keeps the connection alive; only a reset of the stream or a closed connection fails them. Bound them with <code class="lang-kotlin">withTimeout</code> and <a href="../-http3-stream/reset.html">Http3Stream.reset</a> the stream when it expires.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-193101553%2FProperties%2F748033675" anchor-label="capsules" id="-193101553%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="capsules.html"><span><span>capsules</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-193101553%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="capsules.html">capsules</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="../-capsule/index.html">Capsule</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Capsules of <a href="../-capsule-config/known-types.html">CapsuleConfig.knownTypes</a> from the peer, in order. One collector at a time. The flow ends normally at the peer's FIN on a capsule boundary; it fails with <a href="../-http3-exception/-message-error/index.html">Http3Exception.MessageError</a> when the FIN cuts a capsule (RFC 9297 section 3.3), a known capsule exceeds <a href="../-capsule-config/max-capsule-length.html">CapsuleConfig.maxCapsuleLength</a>, or anything follows a capsule of <a href="../-capsule-config/terminal-types.html">CapsuleConfig.terminalTypes</a> (which is delivered first), after the stream was reset and stopped with H3_MESSAGE_ERROR; and with the stream's or connection's error when the peer reset the stream or the connection closed. While nobody collects, reading pauses after <a href="../-capsule-config/receive-queue.html">CapsuleConfig.receiveQueue</a> capsules, DATAGRAM capsules behind them included. A collector cancelled while it waits or handles a capsule leaves the next one for the next collector; a wrapper cancelled after a capsule was delivered (<code class="lang-kotlin">withTimeout</code> around <code class="lang-kotlin">first()</code>) may still drop that one, so collect in one long-lived coroutine. Operators that collect ahead in another coroutine (<code class="lang-kotlin">buffer</code>, <code class="lang-kotlin">flowOn</code>, <code class="lang-kotlin">conflate</code>, <code class="lang-kotlin">produceIn</code>, <code class="lang-kotlin">shareIn</code>, <code class="lang-kotlin">stateIn</code>, and <code class="lang-kotlin">collectLatest</code> by design) hold capsules they took and have not delivered yet; those are lost when the collection is cancelled, so collect this flow directly.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1319899917%2FProperties%2F748033675" anchor-label="datagrams" id="-1319899917%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams.html"><span><span>datagrams</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1319899917%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="datagrams.html">datagrams</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">HTTP datagrams from the peer: QUIC DATAGRAM frames for this stream and DATAGRAM capsules, in one queue that keeps the newest 32 when nobody collects. One collector at a time; it ends when the stream's receive side ended.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1323943093%2FProperties%2F748033675" anchor-label="stream" id="1323943093%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stream.html"><span><span>stream</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1323943093%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="stream.html">stream</a><span class="token operator">: </span><a href="../-http3-stream/index.html">Http3Stream</a></div><div class="brief "><p class="paragraph">The underlying stream, for its id, headers, priority, <a href="../-http3-stream/reset.html">Http3Stream.reset</a> and <a href="../-http3-stream/stop-sending.html">Http3Stream.stopSending</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="864550221%2FFunctions%2F748033675" anchor-label="close" id="864550221%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="close.html"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="864550221%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Writes the capsules still queued, then ends our side of the stream (FIN); <a href="capsules.html">capsules</a> keeps reading the peer's side. Throws the write's error if the queue could not be written. Calling it again does nothing more.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="948204901%2FFunctions%2F748033675" anchor-label="send" id="948204901%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send.html"><span><span>send</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="948204901%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="send.html"><span class="token function">send</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">capsule<span class="token operator">: </span><a href="../-capsule/index.html">Capsule</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Sends <a href="send.html">capsule</a>, whole and never interleaved with another; suspends while <a href="../-capsule-config/send-queue.html">CapsuleConfig.sendQueue</a> capsules wait. Throws IllegalStateException after <a href="close.html">close</a>, and the write's error once writing failed (a reset, STOP_SENDING, a closed connection). No deadline of its own: bound it with <code class="lang-kotlin">withTimeout</code> and <a href="../-http3-stream/reset.html">Http3Stream.reset</a> the stream when it expires; a capsule already queued when the caller gives up may still be written.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="509779400%2FFunctions%2F748033675" anchor-label="sendDatagram" id="509779400%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send-datagram.html"><span>send</span><wbr><span><span>Datagram</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="509779400%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="send-datagram.html"><span class="token function">sendDatagram</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">payload<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="try-send-datagram.html">trySendDatagram</a> that waits for room: in the transport's queue, or in the capsule queue when falling back. Throws as <a href="../-http3-stream/send-datagram.html">Http3Stream.sendDatagram</a> does, and IllegalStateException after <a href="close.html">close</a>. When falling back it may wait for the peer's flow-control credit: bound it with <code class="lang-kotlin">withTimeout</code> and <a href="../-http3-stream/reset.html">Http3Stream.reset</a> the stream when it expires.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1912083747%2FFunctions%2F748033675" anchor-label="trySendDatagram" id="-1912083747%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="try-send-datagram.html"><span>try</span><wbr><span>Send</span><wbr><span><span>Datagram</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1912083747%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="try-send-datagram.html"><span class="token function">trySendDatagram</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">payload<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-datagram-send-result/index.html">DatagramSendResult</a></div><div class="brief "><p class="paragraph">Sends <a href="try-send-datagram.html">payload</a> as a QUIC DATAGRAM when HTTP/3 datagrams are available, answering as <a href="../-http3-stream/try-send-datagram.html">Http3Stream.trySendDatagram</a>. When they are unsupported and <a href="../-capsule-config/datagram-fallback.html">CapsuleConfig.datagramFallback</a> is on, it goes as a DATAGRAM capsule instead (RFC 9297 section 3.5): <code class="lang-kotlin">Sent</code> once queued, <code class="lang-kotlin">QueueFull</code> while <a href="../-capsule-config/send-queue.html">CapsuleConfig.sendQueue</a> capsules wait. <code class="lang-kotlin">TooLarge</code> is returned as is, never retried as a capsule. <code class="lang-kotlin">Closed</code> after <a href="close.html">close</a> or once the send side is closed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

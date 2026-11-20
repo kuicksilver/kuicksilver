@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploying the HTTP/3 server - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li class="current"><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="deploying-the-http3-server">Deploying the HTTP/3 server</h1>
+<p><strong>What this page is for.</strong> It is for the person who runs <code>embeddedServer(Kuicksilver)</code> in production and needs HTTP/3 to
+work: ports, firewalls, containers, load balancers, certificates, host settings and how to check from both ends.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>A server built with <code>io.kuicksilver:kuicksilver-ktor-server</code> (version <code>0.3.0</code> or newer) and Ktor 3.6.x, on JVM 17 or
+newer or as a Kotlin/Native server on Linux, macOS or Windows (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>A certificate chain and private key (PEM) for the host name clients use. HTTP/3 uses the same certificate as TLS over TCP.</li>
+<li>Control over the network path: you can open the same port number on TCP and on UDP.</li>
+</ul>
+<p><strong>Minimal example.</strong> The server that this page deploys is the one in <a href="ktor.html#minimal-example">Ktor engines: Minimal example</a> (a
+<code>tlsConnector</code> with an identity; it serves HTTP/1.1 on TCP and HTTP/3 on UDP, same port). What has to reach it is in
+<a href="#ports-and-alt-svc">Ports and Alt-Svc</a>, and <a href="#checking-a-deployment">Checking a deployment</a> shows how to test it.</p>
+<p><strong>Imports.</strong> The Kotlin blocks on this page use these imports (the rest of the server's imports are in
+<a href="ktor.html#imports">Ktor engines: Imports</a>):</p>
+<pre><code class="language-kotlin">// guide:deployment:imports
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.response.header
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.server.Http3Advertising
+import io.kuicksilver.ktor.server.Kuicksilver
+import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
+</code></pre>
+<p>This guide is for running <code>embeddedServer(Kuicksilver)</code> in production with HTTP/3 working: what has to reach the server,
+what the host and the network in front of it need, and how to check from both ends why a client does or does not use
+HTTP/3. The engine's options are in <a href="ktor.html#server">Ktor: Server</a> and the
+<a href="configuration.html#ktor-server-engine">configuration reference</a>; error messages are in
+<a href="troubleshooting.html">troubleshooting</a>. This page links there instead of repeating them.</p>
+<p>Statements about other products (Docker, Kubernetes, cloud load balancers, proxies) were checked against their
+documentation on 2026-11-05 and link to it. Products and details this page does not name were not checked: read their
+documentation before you rely on them.</p>
+<h2 id="how-a-client-gets-to-http3">How a client gets to HTTP/3</h2>
+<ol>
+<li>The client connects over TCP and TLS (HTTP/1.1; the TCP side's ALPN is <code>http/1.1</code>).</li>
+<li>The response carries <code>Alt-Svc: h3=&quot;:&lt;port&gt;&quot;; ma=86400</code> (RFC 7838): HTTP/3 is on UDP, on that port of the same host,
+for 24 hours.</li>
+<li>The client opens QUIC to that UDP port. The TLS handshake there uses the origin's host name (SNI) and checks the
+same certificate, with ALPN <code>h3</code>.</li>
+<li>The client caches the alternative. If UDP does not get through it falls back to TCP; the Kuicksilver client then
+marks the alternative broken for a while (<a href="ktor.html#racing-and-fallback">Ktor: Racing and fallback</a>).</li>
+</ol>
+<p>So the TCP port, the UDP port, the <code>Alt-Svc</code> header and the certificate all have to work for HTTP/3. When one of them
+is missing, clients quietly stay on HTTP/1.1.</p>
+<h2 id="ports-and-alt-svc">Ports and Alt-Svc</h2>
+<p>Every <code>tlsConnector</code> serves HTTP/1.1 on TCP and HTTP/3 on UDP <strong>with the same port number</strong> and the same <code>host</code>
+(default <code>0.0.0.0</code>), and so does a plain connector when the configuration has an <code>identity</code> (with <code>EngineMain</code>, the
+<code>kuicksilver.tls.*</code> keys). The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
+(<a href="ktor.html#http3-on-the-server">Ktor: HTTP/3 on the server</a>). Open, forward and publish <strong>both</strong> <code>&lt;port&gt;/tcp</code> and
+<code>&lt;port&gt;/udp</code> everywhere on the way.</p>
+<p>The engine's <code>Alt-Svc</code> names the port it bound, <code>h3=&quot;:&lt;bound port&gt;&quot;</code> (no host: the same host as the request).
+That is right only when clients reach the UDP port under the same number. When a NAT, a container port mapping or a
+load balancer exposes another number, clients would try the wrong port. Two fixes:</p>
+<ul>
+<li>Map the same number on both sides (<code>443</code> outside to <code>443</code> inside), so the engine's header is right as it is.</li>
+<li>Or let the application send its own <code>Alt-Svc</code>. The engine never replaces an <code>Alt-Svc</code> the application set, so the
+application then also follows the run-time switch <code>engine.http3Advertising</code> (<a href="#turning-http3-off-without-a-restart">Turning HTTP/3 off without a restart</a>) itself. Use it only on
+connectors that do serve HTTP/3: not on a plain connector without TLS, and not when
+the start logged &quot;HTTP/3 is not served ...&quot; (a UDP bind failure, a platform without a QUIC server, <code>udpSocketCount</code>
+above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:</li>
+</ul>
+<pre><code class="language-kotlin">// guide:deployment:public-alt-svc
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
+lateinit var engine: KuicksilverApplicationEngine
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 8443 }
+}) {
+    intercept(ApplicationCallPipeline.Plugins) {
+        // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
+        val h3 = engine.http3Advertising == Http3Advertising.On
+        call.response.header(&quot;Alt-Svc&quot;, if (h3) &quot;h3=\&quot;:$publicPort\&quot;; ma=86400&quot; else &quot;clear&quot;)
+    }
+}
+engine = server.engine
+</code></pre>
+<p>The sample also sends its header on HTTP/3 responses, where the engine sends none under <code>On</code>; that only repeats what the
+client already uses.</p>
+<p>The client side has its own rule: the Kuicksilver client ignores an alternative on an unprivileged port (1024 and up) for
+an origin on a privileged one, as Chromium does (<a href="ktor.html#discovery-and-alt-svc">Ktor: Discovery and Alt-Svc</a>).
+So for an origin on <code>https://host/</code> (port 443), HTTP/3 must also be reachable on a port below 1024, in practice UDP 443.</p>
+<p><code>ma=86400</code> means clients remember the alternative for a day. To withdraw HTTP/3, use <code>Clear</code> or <code>Drain</code> (<a href="#turning-http3-off-without-a-restart">Turning HTTP/3 off without a restart</a>), which
+send <code>Alt-Svc: clear</code>, rather than closing the UDP port, and keep that mode for at least 24 hours: <code>clear</code> only reaches
+clients that come back over TCP, so a client that cached the alternative and returns within its <code>ma</code> still tries QUIC.
+Clients that find the UDP port closed wait for their QUIC attempt to time out before they fall back. <code>altSvc = false</code> (<code>kuicksilver.altSvc</code> with <code>EngineMain</code>) stops the
+engine's header entirely: then only clients that try HTTP/3 without being told (the Kuicksilver client's <code>Preferred</code>
+mode or <code>quicHints</code>, <code>curl --http3</code>) use it.</p>
+<p>The engine does not publish DNS HTTPS records (RFC 9460); publishing one in your DNS zone is up to you. A record such as
+<code>example.com. 300 IN HTTPS 1 . alpn=h3,h2</code> lets clients that look them up (browsers, and the Kuicksilver client with
+<code>http3 { httpsRecords = ... }</code>, see <a href="ktor.html#https-records-experimental">HTTPS records</a>) use HTTP/3 from the first
+request; for a port other than 443 the name is <code>_&lt;port&gt;._https.&lt;host&gt;</code>.</p>
+<h2 id="firewalls-and-security-groups">Firewalls and security groups</h2>
+<ul>
+<li>Allow inbound <strong>UDP</strong> on the port, next to TCP: in the host firewall (<code>ufw</code>, <code>firewalld</code>, <code>nftables</code>; Windows
+Defender Firewall, see <a href="troubleshooting.html#windows">troubleshooting: Windows</a>) and in the cloud's security group or
+network ACL. A rule for TCP 443 alone is the most common reason a server serves HTTP/1.1 but no client ever arrives over
+QUIC.</li>
+<li>Answers leave from the same UDP port, and from the address the kernel's route picks (the address the client sent to
+only on a host with one address; see <a href="#reply-addresses">Reply addresses</a>). A stateful firewall allows them once the
+inbound flow is allowed. A stateless
+network ACL needs an outbound rule for UDP from the port to the clients' ports.</li>
+<li>Many corporate and guest networks block UDP 443 on the client side. You cannot fix that from the server. Clients
+fall back to TCP: the Kuicksilver client reports <code>FallbackReason.HandshakeTimeout</code> and then <code>BrokenAlternative</code>
+(<a href="ktor.html#why-did-this-request-not-use-http3">Ktor: Why did this request not use HTTP/3?</a>).</li>
+</ul>
+<h2 id="containers">Containers</h2>
+<h3 id="docker">Docker</h3>
+<p>Docker publishes TCP unless a mapping says <code>/udp</code>; publish both protocols on the same number
+(<a href="https://docs.docker.com/engine/network/port-publishing/">Docker: port publishing</a>: &quot;<code>-p 8080:80/udp</code> Map port <code>8080</code> on
+the Docker host to UDP port <code>80</code> in the container&quot;):</p>
+<pre><code class="language-sh">docker run -p 443:443/tcp -p 443:443/udp my-server-image
+</code></pre>
+<pre><code class="language-dockerfile">EXPOSE 443/tcp 443/udp
+</code></pre>
+<p><code>EXPOSE</code> only documents ports; the <code>-p</code> mappings publish them. With <code>-p 8443:443/udp</code> (another host port) the engine's
+<code>Alt-Svc</code> names 443, which is wrong outside: map the same number or send your own header (<a href="#ports-and-alt-svc">Ports and Alt-Svc</a>).
+On Linux, <code>--network host</code> skips Docker's port mapping, and the engine binds the host's ports directly.</p>
+<p>The UDP buffer limits are kernel settings of the host (<a href="#udp-socket-buffers">UDP socket buffers</a>). Set them on the host (the
+Kubernetes node), not in the image.</p>
+<h3 id="the-image">The image</h3>
+<ul>
+<li><strong>A glibc base image.</strong> The native library inside the JVM jar is built for glibc 2.17 or newer and needs
+<code>libresolv.so.2</code> (part of glibc) since 0.3.0. musl is not supported: on an Alpine image (or any <code>-alpine</code> tag) the
+library does not load, <code>KslLoader.availability()</code> is <code>Unavailable</code> and the server cannot start its TLS connectors. Use an
+image built on a glibc distribution (Debian, Ubuntu, RHEL and its derivatives). A Kotlin/Native server on Linux needs
+glibc too (2.19 on x64, 2.25 on arm64), plus the system zlib (<code>libz.so.1</code>) and <code>libresolv.so.2</code>, so <code>scratch</code> and
+images without a C library do not work; a Native client that verifies with <code>TrustConfig.Platform</code> also needs a CA
+bundle (<code>ca-certificates</code>; <a href="tls.html#linux-trust-store">TLS: Linux trust store</a>). <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>
+has every floor.</li>
+<li><strong>A read-only root file system, or a <code>noexec</code> temporary directory.</strong> On the JVM the native library is extracted on
+first use into <code>&lt;java.io.tmpdir&gt;/kuicksilver-native-&lt;user&gt;</code> and loaded from there (<a href="tls.html#native-library-availability">TLS: Native library
+availability</a>). With <code>readOnlyRootFilesystem: true</code> that write fails, and with a
+<code>noexec</code> <code>/tmp</code> the load fails (&quot;... if the work directory is mounted noexec set -Dkuicksilver.native.workdir&quot;). Set
+<code>-Dkuicksilver.native.workdir</code> to a directory on a writable volume that allows executables, such as an <code>emptyDir</code>.
+Name a directory <em>below</em> the volume's mount point: the loader creates it with owner-only permissions and refuses a
+directory that another user owns or can write to, as the root of a volume often is. The loader does not check the
+directories above a <code>-Dkuicksilver.native.workdir</code> (the volume root among them): whoever else can
+write to one of them could rename the work directory, so keep processes of other users off that volume.
+An <code>emptyDir</code> mounted at <code>/tmp</code> instead is world-writable without the sticky bit: the library then goes to the user's
+cache directory when it is writable, else it stays in <code>/tmp</code> and every start logs the warning &quot;native
+library work directory … is writable by others without the sticky bit&quot;. Setting <code>-Dkuicksilver.native.workdir</code> to a
+directory below the mount point, as above, avoids both.</li>
+<li><strong>Port 443 without root.</strong> On Linux, binding a port below 1024, TCP and UDP alike, needs <code>CAP_NET_BIND_SERVICE</code>, or a
+network namespace whose <code>net.ipv4.ip_unprivileged_port_start</code> is at or below the port. In Kubernetes that sysctl is a
+&quot;safe&quot; one since 1.22, so a pod may set it without node changes (not together with <code>hostNetwork</code>;
+<a href="https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/">Kubernetes: sysctls</a>); with Docker,
+<code>docker run --sysctl net.ipv4.ip_unprivileged_port_start=443 ...</code> does the same. Docker's own documentation says
+non-root containers cannot bind ports below 1024 &quot;especially in Kubernetes and Docker Engine &lt; 20.10&quot;
+(<a href="https://docs.docker.com/dhi/how-to/troubleshoot/">Docker: Hardened Images, troubleshooting</a>), so a newer engine may
+already allow it: <code>docker run --rm my-server-image cat /proc/sys/net/ipv4/ip_unprivileged_port_start</code> prints the value
+your containers get. On a host with systemd,
+<code>AmbientCapabilities=CAP_NET_BIND_SERVICE</code> next to <code>User=</code> in the unit grants the capability to the server process
+alone. Or bind an unprivileged port (8443) and map 443 to it in front: then the engine's <code>Alt-Svc</code> names 8443, so send
+your own header (<a href="#ports-and-alt-svc">Ports and Alt-Svc</a>).</li>
+</ul>
+<p>A pod spec with all three (a non-root user, a read-only root file system, port 443):</p>
+<pre><code class="language-yaml">spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001                 # a non-root user ID
+    sysctls:
+      - name: net.ipv4.ip_unprivileged_port_start
+        value: &quot;443&quot;
+  containers:
+    - name: my-server
+      image: my-server-image          # a glibc base, not Alpine
+      securityContext:
+        readOnlyRootFilesystem: true
+      env:
+        - name: JAVA_TOOL_OPTIONS
+          value: &quot;-Dkuicksilver.native.workdir=/var/lib/ksl/native&quot;
+      ports:
+        - { containerPort: 443, protocol: TCP }
+        - { containerPort: 443, protocol: UDP }
+      volumeMounts:
+        - { name: ksl, mountPath: /var/lib/ksl }
+  volumes:
+    - { name: ksl, emptyDir: {} }
+</code></pre>
+<h3 id="kubernetes">Kubernetes</h3>
+<p>A <code>Service</code> carries the TCP and the UDP port as two entries with the same number:</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: my-server
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local   # keeps the client's address; see &quot;The client's address&quot; below the manifest
+  selector:
+    app: my-server
+  ports:
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 443
+    - name: h3
+      protocol: UDP
+      port: 443
+      targetPort: 443
+</code></pre>
+<p>The pod spec should declare <code>containerPort: 443</code> with <code>protocol: TCP</code> and another with <code>protocol: UDP</code> as well
+(<code>containerPort</code> is informational: the Service's <code>targetPort</code> decides where traffic goes).</p>
+<ul>
+<li><strong>Mixed protocols in one <code>LoadBalancer</code> Service</strong> are stable since Kubernetes 1.26 (the <code>MixedProtocolLBService</code> gate
+is removed), but &quot;The set of protocols that can be used for load balanced Services is defined by your cloud provider;
+they may impose restrictions beyond what the Kubernetes API enforces&quot;
+(<a href="https://kubernetes.io/docs/concepts/services-networking/service/#load-balancers-with-mixed-protocol-types">Kubernetes: Service, load balancers with mixed protocol types</a>).
+Check that your provider's load balancer controller supports TCP and UDP on one port. Where it does not, use two
+Services (one TCP, one UDP) behind the same address if the provider can share one, or a load balancer you configure
+yourself.</li>
+<li><strong>The client's address.</strong> With the default <code>externalTrafficPolicy: Cluster</code>, packets may be source-NATed to a
+node's address. &quot;If you set <code>service.spec.externalTrafficPolicy</code> to the value <code>Local</code>, kube-proxy only proxies proxy
+requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
+IP address&quot; (<a href="https://kubernetes.io/docs/tutorials/services/source-ip/">Kubernetes: Using Source IP</a>). This matters more
+for QUIC than for TCP. The QUIC endpoint limits connections <strong>per client IP address</strong> (<code>quicMaxConnectionsPerIp</code>, 256):
+behind a source NAT raise it or turn it off (<a href="#quic-connection-limits">QUIC connection limits</a>); the TCP connectors'
+per-address limit, <code>maxTcpConnectionsPerIp</code>, is off by default and should stay off behind a source NAT. Behind a source NAT, every
+client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
+packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
+tokens are also bound to the address the server sees.</li>
+<li><strong>Rolling updates.</strong> A graceful stop already does what an HTTP/3 client needs (<a href="ktor.html#graceful-stop">Ktor: Graceful stop</a>):
+GOAWAY to every live HTTP/3 connection, and new QUIC clients refused with CONNECTION_REFUSED (under the stateless rate
+limit) instead of timing out. Stop the server with Ktor's <code>shutdownGracePeriod</code> and <code>shutdownTimeout</code>; the larger of the
+two bounds the stop (keep the timeout ≥ the grace period), so keep the <code>preStop</code> delay plus <code>shutdownTimeout</code> below
+the pod's <code>terminationGracePeriodSeconds</code>.
+Clients like the Kuicksilver client recover quickly: it treats <code>CONNECTION_REFUSED</code> as transient, and a connection
+the pod closes with H3_NO_ERROR after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
+back to TCP once (when it may be repeated) and the next one tries HTTP/3 again, which another pod may take. Neither
+marks the alternative broken (<a href="ktor.html#racing-and-fallback">Ktor: Racing and fallback</a>; before 0.3.0 both did, for 5
+minutes doubling up to 2 days). Switching a pod to <code>Http3Advertising.Drain</code> before it stops has a cost: its responses send
+<code>Alt-Svc: clear</code> for the whole origin, not just that pod, so clients that get one drop the alternative until another
+response announces it again. Use <code>Drain</code> to take HTTP/3 out of service, not for routine restarts.</li>
+</ul>
+<h3 id="health-checks">Health checks</h3>
+<p>The kubelet probes a container with <code>exec</code>, <code>grpc</code>, <code>httpGet</code> or <code>tcpSocket</code>
+(<a href="https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/">Kubernetes: probes</a>): none of
+them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched from outside.</p>
+<ul>
+<li><strong>Readiness and liveness</strong> go to an HTTP route over TLS: <code>httpGet</code> with <code>scheme: HTTPS</code> (&quot;the kubelet sends an HTTPS
+request skipping the certificate verification&quot;, same page), on the TLS connector's port.</li>
+<li><strong>The HTTP/3 side</strong> is checked by a canary outside the cluster (<code>curl --http3-only</code>, as in <a href="#checking-a-deployment">Checking a
+deployment</a>, or a Kuicksilver client in <code>H3Only</code> mode) and by the endpoint counters as metrics:
+<code>datagramsReceived</code> that stops growing while TCP traffic goes on means UDP no longer reaches the pod;
+<code>connectionsRefusedLimits</code> growing means clients hit <code>quicMaxConnections</code> or <code>quicMaxConnectionsPerIp</code>
+(<a href="#quic-connection-limits">QUIC connection limits</a>); <code>handshakesFailedTimeout</code> growing means clients start handshakes
+that never finish (lost answers, <a href="#reply-addresses">Reply addresses</a>).</li>
+<li><strong><code>Drain</code> is not unreadiness.</strong> Under <code>Clear</code> or <code>Drain</code> the pod still serves HTTP/1.1 and HTTP/2, so keep its probes
+passing; <code>http3Advertising</code> is part of the metrics instead. A <a href="ktor.html#graceful-stop">graceful stop</a> stops accepting
+TCP connections, so the probes fail during it on their own; a <code>preStop</code> delay lets the Service drop the pod before that.</li>
+</ul>
+<pre><code class="language-kotlin">// guide:deployment:health
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+lateinit var engine: KuicksilverApplicationEngine
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+}) {
+    routing {
+        // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
+        get(&quot;/healthz&quot;) { call.respondText(&quot;ok&quot;) }
+        // for a metrics scraper: is QUIC arriving, and is it refused?
+        get(&quot;/metrics/quic&quot;) {
+            val s = engine.http3Stats
+            call.respondText(
+                &quot;datagrams_received ${s.sumOf { it.datagramsReceived }}\n&quot; +
+                    &quot;connections_active ${s.sumOf { it.connectionsActive }}\n&quot; +
+                    &quot;refused_limits ${s.sumOf { it.connectionsRefusedLimits }}\n&quot; +
+                    &quot;handshakes_failed_timeout ${s.sumOf { it.handshakesFailedTimeout }}\n&quot; +
+                    &quot;http3_advertising ${engine.http3Advertising}\n&quot;,
+            )
+        }
+    }
+}
+engine = server.engine
+</code></pre>
+<pre><code class="language-yaml">      readinessProbe:
+        httpGet: { path: /healthz, port: 443, scheme: HTTPS }
+        periodSeconds: 10
+      livenessProbe:
+        httpGet: { path: /healthz, port: 443, scheme: HTTPS }
+        periodSeconds: 20
+        failureThreshold: 3
+</code></pre>
+<p>Keep <code>/metrics/quic</code> off the public internet (a separate connector or port, or a network policy); the counters say
+nothing secret, but they are not for clients.</p>
+<h2 id="load-balancers-and-proxies">Load balancers and proxies</h2>
+<h3 id="what-can-sit-in-front-of-the-server">What can sit in front of the server</h3>
+<table>
+<thead>
+<tr>
+<th>In front</th>
+<th>HTTP/3 reaches Kuicksilver?</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nothing (public address on the host)</td>
+<td>yes</td>
+<td>the simplest setup</td>
+</tr>
+<tr>
+<td>An L4 load balancer that passes UDP through (cloud network load balancer, <code>kube-proxy</code>, IPVS, nginx <code>stream</code>)</td>
+<td>yes</td>
+<td>per-flow routing, see <a href="#connection-ids-and-several-instances">connection IDs</a>; with direct server return (IPVS-DR, a VIP on <code>lo</code>) bind <code>host</code> to the VIP, see <a href="#reply-addresses">reply addresses</a></td>
+</tr>
+<tr>
+<td>An L7 proxy that terminates HTTP/3 itself (CDN, nginx <code>http</code>, other reverse proxies)</td>
+<td><strong>no</strong></td>
+<td>the proxy speaks HTTP/3 to clients and HTTP/1.1 (or HTTP/2) to the server; Kuicksilver then serves only that TCP side. Set <code>altSvc = false</code> (or strip the header at the proxy): the engine's <code>h3=&quot;:&lt;bound port&gt;&quot;</code> would otherwise pass through and point clients at that port on the proxy's host</td>
+</tr>
+</tbody>
+</table>
+<p>Notes on specific products (checked 2026-11-05):</p>
+<ul>
+<li><strong>AWS Network Load Balancer.</strong> Listeners support &quot;TCP, TLS, UDP, TCP_UDP, QUIC, TCP_QUIC&quot;; &quot;To support both TCP and
+UDP on the same port, create a TCP_UDP listener&quot;, and its target groups must use TCP_UDP
+(<a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-listeners.html">AWS: NLB listeners</a>).
+Client IP preservation &quot;can't be disabled for UDP, TCP_UDP, QUIC, and TCP_QUIC target groups&quot;
+(<a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-target-groups.html">AWS: NLB target groups</a>),
+so the per-IP limit sees real clients. Use TCP_UDP with Kuicksilver. The QUIC and TCP_QUIC listeners route by
+QUIC connection ID: <strong>not verified</strong> with Kuicksilver's QUIC-LB connection IDs (<a href="#connection-ids-and-several-instances">Connection IDs and several instances</a>).</li>
+<li><strong>Cloudflare</strong> (proxied hostname): HTTP/3 ends at Cloudflare's edge; &quot;HTTP/3 connection to the origin is not yet
+supported&quot; (<a href="https://developers.cloudflare.com/speed/optimization/protocol/http3/">Cloudflare: HTTP/3</a>). Cloudflare then
+reaches a Kuicksilver origin over TCP, and the origin's UDP port only serves clients that reach it directly. Set
+<code>altSvc = false</code> on the origin, so its <code>Alt-Svc</code> does not reach clients through Cloudflare.</li>
+<li><strong>nginx</strong> as an L7 proxy terminates HTTP/3 itself and talks to the upstream with <code>proxy_http_version 1.0 | 1.1 | 2</code>
+(HTTP/2 since 1.29.4, HTTP/1.1 the default since 1.29.7;
+<a href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_http_version">nginx: proxy_http_version</a>). A
+Kuicksilver upstream serves HTTP/1.1; set <code>altSvc = false</code> on it, or drop the header with <code>proxy_hide_header Alt-Svc</code>.
+For UDP passthrough, the <code>stream</code> module's <code>listen ... udp</code>
+&quot;configures a listening socket for working with datagrams&quot;, with <code>reuseport</code> &quot;to handle packets from the same address
+and port in the same session&quot;
+(<a href="https://nginx.org/en/docs/stream/ngx_stream_core_module.html#listen">nginx: stream listen</a>). By default nginx connects
+to the upstream from its own address, so every client shares nginx's address against the per-IP limit
+(<a href="#quic-connection-limits">QUIC connection limits</a>).</li>
+<li><strong>Google Cloud (GKE) and Azure:</strong> whether their load balancers take TCP and UDP on one port in one Service was <strong>not
+verified</strong> for this page; see their documentation.</li>
+<li><strong>HAProxy, Envoy, Caddy, other CDNs:</strong> <strong>not verified</strong>. The table above still applies: find out whether the product
+passes QUIC through at layer 4 or terminates HTTP/3.</li>
+</ul>
+<h3 id="nats-and-idle-connections">NATs and idle connections</h3>
+<p>A QUIC connection with no packets for the idle timeout ends (<code>maxIdleTimeout</code>, 30 s by default, the smaller of both
+sides'). A NAT, a stateful firewall or the node's connection tracking can forget an idle UDP flow sooner. RFC 9000
+section 10.1.2: &quot;Though REQ-5 in [RFC4787] recommends a 2-minute timeout interval, experience shows that sending packets
+every 30 seconds is necessary to prevent the majority of middleboxes from losing state for UDP flows&quot;. What happens then:</p>
+<ul>
+<li>The client sends next: its packet gets a new mapping, often a new port, and the server sees a NAT rebinding. The
+connection survives (path validation, <a href="quic.html#migration-and-paths">QUIC: Migration and paths</a>), unless a 4-tuple
+hashing load balancer sends the new flow to another instance (<a href="#connection-ids-and-several-instances">Connection IDs and several
+instances</a>).</li>
+<li>The server sends next (a response the client waits for, a WebSocket message): its packets go to the forgotten mapping
+and are lost until the client sends something.</li>
+</ul>
+<p><code>QuicConfig.keepAlive</code> sends a PING often enough to keep the path warm, at least every half of the effective idle
+timeout, at most 3/4 of <code>maxIdleTimeout</code>. Set it on the side that keeps a quiet connection it cares about, usually the
+client: on the Ktor client <code>engine { quic = quicConfig { keepAlive = 15.seconds } }</code>, on the Ktor server
+<code>quic = quicConfig { keepAlive = 15.seconds }</code> (every connection of the listener then sends a PING that often, which a
+server with many idle clients pays for). The Ktor client closes HTTP/3 connections that carry no request after its own
+<code>idleTimeout</code> (5 minutes) whatever <code>keepAlive</code> says. TCP has the same problem with longer timers (<code>ktor.deployment.connectionIdleTimeoutSeconds</code>, 45 s,
+closes idle HTTP/1.1 connections first).</p>
+<p>A process that was frozen (an Android app frozen in the background or in Doze, a laptop that slept, a debugger stopped
+at a breakpoint) wakes with its idle timers overdue. Before an idle timer closes a connection, the endpoint reads what
+its sockets hold, without waiting, and processes it: a packet the peer sent meanwhile keeps the connection, and only a
+connection none of whose packets arrived closes (RFC 9000 section 10.1). Such a close can come up to about 100 ms after
+the deadline on the accelerated socket, which ends its receive in flight with its current wait. A <code>DatagramIo</code> of your own
+is not read this way. After a long freeze the peer has usually closed its side by its own idle timer, so keep-alive
+still decides whether a quiet connection survives.</p>
+<h3 id="reply-addresses">Reply addresses</h3>
+<p>A client drops QUIC packets from an address it did not send to (RFC 9000 section 9), so every answer must leave from the
+address the client used. With the default <code>host = &quot;0.0.0.0&quot;</code> (or <code>::</code>) the engine's accelerated UDP socket (Linux,
+Android, macOS, iOS, Windows; 0.3.0) learns the destination of every datagram (<code>IP_PKTINFO</code> / <code>IPV6_PKTINFO</code>) and
+sends that connection's packets, and any stateless answer to it, from that address. This covers a host with several
+addresses, a secondary IP, a floating or virtual IP (keepalived) and a VIP on <code>lo</code> for IPVS direct routing or similar
+direct server return. A connection keeps the server address its client first reached: packets of the same client that
+later arrive at another of the server's addresses are processed, and the answers still leave from the first one (only a
+client migrates, and it does so by changing its own address).</p>
+<p>Before 0.3.0, and still with the portable socket (<code>IoPreference.Portable</code>, the JVM without the native library, a
+Kotlin/Native target without <code>ksl_udp</code>; the log says &quot;using the portable socket&quot; when it falls back), the kernel picks
+the source from the route to the client: on such hosts the answers leave from the wrong address and QUIC never
+connects while TCP works. There, bind the connector's <code>host</code> to the address clients send to (one connector per address
+when there are several).</p>
+<h3 id="connection-ids-and-several-instances">Connection IDs and several instances</h3>
+<p>A QUIC connection is identified by connection IDs, not by the 4-tuple, so it survives a client's change of address (NAT
+rebinding, Wi-Fi to cellular; <a href="quic.html#migration-and-paths">QUIC: Migration and paths</a>). An L4 load balancer that hashes
+the 4-tuple does not know this:</p>
+<ul>
+<li>While the client's address and port stay the same, all its packets reach the same instance, and everything works.</li>
+<li>When they change, the packets may hash to another instance. That instance has no state for the connection and
+cannot end it either: Stateless Reset tokens come from a key of the endpoint that issued the connection
+(<a href="quic.html#stateless-reset">QUIC: Stateless reset</a>). The connection then stalls until the client's idle timeout and
+the client reconnects. With a single instance behind the load balancer this cannot happen.</li>
+<li>Retry tokens and NEW_TOKEN address tokens are sealed with keys of one server process. A Retry token is valid for
+10 s and bound to the client's address and port; one that another instance issued does not open, so the attempt is
+refused with a stateless CONNECTION_CLOSE carrying INVALID_TOKEN (RFC 9000 section 8.1.3) and that connection attempt
+fails. Under per-flow routing the Initial after a Retry comes from the same 4-tuple and reaches the same instance, so
+this happens only when the flow moves within those seconds. A NEW_TOKEN token from another instance counts as no
+token (<a href="quic.html#admission-and-endpoint-limits">QUIC: Admission and endpoint limits</a>): the client may be asked for a
+Retry again, at the cost of a round trip.</li>
+</ul>
+<p>QUIC-LB (draft-ietf-quic-load-balancers-21) lets a load balancer route by a server ID encoded in the connection ID. Since
+0.3.0 the engine offers it, experimentally: <code>quicLoadBalancer = QuicLbConfig(...)</code> with the values your load balancer's
+configuration agent assigned each instance, and <code>engine.updateLoadBalancer(next)</code> to roll out a new configuration
+(<a href="quic.html#behind-a-load-balancer">QUIC: Behind a load balancer</a>). Without a QUIC-LB load balancer, put one instance behind
+each address, or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
+preferred address (<code>QuicServerConfig.preferredAddress</code>, <a href="quic.html#migration-and-paths">QUIC: Migration and paths</a>) either;
+that needs the QUIC API directly.</p>
+<h2 id="the-host">The host</h2>
+<h3 id="udp-socket-buffers">UDP socket buffers</h3>
+<p>A QUIC server receives everything through one UDP socket per loop. A burst that does not fit into the socket's receive
+buffer is dropped by the kernel, and QUIC sees it as loss. Kuicksilver asks for large buffers itself; the OS caps what
+it gets:</p>
+<table>
+<thead>
+<tr>
+<th>Platform (socket)</th>
+<th>What Kuicksilver asks for</th>
+<th>What limits it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux, Android (accelerated <code>ksl</code> socket)</td>
+<td><code>SO_RCVBUF</code> and <code>SO_SNDBUF</code> of 7 MiB</td>
+<td><code>net.core.rmem_max</code> and <code>net.core.wmem_max</code>: Linux silently caps a larger request to them (<code>socket(7)</code>). The default is distribution-dependent and often about 208 KiB</td>
+</tr>
+<tr>
+<td>macOS, iOS (accelerated <code>ksl</code> socket)</td>
+<td>7 MiB, halved until the kernel accepts it (the last try is 448 KiB; after that the OS default stays)</td>
+<td><code>kern.ipc.maxsockbuf</code> (on macOS 8 MiB by default, less overhead; iOS not checked)</td>
+</tr>
+<tr>
+<td>Windows (accelerated <code>ksl</code> socket)</td>
+<td>7 MiB, once</td>
+<td>Windows' own limits</td>
+</tr>
+<tr>
+<td>JVM portable socket (when <code>ksl</code> is not used)</td>
+<td>8 MiB</td>
+<td>the same OS limits</td>
+</tr>
+</tbody>
+</table>
+<p>Kuicksilver does not read the size back, does not log it, and does not use <code>SO_RCVBUFFORCE</code>. The engine has no option
+for it (&quot;UDP socket buffer sizes are not configurable yet&quot;, <a href="ktor.html#http3-on-the-server">Ktor: HTTP/3 on the server</a>).
+On Linux, raise the limits so the request is granted in full (values in bytes; 8 MiB, 8 388 608, covers the 7 MiB of
+the <code>ksl</code> socket and the 8 MiB of the JVM portable socket):</p>
+<pre><code class="language-sh">sysctl net.core.rmem_max net.core.wmem_max          # what the host allows now
+sudo sysctl -w net.core.rmem_max=8388608 net.core.wmem_max=8388608
+# keep it across reboots
+printf 'net.core.rmem_max=8388608\nnet.core.wmem_max=8388608\n' | sudo tee /etc/sysctl.d/90-quic.conf
+</code></pre>
+<p>Signs that the buffer is too small: receive errors growing under load (<code>netstat -su</code>, &quot;receive buffer errors&quot;, or
+<code>RcvbufErrors</code> in <code>/proc/net/snmp</code>) and losses in a qlog trace that the network does not explain. These counters are
+per network namespace: for a server in a container, read them inside it (or with <code>nsenter -t &lt;pid&gt; -n</code>).</p>
+<h3 id="gso-gro-and-several-loops">GSO, GRO and several loops</h3>
+<p>On Linux and Android the accelerated socket sends runs of equal-sized datagrams with one <code>sendmsg</code> and <code>UDP_SEGMENT</code>
+(GSO), and receives coalesced datagrams with <code>UDP_GRO</code>. It probes both when the socket opens, and turns GSO off by itself
+if the kernel or the driver fails a send with it. Darwin has neither (one datagram per call). Windows uses USO and URO
+where the system grants them. Nothing needs to be set, but older kernels lack the options: UDP GSO arrived in Linux 4.18
+and UDP GRO in 5.0. The engine does not log whether they were granted; <code>DatagramIo.open(...).capabilities</code>
+(<code>gsoMaxSegments</code>, <code>gro</code>) shows it for a socket you open yourself on the same host
+(<a href="quic.html#binding-an-endpoint-and-connecting">QUIC: Binding an endpoint and connecting</a>).</p>
+<p><code>udpSocketCount</code> (<code>kuicksilver.udpSocketCount</code>, default 1) runs that many endpoint loops on the port. On Linux and
+Android each has its own socket on <code>SO_REUSEPORT</code>, and the kernel spreads client flows over them; a connection whose
+packets the kernel hashes onto another loop's socket (after a NAT rebinding) is forwarded inside the process. On macOS,
+iOS and Windows the loops share one socket, whose receiver hands each datagram to the loop its connection ID names, so a
+rebound client needs no forwarding at all. Either way several loops have none of the load balancer problems above, and
+one connection is no faster with more loops (<a href="quic.html#several-loops-on-one-port">QUIC: Several loops on one port</a>).
+Only a JVM that fell back to the portable socket cannot run more than one: there the start does not fail, the engine
+logs &quot;HTTP/3 is not served on port <port>: ...&quot; and serves HTTP/1.1 alone, without <code>Alt-Svc</code>
+(<a href="troubleshooting.html#unsupportedoperationexception-for-loops--1">troubleshooting</a>).</p>
+<p>If the accelerated socket cannot open, the JVM falls back to a portable socket without these features, with a warning
+in the log; a Kotlin/Native server then serves HTTP/1.1 only
+(<a href="troubleshooting.html#the-accelerated-socket-is-not-used">troubleshooting: The accelerated socket is not used</a>).</p>
+<h3 id="mtu">MTU</h3>
+<p>QUIC starts at 1200-byte packets and raises them with DPLPMTUD. Tunnels with a small MTU (VPNs, some overlay networks)
+are covered by black-hole detection (<a href="quic.html#path-mtu">QUIC: Path MTU</a>,
+<a href="troubleshooting.html#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole">troubleshooting</a>).</p>
+<h2 id="certificates">Certificates</h2>
+<ul>
+<li>One identity serves both sides: the same chain and key over TCP and over QUIC. The certificate must cover the host
+name clients use for the origin. The alternative in <code>Alt-Svc</code> has no host of its own, so the name is the same.</li>
+<li>A <code>tlsConnector</code> with an <code>sniSelector</code> picks each name's identity on TCP and QUIC alike, so the <code>Alt-Svc</code> of a name's
+TCP responses leads to a QUIC handshake that presents that name's certificate (<a href="ktor.html#certificate-per-name-sni">Ktor: Certificate per name</a>).</li>
+<li>Renewed certificates can be put in place without a restart: a <code>TlsIdentity.Reloadable</code> and <code>reload(...)</code>, or with
+<code>EngineMain</code> the key <code>kuicksilver.tls.reloadInterval</code> that watches the PEM files of <code>kuicksilver.tls.certificateChain</code> and
+<code>kuicksilver.tls.privateKey</code> (<a href="ktor.html#certificate-rotation">Ktor: Certificate rotation</a>,
+<a href="tls.html#rotating-the-server-certificate">TLS: Rotating the server certificate</a>). Handshakes whose ClientHello arrives
+after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.</li>
+<li>The CA bundle that verifies client certificates (mTLS) rotates the same way: a <code>TrustConfig.ReloadableCa</code> as the
+connector's <code>trust</code> and <code>reload(...)</code>, or with <code>EngineMain</code> the keys <code>kuicksilver.tls.clientAuth</code> and
+<code>kuicksilver.tls.clientCa</code>, whose file <code>kuicksilver.tls.reloadInterval</code> also watches (<a href="tls.html#rotating-the-client-ca">TLS: Rotating the client
+CA</a>). Once the reload returns no handshake accepts a client certificate that only a
+dropped CA vouches for (one in progress is checked again when it completes), a session ticket does not get such a client
+back in, and connections it already holds go on until they close.</li>
+</ul>
+<h2 id="turning-http3-off-without-a-restart">Turning HTTP/3 off without a restart</h2>
+<p>On the server, <code>engine.http3Advertising</code> (experimental) is read per response and per new QUIC client
+(<a href="ktor.html#turning-http3-off-on-the-server">Ktor: Turning HTTP/3 off on the server</a>):</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Use it when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>On</code></td>
+<td>normal operation</td>
+</tr>
+<tr>
+<td><code>Clear</code></td>
+<td>HTTP/3 should stop being offered, but connections that use it may finish in their own time</td>
+</tr>
+<tr>
+<td><code>Drain</code></td>
+<td>HTTP/3 must go now: GOAWAY to live connections, new QUIC clients refused with CONNECTION_REFUSED (within the stateless rate limit; beyond it they time out), so they fall back at once; a Kuicksilver client does not mark the alternative broken for the refusal and is back on HTTP/3 as soon as the server announces it again</td>
+</tr>
+</tbody>
+</table>
+<p>The UDP socket stays bound in every mode. To block UDP for good, use the firewall, after at least 24 hours (<code>ma=86400</code>)
+in <code>Drain</code> or <code>Clear</code>, so that returning clients have dropped the cached alternative first; clients that do not come
+back within that time have let it expire. The value is per engine and starts at <code>On</code>. Behind a load balancer,
+set it on every instance.</p>
+<p>On the client, an application can switch HTTP/3 off from its remote configuration with <code>http3 { http3Allowed }</code> and take
+open connections out of use with <code>client.closeHttp3Connections()</code>
+(<a href="ktor.html#turning-http3-off-remotely">Ktor: Turning HTTP/3 off remotely</a>).</p>
+<h2 id="security-limits">Security limits</h2>
+<p>The HTTP/3 listener runs the QUIC endpoint's protections (<a href="quic.html#admission-and-endpoint-limits">QUIC: Admission and endpoint limits</a>,
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/spec/threat-model.md#31-amplification">threat model 3.1</a> and <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/spec/threat-model.md#32-resource-exhaustion">3.2</a>):</p>
+<ul>
+<li><strong>Amplification.</strong> Before a client's address is validated, the server sends at most three times what it received
+(RFC 9000 section 8.1).</li>
+<li><strong>Retry.</strong> <code>quicAdmission</code> (a <code>ConnectionAdmission</code>) decides per new client. The default asks unvalidated clients for a
+Retry under handshake load; <code>ConnectionAdmission.AlwaysRetry</code> always does. Clients that bring a valid address token skip
+it.</li>
+<li><strong>Hard limits.</strong> <code>quicMaxConnections</code> 10 000, <code>quicMaxConnectionsPerIp</code> 256 and <code>quicAcceptQueue</code> 128 per listener
+(<a href="#quic-connection-limits">QUIC connection limits</a>), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
+address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
+a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
+of the server matters (<a href="#kubernetes">Kubernetes</a>): every client behind it shares both per-address limits.</li>
+<li><strong>TCP connection limits.</strong> <code>maxTcpConnections</code> (10 000 per connector: at the limit the connector stops accepting and
+the OS backlog holds new clients; keep it below <code>ulimit -n</code>) and <code>maxTcpConnectionsPerIp</code> (off by default: behind a
+proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
+clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
+HTTP/2 alike (<a href="ktor.html#connection-limits">Connection limits</a>).</li>
+<li><strong>Transport and HTTP/3 settings.</strong> <code>quic</code> (a <code>QuicConfig</code>: idle timeout, windows, congestion control), <code>http3Settings</code>,
+and on TCP <code>requestHeaderTimeoutSeconds</code> and <code>connectionIdleTimeoutSeconds</code> against slow clients
+(<a href="ktor.html#server">Ktor: Server</a>).</li>
+</ul>
+<h3 id="quic-connection-limits">QUIC connection limits</h3>
+<p>Three engine options (<em>experimental</em>, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener. Each bounds the
+listener as a whole, over all its <code>udpSocketCount</code> loops, whatever loop a connection lands on
+(<a href="configuration.html#ktor-server-engine">configuration</a>; with <code>EngineMain</code> the keys <code>kuicksilver.quicMaxConnections</code>,
+<code>kuicksilver.quicMaxConnectionsPerIp</code>, <code>0</code> for off, and <code>kuicksilver.quicAcceptQueue</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Over the limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>quicMaxConnections</code></td>
+<td>10 000</td>
+<td>a new client's Initial is dropped silently; counted in <code>connectionsRefusedLimits</code></td>
+</tr>
+<tr>
+<td><code>quicMaxConnectionsPerIp</code></td>
+<td>256 (<code>null</code> is off)</td>
+<td>the same, per client IP address (ports ignored)</td>
+</tr>
+<tr>
+<td><code>quicAcceptQueue</code></td>
+<td>128</td>
+<td>handshaken connections the accept loop has not taken yet; a new client is refused with CONNECTION_REFUSED (<code>connectionsRefusedAcceptQueue</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The per-address limit counts the address the server sees. Raise it (up to <code>quicMaxConnections</code>) or set it to <code>null</code>
+when many clients reach the server from one address:</p>
+<ul>
+<li>a NAT or carrier-grade NAT in front of many users (an office, a campus, a mobile network);</li>
+<li>Kubernetes <code>kube-proxy</code> with <code>externalTrafficPolicy: Cluster</code>, which may source-NAT packets to a node's address
+(<a href="#kubernetes">Kubernetes</a>); with <code>Local</code> the client's address is kept and the default fits;</li>
+<li>a UDP load balancer or proxy that sends from its own address (nginx <code>stream</code> by default,
+<a href="#what-can-sit-in-front-of-the-server">What can sit in front of the server</a>). The engine reads no PROXY protocol header on UDP, so such a proxy cannot
+pass the client's address on.</li>
+</ul>
+<p>A client over the per-address limit gets no answer and fails at its handshake timeout; a Kuicksilver client then falls
+back to TCP and marks the alternative broken. Keep <code>quicMaxConnections</code> as the overall bound, and keep the limit where
+the server sees real client addresses: it is what stops one address from taking every connection slot. The stateless
+answer limit (8 per second per address) still applies to everyone behind a shared address.</p>
+<pre><code class="language-kotlin">// guide:deployment:quic-limits
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicMaxConnectionsPerIp = 4_096   // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+}) {
+    routing { get(&quot;/&quot;) { call.respondText(&quot;ok&quot;) } }
+}
+server.start(wait = false)
+// for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
+</code></pre>
+<h2 id="observability">Observability</h2>
+<ul>
+<li>
+<p>The application's log gets the engine's own messages, such as &quot;HTTP/3 is not served on port ...&quot;. The <code>logger</code>
+(warnings on standard error by default) gets the QUIC endpoints' diagnostics, such as the fallback to the portable
+socket; <code>logger = KuicksilverLogger.stderr(LogLevel.Debug)</code> adds each QUIC connection's lifecycle.</p>
+</li>
+<li>
+<p><code>eventListener</code> (<code>KuicksilverServerEventListener</code>) hears connections per protocol (<code>connectionOpened</code> with
+<code>HTTP/3.0</code>), failed TLS handshakes and requests, which you can count; <code>connectionListener</code> hears every QUIC connection with its close reason.</p>
+</li>
+<li>
+<p><code>qlog = AsyncQlogSink(DirectoryQlogSink(dir), sampleEvery = 100)</code> writes a trace per sampled connection, for
+<a href="https://qvis.quictools.info/">qvis</a>.</p>
+</li>
+<li>
+<p><code>engine.http3Stats</code> (<em>experimental</em>, 0.3.0) returns the QUIC endpoint counters (<code>EndpointStats</code>) of every HTTP/3
+listener, one per connector serving HTTP/3; each read is a fresh snapshot, safe from any thread, for a metrics gauge.
+<code>datagramsReceived</code> answers &quot;does any QUIC arrive at all?&quot;; <code>connectionsRefusedLimits</code> growing means clients hit
+<code>quicMaxConnections</code> or <code>quicMaxConnectionsPerIp</code> (<a href="#quic-connection-limits">QUIC connection limits</a>),
+<code>connectionsRefusedAcceptQueue</code> the accept queue, <code>connectionsRefusedAdmission</code> the admission policy.</p>
+</li>
+</ul>
+<p>See <a href="ktor.html#observability-experimental">Ktor: Observability</a> for a sample of the listeners. A debug log or a packet
+capture answers the same question without code.</p>
+<h2 id="checking-a-deployment">Checking a deployment</h2>
+<p>From a machine outside your network:</p>
+<pre><code class="language-sh"># 1. TCP side: the Alt-Svc header (h3 with the public port; &quot;clear&quot; under Clear or Drain)
+curl -sI https://example.com/ | grep -i '^alt-svc'
+
+# 2. UDP side: HTTP/3 only, no fallback (needs a curl built with HTTP/3: `curl -V` lists HTTP3)
+curl --http3-only -sI https://example.com/
+
+# 3. On the server: does UDP arrive at all?
+sudo tcpdump -ni any udp port 443
+</code></pre>
+<p><code>curl --http3-only</code> tries QUIC on the URL's port. When <code>Alt-Svc</code> advertises another port, test that one
+(<code>https://example.com:&lt;advertised port&gt;/</code>). Run <code>tcpdump</code> on the port the engine bound; for a container, inside its
+network namespace (<code>nsenter -t &lt;pid&gt; -n tcpdump ...</code>) or on the host's published port.</p>
+<p><code>curl --http3-only</code> fails when QUIC does not get through, so it tells a blocked UDP path apart from a client that just
+chose TCP (<a href="https://curl.se/docs/http3.html">curl: HTTP/3</a>). The repository runs this block as it stands against the
+engine in a container (<code>tools/check/deployment-guide.sh</code>), so the commands stay current.</p>
+<p>From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
+<code>response.kuicksilverDiagnostics?.fallback</code>, or one log line per call with <code>engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }</code>
+(<a href="ktor.html#why-did-this-request-not-use-http3">Ktor: Why did this request not use HTTP/3?</a>). Keep in mind that in <code>Auto</code>
+mode the first call to an origin goes over HTTP/1.1 (<code>NoAlternative</code>) unless a <code>FileAltSvcStore</code> remembers the
+alternative from an earlier run; HTTP/3 starts from the next call.</p>
+<h2 id="troubleshooting-checklist">Troubleshooting checklist</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No <code>Alt-Svc</code> in responses</td>
+<td>the server log (&quot;HTTP/3 is not served ...&quot;: the UDP bind, no QUIC server on the platform, <code>udpSocketCount</code> above 1 without the accelerated socket); <code>http3</code> and <code>altSvc</code> on; a proxy in front that strips the header (<a href="troubleshooting.html#the-server-serves-http11-but-no-http3">troubleshooting</a>)</td>
+</tr>
+<tr>
+<td><code>Alt-Svc: clear</code></td>
+<td><code>engine.http3Advertising</code> is <code>Clear</code> or <code>Drain</code></td>
+</tr>
+<tr>
+<td><code>Alt-Svc</code> names the wrong port</td>
+<td>a port mapping or load balancer with another number: map the same number or send your own header (<a href="#ports-and-alt-svc">Ports and Alt-Svc</a>)</td>
+</tr>
+<tr>
+<td><code>curl --http3-only</code> times out, <code>tcpdump</code> shows nothing</td>
+<td>UDP is blocked before the server: firewall, security group, <code>-p .../udp</code> missing, the Service has no UDP port, the load balancer has no UDP listener</td>
+</tr>
+<tr>
+<td><code>tcpdump</code> shows Initials, no answer</td>
+<td>the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address: <code>engine.http3Stats</code> shows <code>connectionsRefusedLimits</code> growing, <a href="#quic-connection-limits">QUIC connection limits</a>); answers leave from another source address (<a href="#reply-addresses">reply addresses</a>)</td>
+</tr>
+<tr>
+<td><code>curl --http3-only</code> fails with a TLS error</td>
+<td>the certificate does not cover the name; with an <code>sniSelector</code>, a name it answers <code>null</code> for (<code>unrecognized_name</code>, CRYPTO_ERROR 0x170)</td>
+</tr>
+<tr>
+<td>Client <code>fallback = HandshakeTimeout</code>, then <code>BrokenAlternative</code></td>
+<td>UDP blocked on the client's network or in front of the server</td>
+</tr>
+<tr>
+<td>Client <code>fallback = Refused</code></td>
+<td>the server is in <code>Drain</code>, stopping, or its accept queue is full (<code>h3Failure</code> code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener</td>
+</tr>
+<tr>
+<td>Client <code>fallback = TlsFailure</code></td>
+<td>the certificate on the UDP side, its <code>h3</code> ALPN</td>
+</tr>
+<tr>
+<td>Client <code>fallback = NoAlternative</code> on every call</td>
+<td>the client never saw <code>Alt-Svc</code> (a proxy strips it), or the alternative's port is unprivileged for a privileged origin</td>
+</tr>
+<tr>
+<td>Connections drop when clients change networks</td>
+<td>an L4 load balancer with several instances (<a href="#connection-ids-and-several-instances">Connection IDs</a>)</td>
+</tr>
+<tr>
+<td>Throughput low, loss under load</td>
+<td>UDP buffer limits (<a href="#udp-socket-buffers">UDP socket buffers</a>), GSO missing on an old kernel</td>
+</tr>
+</tbody>
+</table>
+
+</main></div>
+</body>
+</html>

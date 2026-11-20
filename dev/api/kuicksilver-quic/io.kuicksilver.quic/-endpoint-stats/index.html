@@ -1,0 +1,777 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>EndpointStats</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic/EndpointStats///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic</a><span class="delimiter">/</span><span class="current">EndpointStats</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Endpoint</span><wbr><span><span>Stats</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">EndpointStats</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointStats.kt#L13">source</a>)</span></span></div><p class="paragraph">A snapshot of an endpoint's stateless work, admission outcomes and connection lifecycle; every counter counts since the endpoint started. <code class="lang-kotlin">QuicEndpoint.stats</code> sums it over every loop of the endpoint (docs/guide/quic.md, "Observability"). The loops keep plain counters, so taking a snapshot allocates this object only and costs nothing per packet; values are read without a lock and may lag the loops by a few events.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1506657848%2FProperties%2F42191490" anchor-label="admissionContractViolations" id="-1506657848%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="admission-contract-violations.html"><span>admission</span><wbr><span>Contract</span><wbr><span><span>Violations</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1506657848%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="admission-contract-violations.html">admissionContractViolations</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph"><a href="../-admission-decision/-retry/index.html">AdmissionDecision.Retry</a> returned for an attempt whose Retry token validated the address, or an exception out of <a href="../-connection-admission/admit.html">ConnectionAdmission.admit</a>; each one was dropped.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="498914197%2FProperties%2F42191490" anchor-label="connectionsAccepted" id="498914197%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-accepted.html"><span>connections</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="498914197%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-accepted.html">connectionsAccepted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Server connections handed to <code class="lang-kotlin">accept()</code> (at handshake completion, or at 0-RTT acceptance).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1854507222%2FProperties%2F42191490" anchor-label="connectionsActive" id="1854507222%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-active.html"><span>connections</span><wbr><span><span>Active</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1854507222%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-active.html">connectionsActive</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections the endpoint holds now, in any state until their closing period ends.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1207184298%2FProperties%2F42191490" anchor-label="connectionsCreated" id="-1207184298%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-created.html"><span>connections</span><wbr><span><span>Created</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1207184298%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-created.html">connectionsCreated</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections this endpoint created so far: client connections opened, plus server connections admitted whose first Initial decrypted (a forged or corrupted Initial creates none and counts in <a href="datagrams-dropped-undecryptable.html">datagramsDroppedUndecryptable</a>); closed ones still count.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="356342979%2FProperties%2F42191490" anchor-label="connectionsRefusedAcceptQueue" id="356342979%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-refused-accept-queue.html"><span>connections</span><wbr><span>Refused</span><wbr><span>Accept</span><wbr><span><span>Queue</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="356342979%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-refused-accept-queue.html">connectionsRefusedAcceptQueue</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client attempts refused because the accept queue was full: at the Initial with a stateless CONNECTION_REFUSED, or at handshake completion (<code class="lang-kotlin">QuicEndpointConfig.acceptQueue</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="821889379%2FProperties%2F42191490" anchor-label="connectionsRefusedAdmission" id="821889379%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-refused-admission.html"><span>connections</span><wbr><span>Refused</span><wbr><span><span>Admission</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="821889379%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-refused-admission.html">connectionsRefusedAdmission</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client attempts the <a href="../-connection-admission/index.html">ConnectionAdmission</a> policy dropped or refused (<a href="../-admission-decision/-drop/index.html">AdmissionDecision.Drop</a>, <a href="../-admission-decision/-close/index.html">AdmissionDecision.Close</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1540672650%2FProperties%2F42191490" anchor-label="connectionsRefusedLimits" id="-1540672650%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-refused-limits.html"><span>connections</span><wbr><span>Refused</span><wbr><span><span>Limits</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1540672650%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-refused-limits.html">connectionsRefusedLimits</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client attempts dropped by the hard limits <code class="lang-kotlin">maxConnections</code> and <code class="lang-kotlin">maxConnectionsPerIp</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="213633720%2FProperties%2F42191490" anchor-label="connectionsRefusedShutdown" id="213633720%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections-refused-shutdown.html"><span>connections</span><wbr><span>Refused</span><wbr><span><span>Shutdown</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="213633720%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connections-refused-shutdown.html">connectionsRefusedShutdown</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client attempts refused with CONNECTION_REFUSED because the endpoint is shutting down (<code class="lang-kotlin">QuicEndpoint.shutdown</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1428382123%2FProperties%2F42191490" anchor-label="datagramsDispatchDropped" id="-1428382123%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-dispatch-dropped.html"><span>datagrams</span><wbr><span>Dispatch</span><wbr><span><span>Dropped</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1428382123%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-dispatch-dropped.html">datagramsDispatchDropped</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Datagrams the in-process dispatch of <code class="lang-kotlin">loops &gt; 1</code> dropped (one socket shared by the loops: Apple, Windows, a caller's <code class="lang-kotlin">DatagramIo</code>) because their loop's ring of 512 datagrams was full: it fell behind, and its datagrams are lost rather than holding up the socket's receiver and the other loops. The peers retransmit. Always 0 with one loop or with SO_REUSEPORT (Linux, Android).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="354964142%2FProperties%2F42191490" anchor-label="datagramsDroppedQueue" id="354964142%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-dropped-queue.html"><span>datagrams</span><wbr><span>Dropped</span><wbr><span><span>Queue</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="354964142%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-dropped-queue.html">datagramsDroppedQueue</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Datagrams dropped because a bounded queue was full: the Initial admission queue (<code class="lang-kotlin">initialQueueCap</code>) or a loop's queue of datagrams forwarded by another loop.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1511126280%2FProperties%2F42191490" anchor-label="datagramsDroppedSocket" id="1511126280%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-dropped-socket.html"><span>datagrams</span><wbr><span>Dropped</span><wbr><span><span>Socket</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1511126280%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-dropped-socket.html">datagramsDroppedSocket</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Datagrams the sockets did not take: a send that failed or took only part of a batch (see <a href="send-failures.html">sendFailures</a>); loss recovery repairs them.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1499112245%2FProperties%2F42191490" anchor-label="datagramsDroppedStateless" id="1499112245%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-dropped-stateless.html"><span>datagrams</span><wbr><span>Dropped</span><wbr><span><span>Stateless</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1499112245%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-dropped-stateless.html">datagramsDroppedStateless</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Datagrams no connection took that got no answer: unknown connection IDs without a Stateless Reset, packets the cheap Initial checks discard, answers withheld by the rate limit, and datagrams for a preferred address that went down (<a href="preferred-address-failures.html">preferredAddressFailures</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="434129969%2FProperties%2F42191490" anchor-label="datagramsDroppedUndecryptable" id="434129969%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-dropped-undecryptable.html"><span>datagrams</span><wbr><span>Dropped</span><wbr><span><span>Undecryptable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="434129969%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-dropped-undecryptable.html">datagramsDroppedUndecryptable</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Datagrams that did not parse as QUIC, and client Initials whose protection did not verify (no state is kept for them).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1451624194%2FProperties%2F42191490" anchor-label="datagramsReceived" id="-1451624194%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-received.html"><span>datagrams</span><wbr><span><span>Received</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1451624194%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-received.html">datagramsReceived</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP datagrams received on the endpoint's sockets (a migrating client's extra sockets included).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1545441241%2FProperties%2F42191490" anchor-label="datagramsSent" id="-1545441241%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="datagrams-sent.html"><span>datagrams</span><wbr><span><span>Sent</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1545441241%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="datagrams-sent.html">datagramsSent</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP datagrams handed to the endpoint's sockets, stateless answers included.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1041480510%2FProperties%2F42191490" anchor-label="handshakesCompleted" id="-1041480510%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshakes-completed.html"><span>handshakes</span><wbr><span><span>Completed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1041480510%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="handshakes-completed.html">handshakesCompleted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Handshakes completed, client and server connections alike.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1747775686%2FProperties%2F42191490" anchor-label="handshakesFailedOther" id="-1747775686%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshakes-failed-other.html"><span>handshakes</span><wbr><span>Failed</span><wbr><span><span>Other</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1747775686%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="handshakes-failed-other.html">handshakesFailedOther</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections that ended before their handshake completed for any other reason: a refusal, a transport error, a close by either side.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="50945737%2FProperties%2F42191490" anchor-label="handshakesFailedTimeout" id="50945737%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshakes-failed-timeout.html"><span>handshakes</span><wbr><span>Failed</span><wbr><span><span>Timeout</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="50945737%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="handshakes-failed-timeout.html">handshakesFailedTimeout</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections that ended before their handshake completed because <code class="lang-kotlin">QuicConfig.handshakeTimeout</code> (or the idle timeout) ran out.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2015036689%2FProperties%2F42191490" anchor-label="handshakesFailedTls" id="-2015036689%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshakes-failed-tls.html"><span>handshakes</span><wbr><span>Failed</span><wbr><span><span>Tls</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2015036689%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="handshakes-failed-tls.html">handshakesFailedTls</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections that ended before their handshake completed with a TLS alert, ours or the peer's (code <code class="lang-kotlin">0x0100 + alert</code>): a certificate, ALPN or version problem.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1765819328%2FProperties%2F42191490" anchor-label="initialsDropped" id="-1765819328%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="initials-dropped.html"><span>initials</span><wbr><span><span>Dropped</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1765819328%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="initials-dropped.html">initialsDropped</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Initials discarded by the endpoint: queue overflow, hard limits (<code class="lang-kotlin">maxConnections</code>, <code class="lang-kotlin">maxConnectionsPerIp</code>), reflective source ports and <a href="../-admission-decision/-drop/index.html">AdmissionDecision.Drop</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1605140000%2FProperties%2F42191490" anchor-label="invalidTokens" id="-1605140000%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="invalid-tokens.html"><span>invalid</span><wbr><span><span>Tokens</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1605140000%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="invalid-tokens.html">invalidTokens</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Initials whose Retry token was forged or expired, answered with INVALID_TOKEN (RFC 9000 section 8.1.3).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1455245972%2FProperties%2F42191490" anchor-label="listenerFailures" id="-1455245972%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="listener-failures.html"><span>listener</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1455245972%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="listener-failures.html">listenerFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Exceptions out of a <a href="../-connection-listener/index.html">ConnectionListener</a> callback or a <a href="../-kuicksilver-logger/index.html">KuicksilverLogger</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1911739704%2FProperties%2F42191490" anchor-label="loadBalancerNoncesExhausted" id="-1911739704%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="load-balancer-nonces-exhausted.html"><span>load</span><wbr><span>Balancer</span><wbr><span>Nonces</span><wbr><span><span>Exhausted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1911739704%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="load-balancer-nonces-exhausted.html">loadBalancerNoncesExhausted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Times a QUIC-LB configuration's nonces ran out (<code class="lang-kotlin">QuicEndpointConfig.loadBalancer</code>; once per configuration): the endpoint then issues unroutable connection IDs until <a href="../-quic-endpoint/update-load-balancer.html">QuicEndpoint.updateLoadBalancer</a> gives it a new configuration (a new key).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1585484609%2FProperties%2F42191490" anchor-label="loadBalancerNoncesWasted" id="-1585484609%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="load-balancer-nonces-wasted.html"><span>load</span><wbr><span>Balancer</span><wbr><span>Nonces</span><wbr><span><span>Wasted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1585484609%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="load-balancer-nonces-wasted.html">loadBalancerNoncesWasted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">QUIC-LB nonces drawn and spent unused: their ID hashed to another loop of the group whose pool (1,024 IDs) was full, and it was for a Retry's SCID (which takes no owner exception) or the owner exceptions (65,536 live IDs) were full. Stays near 0 unless the loops issue IDs very unevenly.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1691617784%2FProperties%2F42191490" anchor-label="loadBalancerReservationFailures" id="1691617784%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="load-balancer-reservation-failures.html"><span>load</span><wbr><span>Balancer</span><wbr><span>Reservation</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1691617784%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="load-balancer-reservation-failures.html">loadBalancerReservationFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Failed <code class="lang-kotlin">QuicLbNonceReservation.store</code> calls: retried after a back-off counted in receive batches (one, doubling to 1,024, times the loops; about one store a round, nothing drawn meanwhile); once the reserved nonces are used up, the requests in between get unroutable IDs. Not counted as exhaustion.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2098663632%2FProperties%2F42191490" anchor-label="newTokensAccepted" id="-2098663632%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="new-tokens-accepted.html"><span>new</span><wbr><span>Tokens</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2098663632%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="new-tokens-accepted.html">newTokensAccepted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client Initials whose NEW_TOKEN token validated the client's address.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1912615124%2FProperties%2F42191490" anchor-label="newTokensIssued" id="-1912615124%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="new-tokens-issued.html"><span>new</span><wbr><span>Tokens</span><wbr><span><span>Issued</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1912615124%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="new-tokens-issued.html">newTokensIssued</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">NEW_TOKEN tokens this server issued (RFC 9000 section 8.1.3; <code class="lang-kotlin">QuicServerConfig.newTokenLifetime</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1743505977%2FProperties%2F42191490" anchor-label="newTokensRejected" id="1743505977%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="new-tokens-rejected.html"><span>new</span><wbr><span>Tokens</span><wbr><span><span>Rejected</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1743505977%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="new-tokens-rejected.html">newTokensRejected</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client Initials with a NEW_TOKEN-type token that did not validate (forged, expired, another IP, replayed): treated as no token.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1668006882%2FProperties%2F42191490" anchor-label="pathValidationFailures" id="1668006882%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="path-validation-failures.html"><span>path</span><wbr><span>Validation</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1668006882%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="path-validation-failures.html">pathValidationFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Path validations that failed (RFC 9000 section 8.2.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="781993500%2FProperties%2F42191490" anchor-label="pathValidations" id="781993500%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="path-validations.html"><span>path</span><wbr><span><span>Validations</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="781993500%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="path-validations.html">pathValidations</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Paths that passed validation (RFC 9000 section 8.2): migrations, NAT rebindings and probes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1178572237%2FProperties%2F42191490" anchor-label="preferredAddressFailures" id="1178572237%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="preferred-address-failures.html"><span>preferred</span><wbr><span>Address</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1178572237%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="preferred-address-failures.html">preferredAddressFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Times the preferred-address sockets failed (<code class="lang-kotlin">QuicServerConfig.preferredAddress</code>; at most once per endpoint): every loop then stops offering the address and closes the connections that had moved there; the endpoint goes on.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-982857940%2FProperties%2F42191490" anchor-label="ptbAccepted" id="-982857940%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ptb-accepted.html"><span>ptb</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-982857940%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="ptb-accepted.html">ptbAccepted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP Packet Too Big messages taken as a DPLPMTUD hint (they quoted a packet of a connection's active path; RFC 8899 section 4.6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-209391819%2FProperties%2F42191490" anchor-label="ptbIgnored" id="-209391819%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ptb-ignored.html"><span>ptb</span><wbr><span><span>Ignored</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-209391819%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="ptb-ignored.html">ptbIgnored</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP Packet Too Big messages ignored: over the 64-a-second budget, below 1200 bytes of payload, or about no packet of ours. With several loops on one shared socket each message is offered to every loop (each counts it, accepted or ignored), and one a loop had no room for (16 waiting) counts here too.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-985420813%2FProperties%2F42191490" anchor-label="retriesSent" id="-985420813%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="retries-sent.html"><span>retries</span><wbr><span><span>Sent</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-985420813%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="retries-sent.html">retriesSent</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Retry packets sent (RFC 9000 section 8.1.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2053847832%2FProperties%2F42191490" anchor-label="sendFailures" id="2053847832%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send-failures.html"><span>send</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2053847832%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="send-failures.html">sendFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Socket sends that threw (a filter, an unreachable route); their datagrams count in <a href="datagrams-dropped-socket.html">datagramsDroppedSocket</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="475076409%2FProperties%2F42191490" anchor-label="statelessRateLimited" id="475076409%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stateless-rate-limited.html"><span>stateless</span><wbr><span>Rate</span><wbr><span><span>Limited</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="475076409%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="stateless-rate-limited.html">statelessRateLimited</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN or CONNECTION_REFUSED close) withheld by the per-address or total rate limit.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1891287389%2FProperties%2F42191490" anchor-label="statelessResets" id="-1891287389%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stateless-resets.html"><span>stateless</span><wbr><span><span>Resets</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1891287389%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="stateless-resets.html">statelessResets</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Stateless Reset packets sent (RFC 9000 section 10.3).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1087720939%2FProperties%2F42191490" anchor-label="uncaughtFailures" id="1087720939%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="uncaught-failures.html"><span>uncaught</span><wbr><span><span>Failures</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1087720939%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="uncaught-failures.html">uncaughtFailures</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Exceptions that escaped a coroutine of the endpoint loop (none is expected): counted instead of reaching the thread's uncaught-exception handler.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="170220999%2FProperties%2F42191490" anchor-label="versionNegotiations" id="170220999%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="version-negotiations.html"><span>version</span><wbr><span><span>Negotiations</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="170220999%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="version-negotiations.html">versionNegotiations</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Version Negotiation packets sent (RFC 9000 section 6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-565090592%2FProperties%2F42191490" anchor-label="zeroRttAccepted" id="-565090592%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="zero-rtt-accepted.html"><span>zero</span><wbr><span>Rtt</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-565090592%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="zero-rtt-accepted.html">zeroRttAccepted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Connections whose 0-RTT was accepted: client connections the server accepted, server connections that accepted the client's.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-370805256%2FProperties%2F42191490" anchor-label="zeroRttOffered" id="-370805256%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="zero-rtt-offered.html"><span>zero</span><wbr><span>Rtt</span><wbr><span><span>Offered</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-370805256%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="zero-rtt-offered.html">zeroRttOffered</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client connections that sent 0-RTT (a resumed ticket that allowed early data).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1017888279%2FProperties%2F42191490" anchor-label="zeroRttRejected" id="-1017888279%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="zero-rtt-rejected.html"><span>zero</span><wbr><span>Rtt</span><wbr><span><span>Rejected</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1017888279%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="zero-rtt-rejected.html">zeroRttRejected</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Client connections whose 0-RTT the server rejected.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-1448866083%2FFunctions%2F42191490" anchor-label="toString" id="-1448866083%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-string.html"><span>to</span><wbr><span><span>String</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1448866083%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="to-string.html"><span class="token function">toString</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">For logs.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

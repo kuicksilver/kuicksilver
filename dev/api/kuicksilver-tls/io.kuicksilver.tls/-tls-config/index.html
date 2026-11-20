@@ -1,0 +1,417 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>TlsConfig</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/commonMain" data-filter=":kuicksilver-tls/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-tls::io.kuicksilver.tls/TlsConfig///PointingToDeclaration//-1635407269">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-tls</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.tls</a><span class="delimiter">/</span><span class="current">TlsConfig</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Tls</span><wbr><span><span>Config</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">TlsConfig</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TlsConfig.kt#L155">source</a>)</span></span></div><p class="paragraph">Immutable TLS configuration (docs/guide/tls.md, Configuration); build it with <a href="../tls-config.html">tlsConfig</a> or <a href="-builder/index.html">Builder</a>.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="842265789%2FClasslikes%2F-1635407269" anchor-label="Builder" id="842265789%2FClasslikes%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-builder/index.html"><span><span>Builder</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="842265789%2FClasslikes%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-builder/index.html">Builder</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>role<span class="token operator">: </span><a href="../-tls-role/index.html">TlsRole</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Mutable builder behind <a href="../tls-config.html">tlsConfig</a>; every property starts at its safe default and <a href="-builder/build.html">build</a> validates the combination. Not thread-safe; use one builder per configuration.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1334710324%2FProperties%2F-1635407269" anchor-label="alpn" id="-1334710324%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alpn.html"><span><span>alpn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1334710324%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="alpn.html">alpn</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">ALPN protocol IDs in preference order (RFC 7301); empty means no ALPN extension. See <a href="-builder/alpn.html">Builder.alpn</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1783403510%2FProperties%2F-1635407269" anchor-label="alpnFallback" id="-1783403510%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alpn-fallback.html"><span>alpn</span><wbr><span><span>Fallback</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1783403510%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="alpn-fallback.html">alpnFallback</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The protocol a TLS-over-TCP client without ALPN speaks, null for none; see <a href="-builder/alpn-fallback.html">Builder.alpnFallback</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-497260378%2FProperties%2F-1635407269" anchor-label="certificateCompression" id="-497260378%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="certificate-compression.html"><span>certificate</span><wbr><span><span>Compression</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-497260378%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="certificate-compression.html">certificateCompression</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Whether TLS certificate compression (RFC 8879) is offered and used; see <a href="-builder/certificate-compression.html">Builder.certificateCompression</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1219439761%2FProperties%2F-1635407269" anchor-label="cipherSuites" id="-1219439761%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="cipher-suites.html"><span>cipher</span><wbr><span><span>Suites</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1219439761%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="cipher-suites.html">cipherSuites</a><span class="token operator">: </span><a href="../-cipher-suites/index.html">CipherSuites</a></div><div class="brief "><p class="paragraph">The TLS 1.3 cipher suites in preference order; see <a href="-builder/cipher-suites.html">Builder.cipherSuites</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1798968418%2FProperties%2F-1635407269" anchor-label="clientAuth" id="1798968418%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="client-auth.html"><span>client</span><wbr><span><span>Auth</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1798968418%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="client-auth.html">clientAuth</a><span class="token operator">: </span><a href="../-client-auth/index.html">ClientAuth</a></div><div class="brief "><p class="paragraph">Whether a server asks for a client certificate; see <a href="-builder/client-auth.html">Builder.clientAuth</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1513099305%2FProperties%2F-1635407269" anchor-label="genericAlerts" id="-1513099305%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="generic-alerts.html"><span>generic</span><wbr><span><span>Alerts</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1513099305%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="generic-alerts.html">genericAlerts</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Whether every verification failure is sent as <code class="lang-kotlin">handshake_failure</code>; see <a href="-builder/generic-alerts.html">Builder.genericAlerts</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1191009045%2FProperties%2F-1635407269" anchor-label="handshakeTimeout" id="-1191009045%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshake-timeout.html"><span>handshake</span><wbr><span><span>Timeout</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1191009045%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="handshake-timeout.html">handshakeTimeout</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">The deadline of a TLS-over-TCP handshake; see <a href="-builder/handshake-timeout.html">Builder.handshakeTimeout</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="551421975%2FProperties%2F-1635407269" anchor-label="identity" id="551421975%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="identity.html"><span><span>identity</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="551421975%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="identity.html">identity</a><span class="token operator">: </span><a href="../-tls-identity/index.html">TlsIdentity</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The certificate chain and key this side presents, if any; see <a href="-builder/identity.html">Builder.identity</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2022415857%2FProperties%2F-1635407269" anchor-label="keyExchangeGroups" id="-2022415857%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="key-exchange-groups.html"><span>key</span><wbr><span>Exchange</span><wbr><span><span>Groups</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2022415857%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="key-exchange-groups.html">keyExchangeGroups</a><span class="token operator">: </span><a href="../-key-exchange-groups/index.html">KeyExchangeGroups</a></div><div class="brief "><p class="paragraph">The key-exchange groups and a client's key shares; see <a href="-builder/key-exchange-groups.html">Builder.keyExchangeGroups</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1781659696%2FProperties%2F-1635407269" anchor-label="keylog" id="1781659696%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="keylog.html"><span><span>keylog</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1781659696%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="keylog.html">keylog</a><span class="token operator">: </span><a href="../-keylog-sink/index.html">KeylogSink</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Where TLS secrets are written for debugging, null (the default) for nowhere; see <a href="-builder/keylog.html">Builder.keylog</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1886042718%2FProperties%2F-1635407269" anchor-label="ocspStapling" id="1886042718%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ocsp-stapling.html"><span>ocsp</span><wbr><span><span>Stapling</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1886042718%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="ocsp-stapling.html">ocspStapling</a><span class="token operator">: </span><a href="../-ocsp-stapling/index.html">OcspStapling</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The OCSP response a server staples; see <a href="-builder/ocsp-stapling.html">Builder.ocspStapling</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1723167543%2FProperties%2F-1635407269" anchor-label="revocation" id="1723167543%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="revocation.html"><span><span>revocation</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1723167543%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="revocation.html">revocation</a><span class="token operator">: </span><a href="../-revocation-policy/index.html">RevocationPolicy</a></div><div class="brief "><p class="paragraph">A client's treatment of the stapled OCSP response; see <a href="-builder/revocation.html">Builder.revocation</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1263207263%2FProperties%2F-1635407269" anchor-label="role" id="1263207263%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="role.html"><span><span>role</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1263207263%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="role.html">role</a><span class="token operator">: </span><a href="../-tls-role/index.html">TlsRole</a></div><div class="brief "><p class="paragraph">Which side of the handshake this configuration drives.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1725971353%2FProperties%2F-1635407269" anchor-label="serverName" id="-1725971353%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="server-name.html"><span>server</span><wbr><span><span>Name</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1725971353%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="server-name.html">serverName</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">A client's SNI and reference identifier, as configured (not normalized); see <a href="-builder/server-name.html">Builder.serverName</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1407623484%2FProperties%2F-1635407269" anchor-label="sessionTickets" id="-1407623484%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="session-tickets.html"><span>session</span><wbr><span><span>Tickets</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1407623484%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="session-tickets.html">sessionTickets</a><span class="token operator">: </span><a href="../-session-ticket-config/index.html">SessionTicketConfig</a></div><div class="brief "><p class="paragraph">Session ticket keys and lifetimes of a server (TCP, and QUIC with 0-RTT); see <a href="-builder/session-tickets.html">Builder.sessionTickets</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-521331048%2FProperties%2F-1635407269" anchor-label="sniSelector" id="-521331048%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="sni-selector.html"><span>sni</span><wbr><span><span>Selector</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-521331048%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="sni-selector.html">sniSelector</a><span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span><a href="../-client-hello-info/index.html">ClientHelloInfo</a><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="../-server-tls-override/index.html">ServerTlsOverride</a><span class="token operator">?</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">A server's per-connection identity choice from the ClientHello (TCP and QUIC); see <a href="-builder/sni-selector.html">Builder.sniSelector</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1805970419%2FProperties%2F-1635407269" anchor-label="trust" id="-1805970419%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="trust.html"><span><span>trust</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1805970419%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="trust.html">trust</a><span class="token operator">: </span><a href="../-trust-config/index.html">TrustConfig</a></div><div class="brief "><p class="paragraph">How the peer's certificate is trusted (ADR-0011); see <a href="-builder/trust.html">Builder.trust</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1683137318%2FProperties%2F-1635407269" anchor-label="versions" id="-1683137318%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="versions.html"><span><span>versions</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1683137318%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="versions.html">versions</a><span class="token operator">: </span><a href="../-tls-versions/index.html">TlsVersions</a></div><div class="brief "><p class="paragraph">The TLS versions offered and accepted; see <a href="-builder/versions.html">Builder.versions</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

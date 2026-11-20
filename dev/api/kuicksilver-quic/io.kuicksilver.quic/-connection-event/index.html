@@ -1,0 +1,428 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>ConnectionEvent</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic/ConnectionEvent///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic</a><span class="delimiter">/</span><span class="current">ConnectionEvent</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Connection</span><wbr><span><span>Event</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="index.html">ConnectionEvent</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/ConnectionEvent.kt#L33">source</a>)</span></span></div><p class="paragraph">What the core tells its runtime through <a href="../-connection-core/next-event.html">ConnectionCore.nextEvent</a>.</p><h4 class="tableheader">Inheritors</h4><div class="table"><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-handshake-completed/index.html">HandshakeCompleted</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-verify-requested/index.html">VerifyRequested</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-sni-requested/index.html">SniRequested</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-opened/index.html">StreamOpened</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-readable/index.html">StreamReadable</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-writable/index.html">StreamWritable</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-reset/index.html">StreamReset</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stop-sending-received/index.html">StopSendingReceived</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-finished/index.html">StreamFinished</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-stream-final-size/index.html">StreamFinalSize</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-streams-available/index.html">StreamsAvailable</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-closed/index.html">Closed</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-mtu-updated/index.html">MtuUpdated</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-datagrams-readable/index.html">DatagramsReadable</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-path-validated/index.html">PathValidated</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-path-failed/index.html">PathFailed</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-path-changed/index.html">PathChanged</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-early-data-accepted/index.html">EarlyDataAccepted</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-early-data-rejected/index.html">EarlyDataRejected</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-session-ticket/index.html">SessionTicket</a></div></span></div><div></div></div></div></div></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="354109284%2FClasslikes%2F42191490" anchor-label="Closed" id="354109284%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-closed/index.html"><span><span>Closed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="354109284%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-closed/index.html">Closed</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The connection ended for <a href="-closed/reason.html">reason</a>; the last event of the connection, raised once.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-550509488%2FClasslikes%2F42191490" anchor-label="DatagramsReadable" id="-550509488%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-datagrams-readable/index.html"><span>Datagrams</span><wbr><span><span>Readable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-550509488%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-datagrams-readable/index.html">DatagramsReadable</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">DATAGRAM payloads wait in <a href="../-connection-core/read-datagram.html">ConnectionCore.readDatagram</a> (RFC 9221).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="886484414%2FClasslikes%2F42191490" anchor-label="EarlyDataAccepted" id="886484414%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-early-data-accepted/index.html"><span>Early</span><wbr><span>Data</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="886484414%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-early-data-accepted/index.html">EarlyDataAccepted</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Server: 0-RTT of this connection was accepted and its packets are read from now on, before the handshake completes; client: the server accepted our 0-RTT (RFC 9001 section 4.6.2). Early data can be a replay (RFC 9846 section 8).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="433686727%2FClasslikes%2F42191490" anchor-label="EarlyDataRejected" id="433686727%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-early-data-rejected/index.html"><span>Early</span><wbr><span>Data</span><wbr><span><span>Rejected</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="433686727%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-early-data-rejected/index.html">EarlyDataRejected</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Client: the server rejected our 0-RTT. Every stream we opened was reset (RFC 9001 section 4.6.2): nothing of them is sent again, their IDs and the connection's credit start over from the server's new transport parameters, and the application opens new streams for what it still wants to send.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="133340988%2FClasslikes%2F42191490" anchor-label="HandshakeCompleted" id="133340988%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-handshake-completed/index.html"><span>Handshake</span><wbr><span><span>Completed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="133340988%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-handshake-completed/index.html">HandshakeCompleted</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The handshake completed (RFC 9001 section 4.1.1): <a href="../-connection-core/peer-certificates.html">ConnectionCore.peerCertificates</a> and <a href="../-connection-core/negotiated-alpn.html">ConnectionCore.negotiatedAlpn</a> are readable.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="818125635%2FClasslikes%2F42191490" anchor-label="MtuUpdated" id="818125635%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-mtu-updated/index.html"><span>Mtu</span><wbr><span><span>Updated</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="818125635%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-mtu-updated/index.html">MtuUpdated</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">DPLPMTUD changed the datagram size of <a href="-mtu-updated/path.html">path</a> to <a href="-mtu-updated/mtu.html">mtu</a> bytes of UDP payload (RFC 8899); after a black hole it drops back to 1200.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="568620163%2FClasslikes%2F42191490" anchor-label="PathChanged" id="568620163%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-changed/index.html"><span>Path</span><wbr><span><span>Changed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="568620163%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-path-changed/index.html">PathChanged</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Packets now go to <a href="-path-changed/new.html">new</a> instead of <a href="-path-changed/old.html">old</a> (RFC 9000 section 9.3), for the given <a href="-path-changed/reason.html">reason</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-848340658%2FClasslikes%2F42191490" anchor-label="PathFailed" id="-848340658%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-failed/index.html"><span>Path</span><wbr><span><span>Failed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-848340658%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-path-failed/index.html">PathFailed</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph"><a href="-path-failed/path.html">path</a> never answered within the validation timeout (RFC 9000 section 8.2.4), or <a href="-path-failed/reason.html">reason</a> says why it could not be probed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1367170281%2FClasslikes%2F42191490" anchor-label="PathValidated" id="1367170281%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-path-validated/index.html"><span>Path</span><wbr><span><span>Validated</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1367170281%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-path-validated/index.html">PathValidated</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph"><a href="-path-validated/path.html">path</a> answered our PATH_CHALLENGE (RFC 9000 section 8.2.3).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2077262128%2FClasslikes%2F42191490" anchor-label="SessionTicket" id="2077262128%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-session-ticket/index.html"><span>Session</span><wbr><span><span>Ticket</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2077262128%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-session-ticket/index.html">SessionTicket</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Client with early data: a ticket for a later 0-RTT connection, with the server's transport parameters remembered (RFC 9000 section 7.4.1). The receiver owns it: store it (single use) or close it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-771702160%2FClasslikes%2F42191490" anchor-label="SniRequested" id="-771702160%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-sni-requested/index.html"><span>Sni</span><wbr><span><span>Requested</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-771702160%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-sni-requested/index.html">SniRequested</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Server: the handshake paused at the ClientHello for the configuration's <code class="lang-kotlin">sniSelector</code>: run <code class="lang-kotlin">session.selectSni(clientHello)</code> off the loop and pass the result to <a href="../-connection-core/resume-sni.html">ConnectionCore.resumeSni</a> (or close it when the connection ended meanwhile).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-994255207%2FClasslikes%2F42191490" anchor-label="StopSendingReceived" id="-994255207%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stop-sending-received/index.html"><span>Stop</span><wbr><span>Sending</span><wbr><span><span>Received</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-994255207%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stop-sending-received/index.html">StopSendingReceived</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The peer sent STOP_SENDING with <a href="-stop-sending-received/code.html">code</a> for stream <a href="-stop-sending-received/id.html">id</a> (RFC 9000 section 19.5); the core already answered with RESET_STREAM carrying the same code, or the code of our RESET_STREAM_AT when one went first (draft-ietf-quic-reliable-stream-reset section 5.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1910288165%2FClasslikes%2F42191490" anchor-label="StreamFinalSize" id="-1910288165%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-final-size/index.html"><span>Stream</span><wbr><span>Final</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1910288165%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-final-size/index.html">StreamFinalSize</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The final size of one half of stream <a href="-stream-final-size/id.html">id</a> is fixed (RFC 9000 section 4.5): for <a href="-stream-final-size/sending.html">sending</a>, once the sending half's reset was queued (RESET_STREAM, RESET_STREAM_AT, or the answer to the peer's STOP_SENDING) or its FIN first went out; for the receiving half, once the peer's FIN, RESET_STREAM or RESET_STREAM_AT told it, whether or not the bytes were read. <a href="-stream-final-size/size.html">size</a> is the flow-control credit the stream consumed. Raised once per half; for a client stream sent in 0-RTT only after the server accepted it (a rejection drops the stream instead).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="560778366%2FClasslikes%2F42191490" anchor-label="StreamFinished" id="560778366%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-finished/index.html"><span>Stream</span><wbr><span><span>Finished</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="560778366%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-finished/index.html">StreamFinished</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Stream <a href="-stream-finished/id.html">id</a> is done in both directions — its sending half acknowledged, or reset with that RESET_STREAM acknowledged (RFC 9000 section 3.1), its receiving half read to the end or reset and consumed — and was retired: its state is gone and, for a peer stream, its credit returns through MAX_STREAMS (for one that ended with our reset, at that reset's acknowledgment, when this is raised). Raised once.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1611699161%2FClasslikes%2F42191490" anchor-label="StreamOpened" id="-1611699161%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-opened/index.html"><span>Stream</span><wbr><span><span>Opened</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1611699161%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-opened/index.html">StreamOpened</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The peer opened stream <a href="-stream-opened/id.html">id</a> (RFC 9000 section 3.2); a lower stream of the same type it skipped gets its own event first.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-635198784%2FClasslikes%2F42191490" anchor-label="StreamReadable" id="-635198784%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-readable/index.html"><span>Stream</span><wbr><span><span>Readable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-635198784%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-readable/index.html">StreamReadable</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Stream <a href="-stream-readable/id.html">id</a> has new data, its end or its reset for <a href="../-connection-core/read-stream.html">ConnectionCore.readStream</a>, or data arrived beyond a gap (its highest received offset grew, nothing new to read yet); raised again only after more arrives.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1956214179%2FClasslikes%2F42191490" anchor-label="StreamReset" id="1956214179%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-reset/index.html"><span>Stream</span><wbr><span><span>Reset</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1956214179%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-reset/index.html">StreamReset</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The peer abandoned stream <a href="-stream-reset/id.html">id</a> with RESET_STREAM and application error <a href="-stream-reset/code.html">code</a> (RFC 9000 section 19.4); its reads end with -1. After RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset) it comes once the reliable bytes were read.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="313620026%2FClasslikes%2F42191490" anchor-label="StreamsAvailable" id="313620026%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-streams-available/index.html"><span>Streams</span><wbr><span><span>Available</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="313620026%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-streams-available/index.html">StreamsAvailable</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The peer raised its stream limit (<a href="-streams-available/bidi.html">bidi</a> or unidirectional) with MAX_STREAMS (RFC 9000 section 4.6) after <a href="../-connection-core/open-stream.html">ConnectionCore.openStream</a> was refused at the old one: retry the open. Raised once per refusal.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-337737456%2FClasslikes%2F42191490" anchor-label="StreamWritable" id="-337737456%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-stream-writable/index.html"><span>Stream</span><wbr><span><span>Writable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-337737456%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-stream-writable/index.html">StreamWritable</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">Stream <a href="-stream-writable/id.html">id</a> can make progress again: acknowledgements freed send-buffer room after <a href="../-connection-core/write-stream.html">ConnectionCore.writeStream</a> took fewer bytes than offered, or the peer raised its flow-control credit (MAX_STREAM_DATA, MAX_DATA; RFC 9000 section 4.1) while the stream had data waiting to be sent. Retry the write; the event is a hint, a write may still take fewer bytes when other streams share the buffer. Also, for a stream whose <a href="../-quic-stream/send-released.html">QuicStream.sendReleased</a> is followed, once acknowledgements or a reset released some of its buffered bytes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="470888093%2FClasslikes%2F42191490" anchor-label="VerifyRequested" id="470888093%2FClasslikes%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-verify-requested/index.html"><span>Verify</span><wbr><span><span>Requested</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="470888093%2FClasslikes%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-verify-requested/index.html">VerifyRequested</a> : <a href="index.html">ConnectionEvent</a></div><div class="brief "><p class="paragraph">The handshake paused for certificate verification: run <code class="lang-kotlin">session.verifyPeer(chain)</code> off the loop and pass the result to <a href="../-connection-core/resume-verify.html">ConnectionCore.resumeVerify</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

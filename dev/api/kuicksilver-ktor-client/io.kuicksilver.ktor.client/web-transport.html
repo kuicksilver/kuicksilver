@@ -1,0 +1,119 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>webTransport</title>
+<link href="../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../styles/style.css" rel="Stylesheet">
+<link href="../../styles/main.css" rel="Stylesheet">
+<link href="../../styles/prism.css" rel="Stylesheet">
+<link href="../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="member" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client//webTransport/io.ktor.client.HttpClient#kotlin.String#kotlin.collections.List[kotlin.String]#io.kuicksilver.http3.Http3Headers/PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">webTransport</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>web</span><wbr><span><span>Transport</span></span></h1>
+  </div>
+  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client/-http-client/index.html">HttpClient</a><span class="token punctuation">.</span><a href="web-transport.html"><span class="token function">webTransport</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">urlString<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">protocols<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">&gt;</span><span class="token operator"> = </span>emptyList()<span class="token punctuation">, </span></span><span class="parameter ">headers<span class="token operator">: </span><a href="../../kuicksilver-http3/io.kuicksilver.http3/-http3-headers/index.html">Http3Headers</a><span class="token operator"> = </span>Http3Headers.Empty</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../kuicksilver-http3/io.kuicksilver.http3/-web-transport-session/index.html">WebTransportSession</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/WebTransportClient.kt#L53">source</a>)</span></span></div><p class="paragraph">Opens a WebTransport session (draft-ietf-webtrans-http3-16) to <a href="web-transport.html">urlString</a>, an <code class="lang-kotlin">https</code> URL. Sessions share the engine's pooled HTTP/3 connection to the URL's host and port with each other and with requests (RFC 9114 section 3.3: one connection per address and port), as long as the server allows it: with WebTransport flow control on both sides (draft-16 section 5.1) a connection carries up to <code class="lang-kotlin">http3 { settings.webTransportMaxSessions }</code> sessions (4 by default) and as many as the server accepts (section 5.2: a session it refuses with H3_REQUEST_REJECTED is opened again on another connection to the same server, which the next sessions share too, unless none of this client's sessions was on the refusing connection: that is the server's rate, and the refusal is thrown as <a href="../../kuicksilver-http3/io.kuicksilver.http3/-http3-exception/-request-not-processed/index.html">io.kuicksilver.http3.Http3Exception.RequestNotProcessed</a>); without flow control a connection carries one session, and each further one gets a connection of its own. A pooled connection that is not WebTransport-capable (opened for requests without WebTransport's SETTINGS and <code class="lang-kotlin">reset_stream_at</code>) is replaced by one that is, which carries the origin's requests from then on; the old one finishes its requests and closes. A connection stays open while a session or a request uses it, and then idles as any pooled connection does; an extra connection a server's limit made closes with its last session. <a href="web-transport.html">protocols</a> are offered in <code class="lang-kotlin">WT-Available-Protocols</code>; <a href="web-transport.html">headers</a> go with the CONNECT (an <code class="lang-kotlin">origin</code>, for a server that checks it).</p><p class="paragraph">The engine's <code class="lang-kotlin">connectTimeout</code> bounds the connection setup (<a href="https://api.ktor.io/ktor-client-core/io.ktor.client.network.sockets/-connect-timeout-exception/index.html">io.ktor.client.network.sockets.ConnectTimeoutException</a>); then the server's SETTINGS and its answer to the CONNECT are waited for up to ten seconds each. A server without WebTransport fails with <a href="../../kuicksilver-http3/io.kuicksilver.http3/-http3-exception/-settings/index.html">io.kuicksilver.http3.Http3Exception.Settings</a>, a refusal with <a href="../../kuicksilver-http3/io.kuicksilver.http3/-http3-exception/-connect-rejected/index.html">io.kuicksilver.http3.Http3Exception.ConnectRejected</a> (a 429 too: the server's own rate limit, section 5.2, is the application's to handle); there is no fallback to HTTP/1.1 or HTTP/2, which carry no WebTransport here. When the connection is lost, every session on it ends with the connection's reason (<a href="../../kuicksilver-http3/io.kuicksilver.http3/-web-transport-session/closed.html">WebTransportSession.closed</a>). Needs the Kuicksilver engine (IllegalStateException otherwise) and an open client (IllegalStateException after <code class="lang-kotlin">close()</code>).</p><p class="paragraph">Refused with UnsupportedOperationException: under <code class="lang-kotlin">http3 { discovery = H1Only }</code>, which turns HTTP/3 off, while <code class="lang-kotlin">http3 { http3Allowed }</code> returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless <code class="lang-kotlin">http3 { webTransportIgnoresProxy = true }</code> asks to connect directly. At most <code class="lang-kotlin">http3 { maxWebTransportSessions }</code> (64) sessions are open at once on the client; one more fails at once with IllegalStateException.</p><p class="paragraph">The connection goes straight to the URL's host and port: Alt-Svc is not consulted, and the CONNECT never goes in 0-RTT. The resolved addresses are tried in order within the connect timeout. Closing the client ends the sessions still open with their connections, without a close capsule; <code class="lang-kotlin">HttpClient.closeHttp3Connections()</code> sends each open session WT_DRAIN_SESSION and its connection a GOAWAY, asking the server to wind it down. A session still being set up when it runs is drained as soon as it opens, or, when its CONNECT had not gone out yet, the call fails with IllegalStateException naming <code class="lang-kotlin">closeHttp3Connections()</code>.</p></div></div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

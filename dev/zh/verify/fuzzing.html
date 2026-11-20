@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模糊测试与变异测试 - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/fuzzing.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/fuzzing.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/fuzzing.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/fuzzing.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/fuzzing.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../../index.html">Kuicksilver</a><a href="../../guide/index.html">指南</a> <a href="../../api/index.html">API 参考</a> <a href="../../zh/verify/index.html">我们如何验证</a><nav class="lang" aria-label="语言"><a hreflang="en" lang="en" href="../../verify/fuzzing.html">English</a> <a hreflang="ru" lang="ru" href="../../ru/verify/fuzzing.html">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../../zh/verify/fuzzing.html" aria-current="page">简体中文</a></nav></header>
+<div class="snapshot" role="note">提交 612511494c503adf8ad86282557ae3f808ee935c（2026-11-20T09:32:18Z）的开发快照（development snapshot），不是发布版本。 <a href="../../../index.html">所有发布版本</a></div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">我们如何验证</a></li><li><a href="platforms.html">平台矩阵</a></li><li><a href="interop.html">引擎互操作（engine interop）</a></li><li><a href="conformance.html">一致性测试套件</a></li><li class=current><a href="fuzzing.html">模糊测试与变异测试</a></li><li><a href="sizes.html">构件大小</a></li><li><a href="benchmarks.html">基准测试</a></li><li><a href="rfc.html">RFC 合规性</a></li><li><a href="how.html">流程</a></li></ul></nav><main>
+<p class="note">本译文未经母语者审校。以英文页面为准： <a href="../../verify/fuzzing.html" hreflang="en" lang="en">English</a></p>
+<h1>模糊测试与变异测试</h1>
+<p class="prov">数据来自提交 612511494c503adf8ad86282557ae3f808ee935c 的成功 build.yml 运行，开始于 2026-11-20 10:11 UTC。 <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">CI 运行 44717133396</a></p><p>共 36 个模糊测试目标，覆盖 TLS、QUIC、HTTP/3 和 HTTP/2 各层以及 C 适配层的解析器（JVM 上使用 Jazzer，C 使用 libFuzzer）。</p>
+<h2>CI 中的回归语料库</h2>
+<p>模糊测试类在每次 CI 运行中重放已提交的语料库和复现用例：共 996 个测试用例，0 个失败。 <span class="pass">通过</span></p>
+<h2>目标</h2>
+<table><thead><tr><th>模糊测试目标</th><th class=num>语料输入数</th><th class=num>语料大小</th><th class=num>小时</th><th class=num>执行次数</th><th class=num>覆盖率</th><th>发现</th></tr></thead><tbody><tr><td><code>quic.frameDecode</code></td><td class=num>267</td><td class=num>27.0 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.packetHeader</code></td><td class=num>65</td><td class=num>16.5 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.transportParameters</code></td><td class=num>98</td><td class=num>8.1 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.streamReassembler</code></td><td class=num>210</td><td class=num>55.4 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.retryPacket</code></td><td class=num>75</td><td class=num>4.3 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.endpointRoute</code></td><td class=num>622</td><td class=num>1 032.7 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.packetRecvServer</code></td><td class=num>235</td><td class=num>241.8 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.packetRecvClient</code></td><td class=num>776</td><td class=num>440.9 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.multiPacket</code></td><td class=num>910</td><td class=num>2 294.1 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.postHandshake</code></td><td class=num>880</td><td class=num>387.9 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.connectionNull</code></td><td class=num>2 505</td><td class=num>211.8 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.connectionTls</code></td><td class=num>2 308</td><td class=num>147.4 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.replayRegister</code></td><td class=num>158</td><td class=num>9.2 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.rememberedTicket</code></td><td class=num>86</td><td class=num>5.5 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.zeroRttConnection</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>quic.bbrInvariants</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>tls.clientHelloScan</code></td><td class=num>44</td><td class=num>7.5 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>tls.zeroRttHello</code></td><td class=num>73</td><td class=num>1.4 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.h3Frames</code></td><td class=num>289</td><td class=num>57.7 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.capsules</code></td><td class=num>67</td><td class=num>3.2 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.qpackDecode</code></td><td class=num>282</td><td class=num>12.2 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.h3Connection</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.udpTemplate</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http3.udpDatagrams</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http2.frames</code></td><td class=num>105</td><td class=num>38.6 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http2.hpackDecode</code></td><td class=num>120</td><td class=num>21.1 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http2.connectionServer</code></td><td class=num>663</td><td class=num>372.7 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http2.connectionClient</code></td><td class=num>638</td><td class=num>118.9 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>http2.hpackRoundTrip</code></td><td class=num>195</td><td class=num>42.4 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>ktor-network.inflate</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>ktor-network.wsGuard</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>client.svcb</code></td><td class=num>159</td><td class=num>17.6 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>client.h1Response</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>server.h1Request</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>server.proxyHeader</code></td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr><tr><td><code>ksl.parsers</code></td><td class=num>53</td><td class=num>31.0 KiB</td><td class=num>—</td><td class=num>—</td><td class=num>—</td><td>—</td></tr></tbody></table>
+<p class="note">活动列：最近一次 fuzz.yml 运行，基于另一个提交（546d3f7f49ad），开始于 2026-11-14 09:21 UTC，结论为 failure。它不是该提交的结果。 <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/43580155023">CI 运行 43580155023</a></p>
+<h2>变异测试</h2>
+<p class="nodata">未在 CI 中测量：变异测试在选定模块上手工运行，发现的缺口会转化为测试。没有可展示的变异分数（mutation score）。</p>
+</main></div>
+</body>
+</html>

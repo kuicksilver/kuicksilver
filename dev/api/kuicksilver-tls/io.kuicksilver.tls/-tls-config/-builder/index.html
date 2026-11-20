@@ -1,0 +1,436 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Builder</title>
+<link href="../../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../../styles/style.css" rel="Stylesheet">
+<link href="../../../../styles/main.css" rel="Stylesheet">
+<link href="../../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/commonMain" data-filter=":kuicksilver-tls/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-tls::io.kuicksilver.tls/TlsConfig.Builder///PointingToDeclaration//-1635407269">
+  <div class="breadcrumbs"><a href="../../../index.html">kuicksilver-tls</a><span class="delimiter">/</span><a href="../../index.html">io.kuicksilver.tls</a><span class="delimiter">/</span><a href="../index.html">TlsConfig</a><span class="delimiter">/</span><span class="current">Builder</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Builder</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Builder</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>role<span class="token operator">: </span><a href="../../-tls-role/index.html">TlsRole</a></span></span><span class="token punctuation">)</span><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TlsConfig.kt#L260">source</a>)</span></span></div><p class="paragraph">Mutable builder behind <a href="../../tls-config.html">tlsConfig</a>; every property starts at its safe default and <a href="build.html">build</a> validates the combination. Not thread-safe; use one builder per configuration.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="-126922783%2FConstructors%2F-1635407269" anchor-label="Builder" id="-126922783%2FConstructors%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-builder.html"><span><span>Builder</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-126922783%2FConstructors%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">role<span class="token operator">: </span><a href="../../-tls-role/index.html">TlsRole</a></span></span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-238519399%2FProperties%2F-1635407269" anchor-label="alpn" id="-238519399%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alpn.html"><span><span>alpn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-238519399%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="alpn.html">alpn</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">ALPN protocol IDs in preference order (RFC 7301), each 1..255 bytes of UTF-8 and at most 255 bytes together with one length byte each; default empty, which sends no ALPN extension. QUIC needs at least one (RFC 9001 section 8.1); a server that shares none with the client's offer fails the handshake with <code class="lang-kotlin">no_application_protocol</code>. A server over TCP selects from the list without <code class="lang-kotlin">h3</code>, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of <code class="lang-kotlin">h3</code> alone serves nothing there, and every TCP handshake ends with <code class="lang-kotlin">no_application_protocol</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="68934359%2FProperties%2F-1635407269" anchor-label="alpnFallback" id="68934359%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alpn-fallback.html"><span>alpn</span><wbr><span><span>Fallback</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="68934359%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="alpn-fallback.html">alpnFallback</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Server, TLS over TCP: the protocol a client that sends no ALPN extension speaks (Netty's "fallback protocol"), e.g. <code class="lang-kotlin">http/1.1</code> for HTTP, whose <code class="lang-kotlin">h2</code> "over TLS MUST use protocol negotiation in TLS" (RFC 9113 section 3.3). Default null: such a client completes the handshake without ALPN, as with OpenSSL and Go's <code class="lang-kotlin">crypto/tls</code>. Set, such a client completes it only where the protocols in effect for its connection name it: <a href="alpn.html">alpn</a>, or the <a href="sni-selector.html">sniSelector</a> answer's <a href="../../-server-tls-override/alpn.html">ServerTlsOverride.alpn</a>; otherwise the handshake ends with <code class="lang-kotlin">no_application_protocol</code> (120), the alert RFC 7301 section 3.2 gives a server that "supports no protocols that the client advertises" and RFC 9001 section 8.1 a QUIC server whose client negotiated none. The check runs at every ClientHello, a second one after HelloRetryRequest included (RFC 9846 section 4.2.2 lets a client change nothing else there, and a server is not told to compare), and again when the handshake completes. A present but malformed ALPN extension (RFC 7301 section 3.1: a non-empty list of non-empty names) gets <code class="lang-kotlin">decode_error</code> (50) instead, as without the fallback. An empty list in effect (no ALPN) takes any client. QUIC ignores it: a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is 1..255 bytes of UTF-8, and not <code class="lang-kotlin">h3</code>, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-290030797%2FProperties%2F-1635407269" anchor-label="certificateCompression" id="-290030797%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="certificate-compression.html"><span>certificate</span><wbr><span><span>Compression</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-290030797%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="certificate-compression.html">certificateCompression</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">TLS certificate compression (RFC 8879), over TCP and QUIC; default true. A client offers brotli, then zlib, in its ClientHello and accepts the server's chain compressed with either; a server sends its chain compressed with the first of the client's algorithms it shares (compressed once per identity, when its context is built; a chain neither makes smaller goes out uncompressed) and offers the same two for client certificates when it asks for one. A peer without it gets and sends plain certificates. Over QUIC a smaller chain keeps more of the server's first flight inside the amplification limit before the client's address is validated (RFC 9000 section 8.1). TLS 1.3 only: a TLS 1.2 handshake ignores it. What a peer sends is held to the certificate list bound of 100 KiB: an announced length above it, data that does not decompress to exactly the announced length, or a decompression past it ends the handshake with <code class="lang-kotlin">bad_certificate</code> (42); an algorithm that was not offered with <code class="lang-kotlin">illegal_parameter</code> (47). False: no extension, and a compressed certificate from the peer is an <code class="lang-kotlin">unexpected_message</code> (10). The algorithm the peer's chain came in: <a href="../../-tls-connection/peer-certificate-compression.html">TlsConnection.peerCertificateCompression</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="632898108%2FProperties%2F-1635407269" anchor-label="cipherSuites" id="632898108%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="cipher-suites.html"><span>cipher</span><wbr><span><span>Suites</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="632898108%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="cipher-suites.html">cipherSuites</a><span class="token operator">: </span><a href="../../-cipher-suites/index.html">CipherSuites</a></div><div class="brief "><p class="paragraph">The TLS 1.3 cipher suites in preference order; default <a href="../../-cipher-suites/-companion/-default.html">CipherSuites.Default</a>. QUIC takes only the suites of <a href="../../-cipher-suites/-companion/-default.html">CipherSuites.Default</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="848941679%2FProperties%2F-1635407269" anchor-label="clientAuth" id="848941679%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="client-auth.html"><span>client</span><wbr><span><span>Auth</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="848941679%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="client-auth.html">clientAuth</a><span class="token operator">: </span><a href="../../-client-auth/index.html">ClientAuth</a></div><div class="brief "><p class="paragraph">Whether a server requests a client certificate; default <a href="../../-client-auth/-none/index.html">ClientAuth.None</a>. Anything else needs an AnchoredCa or ReloadableCa <a href="trust.html">trust</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="74799786%2FProperties%2F-1635407269" anchor-label="genericAlerts" id="74799786%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="generic-alerts.html"><span>generic</span><wbr><span><span>Alerts</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="74799786%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="generic-alerts.html">genericAlerts</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Send every verification failure as <code class="lang-kotlin">handshake_failure</code> instead of the specific alert, except a failed stapled OCSP check, which OpenSSL always ends with <code class="lang-kotlin">bad_certificate_status_response</code> (113). Default false; true hides from the peer why it was rejected at the cost of harder diagnosis on its side. The local <a href="../../-tls-exception/-verify/index.html">TlsException.Verify</a> keeps the real reason either way.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-858987208%2FProperties%2F-1635407269" anchor-label="handshakeTimeout" id="-858987208%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handshake-timeout.html"><span>handshake</span><wbr><span><span>Timeout</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-858987208%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="handshake-timeout.html">handshakeTimeout</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">The deadline of a TLS-over-TCP handshake (<a href="../../-tls-connection/index.html">TlsConnection</a>, <code class="lang-kotlin">Socket.tls</code>); default 10 seconds. A server counts the wait for the client's ClientHello in it. When it passes the handshake fails with <a href="../../-tls-exception/-protocol/index.html">TlsException.Protocol</a>. Must be positive; <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/-companion/-i-n-f-i-n-i-t-e.html">Duration.INFINITE</a> waits without a deadline. QUIC connections use their own <code class="lang-kotlin">QuicConfig.handshakeTimeout</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2034230628%2FProperties%2F-1635407269" anchor-label="identity" id="2034230628%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="identity.html"><span><span>identity</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2034230628%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="identity.html">identity</a><span class="token operator">: </span><a href="../../-tls-identity/index.html">TlsIdentity</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The chain and private key this side presents: required for a server unless <a href="sni-selector.html">sniSelector</a> supplies one per connection, optional for a client (sent when the server asks for a certificate). Default null. A <a href="../../-tls-identity/-in-memory/index.html">TlsIdentity.InMemory</a>, or a <a href="../../-tls-identity/-reloadable/index.html">TlsIdentity.Reloadable</a> to replace the certificate at run time: each handshake then takes the identity current when the ClientHello arrives.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-319673502%2FProperties%2F-1635407269" anchor-label="keyExchangeGroups" id="-319673502%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="key-exchange-groups.html"><span>key</span><wbr><span>Exchange</span><wbr><span><span>Groups</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-319673502%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="key-exchange-groups.html">keyExchangeGroups</a><span class="token operator">: </span><a href="../../-key-exchange-groups/index.html">KeyExchangeGroups</a></div><div class="brief "><p class="paragraph">The key-exchange groups, most preferred first, and the groups a client sends key shares for (RFC 9846 sections 4.3.7 and 4.3.8); default <a href="../../-key-exchange-groups/-companion/-default.html">KeyExchangeGroups.Default</a>: X25519MLKEM768, X25519, P-256, X448, P-384, P-521, a client sending shares for the first two. A server picks by its own order, a group the client sent a share for first; see <a href="../../-key-exchange-groups/index.html">KeyExchangeGroups</a> for the HelloRetryRequest and the <code class="lang-kotlin">handshake_failure</code> a mismatch costs. <a href="build.html">build</a> throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a> for a group the OpenSSL in use does not provide, for key shares on a server, and for <a href="../../-tls-versions/-tls12-and13/index.html">TlsVersions.Tls12And13</a> with no elliptic curve in the list (TLS 1.2 has no hybrid). In TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (RFC 8422 section 5.1): a client without <a href="../../-key-exchange-groups/-companion/-s-e-c-p256-r1.html">KeyExchangeGroups.SECP256R1</a> refuses a P-256 server certificate (<code class="lang-kotlin">handshake_failure</code>), a server without it a P-256 client certificate (<code class="lang-kotlin">illegal_parameter</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1340816195%2FProperties%2F-1635407269" anchor-label="keylog" id="-1340816195%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="keylog.html"><span><span>keylog</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1340816195%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="keylog.html">keylog</a><span class="token operator">: </span><a href="../../-keylog-sink/index.html">KeylogSink</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Receives the handshake secrets as RFC 9850 key log lines, so that a capture can be decrypted; default null, and keep it null in production: anyone who reads the sink can decrypt the traffic. <code class="lang-kotlin">SSLKEYLOGFILE</code> is not read unless the application calls <a href="../../keylog-from-environment.html">keylogFromEnvironment</a> and assigns its sink here.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-556586709%2FProperties%2F-1635407269" anchor-label="ocspStapling" id="-556586709%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ocsp-stapling.html"><span>ocsp</span><wbr><span><span>Stapling</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-556586709%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="ocsp-stapling.html">ocspStapling</a><span class="token operator">: </span><a href="../../-ocsp-stapling/index.html">OcspStapling</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Server: the OCSP response stapled for the certificate when the client asks (RFC 6066 section 8, RFC 9325 section 7.5); default null, nothing stapled. See <a href="../../-ocsp-stapling/index.html">OcspStapling</a> for when a response is sent. A client configuration with one throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="773140804%2FProperties%2F-1635407269" anchor-label="revocation" id="773140804%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="revocation.html"><span><span>revocation</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="773140804%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="revocation.html">revocation</a><span class="token operator">: </span><a href="../../-revocation-policy/index.html">RevocationPolicy</a></div><div class="brief "><p class="paragraph">Client: how the revocation status the server staples is treated (RFC 9325 section 7.5); default <a href="../../-revocation-policy/-stapled-if-present/index.html">RevocationPolicy.StapledIfPresent</a>. Applies where <code class="lang-kotlin">ksl</code> verifies the chain (<a href="../../-trust-config/-anchored-ca/index.html">TrustConfig.AnchoredCa</a>, and <a href="../../-trust-config/-platform/index.html">TrustConfig.Platform</a> on Linux Native, also inside Pinned or ExpectedName); <a href="../../-revocation-policy/-require-stapled/index.html">RevocationPolicy.RequireStapled</a> with any other trust throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a> when the configuration is used. Servers ignore it (client certificates are checked against the CRLs of their <a href="../../-trust-config/-anchored-ca/index.html">TrustConfig.AnchoredCa</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1935569108%2FProperties%2F-1635407269" anchor-label="role" id="-1935569108%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="role.html"><span><span>role</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1935569108%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="role.html">role</a><span class="token operator">: </span><a href="../../-tls-role/index.html">TlsRole</a></div><div class="brief "><p class="paragraph">the side the configuration is for, fixed at creation.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1618969204%2FProperties%2F-1635407269" anchor-label="serverName" id="1618969204%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="server-name.html"><span>server</span><wbr><span><span>Name</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1618969204%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="server-name.html">serverName</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Client: the host name sent as SNI and, unless <a href="../../-trust-config/-expected-name/index.html">TrustConfig.ExpectedName</a> replaces it, the reference identifier the certificate must match (RFC 9525); an IP literal is matched but never sent as SNI (RFC 6066 section 3). Default null; a client needs it or an ExpectedName. Validated by <a href="../../-host-name/-companion/normalize.html">HostName.normalize</a> in <a href="build.html">build</a>. Servers ignore it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="572608081%2FProperties%2F-1635407269" anchor-label="sessionTickets" id="572608081%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="session-tickets.html"><span>session</span><wbr><span><span>Tickets</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="572608081%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="session-tickets.html">sessionTickets</a><span class="token operator">: </span><a href="../../-session-ticket-config/index.html">SessionTicketConfig</a></div><div class="brief "><p class="paragraph">Session ticket keys and lifetimes of a server; default <a href="../../-session-ticket-config/-companion/-default.html">SessionTicketConfig.Default</a>. Used by TLS-over-TCP servers and by QUIC servers with 0-RTT (<code class="lang-kotlin">QuicServerConfig.earlyData</code>), the only QUIC servers that issue tickets; clients ignore it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="92611115%2FProperties%2F-1635407269" anchor-label="sniSelector" id="92611115%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="sni-selector.html"><span>sni</span><wbr><span><span>Selector</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="92611115%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="sni-selector.html">sniSelector</a><span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span><a href="../../-client-hello-info/index.html">ClientHelloInfo</a><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="../../-server-tls-override/index.html">ServerTlsOverride</a><span class="token operator">?</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Server, over TCP and QUIC alike: called with the ClientHello while the handshake is paused, it chooses this connection's identity and settings. Null from it with SNI present ends the handshake with <code class="lang-kotlin">unrecognized_name</code> (RFC 6066 section 3); without SNI the default <a href="identity.html">identity</a> is used, and without one either the handshake ends with <code class="lang-kotlin">missing_extension</code> (RFC 9846 section 9.2). A session ticket resumes only under the server name and the certificate it was issued under, so a ticket of one identity never resumes under another (RFC 6066 section 3, RFC 9846 section 4.7.1). On QUIC the selector runs off the connection's loop; an override's <a href="../../-server-tls-override/alpn.html">ServerTlsOverride.alpn</a> must still suit QUIC (non-empty), and one with client certificates gets no 0-RTT and no tickets (0-RTT with client certificates is not supported). An exception from it, or an override <a href="build.html">build</a> would refuse, ends that handshake (TCP: with the exception; QUIC: with <code class="lang-kotlin">internal_error</code>). Default null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2111177184%2FProperties%2F-1635407269" anchor-label="trust" id="2111177184%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="trust.html"><span><span>trust</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2111177184%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="trust.html">trust</a><span class="token operator">: </span><a href="../../-trust-config/index.html">TrustConfig</a></div><div class="brief "><p class="paragraph">How the peer is trusted; default <a href="../../-trust-config/-platform/index.html">TrustConfig.Platform</a>, the OS trust store. A client checks the server with it; a server checks client certificates with it when <a href="client-auth.html">clientAuth</a> is not <a href="../../-client-auth/-none/index.html">ClientAuth.None</a>, and then v1 accepts only <a href="../../-trust-config/-anchored-ca/index.html">TrustConfig.AnchoredCa</a> or <a href="../../-trust-config/-reloadable-ca/index.html">TrustConfig.ReloadableCa</a> (a bundle that rotates at run time), optionally inside <a href="../../-trust-config/-pinned/index.html">TrustConfig.Pinned</a> (ADR-0012); a client refuses a ReloadableCa. The host name check is never disabled.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-200328665%2FProperties%2F-1635407269" anchor-label="versions" id="-200328665%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="versions.html"><span><span>versions</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-200328665%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="versions.html">versions</a><span class="token operator">: </span><a href="../../-tls-versions/index.html">TlsVersions</a></div><div class="brief "><p class="paragraph">The versions offered; default <a href="../../-tls-versions/-tls13/index.html">TlsVersions.Tls13</a>. <a href="../../-tls-versions/-tls12-and13/index.html">TlsVersions.Tls12And13</a> is for TCP peers without TLS 1.3 only.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-183984502%2FFunctions%2F-1635407269" anchor-label="build" id="-183984502%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="build.html"><span><span>build</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-183984502%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="build.html"><span class="token function">build</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../index.html">TlsConfig</a></div><div class="brief "><p class="paragraph">Validates the settings and returns an immutable <a href="../index.html">TlsConfig</a>. Throws <a href="../../-tls-exception/-config/index.html">TlsException.Config</a> for an ALPN entry that is empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without <a href="identity.html">identity</a> or <a href="sni-selector.html">sniSelector</a>, <a href="client-auth.html">clientAuth</a> on a client or without an AnchoredCa or ReloadableCa <a href="trust.html">trust</a>, a ReloadableCa on a client, an <a href="alpn-fallback.html">alpnFallback</a> on a client, <code class="lang-kotlin">h3</code> or not 1..255 bytes, <a href="key-exchange-groups.html">keyExchangeGroups</a> this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under <a href="../../-tls-versions/-tls12-and13/index.html">TlsVersions.Tls12And13</a>, and an invalid <a href="server-name.html">serverName</a> or ExpectedName. Transport-specific rules (QUIC) are checked when the configuration is used.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

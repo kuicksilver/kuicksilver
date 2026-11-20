@@ -1,0 +1,297 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>CongestionController</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic/CongestionController///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic</a><span class="delimiter">/</span><span class="current">CongestionController</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Congestion</span><wbr><span><span>Controller</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-subclass-opt-in-required/index.html"><span class="token annotation builtin">SubclassOptInRequired</span></a><span class="token punctuation">(</span><span>markerClass<span class="token operator"> = </span><span class="token punctuation">[</span><span><a href="../../../kuicksilver-native/io.kuicksilver.annotations/-experimental-kuicksilver-api/index.html">ExperimentalKuicksilverApi::class</a></span><wbr><span class="token punctuation">]</span></span><wbr><span class="token punctuation">)</span></div></div><span class="token keyword">interface </span><a href="index.html">CongestionController</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/CongestionController.kt#L14">source</a>)</span></span></div><p class="paragraph">Congestion control of one path (RFC 9002 section 7). The core calls these from its single-threaded loop; a controller never blocks and never allocates on the hot path. <a href="../-cubic/index.html">Cubic</a> with HyStart++ is the default; <a href="../-new-reno/index.html">NewReno</a> and the experimental <a href="../-bbr/index.html">Bbr</a> are choices.</p><h4 class="tableheader">Inheritors</h4><div class="table"><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="../-bbr/index.html">Bbr</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="../-cubic/index.html">Cubic</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="../-new-reno/index.html">NewReno</a></div></span></div><div></div></div></div></div></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1194939398%2FProperties%2F42191490" anchor-label="bytesInFlight" id="-1194939398%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="bytes-in-flight.html"><span>bytes</span><wbr><span>In</span><wbr><span><span>Flight</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1194939398%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="bytes-in-flight.html">bytesInFlight</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Bytes sent and neither acknowledged, lost nor discarded yet, as this controller counts them.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1684893322%2FProperties%2F42191490" anchor-label="cwnd" id="-1684893322%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="cwnd.html"><span><span>cwnd</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1684893322%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="cwnd.html">cwnd</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Congestion window in bytes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-175316057%2FProperties%2F42191490" anchor-label="sendQuantum" id="-175316057%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send-quantum.html"><span>send</span><wbr><span><span>Quantum</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-175316057%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="send-quantum.html">sendQuantum</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Largest burst the sender hands to the socket at once: at most 65 536 bytes, or two datagrams when those are larger.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-976089285%2FFunctions%2F42191490" anchor-label="onAck" id="-976089285%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-ack.html"><span>on</span><wbr><span><span>Ack</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-976089285%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-ack.html"><span class="token function">onAck</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">sentTime<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">bytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">smoothedRtt<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token punctuation">, </span></span><span class="parameter ">appLimited<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="on-ack.html">bytes</a> sent at <a href="on-ack.html">sentTime</a> were acknowledged at <a href="on-ack.html">now</a>; <a href="on-ack.html">appLimited</a> means the sender had nothing more to send then, so the window must not grow on it (RFC 9002 section 7.8).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="16523386%2FFunctions%2F42191490" anchor-label="onDiscarded" id="16523386%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-discarded.html"><span>on</span><wbr><span><span>Discarded</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="16523386%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-discarded.html"><span class="token function">onDiscarded</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">bytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Packets of a discarded packet number space leave the in-flight count without a congestion event (RFC 9002 section 6.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-854622280%2FFunctions%2F42191490" anchor-label="onEcnCe" id="-854622280%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-ecn-ce.html"><span>on</span><wbr><span>Ecn</span><wbr><span><span>Ce</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-854622280%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-ecn-ce.html"><span class="token function">onEcnCe</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">sentTime<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The peer reported new ECN-CE marks for packets up to one sent at <a href="on-ecn-ce.html">sentTime</a> (RFC 9002 section 7.1). Called for every such report of this path: like <a href="on-loss.html">onLoss</a>, the controller reduces at most once per recovery period, which losses and CE reports share, judged by <a href="on-ecn-ce.html">sentTime</a> (appendix B.6 InCongestionRecovery).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1388168300%2FFunctions%2F42191490" anchor-label="onLoss" id="-1388168300%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-loss.html"><span>on</span><wbr><span><span>Loss</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1388168300%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-loss.html"><span class="token function">onLoss</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">lostBytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">largestLostSentTime<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">persistentCongestion<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="on-loss.html">lostBytes</a> were declared lost (RFC 9002 section 6.1); one reduction per recovery period, judged by <a href="on-loss.html">largestLostSentTime</a>; <a href="on-loss.html">persistentCongestion</a> collapses the window to its minimum (section 7.6).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1493957152%2FFunctions%2F42191490" anchor-label="onMtuUpdate" id="-1493957152%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-mtu-update.html"><span>on</span><wbr><span>Mtu</span><wbr><span><span>Update</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1493957152%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-mtu-update.html"><span class="token function">onMtuUpdate</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">maxDatagramSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The path's datagram size changed to <a href="on-mtu-update.html">maxDatagramSize</a> bytes (PMTUD, RFC 9000 section 14); windows counted in datagrams follow it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1941111932%2FFunctions%2F42191490" anchor-label="onPacketSent" id="-1941111932%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-packet-sent.html"><span>on</span><wbr><span>Packet</span><wbr><span><span>Sent</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1941111932%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="on-packet-sent.html"><span class="token function">onPacketSent</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">bytes<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">A packet of <a href="on-packet-sent.html">bytes</a> that counts in flight left at <a href="on-packet-sent.html">now</a> (RFC 9002 section 7).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1625660331%2FFunctions%2F42191490" anchor-label="onRttSample" id="-1625660331%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-rtt-sample.html"><span>on</span><wbr><span>Rtt</span><wbr><span><span>Sample</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1625660331%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="on-rtt-sample.html"><span class="token function">onRttSample</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">latest<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token punctuation">, </span></span><span class="parameter ">min<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">An RTT sample of the active path (RFC 9002 section 5); HyStart++ listens, others may ignore it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1991355384%2FFunctions%2F42191490" anchor-label="pacingRate" id="-1991355384%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="pacing-rate.html"><span>pacing</span><wbr><span><span>Rate</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1991355384%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="pacing-rate.html"><span class="token function">pacingRate</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">smoothedRtt<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">Pacing rate in bytes per second for the current window.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

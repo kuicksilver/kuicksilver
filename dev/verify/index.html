@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How we verify - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/verify/index.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/index.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/index.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/index.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/index.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a> <a href="../verify/index.html">How we verify</a><nav class="lang" aria-label="Language"><a hreflang="en" lang="en" href="../verify/index.html" aria-current="page">English</a> <a hreflang="ru" lang="ru" href="../ru/verify/index.html">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../zh/verify/index.html">简体中文</a></nav></header>
+<div class="snapshot" role="note">Development snapshot of 612511494c503adf8ad86282557ae3f808ee935c (2026-11-20T09:32:18Z), not a release. <a href="../../index.html">All releases</a></div>
+<div class="layout"><nav class="pages"><ul><li class=current><a href="index.html">How we verify</a></li><li><a href="platforms.html">Platform matrix</a></li><li><a href="interop.html">Engine interop</a></li><li><a href="conformance.html">Conformance suites</a></li><li><a href="fuzzing.html">Fuzzing and mutation</a></li><li><a href="sizes.html">Artifact sizes</a></li><li><a href="benchmarks.html">Benchmarks</a></li><li><a href="rfc.html">RFC compliance</a></li><li><a href="how.html">The process</a></li></ul></nav><main>
+<h1>How we verify</h1>
+<p class="prov">Data from the successful build.yml run of commit 612511494c503adf8ad86282557ae3f808ee935c, started 2026-11-20 10:11 UTC. <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">CI run 44717133396</a></p>
+<p class=badges><img src="../verify/badges/tests.svg" alt="tests"><img src="../verify/badges/platforms.svg" alt="platforms"><img src="../verify/badges/engine-interop.svg" alt="engine-interop"><img src="../verify/badges/rfc.svg" alt="rfc"></p>
+<p>Every number on these pages is generated from the CI results of the commit this documentation was built from; nothing is typed in by hand. A section with no result for this commit says so.</p>
+<table><thead><tr><th>Section</th><th>What it shows</th></tr></thead><tbody><tr><td><a href="platforms.html">Platform matrix</a></td><td>Test counts per Kotlin target and CI host.</td></tr><tr><td><a href="interop.html">Engine interop</a></td><td>Kuicksilver&#x27;s Ktor engines against other clients and servers, per wire protocol; the QUIC Interop Runner.</td></tr><tr><td><a href="conformance.html">Conformance suites</a></td><td>h2spec, h3spec and Autobahn: what runs in CI and what does not yet.</td></tr><tr><td><a href="fuzzing.html">Fuzzing and mutation</a></td><td>Fuzz targets, committed corpora, the regression run and the latest campaign.</td></tr><tr><td><a href="sizes.html">Artifact sizes</a></td><td>What the published artifacts weigh, per platform.</td></tr><tr><td><a href="benchmarks.html">Benchmarks</a></td><td>Throughput and handshake measurements, with where and when they were taken.</td></tr><tr><td><a href="rfc.html">RFC compliance</a></td><td>Requirements met, partly met, planned and not planned, from the RFC compliance matrix.</td></tr><tr><td><a href="how.html">The process</a></td><td>The checks every change goes through, and how to verify a release yourself.</td></tr></tbody></table>
+</main></div>
+</body>
+</html>

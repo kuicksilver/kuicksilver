@@ -1,0 +1,417 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>UdpProxyStats</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/UdpProxyStats///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">UdpProxyStats</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Udp</span><wbr><span>Proxy</span><wbr><span><span>Stats</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">UdpProxyStats</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/ConnectUdp.kt#L393">source</a>)</span></span></div><p class="paragraph">What a <a href="../-udp-proxy/index.html">UdpProxy</a> has done since it was made.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-294490888%2FProperties%2F748033675" anchor-label="closedUnreachable" id="-294490888%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="closed-unreachable.html"><span>closed</span><wbr><span><span>Unreachable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-294490888%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="closed-unreachable.html">closedUnreachable</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">tunnels closed because an ICMP port unreachable came for their target that quoted a payload they sent (section 3.1; RFC 8085 section 5.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-560384516%2FProperties%2F748033675" anchor-label="droppedClientBusy" id="-560384516%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-client-busy.html"><span>dropped</span><wbr><span>Client</span><wbr><span><span>Busy</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-560384516%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-client-busy.html">droppedClientBusy</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads from targets dropped because the connection's datagram queue was full.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1596002187%2FProperties%2F748033675" anchor-label="droppedForeignSource" id="1596002187%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-foreign-source.html"><span>dropped</span><wbr><span>Foreign</span><wbr><span><span>Source</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1596002187%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-foreign-source.html">droppedForeignSource</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-498921824%2FProperties%2F748033675" anchor-label="droppedRateLimited" id="-498921824%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-rate-limited.html"><span>dropped</span><wbr><span>Rate</span><wbr><span><span>Limited</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-498921824%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-rate-limited.html">droppedRateLimited</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads beyond <a href="../-udp-proxy-config/packet-rate.html">UdpProxyConfig.packetRate</a> or <a href="../-udp-proxy-config/client-packet-rate.html">UdpProxyConfig.clientPacketRate</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="873193837%2FProperties%2F748033675" anchor-label="droppedTooLargeForClient" id="873193837%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-too-large-for-client.html"><span>dropped</span><wbr><span>Too</span><wbr><span>Large</span><wbr><span>For</span><wbr><span><span>Client</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="873193837%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-too-large-for-client.html">droppedTooLargeForClient</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads from targets too large for the client's QUIC DATAGRAM frames (section 6.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="66253534%2FProperties%2F748033675" anchor-label="droppedTooLargeForLink" id="66253534%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-too-large-for-link.html"><span>dropped</span><wbr><span>Too</span><wbr><span>Large</span><wbr><span>For</span><wbr><span><span>Link</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="66253534%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-too-large-for-link.html">droppedTooLargeForLink</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads above what <a href="../-udp-proxy-config/link-mtu.html">UdpProxyConfig.linkMtu</a> carries unfragmented (section 5).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1858511262%2FProperties%2F748033675" anchor-label="droppedTooLargeFromTarget" id="1858511262%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-too-large-from-target.html"><span>dropped</span><wbr><span>Too</span><wbr><span>Large</span><wbr><span>From</span><wbr><span><span>Target</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1858511262%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-too-large-from-target.html">droppedTooLargeFromTarget</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">datagrams from targets above <a href="../-udp-proxy-config/link-mtu.html">UdpProxyConfig.linkMtu</a> bytes, dropped whole.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1674768426%2FProperties%2F748033675" anchor-label="droppedUnanswered" id="1674768426%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-unanswered.html"><span>dropped</span><wbr><span><span>Unanswered</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1674768426%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-unanswered.html">droppedUnanswered</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads beyond <a href="../-udp-proxy-config/unanswered-limit.html">UdpProxyConfig.unansweredLimit</a> to a target that never answered.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-13789701%2FProperties%2F748033675" anchor-label="droppedUnknownContext" id="-13789701%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-unknown-context.html"><span>dropped</span><wbr><span>Unknown</span><wbr><span><span>Context</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-13789701%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dropped-unknown-context.html">droppedUnknownContext</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">HTTP datagrams from clients with a Context ID other than 0, or none (RFC 9298 section 4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1989609736%2FProperties%2F748033675" anchor-label="fromTargets" id="1989609736%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="from-targets.html"><span>from</span><wbr><span><span>Targets</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1989609736%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="from-targets.html">fromTargets</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads received from targets and sent on to clients.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-638258760%2FProperties%2F748033675" anchor-label="ignoredUnreachable" id="-638258760%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ignored-unreachable.html"><span>ignored</span><wbr><span><span>Unreachable</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-638258760%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="ignored-unreachable.html">ignoredUnreachable</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP unreachable reports not acted on: host unreachable, for another destination, quoting the headers only or a payload the tunnel did not send lately (possibly forged).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1014018906%2FProperties%2F748033675" anchor-label="packetTooBig" id="-1014018906%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="packet-too-big.html"><span>packet</span><wbr><span>Too</span><wbr><span><span>Big</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1014018906%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="packet-too-big.html">packetTooBig</a><span class="token operator">: </span><a href="../-packet-too-big-status/index.html">PacketTooBigStatus</a></div><div class="brief "><p class="paragraph">whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its first tunnel.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1940188201%2FProperties%2F748033675" anchor-label="packetTooBigFailed" id="1940188201%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="packet-too-big-failed.html"><span>packet</span><wbr><span>Too</span><wbr><span>Big</span><wbr><span><span>Failed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1940188201%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="packet-too-big-failed.html">packetTooBigFailed</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP Packet Too Big messages the raw socket did not send (the family's socket did not open, the kernel refused the message, or the sender ruled out its addresses); their rate-limit tokens stay spent.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1918804426%2FProperties%2F748033675" anchor-label="packetTooBigNoSource" id="1918804426%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="packet-too-big-no-source.html"><span>packet</span><wbr><span>Too</span><wbr><span>Big</span><wbr><span>No</span><wbr><span><span>Source</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1918804426%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="packet-too-big-no-source.html">packetTooBigNoSource</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP Packet Too Big messages not sent (with <a href="packet-too-big.html">packetTooBig</a> <a href="../-packet-too-big-status/-available/index.html">PacketTooBigStatus.Available</a>) because the address the target sent to is unknown: a socket of <a href="../-udp-proxy-config/socket-factory.html">UdpProxyConfig.socketFactory</a> bound to a wildcard address that does not report each datagram's destination (the portable socket; the accelerated one reports it). A socket bound to one address answers from that address.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="989629294%2FProperties%2F748033675" anchor-label="packetTooBigSent" id="989629294%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="packet-too-big-sent.html"><span>packet</span><wbr><span>Too</span><wbr><span>Big</span><wbr><span><span>Sent</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="989629294%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="packet-too-big-sent.html">packetTooBigSent</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">ICMP Packet Too Big messages sent to targets.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="768946580%2FProperties%2F748033675" anchor-label="requestsRefused" id="768946580%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="requests-refused.html"><span>requests</span><wbr><span><span>Refused</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="768946580%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="requests-refused.html">requestsRefused</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">requests answered with another status.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="357806233%2FProperties%2F748033675" anchor-label="toTargets" id="357806233%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-targets.html"><span>to</span><wbr><span><span>Targets</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="357806233%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="to-targets.html">toTargets</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">UDP payloads sent to targets.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="196015212%2FProperties%2F748033675" anchor-label="tunnelsOpened" id="196015212%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="tunnels-opened.html"><span>tunnels</span><wbr><span><span>Opened</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="196015212%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="tunnels-opened.html">tunnelsOpened</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">requests answered with a 2xx.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="639653230%2FFunctions%2F748033675" anchor-label="toString" id="639653230%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-string.html"><span>to</span><wbr><span><span>String</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="639653230%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="to-string.html"><span class="token function">toString</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">The counters, for logs.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

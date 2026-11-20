@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kuicksilver on iOS - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li class="current"><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="kuicksilver-on-ios">Kuicksilver on iOS</h1>
+<p><strong>What this page is for.</strong> It is for an iOS app developer who wants to add Kuicksilver, through Kotlin Multiplatform or
+SwiftPM: what to depend on, how it links, what Apple's privacy manifest and networking rules mean for it, and how to
+check the size and the build.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Kotlin 2.4.x with the targets <code>iosArm64</code> and <code>iosSimulatorArm64</code> (Kotlin/Native needs Kotlin 2.4.x,
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#kotlin-version">Kotlin version</a>), or a Swift-only app; iOS 15 or newer.</li>
+<li>Kuicksilver's binaries are built with Xcode 27.0; apps on Kotlin 2.4.20 may build with Xcode 26.4 or 27.0
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>Dependency: <code>io.kuicksilver:kuicksilver-http3:0.3.0</code> or newer (or <code>-quic</code>, <code>-ktor-client</code>) for Kotlin Multiplatform. For
+Swift, the Swift package <a href="https://github.com/kuicksilver/kuicksilver-swift">kuicksilver-swift</a> (<code>Kuicksilver.xcframework</code>,
+attached to every GitHub release from 0.3.0).</li>
+</ul>
+<p><strong>Minimal example.</strong> The Gradle setup is in <a href="#kotlin-multiplatform-klibs-and-one-framework">Kotlin Multiplatform: klibs and one framework</a>,
+the SwiftPM one in <a href="#swift-only-kuicksilverxcframework-and-swiftpm">Swift only</a>, and a running app in
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/samples/ios/README.md"><code>samples/ios</code></a>.</p>
+<p>Kuicksilver runs on iOS through Kotlin/Native (<code>iosArm64</code>, <code>iosSimulatorArm64</code>). OpenSSL 3.5 and the <code>ksl</code> C shim are
+linked statically into your app with every OpenSSL symbol renamed to <code>ksl_ossl_*</code> (ADR-0007), so another OpenSSL or
+BoringSSL in the same app does not clash with it. The QUIC socket is the accelerated <code>ksl</code> socket (ECN, DF; no GSO/GRO
+on Darwin). Certificates are checked by SecTrust when you use <code>TrustConfig.Platform</code>.</p>
+<p>The working example is <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/samples/ios/README.md"><code>samples/ios</code></a>: a SwiftUI app over a small Kotlin facade, with
+HTTP/3 GET, a raw QUIC echo with an RTT and path-event log, and a server mode advertised over Bonjour.</p>
+<h2 id="choosing-how-to-consume-it">Choosing how to consume it</h2>
+<table>
+<thead>
+<tr>
+<th>Your app</th>
+<th>Use</th>
+<th>What you ship</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kotlin Multiplatform (a <code>shared</code> module)</td>
+<td>the klibs: <code>implementation(&quot;io.kuicksilver:kuicksilver-http3:…&quot;)</code></td>
+<td>one Kotlin framework (yours), Kuicksilver inside it</td>
+</tr>
+<tr>
+<td>Swift only</td>
+<td><code>Kuicksilver.xcframework</code> (dynamic) through SwiftPM <code>binaryTarget</code></td>
+<td>the xcframework, with its own privacy manifest and dSYMs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kotlin-multiplatform-klibs-and-one-framework">Kotlin Multiplatform: klibs and one framework</h3>
+<p>Depend on the Kuicksilver modules from your shared module like any KMP library. The klibs carry the prefixed OpenSSL
+and <code>libksl</code> as static libraries; Kotlin/Native links them into the framework your app already builds:</p>
+<!-- guide-sync: not compiled (a Gradle build script; samples/ios/shared/build.gradle.kts is the built one) -->
+<pre><code class="language-kotlin">kotlin {
+    listOf(iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework { baseName = &quot;Shared&quot;; isStatic = true }
+    }
+    sourceSets.commonMain.dependencies {
+        implementation(&quot;io.kuicksilver:kuicksilver-http3:0.3.0&quot;)   // or -quic, -ktor-client
+    }
+}
+</code></pre>
+<p>Hook the framework into Xcode the KMP way (direct integration): a Run Script phase before Compile Sources that runs
+<code>./gradlew :shared:embedAndSignAppleFrameworkForXcode</code>, User Script Sandboxing off (<code>ENABLE_USER_SCRIPT_SANDBOXING = NO</code>), and <code>FRAMEWORK_SEARCH_PATHS = $(SRCROOT)/shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)</code> with
+<code>OTHER_LDFLAGS = -framework Shared</code>. <code>samples/ios/Config/Project.xcconfig</code> and <code>build-kotlin-framework.sh</code> show the
+complete setup.</p>
+<blockquote>
+<p><strong>One Kotlin/Native framework per app.</strong> Every Kotlin/Native framework carries its own Kotlin runtime, stdlib and
+copies of every library it uses: two frameworks mean two garbage collectors, two copies of Kuicksilver (and of
+OpenSSL) and types that do not cross between them (a <code>QuicConnection</code> from one is not one in the other). Put
+everything Kotlin into one umbrella framework. In particular do not combine your own KMP framework with
+<code>Kuicksilver.xcframework</code>: depend on the klibs instead.</p>
+</blockquote>
+<p>Expose a thin facade to Swift rather than the library API: Kotlin <code>suspend</code> functions become Swift <code>async</code> functions or
+completion handlers in the generated header, but <code>Flow</code>, <code>ByteReadChannel</code> and Kotlin generics translate poorly. The
+sample's <code>SampleFacade</code> runs every operation on a background dispatcher and calls back on the main thread with
+<code>(result, error)</code>, with no SKIE or other compiler plugin.</p>
+<h3 id="swift-only-kuicksilverxcframework-and-swiftpm">Swift only: Kuicksilver.xcframework and SwiftPM</h3>
+<p>The Swift package is <a href="https://github.com/kuicksilver/kuicksilver-swift">kuicksilver/kuicksilver-swift</a>, a small
+repository with no source code: its <code>Package.swift</code> declares one binary target, <code>Kuicksilver.xcframework.zip</code> of this
+repository's GitHub release, with its checksum, and each of its tags (<code>0.3.0</code>, ...) is made by the release of that
+version. Add it in Xcode (<em>File → Add Package Dependencies…</em>, the URL <code>https://github.com/kuicksilver/kuicksilver-swift</code>,
+<em>Up to Next Minor Version</em> from 0.3.0: before 1.0 a minor version may break the API,
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#stability-levels">Stability levels</a>) or in your own <code>Package.swift</code>:</p>
+<pre><code class="language-swift">dependencies: [
+    .package(url: &quot;https://github.com/kuicksilver/kuicksilver-swift&quot;, .upToNextMinor(from: &quot;0.3.0&quot;)),
+],
+targets: [
+    .target(name: &quot;App&quot;, dependencies: [.product(name: &quot;Kuicksilver&quot;, package: &quot;kuicksilver-swift&quot;)]),
+]
+</code></pre>
+<p>SwiftPM resolves the tag <code>0.3.0</code> of that repository, reads its <code>Package.swift</code> and downloads
+<code>https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip</code>, which it accepts only
+if its SHA-256 is the checksum there. The release signs the zip with the release key (<code>.asc</code> next to it) and lists it in
+the build provenance; <code>tools/verify/verify-release.sh</code> checks both and that the Swift package's <code>Package.swift</code> names
+exactly that zip (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/verifying.md#the-swift-package">Verifying a release</a>). A release candidate is tagged too
+(<code>0.3.0-rc1</code>); SwiftPM never picks a prerelease for a version range, so name it with <code>exact: &quot;0.3.0-rc1&quot;</code>. Swift then
+calls the API directly (<code>import Kuicksilver</code>; suspend functions are <code>async</code>); <code>KuicksilverInfo.VERSION</code> names the
+version you got.</p>
+<p>The framework is dynamic, so its dSYMs travel with it and Apple finds its privacy manifest in its own bundle; the
+licences (Kuicksilver's and OpenSSL's, both Apache-2.0) are in the framework too, so they ship with your app:</p>
+<pre><code>Kuicksilver.xcframework
+  ios-arm64/Kuicksilver.framework (+ PrivacyInfo.xcprivacy, LICENSE, NOTICE, licenses/)   ios-arm64/dSYMs/…
+  ios-arm64-simulator/…                                                                ios-arm64-simulator/dSYMs/…
+</code></pre>
+<p>It is the small umbrella module <code>samples/ios/kuicksilver-swift</code>, which exports the public API of <code>kuicksilver-tls</code>,
+<code>kuicksilver-quic</code> and <code>kuicksilver-http3</code> through the Kotlin <code>XCFramework</code> DSL. To build it yourself (an unreleased
+commit, or to compare with the release asset), from a checkout:</p>
+<pre><code class="language-sh">tools/release/xcframework.sh 0.3.0
+#   build/release/Kuicksilver.xcframework.zip and its SwiftPM checksum (what `swift package compute-checksum` prints)
+</code></pre>
+<p>The zip is reproducible on the same toolchain: the klibs, the symbols and the dSYMs name the sources relative to the
+checkout, the zip has fixed
+timestamps and order, and the slices are listed in a fixed order, so the same commit and Xcode give the same checksum
+in any checkout directory. Only the native libraries inside are compared with an independent rebuild by
+<code>verify-release.sh</code> (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/verifying.md#which-native-libraries-are-reproducible">Which native libraries are reproducible</a>);
+the Kotlin code is not.</p>
+<h2 id="privacy-manifest">Privacy manifest</h2>
+<p>Apple requires a privacy manifest that declares every &quot;required reason&quot; API an app or SDK uses. Kuicksilver's is
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-native/apple/PrivacyInfo.xcprivacy"><code>kuicksilver-native/apple/PrivacyInfo.xcprivacy</code></a>: no tracking,
+no collected data, one API category.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Symbols in a Release arm64 link</th>
+<th>Where from</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>File timestamp</td>
+<td><code>stat</code>, <code>fstat</code>, <code>lstat</code></td>
+<td>OpenSSL's file loaders (<code>X509_STORE_load_file/path</code>, which <code>libksl</code> links for a file-based trust store; <code>conf_def.c</code>, <code>ssl_cert.c</code>, <code>file_store.c</code>), the <code>/dev/urandom</code> fallback of <code>rand_unix.c</code>, and <code>fstat</code> in the key log file check when you enable <code>keylog</code></td>
+<td><code>C617.1</code>: metadata of files inside the app container that the app points Kuicksilver at; Kuicksilver reads the file type, owner and link count, never sends anything</td>
+</tr>
+<tr>
+<td>System boot time</td>
+<td>none</td>
+<td>Kotlin/Native measures time with libc++ <code>steady_clock</code> and <code>gettimeofday</code>, not <code>mach_absolute_time</code> or <code>systemUptime</code></td>
+<td>not declared</td>
+</tr>
+<tr>
+<td>Disk space, active keyboards, user defaults</td>
+<td>none</td>
+<td></td>
+<td>not declared</td>
+</tr>
+</tbody>
+</table>
+<p><code>sysctlbyname</code> (OpenSSL reads the <code>hw.optional.arm.*</code> CPU features) is not on Apple's list. Check your own build with
+<code>tools/check/ios-private-api.py</code> (<a href="#checks">Checks</a>): it prints a <code>required-reason</code> line per category it finds. Debug builds of a
+Kotlin framework import far more (<code>getattrlist</code>, <code>clock_gettime</code>, …) because they link the per-library caches with
+every platform binding; only the Release link is what you ship.</p>
+<p>How to include it:</p>
+<ul>
+<li><strong>Kuicksilver.xcframework</strong> (the Swift package) carries the file in each framework; nothing to do.</li>
+<li><strong>A KMP app</strong> (Kuicksilver is linked statically into your framework, and a static framework has no bundle of its
+own): merge the entries into your app's <code>PrivacyInfo.xcprivacy</code>. The Maven artifacts (klibs) do not carry the file,
+so you need nothing from this repository: the complete manifest, with the same entries, is
+<a href="app-store.html#6-privacy-manifest">App Store: Templates, 6. Privacy manifest</a>, ready to paste; the repository's file
+at the tag of the version you use (<code>v0.3.0</code>, ...) is the reference. If your app has no manifest, save that template as
+<code>PrivacyInfo.xcprivacy</code> in the app target (Copy Bundle Resources), as the sample does with Kuicksilver's file. If you have one, add the <code>NSPrivacyAccessedAPICategoryFileTimestamp</code>
+entry with <code>C617.1</code> (keep your own reasons next to it).</li>
+<li>If your app persists TOFU pins in user defaults or reads timestamps for its own purposes, that is your code's use:
+declare it with your own reason.</li>
+</ul>
+<h2 id="export-compliance">Export compliance</h2>
+<p>Kuicksilver contains encryption (OpenSSL: TLS 1.3, AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM) and implements it in
+the app rather than using the operating system's. Apple's guidance is that encryption built into the OS (for example
+HTTPS through <code>URLSession</code>) is typically exempt from export documentation, and other encryption is not. The sample
+therefore sets <code>ITSAppUsesNonExemptEncryption</code> to <code>true</code>:</p>
+<ul>
+<li>Under the U.S. Export Administration Regulations, an app that uses standard cryptography to secure its own
+communication is usually a mass-market item exported under License Exception ENC, 15 CFR 740.17(b)(1), and
+classified 5D992.c after self-classification. Since the 2021 amendment, the annual self-classification report of
+740.17(e)(3) covers mass-market <em>components</em> and certain executable software rather than end-user apps, but the
+recordkeeping of part 762 applies.</li>
+<li>App Store Connect asks about encryption for every build unless the Info.plist answers it, and may ask for
+documentation (then add <code>ITSEncryptionExportComplianceCode</code>), including a declaration for distribution in France.</li>
+<li>The step-by-step version, with the App Store Connect questions, Info.plist and review-note templates, is
+<a href="app-store.html">app-store.md</a>.</li>
+<li><strong>The classification and the answers are the app owner's decision and responsibility</strong>, not the library's, and this
+section is not legal advice. Changing what the app encrypts (for example adding end-to-end encryption of user data
+on top) can change the answer.</li>
+</ul>
+<h2 id="networking-rules-on-ios">Networking rules on iOS</h2>
+<ul>
+<li><strong>App Transport Security does not apply.</strong> ATS governs <code>URLSession</code> and other URL-loading APIs. Kuicksilver opens its
+own UDP and TCP sockets, so <code>NSAppTransportSecurity</code> settings neither allow nor block it. Your TLS policy is
+Kuicksilver's: <code>TrustConfig.Platform</code> (SecTrust, the system and MDM roots), pins, or a private CA; host names are
+always checked.</li>
+<li><strong>Local network permission.</strong> Talking to a device on the LAN (a server on another phone, an echo peer, a printer)
+triggers the iOS local network prompt. Declare <code>NSLocalNetworkUsageDescription</code>, and <code>NSBonjourServices</code> for every
+service type you browse or advertise (<code>_kuicksilver._udp</code> in the sample). Loopback and Internet traffic need neither.</li>
+<li><strong>Servers are foreground only.</strong> A QUIC server on iOS works (bind <code>::</code> for dual-stack), but the system suspends the
+app, and with it the socket, shortly after it leaves the screen. Use <code>loops = 1</code>.</li>
+<li><strong>IPv6-only networks.</strong> App Review tests on a NAT64 network. Bind <code>::</code> and connect by host name: the endpoint
+resolves the name once, and on NAT64 the system resolver synthesises an IPv6 address for an IPv4-only host. Do not
+hard-code IPv4 literals.</li>
+<li><strong>Network changes.</strong> A QUIC connection survives a move to another socket (<code>QuicConnection.migrate</code>, <code>rebind</code>).
+<code>QuicConnection.followDefaultNetwork(scope)</code> (experimental) follows the default network automatically (Wi-Fi to
+cellular and back) through one shared <code>NWPathMonitor</code>, and also replaces a socket iOS reclaimed while the app was
+suspended (<a href="quic.html#network-changes">QUIC: Network changes</a>). The sample's echo screen has a &quot;Follow the default
+network&quot; toggle for it and a manual Rebind button. For <code>HttpClient(Kuicksilver)</code>,
+<code>http3 { connectionMigration = Http3ConnectionMigration.followDefaultNetwork() }</code> (experimental, off by default) does
+the same for every pooled HTTP/3 connection (<a href="ktor.html#connection-migration">Ktor: Connection migration</a>).</li>
+</ul>
+<h2 id="checks">Checks</h2>
+<p>The project runs these scripts on <code>samples/ios</code> before a release, so they need a checkout of this repository; their
+results are below. For your own app you need only <code>tools/check/ios-private-api.py</code>, a single Python 3 file that needs a full
+Xcode (the iOS SDK and <code>nm</code>; the Command Line Tools alone have no iOS SDK): take it from the tag of the version you use
+(<code>https://raw.githubusercontent.com/kuicksilver/kuicksilver/v&lt;version&gt;/tools/check/ios-private-api.py</code>) and run it on
+your Release binary, <code>python3 ios-private-api.py &quot;$(xcrun --sdk iphoneos --show-sdk-path)&quot; &lt;your app's executable&gt;</code>. It
+lists any symbol that no public SDK library exports and the required-reason API categories it finds, which the privacy
+manifest must declare. Your app's own size impact comes from its linker map (<code>LD_GENERATE_MAP_FILE = YES</code>), as in
+<a href="#size">Size</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>What it proves</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tools/check/ios-sample-smoke.sh</code></td>
+<td>the sample builds for the simulator, <code>-smoke</code> launch passes (server, echo, HTTP/3 over loopback), and the XCTest bundle calling the facade from Swift passes</td>
+</tr>
+<tr>
+<td><code>tools/check/ios-symbols.sh</code></td>
+<td>no global symbol is defined both by the Kotlin framework and by an unprefixed OpenSSL of the same release (7148 would be without the prefix); both copies are linked into one executable and both complete a TLS 1.3 handshake on the simulator</td>
+</tr>
+<tr>
+<td><code>tools/check/ios-private-api.py &lt;sdk&gt; &lt;binary&gt;</code></td>
+<td>every undefined symbol is exported by a public <code>.tbd</code> of the SDK (no private API), plus the required-reason report</td>
+</tr>
+<tr>
+<td><code>tools/check/ios-size.sh</code></td>
+<td>the size budget below, from the linker map of a Release arm64 build</td>
+</tr>
+</tbody>
+</table>
+<p>Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator), <strong>on the 0.2.0 code</strong>: all pass. Size and imports
+re-measured on 2026-10-14, also on the 0.2.0 code (<code>ios-size.sh</code>, <code>ios-private-api.py</code>): the Release arm64 app imports
+647 symbols, all from public SDK libraries; the Release Kotlin framework 354, likewise. These numbers have not been
+measured again for 0.3.0; the release gate of 0.3.0 runs the scripts again, and this page will name that version once
+it has.</p>
+<h2 id="size">Size</h2>
+<p>Linked bytes of <code>samples/ios</code> (Release, arm64, <code>-dead_strip</code>), from the linker map:</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>MB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenSSL (libssl + libcrypto, prefixed)</td>
+<td>1.98</td>
+</tr>
+<tr>
+<td><code>ksl</code> C shim</td>
+<td>0.03</td>
+</tr>
+<tr>
+<td>Kotlin: Kuicksilver</td>
+<td>1.43</td>
+</tr>
+<tr>
+<td>Kotlin: stdlib</td>
+<td>0.73</td>
+</tr>
+<tr>
+<td>Kotlin/Native runtime, glue and data</td>
+<td>0.72</td>
+</tr>
+<tr>
+<td>kotlinx-coroutines</td>
+<td>0.48</td>
+</tr>
+<tr>
+<td>ktor-io / ktor-network</td>
+<td>0.18</td>
+</tr>
+<tr>
+<td>kotlinx-io, atomicfu, platform interop</td>
+<td>0.06</td>
+</tr>
+<tr>
+<td><strong>Kuicksilver's contribution</strong></td>
+<td><strong>5.60</strong></td>
+</tr>
+<tr>
+<td>the sample's Swift code and the rest</td>
+<td>0.10</td>
+</tr>
+</tbody>
+</table>
+<p>Measured on 2026-10-14 <strong>on the 0.2.0 code</strong> (Xcode 27.0; not measured again for 0.3.0 yet). The whole executable is 8316 KiB (8.1 MiB) before stripping and
+5955 KiB (5.8 MiB) after (<code>strip -x</code>, as an App Store build does). A KMP app that already ships Kotlin pays only for the
+OpenSSL, <code>ksl</code> and Kuicksilver rows (about 3.4 MB); the runtime, stdlib and coroutines are shared with the rest of its
+Kotlin code. The App Store applies app thinning and compression on top.</p>
+<h2 id="device-checklist">Device checklist</h2>
+<p>The simulator shares the Mac's network stack, so these need an iPhone. Open <code>samples/ios/KuicksilverSample.xcodeproj</code>,
+select your team in Signing &amp; Capabilities (a free Apple ID works; if the bundle ID is taken, change
+<code>KUICKSILVER_BUNDLE_PREFIX</code> in <code>samples/ios/Config/Project.xcconfig</code>), pick the phone and press Run. For a server and a
+client, run the app on two devices, or point the echo screen at <code>samples/realtime-telemetry</code>-style peers on a Mac.</p>
+<ol>
+<li><strong>Wi-Fi and cellular, separately</strong>: HTTP/3 GET of a public site with System trust; echo to a server on the LAN
+(Wi-Fi only).</li>
+<li><strong>Handover under load</strong>: an echo session with 300 rounds every 250 ms, then walk out of Wi-Fi range (or turn Wi-Fi
+off), once with &quot;Follow the default network&quot; on and once with Rebind by hand; the log must show <code>path changed</code>
+without a new handshake.</li>
+<li><strong>Backgrounding</strong>: start an echo session, background the app for 5 s, 60 s and 5 min, return; note whether the
+session survives (the idle timeout is 30 s) and that a new one works.</li>
+<li><strong>Low Power Mode</strong>: repeat 1 and 2.</li>
+<li><strong>IPv6-only through NAT64</strong>: share the Mac's connection over Wi-Fi with &quot;Create NAT64 Network&quot; (System Settings &gt;
+General &gt; Sharing &gt; Internet Sharing, Option-click for the NAT64 choice); HTTP/3 GET of an IPv4-only host name must
+work.</li>
+<li><strong>Captive portal</strong>: join a network before signing in; requests must fail cleanly (a handshake timeout, no hang).</li>
+<li><strong>VPN</strong>: with a VPN on, HTTP/3 and echo; the smaller MTU must not stall the transfer (PMTUD falls back to 1200).</li>
+<li><strong>iCloud Private Relay</strong>: on; Private Relay covers Safari, DNS and unencrypted HTTP, not an app's own QUIC, so
+the results must match 1 (name resolution may take a different route).</li>
+<li><strong>LAN server</strong>: Server tab, Start; accept the local network prompt; from another phone, echo to the shown address
+with Sample CA trust, and open the <code>https://</code> address with the HTTP/3 screen. The service is visible as
+<code>_kuicksilver._udp</code> to a Bonjour browser.</li>
+</ol>
+<p>Before relying on a release on devices, run at least items 1, 2, 3 and 5.</p>
+
+</main></div>
+</body>
+</html>

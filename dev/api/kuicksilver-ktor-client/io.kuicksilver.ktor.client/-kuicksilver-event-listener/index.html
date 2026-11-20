@@ -1,0 +1,387 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>KuicksilverEventListener</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client/KuicksilverEventListener///PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">KuicksilverEventListener</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Kuicksilver</span><wbr><span>Event</span><wbr><span><span>Listener</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">class </span><a href="index.html">KuicksilverEventListener</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEventListener.kt#L30">source</a>)</span></span></div><p class="paragraph">Hears what the client engine does with each call (docs/guide/ktor.md, "Observability"), in the manner of OkHttp's <code class="lang-kotlin">EventListener</code>: set it with <code class="lang-kotlin">engine { eventListener = ... }</code>. Every method has an empty default; override the ones you need. The order for one call is <a href="call-start.html">callStart</a>, then for each attempt the protocol decision (<a href="protocol-selected.html">protocolSelected</a>, with <a href="race-ended.html">raceEnded</a>, <a href="alt-svc-used.html">altSvcUsed</a>, <a href="fallback.html">fallback</a> and <a href="retry.html">retry</a> where they apply), the name lookups it makes (<a href="dns-start.html">dnsStart</a> and <a href="dns-end.html">dnsEnd</a>, before the connection they serve; usually none when the request reuses a pooled connection, except that a WebSocket's keys are looked up before the pool is asked, and an HTTP/3 request whose origin has a connection under another name (its host and an alternative) resolves first to decide whether to share it) and <a href="connection-acquired.html">connectionAcquired</a>, and finally <a href="call-end.html">callEnd</a> or <a href="call-failed.html">callFailed</a>; <a href="connection-released.html">connectionReleased</a> follows when the call's response is done with.</p><p class="paragraph">Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without blocking. <a href="dns-start.html">dnsStart</a> and <a href="dns-end.html">dnsEnd</a> may run concurrently, on different threads, for one call: the two address families are looked up at once, and the two sides of the HTTP/3 and TCP race too, so an implementation of them must be thread-safe; an exception out of one (a CancellationException included) is logged at <a href="../../../kuicksilver-quic/io.kuicksilver.quic/-log-level/-warn/index.html">LogLevel.Warn</a> through the engine's logger and otherwise ignored.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="-1905150766%2FConstructors%2F-816330356" anchor-label="KuicksilverEventListener" id="-1905150766%2FConstructors%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-kuicksilver-event-listener.html"><span>Kuicksilver</span><wbr><span>Event</span><wbr><span><span>Listener</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1905150766%2FConstructors%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="1457764885%2FFunctions%2F-816330356" anchor-label="altSvcMarkedBroken" id="1457764885%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alt-svc-marked-broken.html"><span>alt</span><wbr><span>Svc</span><wbr><span>Marked</span><wbr><span><span>Broken</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1457764885%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="alt-svc-marked-broken.html"><span class="token function">altSvcMarkedBroken</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">origin<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">alternative<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The engine marked <a href="alt-svc-marked-broken.html">alternative</a> of <a href="alt-svc-marked-broken.html">origin</a> broken: HTTP/3 failed there while HTTP/1.1 worked (RFC 7838 section 2.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-630678636%2FFunctions%2F-816330356" anchor-label="altSvcUsed" id="-630678636%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alt-svc-used.html"><span>alt</span><wbr><span>Svc</span><wbr><span><span>Used</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-630678636%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="alt-svc-used.html"><span class="token function">altSvcUsed</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">alternative<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="alt-svc-used.html">request</a> goes to the HTTP/3 alternative <a href="alt-svc-used.html">alternative</a> (<code class="lang-kotlin">host:port</code>) the origin announced with <code class="lang-kotlin">Alt-Svc</code> (RFC 7838).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1613233682%2FFunctions%2F-816330356" anchor-label="callEnd" id="1613233682%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="call-end.html"><span>call</span><wbr><span><span>End</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1613233682%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="call-end.html"><span class="token function">callEnd</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">protocol<span class="token operator">: </span><a href="https://api.ktor.io/ktor-http/io.ktor.http/-http-protocol-version/index.html">HttpProtocolVersion</a><span class="token punctuation">, </span></span><span class="parameter ">status<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="call-end.html">request</a> got its response head (<a href="call-end.html">status</a>) over <a href="call-end.html">protocol</a>; the body may still be streaming.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1618611588%2FFunctions%2F-816330356" anchor-label="callFailed" id="1618611588%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="call-failed.html"><span>call</span><wbr><span><span>Failed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1618611588%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="call-failed.html"><span class="token function">callFailed</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">cause<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="call-failed.html">request</a> failed with <a href="call-failed.html">cause</a> (after any fallback or retry).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1570749601%2FFunctions%2F-816330356" anchor-label="callStart" id="1570749601%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="call-start.html"><span>call</span><wbr><span><span>Start</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1570749601%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="call-start.html"><span class="token function">callStart</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The engine received <a href="call-start.html">request</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="380480232%2FFunctions%2F-816330356" anchor-label="connectionAcquired" id="380480232%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-acquired.html"><span>connection</span><wbr><span><span>Acquired</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="380480232%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="connection-acquired.html"><span class="token function">connectionAcquired</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">protocol<span class="token operator">: </span><a href="https://api.ktor.io/ktor-http/io.ktor.http/-http-protocol-version/index.html">HttpProtocolVersion</a><span class="token punctuation">, </span></span><span class="parameter ">reused<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="connection-acquired.html">request</a> got a connection over <a href="connection-acquired.html">protocol</a>: an open or pooled one when <a href="connection-acquired.html">reused</a>, else a new one.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1484953694%2FFunctions%2F-816330356" anchor-label="connectionMigrated" id="1484953694%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-migrated.html"><span>connection</span><wbr><span><span>Migrated</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1484953694%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="connection-migrated.html"><span class="token function">connectionMigrated</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">origin<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">event<span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-migration-event/index.html">MigrationEvent</a><span class="token operator">&lt;</span><span class="token operator">*</span><span class="token operator">&gt;</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">An HTTP/3 connection to <a href="connection-migrated.html">origin</a> (<code class="lang-kotlin">https://host:port</code>) followed the network (<a href="../-http3-client-config/connection-migration.html">Http3ClientConfig.connectionMigration</a>): <a href="connection-migrated.html">event</a> is what its <a href="../../../kuicksilver-quic/io.kuicksilver.quic/-network-migrator/index.html">io.kuicksilver.quic.NetworkMigrator</a> did, a move to another network (<a href="../../../kuicksilver-quic/io.kuicksilver.quic/-migration-event/-migrated/index.html">MigrationEvent.Migrated</a>), a move that failed and left the connection where it was (<a href="../../../kuicksilver-quic/io.kuicksilver.quic/-migration-event/-failed/index.html">MigrationEvent.Failed</a>), a lost network or a failed network source. Runs on the migrator's coroutine, not a call's.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="775808025%2FFunctions%2F-816330356" anchor-label="connectionReleased" id="775808025%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-released.html"><span>connection</span><wbr><span><span>Released</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="775808025%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="connection-released.html"><span class="token function">connectionReleased</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">protocol<span class="token operator">: </span><a href="https://api.ktor.io/ktor-http/io.ktor.http/-http-protocol-version/index.html">HttpProtocolVersion</a><span class="token punctuation">, </span></span><span class="parameter ">kept<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="connection-released.html">request</a>'s exchange gave its connection back: <a href="connection-released.html">kept</a> when the connection stays open for the next request. Follows every <a href="connection-acquired.html">connectionAcquired</a> once, also when the exchange failed before a response (then usually not <a href="connection-released.html">kept</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1978993267%2FFunctions%2F-816330356" anchor-label="dnsEnd" id="1978993267%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dns-end.html"><span>dns</span><wbr><span><span>End</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1978993267%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="dns-end.html"><span class="token function">dnsEnd</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">host<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">ipv6<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator">?</span><span class="token punctuation">, </span></span><span class="parameter ">addresses<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-ip-address/index.html">IpAddress</a><span class="token operator">&gt;</span><span class="token punctuation">, </span></span><span class="parameter ">failure<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The lookup <a href="dns-start.html">dnsStart</a> announced ended (OkHttp's <code class="lang-kotlin">dnsEnd</code>, which has no failure; here also when it failed): <a href="dns-end.html">addresses</a> are what the engine may connect to, after the destination check (no unspecified, multicast or broadcast address) and before the RFC 6724 sort, empty when the name has none of that family; on a failure (a cancellation included) <a href="dns-end.html">addresses</a> is empty and <a href="dns-end.html">failure</a> says why. On an IPv6-only network the IPv4 answers are synthesized later, so they appear here as IPv4. May run concurrently with the call's other DNS events, on another thread.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="809654510%2FFunctions%2F-816330356" anchor-label="dnsStart" id="809654510%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dns-start.html"><span>dns</span><wbr><span><span>Start</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="809654510%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="dns-start.html"><span class="token function">dnsStart</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">host<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">ipv6<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The engine starts a lookup of <a href="dns-start.html">host</a> for <a href="dns-start.html">request</a> (OkHttp's <code class="lang-kotlin">dnsStart</code>): through the system's resolver or <code class="lang-kotlin">KuicksilverEngineConfig.dns</code>. <a href="dns-start.html">ipv6</a> is the address family asked for, IPv6 or IPv4: the system's resolver and a <a href="../-family-dns/index.html">FamilyDns</a> are asked once per family (RFC 8305 section 3), often both at once; null when one lookup answers both (a plain <a href="../-dns/index.html">Dns</a>). Each host and family is looked up once per request (again only after a lookup whose caller was cancelled), so the h3/h1 race and a fallback share it. No lookup, and no event, for an address literal, a host with the form of an IPv4 address, or the addresses an HTTPS answer carried. <a href="dns-end.html">dnsEnd</a> follows once. May run concurrently with the call's other DNS events, on another thread.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1914252693%2FFunctions%2F-816330356" anchor-label="fallback" id="-1914252693%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="fallback.html"><span><span>fallback</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1914252693%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="fallback.html"><span class="token function">fallback</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">cause<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">HTTP/3 failed for <a href="fallback.html">request</a> with <a href="fallback.html">cause</a> and the request goes again over TCP (HTTP/1.1, or HTTP/2 when the server offers it).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1429960401%2FFunctions%2F-816330356" anchor-label="httpsRecordUsed" id="1429960401%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="https-record-used.html"><span>https</span><wbr><span>Record</span><wbr><span><span>Used</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1429960401%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="https-record-used.html"><span class="token function">httpsRecordUsed</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">alternative<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="https-record-used.html">request</a> connects to <a href="https-record-used.html">alternative</a> (<code class="lang-kotlin">host:port</code>), an endpoint of the origin's HTTPS resource record (RFC 9460, <a href="../-http3-client-config/https-records.html">Http3ClientConfig.httpsRecords</a>), over the transports the record allows; once per endpoint tried. A QUIC failure there marks it broken as for an <code class="lang-kotlin">Alt-Svc</code> alternative (<a href="alt-svc-marked-broken.html">altSvcMarkedBroken</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1091379367%2FFunctions%2F-816330356" anchor-label="protocolSelected" id="1091379367%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="protocol-selected.html"><span>protocol</span><wbr><span><span>Selected</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1091379367%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="protocol-selected.html"><span class="token function">protocolSelected</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">protocol<span class="token operator">: </span><a href="https://api.ktor.io/ktor-http/io.ktor.http/-http-protocol-version/index.html">HttpProtocolVersion</a><span class="token punctuation">, </span></span><span class="parameter ">reason<span class="token operator">: </span><a href="../-protocol-reason/index.html">ProtocolReason</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The engine sends <a href="protocol-selected.html">request</a> over <a href="protocol-selected.html">protocol</a> for <a href="protocol-selected.html">reason</a>. On the TCP path it comes once the connection is in hand, with the protocol the server chose (<code class="lang-kotlin">HTTP_2_0</code> when it picked <code class="lang-kotlin">h2</code> in ALPN, else <code class="lang-kotlin">HTTP_1_1</code>); before 0.3.0 it came before connecting and always said <code class="lang-kotlin">HTTP_1_1</code>. A repeat that changes the protocol (HTTP_1_1_REQUIRED) reports it again.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1787811433%2FFunctions%2F-816330356" anchor-label="raceEnded" id="-1787811433%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="race-ended.html"><span>race</span><wbr><span><span>Ended</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1787811433%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="race-ended.html"><span class="token function">raceEnded</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">winner<span class="token operator">: </span><a href="https://api.ktor.io/ktor-http/io.ktor.http/-http-protocol-version/index.html">HttpProtocolVersion</a><span class="token punctuation">, </span></span><span class="parameter ">headStart<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token punctuation">, </span></span><span class="parameter ">h3Failure<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">HTTP/3 and TCP connection setups raced (docs/guide/ktor.md, "Racing and fallback"): <a href="race-ended.html">winner</a> (<code class="lang-kotlin">HTTP_3_0</code>, or the TCP side's <code class="lang-kotlin">HTTP_2_0</code> or <code class="lang-kotlin">HTTP_1_1</code>) won after HTTP/3's <a href="race-ended.html">headStart</a>; <a href="race-ended.html">h3Failure</a> is why HTTP/3 lost when it failed rather than being slower.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1708344820%2FFunctions%2F-816330356" anchor-label="retry" id="-1708344820%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="retry.html"><span><span>retry</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1708344820%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="retry.html"><span class="token function">retry</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">attempt<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">cause<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="retry.html">request</a> is sent again, attempt number <a href="retry.html">attempt</a> (2 and up), because of <a href="retry.html">cause</a>: a GOAWAY or REFUSED_STREAM (the server did not process it), HTTP_1_1_REQUIRED over HTTP/2, a stale pooled connection, or a 417 to its <code class="lang-kotlin">Expect: 100-continue</code> (sent again without it).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-569246389%2FFunctions%2F-816330356" anchor-label="webSocketFailed" id="-569246389%2FFunctions%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="web-socket-failed.html"><span>web</span><wbr><span>Socket</span><wbr><span><span>Failed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-569246389%2FFunctions%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="web-socket-failed.html"><span class="token function">webSocketFailed</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="https://api.ktor.io/ktor-client-core/io.ktor.client.request/-http-request-data/index.html">HttpRequestData</a><span class="token punctuation">, </span></span><span class="parameter ">cause<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">A coroutine of <a href="web-socket-failed.html">request</a>'s WebSocket session (the engine's or Ktor's reader or writer) failed with <a href="web-socket-failed.html">cause</a>: the session ends, and its connection (HTTP/1.1) or stream (HTTP/2, HTTP/3) is closed as for a failed call. The application sees the end through the session's channels; this is where the failure itself is reported, also after <a href="call-end.html">callEnd</a> (the session may outlive its call while it writes its own Close). Runs on the session's coroutine.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

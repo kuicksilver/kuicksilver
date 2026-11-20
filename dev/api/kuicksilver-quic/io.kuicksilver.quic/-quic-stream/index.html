@@ -1,0 +1,342 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>QuicStream</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic/QuicStream///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic</a><span class="delimiter">/</span><span class="current">QuicStream</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Quic</span><wbr><span><span>Stream</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="index.html">QuicStream</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/QuicStream.kt#L17">source</a>)</span></span></div><p class="paragraph">A QUIC stream as two ktor-io channels. Closing <a href="output.html">output</a> sends FIN; closing it with a cause sends RESET_STREAM; cancelling <a href="input.html">input</a> sends STOP_SENDING. A peer reset or stop surfaces as <a href="../-quic-exception/-stream-error/index.html">QuicException.StreamError</a> in the channel's cause chain; a lost connection surfaces as its <a href="../-quic-exception/-connection-lost/index.html">QuicException.ConnectionLost</a>. A unidirectional stream has one half (see <a href="../is-unidirectional.html">isUnidirectional</a>): <a href="input.html">input</a> of our own one and <a href="output.html">output</a> of the peer's throw IllegalStateException.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button><button class="section-tab" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION,EXTENSION_PROPERTY,EXTENSION_FUNCTION">Members &amp; Extensions</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-670657568%2FProperties%2F42191490" anchor-label="id" id="-670657568%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="id.html"><span><span>id</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-670657568%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="id.html">id</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">The stream id (RFC 9000 section 2.1): bit 0x1 tells who opened the stream, bit 0x2 whether it is unidirectional; see <a href="../is-unidirectional.html">isUnidirectional</a> and <a href="../is-client-initiated.html">isClientInitiated</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2094328427%2FProperties%2F42191490" anchor-label="input" id="-2094328427%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="input.html"><span><span>input</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2094328427%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="input.html">input</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-byte-read-channel/index.html">ByteReadChannel</a></div><div class="brief "><p class="paragraph">The bytes the peer sends, in order. Only its FIN, with every byte before it read, ends the channel (<code class="lang-kotlin">isClosedForRead</code>, -1 from <code class="lang-kotlin">readAvailable</code>, <code class="lang-kotlin">closedCause</code> null). Any other end fails every read with its cause instead of reporting an end, and leaves the channel not <code class="lang-kotlin">isClosedForRead</code>: <a href="../-quic-exception/-stream-error/-reset/index.html">QuicException.StreamError.Reset</a> when the peer resets the stream, <a href="../-quic-exception/-stream-error/-stopped/index.html">QuicException.StreamError.Stopped</a> after our <a href="stop-sending.html">stopSending</a>, <a href="../-quic-exception/-connection-lost/index.html">QuicException.ConnectionLost</a> once the connection is gone (a close by either side, an idle timeout, a stateless reset). A lost connection takes nothing the peer sent before it: the bytes already received are still read, up to the FIN when it came too (then the stream ends cleanly, as above), and only then do reads fail with the <a href="../-quic-exception/-connection-lost/index.html">QuicException.ConnectionLost</a>. A reset still fails the reads at once (RFC 9000 section 3.2: the data it abandons may be discarded). IllegalStateException on our own unidirectional stream.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="852389875%2FProperties%2F42191490" anchor-label="isClientInitiated" id="852389875%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_PROPERTY" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../is-client-initiated.html"><span>is</span><wbr><span>Client</span><wbr><span><span>Initiated</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="852389875%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="index.html">QuicStream</a><span class="token punctuation">.</span><a href="../is-client-initiated.html">isClientInitiated</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True when the client opened the stream (RFC 9000 section 2.1, bit 0x1 of the id is 0).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1200879483%2FProperties%2F42191490" anchor-label="isUnidirectional" id="-1200879483%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_PROPERTY" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../is-unidirectional.html"><span>is</span><wbr><span><span>Unidirectional</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1200879483%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="index.html">QuicStream</a><span class="token punctuation">.</span><a href="../is-unidirectional.html">isUnidirectional</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True for a unidirectional stream (RFC 9000 section 2.1, bit 0x2 of the id): ours has only <code class="lang-kotlin">output</code>, the peer's only <code class="lang-kotlin">input</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-300615750%2FProperties%2F42191490" anchor-label="output" id="-300615750%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="output.html"><span><span>output</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-300615750%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="output.html">output</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-byte-write-channel/index.html">ByteWriteChannel</a></div><div class="brief "><p class="paragraph">The bytes we send: <code class="lang-kotlin">flushAndClose()</code> sends FIN, closing with a cause sends RESET_STREAM with <code class="lang-kotlin">QuicConfig.defaultStreamErrorCode</code>, and a peer's STOP_SENDING fails writes with <a href="../-quic-exception/-stream-error/-stopped/index.html">QuicException.StreamError.Stopped</a> as the cause. IllegalStateException on the peer's unidirectional stream.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-701332233%2FProperties%2F42191490" anchor-label="priority" id="-701332233%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="priority.html"><span><span>priority</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-701332233%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">var </span><a href="priority.html">priority</a><span class="token operator">: </span><a href="../-stream-priority/index.html">StreamPriority</a></div><div class="brief "><p class="paragraph">Send priority among the connection's streams (RFC 9218 at the transport): the priority the stream was opened with, or <a href="../-stream-priority/-companion/-default.html">StreamPriority.Default</a> for a stream the peer opened, until assigned; an assignment reaches the endpoint loop asynchronously.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1660807075%2FProperties%2F42191490" anchor-label="receivedEarly" id="-1660807075%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="received-early.html"><span>received</span><wbr><span><span>Early</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1660807075%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="received-early.html">receivedEarly</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1244594647%2FProperties%2F42191490" anchor-label="receivedFinalSize" id="-1244594647%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="received-final-size.html"><span>received</span><wbr><span>Final</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1244594647%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="received-final-size.html">receivedFinalSize</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-deferred/index.html">Deferred</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator">&gt;</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The final size of the peer's sending half (RFC 9000 section 4.5), completed as soon as its FIN, RESET_STREAM or RESET_STREAM_AT made it known, whether or not the bytes were read (also after <a href="stop-sending.html">stopSending</a>): what a protocol that counts the peer's data across streams needs for a reset stream (draft-ietf-webtrans-http3-16 section 5.4). The size counts every byte of the stream, an application's own header included. On a client's own stream, while its 0-RTT awaits the server's answer, it completes only once the server accepted the early data, as <a href="sent-final-size.html">sentFinalSize</a> does. Fails like <a href="sent-final-size.html">sentFinalSize</a> when the connection ends first or a rejected 0-RTT dropped the stream, and at once with IllegalStateException on our own unidirectional stream. Shared like <a href="sent-final-size.html">sentFinalSize</a>: never cancel it. Null from implementations outside this library that do not track it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1653590087%2FProperties%2F42191490" anchor-label="receivedOffset" id="1653590087%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="received-offset.html"><span>received</span><wbr><span><span>Offset</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1653590087%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="received-offset.html">receivedOffset</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-state-flow/index.html">StateFlow</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator">&gt;</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The highest offset of the peer's half received so far, whether read or not and in order or not (RFC 9000 section 4.1: flow control counts it), then its final size once a reset or FIN told it. It only grows; 0 on our own unidirectional stream. What a protocol that limits the peer's data across streams checks, also for bytes nobody reads yet (draft-ietf-webtrans-http3-16 section 5.6.4). Null from implementations outside this library that do not track it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-818211370%2FProperties%2F42191490" anchor-label="sendReleased" id="-818211370%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send-released.html"><span>send</span><wbr><span><span>Released</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-818211370%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="send-released.html">sendReleased</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-state-flow/index.html">StateFlow</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator">&gt;</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The bytes of our sending half released from the connection's send buffer so far (<code class="lang-kotlin">QuicConfig.maxSendBuffer</code>, shared by every stream): acknowledged by the peer, or dropped by a reset; all of them once the stream retired or the connection ended. It only grows; the bytes written minus these are what the stream holds of the shared buffer, which a protocol multiplexing independent users over one connection limits per user. Tracked from its first read on (that read catches up with what was released before); stays 0 on the peer's unidirectional stream. Null from implementations outside this library that do not track it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="762689312%2FProperties%2F42191490" anchor-label="sentFinalSize" id="762689312%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="sent-final-size.html"><span>sent</span><wbr><span>Final</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="762689312%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="sent-final-size.html">sentFinalSize</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-deferred/index.html">Deferred</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator">&gt;</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The final size of our sending half (RFC 9000 section 4.5): the flow-control credit it consumed, as the peer counts it. Completes once the size can no longer change: once the RESET_STREAM of <a href="reset.html">reset</a> or of the answer to the peer's STOP_SENDING is queued, or the RESET_STREAM_AT of <a href="reset-at.html">resetAt</a> (which waits for its reliable bytes to go out once), with the size that frame carries; after FIN, once the FIN was first sent, with every byte written (a later reset carries the same size). A stream opened in 0-RTT completes only once the server accepted it. Fails with the connection's <a href="../-quic-exception/-connection-lost/index.html">QuicException.ConnectionLost</a> when the connection ends first, with <a href="../-quic-exception/-stream-error/-early-data-rejected/index.html">QuicException.StreamError.EarlyDataRejected</a> when a rejected 0-RTT dropped the stream, and at once with IllegalStateException on the peer's unidirectional stream. The same Deferred is handed to every caller: await it, never cancel it, or the others see the cancellation too. Null from implementations outside this library that do not track it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-261911159%2FFunctions%2F42191490" anchor-label="reset" id="-261911159%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="reset.html"><span><span>reset</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-261911159%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="reset.html"><span class="token function">reset</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Abandons sending with RESET_STREAM carrying application error <a href="reset.html">code</a> (RFC 9000 section 19.4): writes to <a href="output.html">output</a> fail with <code class="lang-kotlin">ClosedWriteChannelException</code>, <a href="../-quic-exception/-stream-error/-reset/index.html">QuicException.StreamError.Reset</a> as the cause, and unsent data is dropped. Returns at once; the loop sends the frame. Once all data and the FIN were acknowledged there is nothing to abandon (section 3.1: a reset leaves only the "Ready", "Send", or "Data Sent" states), and no frame goes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="268875382%2FFunctions%2F42191490" anchor-label="resetAt" id="268875382%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="reset-at.html"><span>reset</span><wbr><span><span>At</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="268875382%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="reset-at.html"><span class="token function">resetAt</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token punctuation">, </span></span><span class="parameter ">reliableSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Abandons sending like <a href="reset.html">reset</a>, but with RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset): the first <a href="reset-at.html">reliableSize</a> bytes are still delivered to the peer's application, however many packets are lost, and the peer sees the reset after them. Bytes count only once they were flushed to the stream; a larger <a href="reset-at.html">reliableSize</a> is cut to them. Needs <code class="lang-kotlin">QuicConfig.resetStreamAt</code> on both sides; otherwise it is <a href="reset.html">reset</a> (RESET_STREAM), and the prefix may be lost. Our own setting is required too, not only the peer's: the frame then goes out only on connections where the application opted in to the extension (the same switch makes us accept it), so RFC 9000 behaviour stays the default. The frame waits until every reliable byte was sent once, so its final size stays within the peer's flow control: on a stream starved of credit the reset reaches the peer only once credit arrives, and a later <a href="reset.html">reset</a> cuts that short. Implementations outside this library need not override it: the default is <a href="reset.html">reset</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="385644082%2FFunctions%2F42191490" anchor-label="stopSending" id="385644082%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stop-sending.html"><span>stop</span><wbr><span><span>Sending</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="385644082%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="stop-sending.html"><span class="token function">stopSending</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Asks the peer to stop sending with STOP_SENDING carrying application error <a href="stop-sending.html">code</a> (RFC 9000 section 19.5): <a href="input.html">input</a> fails with <a href="../-quic-exception/-stream-error/-stopped/index.html">QuicException.StreamError.Stopped</a> and buffered data is dropped. Returns at once.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

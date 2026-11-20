@@ -1,0 +1,331 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http3Request</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/Http3Request///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">Http3Request</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Http3Request</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Http3Request</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Http3Request.kt#L21">source</a>)</span></span></div><p class="paragraph">A client request (RFC 9114 section 4.1), built with <a href="../http3-request.html">http3Request</a> (or <a href="-builder/index.html">Builder</a>). <a href="authority.html">authority</a> and <a href="path.html">path</a> become the pseudo-headers; <a href="headers.html">headers</a> must not contain pseudo-headers or connection-specific fields. <code class="lang-kotlin">request</code> refuses with IllegalArgumentException what the peer would treat as malformed (RFC 9114 sections 4.2, 4.3.1): a <a href="method.html">method</a> that is not a token, a <a href="path.html">path</a> that does not start with <code class="lang-kotlin">/</code> (or is <code class="lang-kotlin">*</code> for OPTIONS), userinfo (<code class="lang-kotlin">user@</code>) in <a href="authority.html">authority</a>, a <code class="lang-kotlin">host</code> field differing from <a href="authority.html">authority</a>, <code class="lang-kotlin">te</code> other than <code class="lang-kotlin">trailers</code>, invalid field names or values, a <a href="protocol.html">protocol</a> that is not a token (RFC 8441 section 4), <a href="trailers.html">trailers</a> on a CONNECT (RFC 9114 section 4.4: only DATA follows its 2xx), and a CONNECT that enables the Capsule Protocol (<code class="lang-kotlin">Capsule-Protocol: ?1</code>) with <code class="lang-kotlin">content-length</code>, <code class="lang-kotlin">content-type</code> or <code class="lang-kotlin">transfer-encoding</code> (RFC 9297 section 3.2). A null <a href="body.html">body</a> sends HEADERS with FIN; otherwise the channel is copied into DATA frames until it closes, then <a href="trailers.html">trailers</a> (if any) are sent.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="154741466%2FClasslikes%2F748033675" anchor-label="Builder" id="154741466%2FClasslikes%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-builder/index.html"><span><span>Builder</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="154741466%2FClasslikes%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-builder/index.html">Builder</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">var </span>method<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">var </span>authority<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">var </span>path<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Builds an <a href="index.html">Http3Request</a>: <a href="-builder/method.html">method</a>, <a href="-builder/authority.html">authority</a> and <a href="-builder/path.html">path</a> as the pseudo-headers, everything else optional; see the properties of <a href="index.html">Http3Request</a> for what each setting means. New options arrive as new properties here, so code that builds requests keeps compiling and linking.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1908716428%2FProperties%2F748033675" anchor-label="allowEarlyData" id="-1908716428%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="allow-early-data.html"><span>allow</span><wbr><span>Early</span><wbr><span><span>Data</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1908716428%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="allow-early-data.html">allowEarlyData</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Send in 0-RTT on a connection from <code class="lang-kotlin">Http3Endpoint.connectEarly</code> whose handshake is not complete yet; honoured only for a safe method (GET, HEAD, OPTIONS) without a body, every other request waits for the handshake. The request may be replayed by an attacker (RFC 9846 section 8); a <code class="lang-kotlin">425 Too Early</code> answer is repeated once after the handshake (RFC 8470).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1987684447%2FProperties%2F748033675" anchor-label="authority" id="1987684447%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="authority.html"><span><span>authority</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1987684447%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="authority.html">authority</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The <code class="lang-kotlin">:authority</code> pseudo-header (<code class="lang-kotlin">host[:port]</code>); null sends none, which <code class="lang-kotlin">https</code> requests may only do with a <code class="lang-kotlin">host</code> field.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1896777034%2FProperties%2F748033675" anchor-label="body" id="-1896777034%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="body.html"><span><span>body</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1896777034%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="body.html">body</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-io/io.ktor.utils.io/-byte-read-channel/index.html">ByteReadChannel</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The request content, read until the channel closes; a channel that closes with an error fails the request.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="729734844%2FProperties%2F748033675" anchor-label="headers" id="729734844%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="headers.html"><span><span>headers</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="729734844%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="headers.html">headers</a><span class="token operator">: </span><a href="../-http3-headers/index.html">Http3Headers</a></div><div class="brief "><p class="paragraph">The request fields: lowercase names, no pseudo-headers, no connection-specific fields (RFC 9114 section 4.2).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1186919017%2FProperties%2F748033675" anchor-label="method" id="-1186919017%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="method.html"><span><span>method</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1186919017%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="method.html">method</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">The <code class="lang-kotlin">:method</code> pseudo-header (<code class="lang-kotlin">GET</code>, <code class="lang-kotlin">POST</code>, ...); case-sensitive (RFC 9110 section 9.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1302689078%2FProperties%2F748033675" anchor-label="onInformational" id="-1302689078%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="on-informational.html"><span>on</span><wbr><span><span>Informational</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1302689078%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="on-informational.html">onInformational</a><span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span>status<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span>headers<span class="token operator">: </span><a href="../-http3-headers/index.html">Http3Headers</a><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-unit/index.html">Unit</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Called for each interim (1xx) response before the final one, 103 Early Hints included. It runs on the dispatcher of the coroutine that called <code class="lang-kotlin">request</code> (not the connection's); the final response waits for it to return.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="461642131%2FProperties%2F748033675" anchor-label="path" id="461642131%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="path.html"><span><span>path</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="461642131%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="path.html">path</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The <code class="lang-kotlin">:path</code> pseudo-header (path and query, <code class="lang-kotlin">/</code> at least); ignored for a classic CONNECT (RFC 9114 section 4.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="263797620%2FProperties%2F748033675" anchor-label="priority" id="263797620%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="priority.html"><span><span>priority</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="263797620%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="priority.html">priority</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-stream-priority/index.html">StreamPriority</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Sent as the <code class="lang-kotlin">priority</code> field (RFC 9218 section 5) when not the default u=3, i=false (on a CONNECT always, as <code class="lang-kotlin">i=?0</code> for the defaults: a server may give a CONNECT without the field a tunnel default of its own), and used for our own scheduling of the request stream; it replaces any <code class="lang-kotlin">priority</code> field among <a href="headers.html">headers</a>, so the server's signal and our scheduling agree. Without it a <code class="lang-kotlin">priority</code> field among <a href="headers.html">headers</a> is sent as given and schedules the stream too (when it parses); without either a request, a CONNECT included, is scheduled with the defaults (section 4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="957931776%2FProperties%2F748033675" anchor-label="protocol" id="957931776%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="protocol.html"><span><span>protocol</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="957931776%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="protocol.html">protocol</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">:protocol</code> of an Extended CONNECT (RFC 9220); set by <code class="lang-kotlin">Http3Connection.connect</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="39963987%2FProperties%2F748033675" anchor-label="scheme" id="39963987%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="scheme.html"><span><span>scheme</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="39963987%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="scheme.html">scheme</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">The <code class="lang-kotlin">:scheme</code> pseudo-header; not sent for a classic CONNECT (RFC 9114 section 4.4).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="585651960%2FProperties%2F748033675" anchor-label="trailers" id="585651960%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="trailers.html"><span><span>trailers</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="585651960%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="trailers.html">trailers</a><span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="../-http3-headers/index.html">Http3Headers</a><span class="token operator">?</span><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Called once after <a href="body.html">body</a> ended; the fields it returns are sent as trailers, null sends none. It runs on the dispatcher of the coroutine that called <code class="lang-kotlin">request</code> (not the connection's), so it may suspend or block briefly.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="1786427810%2FFunctions%2F748033675" anchor-label="toBuilder" id="1786427810%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-builder.html"><span>to</span><wbr><span><span>Builder</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1786427810%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="to-builder.html"><span class="token function">toBuilder</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="-builder/index.html">Http3Request.Builder</a></div><div class="brief "><p class="paragraph">A builder pre-filled with this request's values.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

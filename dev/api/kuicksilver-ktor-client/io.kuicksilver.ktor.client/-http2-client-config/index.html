@@ -1,0 +1,207 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http2ClientConfig</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client/Http2ClientConfig///PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">Http2ClientConfig</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Http2Client</span><wbr><span><span>Config</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Http2ClientConfig</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt#L254">source</a>)</span></span></div><p class="paragraph">HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every <code class="lang-kotlin">https://</code> connection over TCP offers <code class="lang-kotlin">h2</code> and <code class="lang-kotlin">http/1.1</code> in ALPN, and a server that picks <code class="lang-kotlin">h2</code> gets one multiplexed connection per route instead of up to <code class="lang-kotlin">maxConnectionsPerRoute</code> HTTP/1.1 connections. An <code class="lang-kotlin">http://</code> request uses HTTP/1.1, unless its origin is listed in <a href="prior-knowledge.html">priorKnowledge</a> (h2c, HTTP/2 over cleartext TCP). A <code class="lang-kotlin">wss://</code> WebSocket goes over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin that is there already and whose server allows it (SETTINGS_ENABLE_CONNECT_PROTOCOL); otherwise it opens a connection of its own that offers <code class="lang-kotlin">http/1.1</code> only, as in 0.2 (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch (<code class="lang-kotlin">http3 { http3Allowed }</code> turns HTTP/3 off, not HTTP/2). A <code class="lang-kotlin">tls</code> block that allows TLS 1.2 (<code class="lang-kotlin">versions = TlsVersions.Tls12And13</code>) offers <code class="lang-kotlin">h2</code> as well (RFC 9113 section 9.2): over TLS 1.2 renegotiation stays refused, and a server that asks for one (a HelloRequest) ends the connection with a connection error of type PROTOCOL_ERROR (section 9.2.1); the TLS 1.2 suites are ECDHE with an AEAD only, none of them prohibited by section 9.2.2.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="1609342242%2FConstructors%2F-816330356" anchor-label="Http2ClientConfig" id="1609342242%2FConstructors%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-http2-client-config.html"><span>Http2Client</span><wbr><span><span>Config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1609342242%2FConstructors%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-281426760%2FProperties%2F-816330356" anchor-label="enabled" id="-281426760%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="enabled.html"><span><span>enabled</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-281426760%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="enabled.html">enabled</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Offer HTTP/2 (true by default). False offers only <code class="lang-kotlin">http/1.1</code> in ALPN, as before 0.3.0: the switch for a server or middlebox whose HTTP/2 is broken.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="870828970%2FProperties%2F-816330356" anchor-label="pingInterval" id="870828970%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ping-interval.html"><span>ping</span><wbr><span><span>Interval</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="870828970%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="ping-interval.html">pingInterval</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">Sends a PING this often on every HTTP/2 connection and closes the connection when one is still unanswered at the next (OkHttp's <code class="lang-kotlin">pingInterval</code>); its calls fail. <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/-companion/-i-n-f-i-n-i-t-e.html">Duration.INFINITE</a> (the default) sends none. At least 100 ms.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1663744205%2FProperties%2F-816330356" anchor-label="priorKnowledge" id="1663744205%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="prior-knowledge.html"><span>prior</span><wbr><span><span>Knowledge</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1663744205%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="prior-knowledge.html">priorKnowledge</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-set/index.html">Set</a><span class="token operator">&lt;</span><a href="../-host-port/index.html">HostPort</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The <code class="lang-kotlin">http://</code> origins (host and port, as in request URLs) whose server is known to speak HTTP/2 over cleartext TCP: their requests go over h2c with prior knowledge (RFC 9113 section 3.3), the client connection preface right after the TCP connect, without TLS, without ALPN and without <code class="lang-kotlin">Upgrade: h2c</code> (deprecated by section 3.1, never sent). Empty by default: every other <code class="lang-kotlin">http://</code> request stays HTTP/1.1, and nothing is learned (a server that once spoke h2c is not assumed to again, section 3.3). The list is per origin on purpose (OkHttp's <code class="lang-kotlin">Protocol.H2_PRIOR_KNOWLEDGE</code> turns a whole client to h2c): h2c is cleartext (CWE-319), so name only servers on a trusted network or behind a sidecar that protects the hop, as a TLS-terminating proxy, a service mesh or a gRPC back end are (docs/guide/ktor.md, "h2c").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1371818146%2FProperties%2F-816330356" anchor-label="settings" id="-1371818146%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="settings.html"><span><span>settings</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1371818146%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="settings.html">settings</a><span class="token operator">: </span><a href="../../../kuicksilver-http2/io.kuicksilver.http2/-http2-settings/index.html">Http2Settings</a></div><div class="brief "><p class="paragraph">Our side of each HTTP/2 connection: windows, SETTINGS and the limits held against the server (threat model 3.23). Its <code class="lang-kotlin">maxConcurrentStreams</code> is what we allow the server to open towards us, which a client never uses: a server's limit for our requests comes from its own SETTINGS.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

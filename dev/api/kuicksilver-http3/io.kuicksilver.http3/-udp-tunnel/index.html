@@ -1,0 +1,282 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>UdpTunnel</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/UdpTunnel///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">UdpTunnel</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Udp</span><wbr><span><span>Tunnel</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">interface </span><a href="index.html">UdpTunnel</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/ConnectUdp.kt#L104">source</a>)</span></span></div><p class="paragraph">A UDP tunnel through a proxy (RFC 9298), from <a href="../connect-udp.html">Http3Connection.connectUdp</a>: UDP payloads to and from one target, carried as HTTP datagrams with Context ID 0 (section 5), as QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams and as DATAGRAM capsules otherwise (RFC 9297 section 3.5). Like UDP, delivery is not guaranteed: datagrams that do not fit the connection to the proxy are refused (<code class="lang-kotlin">TooLarge</code>), and the proxy may drop what its own link cannot carry.</p><p class="paragraph">The tunnel lives as long as its request stream: <a href="close.html">close</a> ends it; the proxy ends it when its socket fails or after a period without traffic (two minutes at least, section 3.1), and <a href="payloads.html">payloads</a> then completes.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1754774465%2FProperties%2F748033675" anchor-label="droppedDatagrams" id="-1754774465%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dropped-datagrams.html"><span>dropped</span><wbr><span><span>Datagrams</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1754774465%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="dropped-datagrams.html">droppedDatagrams</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a></div><div class="brief "><p class="paragraph">HTTP datagrams received and dropped: an unknown Context ID, or too short to carry one.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1250626220%2FProperties%2F748033675" anchor-label="payloads" id="1250626220%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="payloads.html"><span><span>payloads</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1250626220%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="payloads.html">payloads</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-flow/index.html">Flow</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">UDP payloads from the target, in the order they arrived; datagrams with another Context ID are dropped (RFC 9298 section 4) and counted in <a href="dropped-datagrams.html">droppedDatagrams</a>. Keeps the newest 64 nobody collected. One collector at a time; it completes when the proxy ends the tunnel or the stream is gone.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-95601861%2FProperties%2F748033675" anchor-label="remoteAddress" id="-95601861%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="remote-address.html"><span>remote</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-95601861%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="remote-address.html">remoteAddress</a><span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a></div><div class="brief "><p class="paragraph">The address <a href="as-datagram-io.html">asDatagramIo</a> reports for the target: the target itself when it is an IP literal, else a placeholder from 192.0.2.0/24 (TEST-NET-1, never routed): the client does not resolve the name, the proxy does (section 3.1).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-40217295%2FProperties%2F748033675" anchor-label="stream" id="-40217295%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stream.html"><span><span>stream</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-40217295%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="stream.html">stream</a><span class="token operator">: </span><a href="../-capsule-stream/index.html">CapsuleStream</a></div><div class="brief "><p class="paragraph">The request stream speaking the Capsule Protocol, for its headers, priority, <code class="lang-kotlin">reset</code> and the capsules of extensions.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-160127496%2FProperties%2F748033675" anchor-label="targetHost" id="-160127496%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="target-host.html"><span>target</span><wbr><span><span>Host</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-160127496%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="target-host.html">targetHost</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">The target as the request named it: an IP literal (IPv6 without brackets) or a DNS name the proxy resolved.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="128104767%2FProperties%2F748033675" anchor-label="targetPort" id="128104767%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="target-port.html"><span>target</span><wbr><span><span>Port</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="128104767%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="target-port.html">targetPort</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The target's UDP port.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-2033037320%2FFunctions%2F748033675" anchor-label="asDatagramIo" id="-2033037320%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="as-datagram-io.html"><span>as</span><wbr><span>Datagram</span><wbr><span><span>Io</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2033037320%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="as-datagram-io.html"><span class="token function">asDatagramIo</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-datagram-io/index.html">DatagramIo</a></div><div class="brief "><p class="paragraph">The tunnel as a UDP socket for a QUIC endpoint (<code class="lang-kotlin">quicEndpointConfig { io = { tunnel.asDatagramIo() } }</code>), so that a QUIC or HTTP/3 connection to <a href="remote-address.html">remoteAddress</a> runs through the proxy (proxied QUIC). Every datagram the endpoint sends goes to the target whatever its address (a tunnel has one target, so a server's preferred address and other paths are unreachable through it); every one received is reported as coming from <a href="remote-address.html">remoteAddress</a>. The socket has no ECN, GSO or Don't Fragment (<a href="../../../kuicksilver-quic/io.kuicksilver.quic/-io-capabilities/-companion/-portable.html">io.kuicksilver.quic.IoCapabilities.Portable</a>), so the QUIC connection inside keeps 1200-byte datagrams; the connection to the proxy must carry HTTP datagrams of 1200 bytes plus a few bytes of framing, which needs its path MTU above about 1250 (a socket that sets Don't Fragment, so DPLPMTUD can find it): until then the datagrams are refused as too large and the inner handshake waits. A datagram the tunnel refuses counts as lost on the path. Closing the socket closes the tunnel; once the tunnel ended, <code class="lang-kotlin">receive</code> throws. Call it once.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1534759599%2FFunctions%2F748033675" anchor-label="close" id="-1534759599%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="close.html"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1534759599%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Ends the tunnel: our side of the stream ends (FIN) and <a href="payloads.html">payloads</a> completes once the proxy closed its side. Bounded by <code class="lang-kotlin">closeTimeout</code> of <a href="../connect-udp.html">Http3Connection.connectUdp</a> (the stream is reset when it expires). Calling it again does nothing more.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-919890619%2FFunctions%2F748033675" anchor-label="send" id="-919890619%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="send.html"><span><span>send</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-919890619%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="send.html"><span class="token function">send</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">payload<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph"><a href="try-send.html">trySend</a> that waits for room in the transport's queue, as <a href="../-capsule-stream/send-datagram.html">CapsuleStream.sendDatagram</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1274328802%2FFunctions%2F748033675" anchor-label="trySend" id="1274328802%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="try-send.html"><span>try</span><wbr><span><span>Send</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1274328802%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="try-send.html"><span class="token function">trySend</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">payload<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-datagram-send-result/index.html">DatagramSendResult</a></div><div class="brief "><p class="paragraph">Sends one UDP payload to the target without suspending; the result is <a href="../-capsule-stream/try-send-datagram.html">CapsuleStream.trySendDatagram</a>'s, with <code class="lang-kotlin">TooLarge.max</code> the largest payload that fits now. Throws <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a> for more than <a href="../-connect-udp/-m-a-x_-u-d-p_-p-a-y-l-o-a-d.html">ConnectUdp.MAX_UDP_PAYLOAD</a> bytes ("endpoints MUST NOT send HTTP Datagrams with a UDP Proxying Payload field longer than 65527", section 5).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

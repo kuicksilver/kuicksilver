@@ -1,0 +1,203 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>HttpsRecordSource</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client/HttpsRecordSource///PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">HttpsRecordSource</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Https</span><wbr><span>Record</span><wbr><span><span>Source</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">sealed </span><span class="token keyword">interface </span><a href="index.html">HttpsRecordSource</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/HttpsRecordSource.kt#L24">source</a>)</span></span></div><p class="paragraph">Where the client engine looks up HTTPS resource records (RFC 9460) for an origin in <a href="../-http3-discovery-mode/-auto/index.html">Http3DiscoveryMode.Auto</a> (<a href="../-http3-client-config/https-records.html">Http3ClientConfig.httpsRecords</a>; docs/guide/ktor.md, "HTTPS records"). A record that names <code class="lang-kotlin">h3</code> in its <code class="lang-kotlin">alpn</code> lets the first request to the origin race HTTP/3 against TCP at once, without waiting for an <code class="lang-kotlin">Alt-Svc</code> header. The engine is an SVCB-optional client (RFC 9460 section 3): a lookup that fails or answers late leaves the request on the path it would have taken without records.</p><h4 class="tableheader">Inheritors</h4><div class="table"><div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-off/index.html">Off</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-system/index.html">System</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-protected-system/index.html">ProtectedSystem</a></div></span></div><div></div></div></div><div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain"><div class="main-subrow keyValue "><div class=""><span class="inline-flex"><div><a href="-exchange/index.html">Exchange</a></div></span></div><div></div></div></div></div></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="1208591232%2FClasslikes%2F-816330356" anchor-label="Companion" id="1208591232%2FClasslikes%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-companion/index.html"><span><span>Companion</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1208591232%2FClasslikes%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-companion/index.html">Companion</a></div><div class="brief "><p class="paragraph">Builders of sources; on Android also <code class="lang-kotlin">followingPrivateDns</code>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1642548429%2FClasslikes%2F-816330356" anchor-label="Exchange" id="-1642548429%2FClasslikes%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-exchange/index.html"><span><span>Exchange</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1642548429%2FClasslikes%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-exchange/index.html">Exchange</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>secure<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator"> = </span><span class="token boolean">false</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>exchange<span class="token operator">: </span><span class="token keyword">suspend </span><span class="token punctuation">(</span>query<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span> : <a href="index.html">HttpsRecordSource</a></div><div class="brief "><p class="paragraph">Lookups through <a href="-exchange/exchange.html">exchange</a>: it gets a DNS query in wire format (RFC 1035 section 4.1, ID 0 and RD set, as RFC 8484 section 4.1 asks for DNS over HTTPS) and returns the response in wire format, for example the body of a POST to a DoH server with <code class="lang-kotlin">Content-Type: application/dns-message</code>. The engine has no DoH client of its own. An exchange that throws, or returns something that is not the response to the query, counts as a failed lookup; so does a response over 65535 bytes (RFC 8484 section 6: "This media type restricts the maximum size of the DNS message to 65535 bytes").</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1256734397%2FClasslikes%2F-816330356" anchor-label="Off" id="1256734397%2FClasslikes%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-off/index.html"><span><span>Off</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1256734397%2FClasslikes%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">data </span><span class="token keyword">object </span><a href="-off/index.html">Off</a> : <a href="index.html">HttpsRecordSource</a></div><div class="brief "><p class="paragraph">No lookups (the default): HTTP/3 is learned from <code class="lang-kotlin">Alt-Svc</code> only, as before 0.3.0.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1466177519%2FClasslikes%2F-816330356" anchor-label="ProtectedSystem" id="1466177519%2FClasslikes%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-protected-system/index.html"><span>Protected</span><wbr><span><span>System</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1466177519%2FClasslikes%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="-protected-system/index.html">ProtectedSystem</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>isProtected<span class="token operator">: </span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></span></span><span class="token punctuation">)</span> : <a href="index.html">HttpsRecordSource</a></div><div class="brief "><p class="paragraph">The operating system's resolver, as <a href="-system/index.html">System</a>, whose answers are cryptographically protected whenever <a href="-protected-system/is-protected.html">isProtected</a> says so: then a failed lookup abandons the request (RFC 9460 section 3.1), as with <code class="lang-kotlin">Exchange(secure = true)</code>. Called once per request, on the call's coroutine; it must be quick, and one that throws counts as false. On Android <code class="lang-kotlin">HttpsRecordSource.followingPrivateDns(connectivity)</code> builds one that reports Android's strict Private DNS (DNS over TLS with a configured server). On Apple platforms, Linux and Windows no public API tells whether the system's DNS is encrypted: give a check of your own (an MDM profile you deploy, say) or use <a href="-system/index.html">System</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2076122649%2FClasslikes%2F-816330356" anchor-label="System" id="-2076122649%2FClasslikes%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-system/index.html"><span><span>System</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2076122649%2FClasslikes%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">data </span><span class="token keyword">object </span><a href="-system/index.html">System</a> : <a href="index.html">HttpsRecordSource</a></div><div class="brief "><p class="paragraph">The operating system's resolver, so the lookups follow the system's DNS settings (Private DNS on Android, the scoped resolvers of macOS and iOS). Android asks <code class="lang-kotlin">DnsResolver.rawQuery</code> from API 29; below API 29, and on platforms where the system resolver cannot be asked for HTTPS records yet, every lookup counts as failed and requests behave as with <a href="-off/index.html">Off</a> (docs/guide/ktor.md lists the platforms).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

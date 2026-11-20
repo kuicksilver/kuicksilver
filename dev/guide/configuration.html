@@ -1,0 +1,2644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration reference - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li class="current"><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="configuration-reference">Configuration reference</h1>
+<p><strong>What this page is for.</strong> It is the reference for every Kuicksilver option: type, default, accepted range, the release
+that introduced it and what it does. Use it to look up one option; the guides explain how options work together.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Options belong to the modules <code>io.kuicksilver:kuicksilver-quic</code>, <code>-tls</code>, <code>-http3</code>, <code>-http2</code>, <code>-ktor-client</code> and
+<code>-ktor-server</code> (version <code>0.3.0</code> or newer; the <em>Since</em> column names the release of each option;
+<code>io.kuicksilver:kuicksilver-bom</code> pins the modules to one version). A module brings along the modules it is built on,
+so you add the highest one you use.</li>
+<li>Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#kotlin-version">Kotlin version</a>). The engine options need Ktor 3.6.x
+(<a href="ktor.html#supported-ktor-versions">Ktor: Supported Ktor versions</a>).</li>
+<li>Know which object you configure: the table in <a href="#where-each-option-is-set">Where each option is set</a> maps each one to
+its Kotlin, Ktor client, Ktor server and <code>EngineMain</code> spelling.</li>
+</ul>
+<p><strong>How to use this page.</strong> Find the object in the contents line or search the page for the option name; each section
+links the guide that explains it. A minimal working setup is in <a href="ktor.html#server">Ktor: Server</a> and
+<a href="ktor.html#client">Ktor: Client</a>.</p>
+<p>Every option of Kuicksilver in one place: its type, its default as the code sets it, the range the builder
+accepts and what it does. The guides explain how the options work together; each section links its guide. Options
+marked <em>experimental</em> need <code>@OptIn(ExperimentalKuicksilverApi::class)</code>, <em>delicate</em> ones
+<code>@OptIn(DelicateKuicksilverApi::class)</code> (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md">stability</a>).</p>
+<p>All configuration objects are immutable and validated when built: a builder's <code>build()</code> (or the DSL function around
+it) throws <code>IllegalArgumentException</code> naming the first value out of range, or <code>TlsException.Config</code> for a TLS setting.
+Problems that only show at run time are in <a href="troubleshooting.html">troubleshooting</a>. The <em>Since</em> column names the release
+that introduced the option (<code>0.3.0</code>: the release in preparation); <code>tools/check/config-table.sh</code> checks every public
+option of the configuration classes against these tables, defaults and releases included.</p>
+<p>Contents: <a href="#where-each-option-is-set">where options are set</a> · <a href="#quicconfig">QUIC transport</a> · <a href="#quicclientconfig-and-quicserverconfig">QUIC client and server</a> ·
+<a href="#quicendpointconfig">QUIC endpoint</a> · <a href="#other-quic-options">other QUIC options</a> · <a href="#tlsconfig">TLS</a> ·
+<a href="#trustconfig">trust</a> · <a href="#identities-and-key-logging">identities and key logging</a> · <a href="#http3settings">HTTP/3</a> · <a href="#http2settings">HTTP/2</a> ·
+<a href="#ktor-client-engine">Ktor client</a> · <a href="#ktor-server-engine">Ktor server</a> · <a href="#system-properties-and-environment-variables">system properties and environment
+variables</a> · <a href="#fixed-limits">fixed limits</a></p>
+<h2 id="where-each-option-is-set">Where each option is set</h2>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>Kotlin API</th>
+<th>Ktor client</th>
+<th>Ktor server</th>
+<th><code>EngineMain</code> key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#quicconfig"><code>QuicConfig</code></a></td>
+<td><code>quicConfig { }</code></td>
+<td><code>engine { quic = … }</code></td>
+<td><code>quic = …</code> (<code>quicMaxIdleTimeout</code>)</td>
+<td></td>
+</tr>
+<tr>
+<td><a href="#quicendpointconfig"><code>QuicEndpointConfig</code></a></td>
+<td><code>quicEndpointConfig { }</code></td>
+<td><code>engine { http3 { endpoint = … } }</code></td>
+<td>only <code>quicMaxConnections</code>, <code>quicMaxConnectionsPerIp</code>, <code>quicAcceptQueue</code>, <code>quicAdmission</code>, <code>quicLoadBalancer</code>, <code>logger</code>, <code>qlog</code>, <code>connectionListener</code> and <code>udpSocketCount</code> (<code>loops</code>) reach it; the other limits keep their defaults</td>
+<td><code>kuicksilver.udpSocketCount</code>, <code>kuicksilver.quicMaxConnections</code>, <code>kuicksilver.quicMaxConnectionsPerIp</code>, <code>kuicksilver.quicAcceptQueue</code></td>
+</tr>
+<tr>
+<td><a href="#tlsconfig"><code>TlsConfig</code></a></td>
+<td><code>tlsConfig(role) { }</code></td>
+<td><code>engine { trust = …; identity = …; tls { } }</code></td>
+<td><code>tlsConnector(identity) { }</code></td>
+<td><code>kuicksilver.tls.*</code></td>
+</tr>
+<tr>
+<td><a href="#http3settings"><code>Http3Settings</code></a></td>
+<td><code>http3Settings { }</code></td>
+<td><code>engine { http3 { settings = … } }</code></td>
+<td><code>http3Settings = …</code></td>
+<td><code>kuicksilver.http3</code> (on/off)</td>
+</tr>
+<tr>
+<td><a href="#http2settings"><code>Http2Settings</code></a></td>
+<td><code>Http2Settings(…)</code></td>
+<td><code>engine { http2 { settings = … } }</code></td>
+<td><code>http2Settings = …</code></td>
+<td><code>kuicksilver.http2</code> (on/off)</td>
+</tr>
+<tr>
+<td><a href="#ktor-client-engine">client engine</a></td>
+<td></td>
+<td><code>HttpClient(Kuicksilver) { engine { … } }</code></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="#ktor-server-engine">server engine</a></td>
+<td></td>
+<td></td>
+<td><code>embeddedServer(Kuicksilver) { … }</code></td>
+<td><code>kuicksilver.*</code>, <code>ktor.deployment.*</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="quicconfig">QuicConfig</h2>
+<p>Transport settings of a connection: <code>quicConfig { }</code> (<code>QuicConfig.Builder</code>), <code>QuicConfig.Default</code> for all defaults,
+<code>toBuilder()</code> (<em>experimental</em>) to change one value of an existing config. Guide: <a href="quic.html#configuration">QUIC</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maxIdleTimeout</code></td>
+<td><code>Duration</code></td>
+<td>30 s</td>
+<td>zero or positive and finite</td>
+<td>0.2.0</td>
+<td>our <code>max_idle_timeout</code>; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with <code>ConnectionLost.Timeout(TimeoutKind.Idle)</code>. <code>Duration.ZERO</code> advertises none and leaves the timeout to the peer</td>
+</tr>
+<tr>
+<td><code>handshakeTimeout</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td>positive (<code>Duration.INFINITE</code> leaves only the idle timeout)</td>
+<td>0.2.0</td>
+<td>a connection whose handshake has not completed by then closes with <code>TimeoutKind.Handshake</code></td>
+</tr>
+<tr>
+<td><code>keepAlive</code></td>
+<td><code>Duration?</code></td>
+<td><code>null</code> (off)</td>
+<td>positive and finite; at most 3/4 of <code>maxIdleTimeout</code> unless that is <code>ZERO</code></td>
+<td>0.2.0</td>
+<td>PING interval while the application is quiet; PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout does not close the connection (as quic-go). With <code>maxIdleTimeout = ZERO</code> it holds the connection against the peer's timeout</td>
+</tr>
+<tr>
+<td><code>initialStreamWindow</code></td>
+<td><code>Long</code> (bytes)</td>
+<td>524 288 (512 KiB)</td>
+<td>1..<code>maxStreamWindow</code></td>
+<td>0.2.0</td>
+<td>receive window of each stream at its start (<code>initial_max_stream_data_*</code>); doubles while the application reads a whole window in under four RTTs</td>
+</tr>
+<tr>
+<td><code>initialConnectionWindow</code></td>
+<td><code>Long</code> (bytes)</td>
+<td>786 432 (768 KiB)</td>
+<td>1..<code>maxConnectionWindow</code></td>
+<td>0.2.0</td>
+<td>receive window of the connection at its start (<code>initial_max_data</code>); kept at least 1.5 x the largest stream window</td>
+</tr>
+<tr>
+<td><code>maxStreamWindow</code></td>
+<td><code>Long</code> (bytes)</td>
+<td>6 291 456 (6 MiB)</td>
+<td>at least <code>initialStreamWindow</code></td>
+<td>0.2.0</td>
+<td>ceiling of a stream's receive window: the most unread data one stream holds</td>
+</tr>
+<tr>
+<td><code>maxConnectionWindow</code></td>
+<td><code>Long</code> (bytes)</td>
+<td>15 728 640 (15 MiB)</td>
+<td>at least <code>initialConnectionWindow</code></td>
+<td>0.2.0</td>
+<td>ceiling of the connection's receive window</td>
+</tr>
+<tr>
+<td><code>maxBidiStreams</code></td>
+<td><code>Long</code></td>
+<td>100</td>
+<td>0..2^60</td>
+<td>0.2.0</td>
+<td>bidirectional streams the peer may have open at once (<code>initial_max_streams_bidi</code>); raised by MAX_STREAMS as streams close. A stream counts as closed once the application took it from <code>acceptStream()</code> and consumed it (read to the end or saw its reset), so a peer cannot open more streams than this while the application accepts none</td>
+</tr>
+<tr>
+<td><code>maxUniStreams</code></td>
+<td><code>Long</code></td>
+<td>100</td>
+<td>0..2^60</td>
+<td>0.2.0</td>
+<td>the same for unidirectional streams; HTTP/3 needs at least 3 (RFC 9114 §6.2): <code>Http3Endpoint</code> and the Ktor engines with HTTP/3 refuse less</td>
+</tr>
+<tr>
+<td><code>maxSendBuffer</code></td>
+<td><code>Long</code> (bytes)</td>
+<td>4 194 304 (4 MiB)</td>
+<td>1..2^62</td>
+<td>0.2.0</td>
+<td>unacknowledged send data the connection buffers over all streams; writers wait beyond it</td>
+</tr>
+<tr>
+<td><code>maxAckDelay</code></td>
+<td><code>Duration</code></td>
+<td>25 ms</td>
+<td>below 2^14 ms</td>
+<td>0.2.0</td>
+<td>our <code>max_ack_delay</code></td>
+</tr>
+<tr>
+<td><code>ackDelayExponent</code></td>
+<td><code>Int</code></td>
+<td>3</td>
+<td>0..20</td>
+<td>0.2.0</td>
+<td>our <code>ack_delay_exponent</code></td>
+</tr>
+<tr>
+<td><code>activeConnectionIdLimit</code></td>
+<td><code>Int</code></td>
+<td>4</td>
+<td>at least 2</td>
+<td>0.2.0</td>
+<td>our <code>active_connection_id_limit</code>: connection IDs of the peer kept for migration and rotation</td>
+</tr>
+<tr>
+<td><code>connectionIdLength</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>8</td>
+<td>4..20; must equal <code>QuicEndpointConfig.connectionIdLength</code></td>
+<td>0.2.0</td>
+<td>length of the connection IDs we issue</td>
+</tr>
+<tr>
+<td><code>maxUdpPayloadSize</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>1452</td>
+<td>1200..65 527; a <code>QuicEndpoint</code> refuses more than 1500 at <code>bind</code>/<code>connect</code></td>
+<td>0.2.0</td>
+<td>advertised <code>max_udp_payload_size</code> and the upper bound of PMTUD (<a href="quic.html#path-mtu">Path MTU</a>)</td>
+</tr>
+<tr>
+<td><code>versions</code></td>
+<td><code>List&lt;VersionProfile&gt;</code></td>
+<td><code>listOf(VersionProfile.V1)</code></td>
+<td>non-empty, no duplicates</td>
+<td>0.2.0</td>
+<td>versions in preference order; <code>listOf(V2, V1)</code> opts into QUIC v2 (RFC 9368/9369)</td>
+</tr>
+<tr>
+<td><code>initialVersion</code></td>
+<td><code>VersionProfile?</code></td>
+<td><code>null</code> (first of <code>versions</code>)</td>
+<td>one of <code>versions</code></td>
+<td>0.2.0</td>
+<td>the version of a client's first flight</td>
+</tr>
+<tr>
+<td><code>initialRtt</code></td>
+<td><code>Duration</code></td>
+<td>333 ms</td>
+<td>(0, 10 s]</td>
+<td>0.2.0</td>
+<td>RTT assumed before the first sample: the first PTO is 3 x this (1 s, 2 s, 4 s at the default) and a path validation lasts at least 6 x this. A client endpoint replaces it with the last smoothed RTT to the same server address (see <a href="#fixed-limits">fixed limits</a>)</td>
+</tr>
+<tr>
+<td><code>defaultStreamErrorCode</code></td>
+<td><code>Long</code></td>
+<td>0</td>
+<td>0..2^62-1</td>
+<td>0.2.0</td>
+<td>code of the STOP_SENDING / RESET_STREAM sent when a stream channel is cancelled, or when a peer stream is given up before the application accepted it (its <code>acceptStream()</code> caller cancelled). An HTTP/3 server (<code>Http3Endpoint</code>, the Ktor engine) left at 0, which is no HTTP/3 code, uses H3_REQUEST_REJECTED (0x10b, RFC 9114 §4.1.1: not processed, safe to retry); a code set explicitly is kept</td>
+</tr>
+<tr>
+<td><code>qlog</code></td>
+<td><code>QlogSink?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>a qlog trace per connection (<a href="quic.html#qlog">qlog</a>); a failing sink stops tracing for that connection only</td>
+</tr>
+<tr>
+<td><code>congestionController</code></td>
+<td><code>() -&gt; CongestionController</code></td>
+<td><code>{ Cubic() }</code></td>
+<td>return a fresh instance per call</td>
+<td>0.2.0</td>
+<td>controller of each path: <code>Cubic</code> (CUBIC with HyStart++), <code>NewReno</code>, <code>Bbr</code> (<em>experimental</em>) (<a href="quic.html#congestion-control">Congestion control</a>)</td>
+</tr>
+<tr>
+<td><code>greaseQuicBit</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>send the fixed bit randomly when the peer allows it (RFC 9287)</td>
+</tr>
+<tr>
+<td><code>glitchProtection</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>close a connection whose peer keeps making us do useless work (<a href="quic.html#glitch-protection">Glitch protection</a>)</td>
+</tr>
+<tr>
+<td><code>allowMigration</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>server: follow a client to a new address; <code>false</code> advertises <code>disable_active_migration</code> and drops datagrams from other addresses</td>
+</tr>
+<tr>
+<td><code>allowMigrationToLoopback</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>server: accept a move to a loopback or link-local address from a connection that did not start on one</td>
+</tr>
+<tr>
+<td><code>pmtud</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>DPLPMTUD (RFC 8899) on sockets that set DF; <code>false</code> keeps 1200 bytes</td>
+</tr>
+<tr>
+<td><code>followPreferredAddress</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>client: move to the server's preferred address after the handshake, once the path there is validated (<a href="quic.html#migration-and-paths">Migration and paths</a>)</td>
+</tr>
+<tr>
+<td><code>pmtudIcmpHints</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>validated ICMP Packet Too Big (Linux, Android) and EMSGSIZE speed up DPLPMTUD as hints; a lower size drops the MTU to 1200 only until a probe of the old size is acknowledged (<a href="quic.html#path-mtu">Path MTU</a>)</td>
+</tr>
+<tr>
+<td><code>maxDatagramFrameSize</code></td>
+<td><code>Long</code></td>
+<td>65 535</td>
+<td>0..65 535</td>
+<td>0.2.0</td>
+<td>our <code>max_datagram_frame_size</code> (RFC 9221); 0 turns datagrams off</td>
+</tr>
+<tr>
+<td><code>resetStreamAt</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>advertise <code>reset_stream_at</code>: <code>QuicStream.resetAt</code> keeps a stream's first bytes when the peer advertised it too (<a href="quic.html#reliable-stream-reset-experimental">quic.md</a>)</td>
+</tr>
+<tr>
+<td><code>datagramReceiveQueue</code></td>
+<td><code>Int</code></td>
+<td>128</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>received datagrams held for the application; a full queue drops the oldest</td>
+</tr>
+<tr>
+<td><code>datagramSendQueue</code></td>
+<td><code>Int</code></td>
+<td>32</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>datagrams queued for sending (<a href="quic.html#datagrams-rfc-9221">Datagrams</a>)</td>
+</tr>
+<tr>
+<td><code>datagramSendQueueBytes</code></td>
+<td><code>Long</code></td>
+<td>1 048 576 (1 MiB)</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>byte ceiling of the same queue</td>
+</tr>
+</tbody>
+</table>
+<h2 id="quicclientconfig-and-quicserverconfig">QuicClientConfig and QuicServerConfig</h2>
+<p><code>quicClientConfig(tls) { }</code> and <code>quicServerConfig(tls) { }</code> pair a <code>TlsConfig</code> with a <code>QuicConfig</code>. <code>build()</code> throws
+<code>IllegalArgumentException</code> for a <code>TlsConfig</code> of the wrong role (&quot;client config needs a client TlsConfig&quot;) and
+<code>TlsException.Config</code> for one QUIC cannot use: TLS 1.2 allowed, an empty <code>alpn</code> or <code>TLS_AES_128_CCM_8_SHA256</code>. A
+server's <code>sniSelector</code> works as over TCP (its overrides must suit QUIC as well: an empty <code>alpn</code> there fails that handshake).</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tls</code> (constructor)</td>
+<td><code>TlsConfig</code></td>
+<td></td>
+<td>client or server role</td>
+<td>0.3.0</td>
+<td>name to verify, trust, ALPN; identity on a server</td>
+</tr>
+<tr>
+<td><code>quic</code></td>
+<td><code>QuicConfig</code></td>
+<td><code>QuicConfig.Default</code></td>
+<td>on a server, its <code>connectionIdLength</code> must equal the endpoint's</td>
+<td>0.2.0</td>
+<td>transport settings</td>
+</tr>
+<tr>
+<td>client <code>earlyData</code> (<em>experimental</em>)</td>
+<td><code>EarlyDataState</code></td>
+<td><code>Disabled</code></td>
+<td><code>Disabled</code>, <code>Allowed</code>, <code>Required</code></td>
+<td>0.2.0</td>
+<td>keep the server's session tickets (per endpoint, single use) and send 0-RTT through <code>QuicEndpoint.connectEarly</code>; <code>Required</code> fails the connection with <code>ZeroRttRejected</code> when 0-RTT is refused or impossible (<a href="quic.html#0-rtt-opt-in-experimental">0-RTT</a>)</td>
+</tr>
+<tr>
+<td>server <code>earlyData</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>not with client certificates</td>
+<td>0.2.0</td>
+<td>accept 0-RTT: fresh tickets only (the ticket's age within a 10 s window: [claimed − 1 s, claimed + 9 s]), once per ticket, only for the configuration that issued it</td>
+</tr>
+<tr>
+<td>server <code>earlyDataContext</code> (<em>experimental</em>)</td>
+<td><code>ByteArray?</code></td>
+<td><code>null</code></td>
+<td>at most 256 bytes</td>
+<td>0.2.0</td>
+<td>application settings bound into tickets (<code>Http3Endpoint</code> puts its SETTINGS here)</td>
+</tr>
+<tr>
+<td>client <code>tokenStore</code> (<em>experimental</em>)</td>
+<td><code>QuicTokenStore?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>keep the servers' NEW_TOKEN tokens and present one on the next connection to the same server name and port: no Retry round trip; links those connections (<a href="quic.html#address-tokens-new_token">Address tokens</a>)</td>
+</tr>
+<tr>
+<td>server <code>preferredAddress</code> (<em>experimental</em>)</td>
+<td><code>PreferredAddress?</code></td>
+<td><code>null</code></td>
+<td>IP literals, ports 1..65535, not unspecified or multicast</td>
+<td>0.3.0</td>
+<td>also listen on these addresses (one per family) and offer them in <code>preferred_address</code>; clients that follow move there after validating the path (<a href="quic.html#migration-and-paths">Migration and paths</a>)</td>
+</tr>
+<tr>
+<td>server <code>newTokenReplayCapacity</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td><code>1_048_576</code></td>
+<td>1..16,777,216</td>
+<td>0.3.0</td>
+<td>NEW_TOKEN tokens the replay register holds per lifetime (32 bytes each, 32 MiB at the default, allocated on the first token shown); once full a returning client's token counts as absent</td>
+</tr>
+<tr>
+<td>server <code>newTokenLifetime</code> (<em>experimental</em>)</td>
+<td><code>Duration?</code></td>
+<td>24 hours</td>
+<td>positive, at most 7 days; <code>null</code> issues none</td>
+<td>0.3.0</td>
+<td>how long the NEW_TOKEN tokens this server issues validate a returning client's address (<a href="quic.html#admission-and-endpoint-limits">Admission and endpoint limits</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="quicendpointconfig">QuicEndpointConfig</h2>
+<p>The endpoint that owns a socket and its connections: <code>quicEndpointConfig { }</code>, <code>QuicEndpointConfig.Default</code> (a
+client-only endpoint), <code>toBuilder()</code> (<em>experimental</em>). Guide: <a href="quic.html#admission-and-endpoint-limits">Admission and endpoint limits</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server</code></td>
+<td><code>QuicServerConfig?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>the server side; <code>null</code> is a client-only endpoint, which admits no connection</td>
+</tr>
+<tr>
+<td><code>crypto</code></td>
+<td><code>QuicCrypto</code></td>
+<td><code>KslQuicCrypto</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>TLS and packet protection (OpenSSL through <code>ksl</code>)</td>
+</tr>
+<tr>
+<td><code>maxConnections</code></td>
+<td><code>Int</code></td>
+<td>10 000</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>beyond this many connections new Initials are dropped silently; counts the whole endpoint, all <code>loops</code> (since 0.3.0; before, each loop)</td>
+</tr>
+<tr>
+<td><code>acceptQueue</code></td>
+<td><code>Int</code></td>
+<td>128</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>handshaken connections waiting for <code>accept()</code>, over all loops; while full, a new client is refused statelessly with CONNECTION_REFUSED (0x02). Handshakes in flight do not count</td>
+</tr>
+<tr>
+<td><code>dispatcher</code></td>
+<td><code>CoroutineDispatcher?</code></td>
+<td><code>null</code> (<code>Dispatchers.Default.limitedParallelism(1)</code>)</td>
+<td>must stay <code>null</code> with <code>loops &gt; 1</code></td>
+<td>0.2.0</td>
+<td>the single-threaded dispatcher of the endpoint loop. While datagrams keep coming the loop reads the ones already queued on this thread; only on its own dispatcher (<code>null</code>) does it also wait there up to 1 ms for the next ones (not on Windows), so a dispatcher set here, shared with a UI or a second endpoint, is never held in a socket wait</td>
+</tr>
+<tr>
+<td><code>io</code></td>
+<td><code>(suspend (InetSocketAddress) -&gt; DatagramIo)?</code></td>
+<td><code>null</code> (<code>DatagramIo.open</code> with <code>IoPreference.Accelerated</code>)</td>
+<td></td>
+<td>0.2.0</td>
+<td>how the loop opens its socket; <code>MemoryNetwork.open</code> runs the endpoint in memory (<a href="quic.html#testing-your-application">Testing</a>)</td>
+</tr>
+<tr>
+<td><code>connectionIdLength</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>8</td>
+<td>4..20; must equal the <code>QuicConfig.connectionIdLength</code> of the server and of every client connection</td>
+<td>0.2.0</td>
+<td>length used to parse short headers</td>
+</tr>
+<tr>
+<td><code>admission</code></td>
+<td><code>ConnectionAdmission</code></td>
+<td><code>ConnectionAdmission.default()</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>decides per new client Initial: <code>Allow</code>, <code>Retry</code>, <code>Drop</code> or <code>Close(code)</code>. <code>default(maxInflightHandshakes = 256, maxHandshakeBufferBytes = 8 MiB)</code> asks an unvalidated client for a Retry above either and lets in one a Retry or NEW_TOKEN token validated; <code>ConnectionAdmission.AlwaysRetry</code> validates every address first</td>
+</tr>
+<tr>
+<td><code>initialQueueCap</code></td>
+<td><code>Int</code></td>
+<td>1024</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>new Initials queued for admission per receive batch; more are dropped</td>
+</tr>
+<tr>
+<td><code>maxConnectionsPerIp</code></td>
+<td><code>Int?</code></td>
+<td>256</td>
+<td>positive or <code>null</code> (no limit)</td>
+<td>0.2.0</td>
+<td>connections one client IP may hold, ports ignored, over the whole endpoint, all <code>loops</code> (since 0.3.0; before, each loop); the excess is dropped silently</td>
+</tr>
+<tr>
+<td><code>maxConnectionLifetime</code></td>
+<td><code>Duration?</code></td>
+<td><code>null</code> (none)</td>
+<td>positive or <code>null</code></td>
+<td>0.2.0</td>
+<td>server connections older than this close with NO_ERROR (&quot;connection lifetime reached&quot;)</td>
+</tr>
+<tr>
+<td><code>rejectInitialFromReflectivePorts</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>drop Initials from source ports 53, 123, 1900, 5353 and 11211 (reflection attacks)</td>
+</tr>
+<tr>
+<td><code>statelessPerAddressPerSecond</code></td>
+<td><code>Int</code></td>
+<td>8</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>stateless answers (Retry, Version Negotiation, Stateless Reset, refusals) per client address per second</td>
+</tr>
+<tr>
+<td><code>statelessTotalPerSecond</code></td>
+<td><code>Int</code></td>
+<td>1000</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>stateless answers per second over all addresses</td>
+</tr>
+<tr>
+<td><code>loops</code></td>
+<td><code>Int</code></td>
+<td>1</td>
+<td>1..255; more than 1 needs a <code>server</code> and no <code>dispatcher</code></td>
+<td>0.2.0</td>
+<td>endpoint loops sharing the port: a socket each with <code>SO_REUSEPORT</code> on Linux and Android, one socket routed in process elsewhere (every platform since 0.3.0; <a href="quic.html#several-loops-on-one-port">Several loops on one port</a>)</td>
+</tr>
+<tr>
+<td><code>logger</code> (<em>experimental</em>)</td>
+<td><code>KuicksilverLogger</code></td>
+<td><code>KuicksilverLogger.Stderr</code> (warnings and errors on standard error)</td>
+<td></td>
+<td>0.2.0</td>
+<td>the endpoint's diagnostics; <code>KuicksilverLogger.None</code>, <code>KuicksilverLogger.stderr(LogLevel.Debug)</code> or your own (<a href="quic.html#observability">Observability</a>)</td>
+</tr>
+<tr>
+<td><code>listener</code> (<em>experimental</em>)</td>
+<td><code>ConnectionListener?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>lifecycle callbacks of every connection, on the loop</td>
+</tr>
+<tr>
+<td><code>loadBalancer</code> (<em>experimental</em>)</td>
+<td><code>QuicLbConfig?</code></td>
+<td><code>null</code></td>
+<td>needs a <code>server</code>, <code>connectionIdLength</code> = 1 + server ID + nonce and at least 8, a key next to a <code>preferredAddress</code></td>
+<td>0.3.0</td>
+<td>QUIC-LB server connection IDs (draft-ietf-quic-load-balancers-21); change with <code>QuicEndpoint.updateLoadBalancer</code> (<a href="quic.html#behind-a-load-balancer">Behind a load balancer</a>)</td>
+</tr>
+<tr>
+<td><code>sessionCache</code> (<em>internal</em>)</td>
+<td><code>SessionCache?</code></td>
+<td><code>null</code> (the endpoint's own, closed with it)</td>
+<td></td>
+<td>0.3.0</td>
+<td>the client session tickets the endpoint takes and stores, owned by the caller and left open when the endpoint closes; the Ktor client engine shares one across its endpoints</td>
+</tr>
+</tbody>
+</table>
+<h2 id="other-quic-options">Other QUIC options</h2>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Option</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>QuicConnection.openBidi</code>, <code>openUni</code></td>
+<td><code>priority: StreamPriority</code></td>
+<td><code>StreamPriority.Default</code> (<code>urgency = 3</code>, <code>incremental = false</code>; urgency 0..7)</td>
+<td>send order between streams (RFC 9218 levels)</td>
+</tr>
+<tr>
+<td><code>QuicConnection.sendDatagram</code>, <code>trySendDatagram</code></td>
+<td><code>policy: DatagramPolicy</code></td>
+<td><code>DropOldest</code></td>
+<td><code>DropOldest</code>, <code>LatestWins(key)</code> or <code>Reject</code> when the send queue is full</td>
+</tr>
+<tr>
+<td><code>DatagramIo.open(local, prefer)</code></td>
+<td><code>prefer: IoPreference</code></td>
+<td><code>Accelerated</code></td>
+<td><code>Accelerated</code>: the <code>ksl</code> socket where it exists, <code>Portable</code>: NIO on the JVM, <code>ktor-network</code> on Kotlin/Native</td>
+</tr>
+<tr>
+<td><code>Cubic(maxDatagramSize, hystart)</code>, <code>NewReno(maxDatagramSize)</code></td>
+<td></td>
+<td>1200, <code>true</code></td>
+<td>the stable congestion controllers</td>
+</tr>
+<tr>
+<td><code>Bbr(maxDatagramSize, random)</code> (<em>experimental</em>)</td>
+<td></td>
+<td>1200, <code>null</code> (jitter from send and ACK times)</td>
+<td>BBRv3 (<a href="quic.html#choosing-a-congestion-controller">Choosing a congestion controller</a>)</td>
+</tr>
+<tr>
+<td><code>DirectoryQlogSink(directory)</code>, <code>DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes, logHeaderValues)</code> (<em>experimental</em>)</td>
+<td></td>
+<td>256 open traces, 1 GiB in all, <code>logHeaderValues = false</code></td>
+<td>one <code>&lt;odcid&gt;_&lt;client|server&gt;_&lt;random&gt;.sqlog</code> file per connection, created exclusively, never through a link; creates the directory owner-only and refuses one another user could change; <code>logHeaderValues</code> writes HTTP field values into the trace (<a href="http3.html#qlog">HTTP/3: qlog</a>)</td>
+</tr>
+<tr>
+<td><code>qlogDirectory(context, name)</code> (Android, <em>experimental</em>)</td>
+<td></td>
+<td><code>name = &quot;kuicksilver-qlog&quot;</code></td>
+<td>a <code>DirectoryQlogSink</code> in the app's cache directory, created owner-only at once; API 26 and up (refused below)</td>
+</tr>
+<tr>
+<td><code>AsyncQlogSink(delegate, queueCapacity, sampleEvery, dispatcher)</code> (<em>experimental</em>)</td>
+<td></td>
+<td>8192 records, 1 (every connection), <code>Dispatchers.IO.limitedParallelism(1)</code></td>
+<td>runs a sink off the endpoint loop; a full queue drops records (<code>dropped</code>)</td>
+</tr>
+<tr>
+<td><code>QlogSink.logHeaderValues</code> (<em>experimental</em>, 0.3.0)</td>
+<td></td>
+<td><code>false</code></td>
+<td>HTTP/3 events carry header and trailer values; otherwise <code>[redacted]</code> except <code>:method</code>, <code>:scheme</code>, <code>:status</code>, <code>:protocol</code> (threat model 3.26)</td>
+</tr>
+<tr>
+<td><code>NetworkMigrator(connection, networks, openIo, scope)</code> (<em>experimental</em>)</td>
+<td></td>
+<td>no defaults; client connections only</td>
+<td>follows a <code>Flow</code> of networks (<a href="quic.html#network-changes">Network changes</a>)</td>
+</tr>
+<tr>
+<td><code>QuicConnection.rebind(local, prefer)</code> (<em>experimental</em>)</td>
+<td></td>
+<td><code>null</code> (loopback of a loopback peer's family, else the wildcard of the peer's family), <code>Accelerated</code></td>
+<td>moves the connection to a fresh socket</td>
+</tr>
+<tr>
+<td><code>followDefaultNetwork(connectivity, scope, local, prefer)</code> (Android), <code>followDefaultNetwork(scope, local, prefer)</code> (Apple) (<em>experimental</em>)</td>
+<td></td>
+<td><code>null</code>, <code>Accelerated</code></td>
+<td>a started <code>NetworkMigrator</code> on the default network</td>
+</tr>
+<tr>
+<td><code>QuicEndpoint.shutdown(grace, code, reason)</code> (<em>experimental</em>)</td>
+<td></td>
+<td><code>code = 0</code>, <code>reason = &quot;shutdown&quot;</code></td>
+<td>graceful shutdown (<a href="quic.html#graceful-shutdown">Graceful shutdown</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tlsconfig">TlsConfig</h2>
+<p><code>tlsConfig(TlsRole.Client / TlsRole.Server) { }</code> (<code>TlsConfig.Builder</code>); errors are <code>TlsException.Config</code>. One
+<code>TlsConfig</code> drives QUIC, TLS over TCP and <code>Socket.tls()</code>. Guide: <a href="tls.html#configuration">TLS</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alpn</code></td>
+<td><code>List&lt;String&gt;</code></td>
+<td>empty</td>
+<td>each name 1..255 UTF-8 bytes, the list at most 255 bytes on the wire; QUIC needs at least one</td>
+<td>0.2.0</td>
+<td>ALPN protocol IDs in preference order; a server over TCP selects without <code>h3</code> (QUIC only), and <code>h3</code> alone refuses every TCP client (since 0.3.0)</td>
+</tr>
+<tr>
+<td><code>serverName</code></td>
+<td><code>String?</code></td>
+<td><code>null</code></td>
+<td>a client needs it (or <code>TrustConfig.ExpectedName</code>)</td>
+<td>0.2.0</td>
+<td>SNI and the name the certificate must match; an IP literal is verified but never sent as SNI. Servers ignore it</td>
+</tr>
+<tr>
+<td><code>versions</code></td>
+<td><code>TlsVersions</code></td>
+<td><code>Tls13</code></td>
+<td>QUIC: <code>Tls13</code> only</td>
+<td>0.2.0</td>
+<td>TLS 1.3 is the default (RFC 9852); <code>Tls12And13</code> allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an <code>h2</code> connection a peer's attempt ends it (RFC 9113 section 9.2.1)</td>
+</tr>
+<tr>
+<td><code>cipherSuites</code></td>
+<td><code>CipherSuites</code></td>
+<td><code>CipherSuites.Default</code> (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305)</td>
+<td>at least one; QUIC refuses <code>TLS_AES_128_CCM_8_SHA256</code></td>
+<td>0.2.0</td>
+<td>TLS 1.3 suites in preference order</td>
+</tr>
+<tr>
+<td><code>identity</code></td>
+<td><code>TlsIdentity?</code></td>
+<td><code>null</code></td>
+<td>a server needs an identity or an <code>sniSelector</code></td>
+<td>0.2.0</td>
+<td>certificate chain and key; <code>TlsIdentity.reloadable(...)</code> for one replaced at run time (<a href="tls.html#rotating-the-server-certificate">TLS guide</a>)</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td><code>TrustConfig</code></td>
+<td><code>TrustConfig.Platform</code></td>
+<td>with <code>clientAuth</code> other than <code>None</code>: <code>AnchoredCa</code> or <code>ReloadableCa</code>, optionally under <code>Pinned</code></td>
+<td>0.2.0</td>
+<td>how the peer is verified (<a href="#trustconfig">TrustConfig</a>)</td>
+</tr>
+<tr>
+<td><code>clientAuth</code></td>
+<td><code>ClientAuth</code></td>
+<td><code>None</code></td>
+<td>servers only</td>
+<td>0.2.0</td>
+<td><code>None</code>, <code>Optional</code> or <code>Required</code> client certificates</td>
+</tr>
+<tr>
+<td><code>sniSelector</code></td>
+<td><code>(suspend (ClientHelloInfo) -&gt; ServerTlsOverride?)?</code></td>
+<td><code>null</code></td>
+<td>servers, TCP and QUIC (since 0.3.0)</td>
+<td>0.2.0</td>
+<td>picks a <code>ServerTlsOverride(identity, alpn, clientAuth, trust)</code> per ClientHello; <code>null</code> with SNI: <code>unrecognized_name</code>, without SNI: the default <code>identity</code> (none: <code>missing_extension</code>) (<a href="tls.html#certificate-per-name-sni">TLS guide</a>)</td>
+</tr>
+<tr>
+<td><code>sessionTickets</code></td>
+<td><code>SessionTicketConfig</code></td>
+<td><code>SessionTicketConfig.Default</code></td>
+<td>see <a href="#sessionticketconfig">SessionTicketConfig</a></td>
+<td>0.2.0</td>
+<td>the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with <code>earlyData</code> (the only QUIC servers that issue tickets)</td>
+</tr>
+<tr>
+<td><code>keylog</code> (<em>delicate</em>)</td>
+<td><code>KeylogSink?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>TLS secrets as RFC 9850 key log lines (<a href="tls.html#key-logging">Key logging</a>)</td>
+</tr>
+<tr>
+<td><code>handshakeTimeout</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td>positive (<code>Duration.INFINITE</code>: no deadline)</td>
+<td>0.2.0</td>
+<td>TLS over TCP only (QUIC uses <code>QuicConfig.handshakeTimeout</code>)</td>
+</tr>
+<tr>
+<td><code>genericAlerts</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>send <code>handshake_failure</code> instead of the specific alert; a failed stapled OCSP check is still sent as <code>bad_certificate_status_response</code> (113)</td>
+</tr>
+<tr>
+<td><code>revocation</code> (<em>experimental</em>)</td>
+<td><code>RevocationPolicy</code></td>
+<td><code>StapledIfPresent</code></td>
+<td>clients; <code>RequireStapled</code> only with a trust <code>ksl</code> verifies (<code>AnchoredCa</code>, <code>Platform</code> on Linux Native)</td>
+<td>0.3.0</td>
+<td>how the OCSP response the server staples is checked: <code>Off</code>, <code>StapledIfPresent</code> (soft-fail without one), <code>RequireStapled</code>; a must-staple certificate needs one under every policy but <code>Off</code>. Alerts: 113 for every failed staple check (also with <code>genericAlerts</code>); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) (<a href="tls.html#certificate-revocation">Certificate revocation</a>)</td>
+</tr>
+<tr>
+<td><code>alpnFallback</code> (<em>experimental</em>)</td>
+<td><code>String?</code></td>
+<td><code>null</code></td>
+<td>servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not <code>h3</code></td>
+<td>0.3.0</td>
+<td>the protocol a client without ALPN speaks (<code>http/1.1</code> for HTTP, RFC 9113 section 3.3); such a client is refused with <code>no_application_protocol</code> (120) where the protocols in effect (<code>alpn</code> or the <code>sniSelector</code> answer's, non-empty, without <code>h3</code>) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets <code>decode_error</code> (50); null: it completes without ALPN (<a href="tls.html#configuration">TLS guide</a>)</td>
+</tr>
+<tr>
+<td><code>certificateCompression</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>TLS 1.3 only (QUIC and TCP)</td>
+<td>0.3.0</td>
+<td>TLS certificate compression (RFC 8879): offers brotli, then zlib, and sends the chain compressed when the peer offers one of them; a session that staples OCSP sends it uncompressed; <code>false</code>: no offer, and a compressed certificate from the peer is <code>unexpected_message</code> (<a href="tls.html#certificate-compression">Certificate compression</a>)</td>
+</tr>
+<tr>
+<td><code>ocspStapling</code> (<em>experimental</em>)</td>
+<td><code>OcspStapling?</code></td>
+<td><code>null</code></td>
+<td>servers</td>
+<td>0.3.0</td>
+<td>the OCSP response stapled when the client asks and it is for the leaf sent and fresh; <code>update</code> replaces it at run time (<a href="tls.html#certificate-revocation">Certificate revocation</a>)</td>
+</tr>
+<tr>
+<td><code>keyExchangeGroups</code> (<em>experimental</em>)</td>
+<td><code>KeyExchangeGroups</code></td>
+<td><code>KeyExchangeGroups.Default</code> (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two)</td>
+<td>1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with <code>Tls12And13</code> at least one elliptic curve</td>
+<td>0.3.0</td>
+<td>key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, <code>handshake_failure</code> with none in common; in TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (without <code>secp256r1</code>, a P-256 certificate is refused) (<a href="tls.html#key-exchange-groups">Key exchange groups</a>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sessionticketconfig">SessionTicketConfig</h3>
+<p><code>SessionTicketConfig(keys, rotateEvery, ticketLifetime)</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>keys</code> (constructor)</td>
+<td><code>List&lt;ByteArray&gt;?</code></td>
+<td><code>null</code> (generated in the process)</td>
+<td>1 to 64 entries of 80 bytes</td>
+<td>0.2.0</td>
+<td>explicit ticket keys, shared by the servers of one fleet</td>
+</tr>
+<tr>
+<td><code>rotateEvery</code></td>
+<td><code>Duration</code></td>
+<td>1 day</td>
+<td>positive, at most 7 days</td>
+<td>0.2.0</td>
+<td>how often the active ticket key is replaced</td>
+</tr>
+<tr>
+<td><code>ticketLifetime</code></td>
+<td><code>Duration</code></td>
+<td>12 hours</td>
+<td>at least 1 s, at most <code>rotateEvery / 2</code></td>
+<td>0.2.0</td>
+<td>how long a ticket stays valid</td>
+</tr>
+</tbody>
+</table>
+<p>The keys stay in native memory: generated keys never reach Kotlin, explicit keys are
+copied there when the configuration is built and the given arrays are zeroed (keep the keys in your secret store, not
+in the arrays).</p>
+<h2 id="trustconfig">TrustConfig</h2>
+<p>Guide: <a href="tls.html#trust">TLS: Trust</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Parameters (defaults)</th>
+<th>Checks</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TrustConfig.Platform</code></td>
+<td></td>
+<td>Linux Native: a CA store must exist when the client config is built</td>
+<td>the operating system's verifier (<a href="tls.html#platform-trust">Platform trust</a>)</td>
+</tr>
+<tr>
+<td><code>TrustConfig.AnchoredCa(roots)</code></td>
+<td><code>roots: List&lt;Certificate&gt;</code></td>
+<td>at least one root</td>
+<td>only these roots, verified inside <code>ksl</code>; with <code>ReloadableCa</code>, the only trust for client certificates</td>
+</tr>
+<tr>
+<td><code>TrustConfig.reloadable(initial)</code> (<em>experimental</em>)</td>
+<td><code>initial: AnchoredCa</code></td>
+<td>servers only; <code>reload</code> refuses a bundle with no certificate valid now</td>
+<td>a <code>ReloadableCa</code>: client certificates verified against the <code>AnchoredCa</code> current when the handshake starts; <code>reload(next)</code> rotates it (<a href="tls.html#rotating-the-client-ca">Rotating the client CA</a>)</td>
+</tr>
+<tr>
+<td><code>TrustConfig.ExpectedName(name, base)</code></td>
+<td><code>base = Platform</code></td>
+<td>non-blank <code>name</code>; <code>base</code> is <code>Platform</code>, <code>AnchoredCa</code> or <code>Custom</code></td>
+<td>verify another name than the one connected to (proxies)</td>
+</tr>
+<tr>
+<td><code>TrustConfig.Pinned(pins, scope, base)</code></td>
+<td><code>scope = PinScope.Leaf</code>, <code>base = Platform</code></td>
+<td>at least one pin; not around <code>Tofu</code>, <code>Custom</code> or another <code>Pinned</code></td>
+<td>SPKI pins checked on top of <code>base</code>; <code>PinScope.AnyInValidatedChain</code> matches any certificate of the validated chain</td>
+</tr>
+<tr>
+<td><code>TrustConfig.Tofu(store)</code></td>
+<td><code>store: TofuStore</code></td>
+<td>clients only</td>
+<td>trust on first use</td>
+</tr>
+<tr>
+<td><code>TrustConfig.Custom(verifier)</code> (<em>delicate</em>)</td>
+<td><code>verifier: CertificateVerifier</code></td>
+<td>clients only</td>
+<td>your verifier decides; the name check still runs</td>
+</tr>
+<tr>
+<td><code>TrustConfig.fromTrustManager(trustManager)</code></td>
+<td></td>
+<td>JVM only</td>
+<td>a <code>javax.net.ssl.X509TrustManager</code> as a verifier</td>
+</tr>
+</tbody>
+</table>
+<p>Pins are written <code>SpkiSha256.parse(&quot;sha256/&lt;base64&gt;&quot;)</code> (32 bytes). Certificates come from <code>Certificate.parsePem</code> or
+DER.</p>
+<h2 id="identities-and-key-logging">Identities and key logging</h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Parameters (defaults)</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TlsIdentity.fromPem(chainPem, keyPem, password)</code></td>
+<td><code>password = null</code> (encrypted keys are refused)</td>
+<td>chain plus one PKCS#8 key; <code>keyPem</code> is zeroed and the key lives in OpenSSL only</td>
+</tr>
+<tr>
+<td><code>TlsIdentity.fromDer(chain, keyDer)</code></td>
+<td></td>
+<td>the same from DER; <code>keyDer</code> is zeroed</td>
+</tr>
+<tr>
+<td><code>TlsIdentity.fromKeyStore(keyStore, alias, password)</code>, <code>fromPkcs12(bytes, password)</code></td>
+<td></td>
+<td>JVM only</td>
+</tr>
+<tr>
+<td><code>keylogFile(path)</code> (<em>delicate</em>)</td>
+<td></td>
+<td>a 0600 key log file, refused for links, foreign owners and file systems without POSIX permissions</td>
+</tr>
+<tr>
+<td><code>keylogFile(context, name)</code> (Android, <em>delicate</em>)</td>
+<td><code>name = &quot;kuicksilver-keylog.txt&quot;</code></td>
+<td>in the app's files; <code>null</code> in a non-debuggable build</td>
+</tr>
+<tr>
+<td><code>keylogFromEnvironment()</code> (<em>delicate</em>)</td>
+<td></td>
+<td><code>SSLKEYLOGFILE</code>, read only when called</td>
+</tr>
+</tbody>
+</table>
+<h2 id="http3settings">Http3Settings</h2>
+<p><code>http3Settings { }</code> (<code>Http3Settings.Builder</code>), <code>Http3Settings.Default</code>, <code>toBuilder()</code>. Guide: <a href="http3.html">HTTP/3</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>qpackMaxTableCapacity</code></td>
+<td><code>Long</code></td>
+<td>0</td>
+<td>0..2^30</td>
+<td>0.2.0</td>
+<td><code>SETTINGS_QPACK_MAX_TABLE_CAPACITY</code> we advertise: the dynamic table the peer's encoder may use</td>
+</tr>
+<tr>
+<td><code>qpackBlockedStreams</code></td>
+<td><code>Long</code></td>
+<td>0</td>
+<td>0..65 535</td>
+<td>0.2.0</td>
+<td><code>SETTINGS_QPACK_BLOCKED_STREAMS</code> we advertise</td>
+</tr>
+<tr>
+<td><code>encoderMaxTableCapacity</code></td>
+<td><code>Long</code></td>
+<td>4096</td>
+<td>0..2^30</td>
+<td>0.2.0</td>
+<td>ceiling of our own encoder's dynamic table, under what the peer allows</td>
+</tr>
+<tr>
+<td><code>maxFieldSectionSize</code></td>
+<td><code>Long</code></td>
+<td>65 536 (64 KiB)</td>
+<td>1..2^30</td>
+<td>0.2.0</td>
+<td>largest decoded header or trailer section we accept (and so the longest single field; above it: 431, the connection lives), advertised as <code>SETTINGS_MAX_FIELD_SECTION_SIZE</code>; a connection reads at most 8 times this of HEADERS frames at once (since 0.3.0), more wait unread in their streams' flow-control windows</td>
+</tr>
+<tr>
+<td><code>enableConnectProtocol</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>advertise Extended CONNECT (RFC 9220)</td>
+</tr>
+<tr>
+<td><code>h3Datagram</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td><code>SETTINGS_H3_DATAGRAM</code> (always sent); <code>Http3Endpoint</code> sends 0 when <code>QuicConfig.maxDatagramFrameSize</code> is 0</td>
+</tr>
+<tr>
+<td><code>webTransport</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>needs <code>enableConnectProtocol</code> and <code>h3Datagram</code></td>
+<td>0.3.0</td>
+<td>experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); <code>Http3Endpoint.bind</code> refuses it when <code>QuicConfig.maxDatagramFrameSize</code> is 0, and <code>Http3Endpoint</code> turns <code>QuicConfig.resetStreamAt</code> on with it</td>
+</tr>
+<tr>
+<td><code>webTransportMaxSessions</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>4</td>
+<td>1..65 535</td>
+<td>0.3.0</td>
+<td>WebTransport sessions one connection carries at once when both sides use WebTransport flow control (draft-16 section 5.1); a server refuses a CONNECT beyond it with <code>H3_REQUEST_REJECTED</code>, a client opens another connection. Times the per-session limits below, it must fit the QUIC connection's stream limits and largest window (<code>Http3Endpoint</code> refuses a configuration where it does not)</td>
+</tr>
+<tr>
+<td><code>webTransportInitialMaxStreamsBidi</code> (<em>experimental</em>)</td>
+<td><code>Long</code></td>
+<td>24</td>
+<td>0..2^60</td>
+<td>0.3.0</td>
+<td>bidirectional streams the peer may open in each WebTransport session (<code>SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI</code>); raised by WT_MAX_STREAMS as the peer's streams end. With all three limits 0 we declare no WebTransport flow control and a connection carries one session</td>
+</tr>
+<tr>
+<td><code>webTransportInitialMaxStreamsUni</code> (<em>experimental</em>)</td>
+<td><code>Long</code></td>
+<td>24</td>
+<td>0..2^60</td>
+<td>0.3.0</td>
+<td>the same for unidirectional streams (<code>SETTINGS_WT_INITIAL_MAX_STREAMS_UNI</code>)</td>
+</tr>
+<tr>
+<td><code>webTransportInitialMaxData</code> (<em>experimental</em>)</td>
+<td><code>Long</code> (bytes)</td>
+<td>3 932 160</td>
+<td>0..2^62-1</td>
+<td>0.3.0</td>
+<td>stream body bytes the peer may send in each WebTransport session (<code>SETTINGS_WT_INITIAL_MAX_DATA</code>); raised by WT_MAX_DATA as their bytes are consumed (taken by the application; a cleanly ended stream once all of it was handed over; a reset or stopped one by its final size); our sender serves a non-incremental session's streams in open order and shares an incremental session's (RFC 9218 <code>i</code>, signalled with <code>priority: i</code>; without a signal a session is <code>i=?0</code>, RFC 9218 §4.2, and a stream that keeps writing holds the later ones; each side chooses for its own sending); otherwise, or with another implementation, read the streams concurrently (a strictly sequential reader under a tight limit can stall)</td>
+</tr>
+<tr>
+<td><code>grease</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>send a reserved setting, frame and stream type</td>
+</tr>
+<tr>
+<td><code>maxInformationalResponses</code></td>
+<td><code>Int</code></td>
+<td>5</td>
+<td>at least 0</td>
+<td>0.2.0</td>
+<td>deprecated and ignored since 0.2.1: a client accepts any number of 1xx responses (RFC 9110 section 15.2); their fields together are bounded by <code>maxFieldSectionSize</code>, past which the request fails with <code>H3_EXCESSIVE_LOAD</code></td>
+</tr>
+<tr>
+<td><code>maxEarlyPriorityUpdates</code></td>
+<td><code>Int</code></td>
+<td>32</td>
+<td>at least 0</td>
+<td>0.2.0</td>
+<td>PRIORITY_UPDATE frames remembered for streams not yet open</td>
+</tr>
+<tr>
+<td><code>glitchProtection</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>close with <code>H3_EXCESSIVE_LOAD</code> a peer that floods useless frames (unknown frame types; reserved (GREASE) and empty DATA frames beyond the first 8 of a stream)</td>
+</tr>
+<tr>
+<td><code>maxHeaderBlockTime</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td>positive</td>
+<td>0.3.0</td>
+<td>how long one field section (a HEADERS frame) may take to arrive, from its frame header; a server also counts a request head from its stream's first byte. A late request head is rejected with <code>H3_REQUEST_REJECTED</code>, other late sections cancel their request with <code>H3_REQUEST_CANCELLED</code>; the connection lives on. The Ktor server bounds it by <code>requestHeaderTimeoutSeconds</code></td>
+</tr>
+<tr>
+<td><code>earlyData</code> (<em>experimental</em>)</td>
+<td><code>Http3EarlyDataPolicy</code></td>
+<td><code>WaitForHandshake()</code></td>
+<td><code>WaitForHandshake(replayable)</code>, <code>Reject425(replayable)</code>; <code>replayable</code> admits GET, HEAD and OPTIONS by default</td>
+<td>0.2.0</td>
+<td>server: what happens to requests that arrive in 0-RTT (<a href="http3.html#0-rtt-opt-in-experimental">HTTP/3 0-RTT</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>enableQpackDynamicTable()</code> sets <code>qpackMaxTableCapacity = 4096</code> and <code>qpackBlockedStreams = 16</code>.</p>
+<p>Endpoint and request parameters:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Parameters (defaults)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Http3Endpoint.bind(local, config, settings)</code></td>
+<td><code>config = QuicEndpointConfig.Default</code>, <code>settings = Http3Settings.Default</code>; the server's TLS must offer ALPN <code>h3</code></td>
+</tr>
+<tr>
+<td><code>Http3Endpoint.connect(remote, tls, quic, settings)</code></td>
+<td><code>quic = QuicConfig.Default</code>, <code>settings = Http3Settings.Default</code>; <code>tls</code> must offer ALPN <code>h3</code></td>
+</tr>
+<tr>
+<td><code>Http3Endpoint.connectEarly(remote, tls, quic, settings, earlyData)</code> (<em>experimental</em>)</td>
+<td>as <code>connect</code>, <code>earlyData = EarlyDataState.Allowed</code> (not <code>Disabled</code>)</td>
+</tr>
+<tr>
+<td><code>Http3Endpoint.shutdown(grace, code, reason)</code> (<em>experimental</em>)</td>
+<td><code>code = H3_NO_ERROR</code>, <code>reason = &quot;shutdown&quot;</code></td>
+</tr>
+<tr>
+<td><code>http3Request(method, authority, path) { ... }</code> (<code>Http3Request.Builder</code>)</td>
+<td><code>scheme = &quot;https&quot;</code>, <code>headers = Http3Headers.Empty</code>, <code>body = null</code> (no body), <code>trailers = null</code>, <code>priority = null</code> (the default <code>u=3</code>), <code>protocol = null</code>, <code>onInformational = null</code>, <code>allowEarlyData = false</code> (<em>experimental</em>; GET, HEAD and OPTIONS without a body only)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="capsuleconfig-experimental">CapsuleConfig (<em>experimental</em>)</h3>
+<p>How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) once
+<code>Http3Stream.useCapsuleProtocol(config)</code> is called: the constructor, <code>capsuleConfig { }</code> (<code>CapsuleConfig.Builder</code>),
+<code>toBuilder()</code>. Guide: <a href="http3.html#capsules-experimental">HTTP/3, capsules</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>knownTypes</code></td>
+<td><code>Set&lt;Long&gt;</code></td>
+<td>empty</td>
+<td>each 0..2^62-1</td>
+<td>0.3.0</td>
+<td>capsule types delivered in <code>CapsuleStream.capsules</code>; other types are skipped as their bytes arrive. DATAGRAM (0x00) always goes to <code>datagrams</code></td>
+</tr>
+<tr>
+<td><code>maxCapsuleLength</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>65 536 (64 KiB)</td>
+<td>1..1 048 576</td>
+<td>0.3.0</td>
+<td>longest capsule of a known type; a longer one resets and stops the stream with <code>H3_MESSAGE_ERROR</code></td>
+</tr>
+<tr>
+<td><code>maxDatagramLength</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>65 536 (64 KiB)</td>
+<td>1..1 048 576</td>
+<td>0.3.0</td>
+<td>longest DATAGRAM capsule; a longer one is dropped without being buffered</td>
+</tr>
+<tr>
+<td><code>datagramFallback</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>send datagrams as DATAGRAM capsules when HTTP/3 datagrams are unsupported (either side's <code>SETTINGS_H3_DATAGRAM</code> is 0, or the peer's SETTINGS have not arrived yet); a datagram too large for QUIC never falls back</td>
+</tr>
+<tr>
+<td><code>receiveQueue</code></td>
+<td><code>Int</code></td>
+<td>16</td>
+<td>1..4096</td>
+<td>0.3.0</td>
+<td>received capsules held for the collector; when full, reading the stream pauses (flow control holds the peer back)</td>
+</tr>
+<tr>
+<td><code>sendQueue</code></td>
+<td><code>Int</code></td>
+<td>32</td>
+<td>1..4096</td>
+<td>0.3.0</td>
+<td>capsules waiting to be written; when full, <code>send</code> suspends and a fallback <code>trySendDatagram</code> answers <code>QueueFull</code></td>
+</tr>
+<tr>
+<td><code>terminalTypes</code></td>
+<td><code>Set&lt;Long&gt;</code></td>
+<td>empty</td>
+<td>among <code>knownTypes</code>, not DATAGRAM</td>
+<td>0.3.0</td>
+<td>a capsule of such a type must be the stream's last: it is delivered, and any byte after it resets the stream with <code>H3_MESSAGE_ERROR</code> (WebTransport's WT_CLOSE_SESSION)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="udpproxyconfig-experimental">UdpProxyConfig (<em>experimental</em>)</h3>
+<p><code>UdpProxyConfig(...)</code> (constructor parameters, immutable): how a <code>UdpProxy</code> serves CONNECT-UDP (RFC 9298); a bad value
+throws <code>IllegalArgumentException</code> when the object is built. Guide: <a href="http3.html#connect-udp-experimental">HTTP/3, CONNECT-UDP</a>;
+threats and limits: threat model 3.29.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pathTemplate</code></td>
+<td><code>String</code></td>
+<td><code>ConnectUdp.WELL_KNOWN_PATH</code></td>
+<td>a path and query URI Template with <code>target_host</code> and <code>target_port</code> once each, readable back</td>
+<td>0.3.0</td>
+<td>the path a request must have; another shape is answered 404, an invalid value 400</td>
+</tr>
+<tr>
+<td><code>targetFilter</code></td>
+<td><code>UdpTargetFilter</code></td>
+<td><code>UdpTargetFilter.PublicOnly</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>which resolved addresses and ports may be reached; a refusal is 403 with <code>destination_ip_prohibited</code>, before a socket is opened</td>
+</tr>
+<tr>
+<td><code>resolver</code></td>
+<td><code>UdpProxyResolver</code></td>
+<td><code>UdpProxyResolver.System</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>resolves a <code>target_host</code> that is a DNS name, before the answer</td>
+</tr>
+<tr>
+<td><code>resolveTimeout</code></td>
+<td><code>Duration</code></td>
+<td>5 s</td>
+<td>positive</td>
+<td>0.3.0</td>
+<td>a resolution that takes longer is answered 504 with <code>dns_timeout</code></td>
+</tr>
+<tr>
+<td><code>idleTimeout</code></td>
+<td><code>Duration</code></td>
+<td>2 min</td>
+<td>at least 2 min</td>
+<td>0.3.0</td>
+<td>a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor)</td>
+</tr>
+<tr>
+<td><code>linkMtu</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>1500</td>
+<td>1280..65 535</td>
+<td>0.3.0</td>
+<td>UDP payloads above <code>linkMtu - 28</code> (IPv4) or <code>- 48</code> (IPv6) are dropped rather than sent fragmented</td>
+</tr>
+<tr>
+<td><code>maxTunnels</code></td>
+<td><code>Int</code></td>
+<td>4096</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>tunnels at once; one more is answered 503 with <code>connection_limit_reached</code></td>
+</tr>
+<tr>
+<td><code>maxTunnelsPerClient</code></td>
+<td><code>Int</code></td>
+<td>64</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>tunnels at once per client (an IPv4 address or an IPv6 <code>clientIpv6Prefix</code>); one more is answered 429</td>
+</tr>
+<tr>
+<td><code>clientIpv6Prefix</code></td>
+<td><code>Int</code></td>
+<td>64</td>
+<td>1..128</td>
+<td>0.3.0</td>
+<td>the prefix an IPv6 client is known by for its limits (a /64 is one client); IPv4 and IPv4-mapped clients are their address</td>
+</tr>
+<tr>
+<td><code>clientPacketRate</code></td>
+<td><code>Int</code></td>
+<td>50000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>UDP payloads per second all of a client's tunnels together send to targets, on top of each tunnel's <code>packetRate</code></td>
+</tr>
+<tr>
+<td><code>clientPacketBurst</code></td>
+<td><code>Int</code></td>
+<td>5000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>the client bucket's size</td>
+</tr>
+<tr>
+<td><code>packetRate</code></td>
+<td><code>Int</code></td>
+<td>20000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>UDP payloads per second a tunnel sends to its target; more are dropped</td>
+</tr>
+<tr>
+<td><code>packetBurst</code></td>
+<td><code>Int</code></td>
+<td>2000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>payloads a tunnel may send at once (the token bucket's size)</td>
+</tr>
+<tr>
+<td><code>unansweredLimit</code></td>
+<td><code>Int</code></td>
+<td>256</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td>payloads a client sends to a target before it answers once, counted across the client's tunnels; later ones are dropped until it does; 0 turns it off</td>
+</tr>
+<tr>
+<td><code>refuseOwnAddresses</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with <code>destination_ip_prohibited</code></td>
+</tr>
+<tr>
+<td><code>requireCapsuleProtocolField</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>a request without <code>capsule-protocol: ?1</code> is answered 400</td>
+</tr>
+<tr>
+<td><code>proxyName</code></td>
+<td><code>String</code></td>
+<td><code>&quot;proxy&quot;</code></td>
+<td>a Structured Field token</td>
+<td>0.3.0</td>
+<td>the proxy's name in the <code>proxy-status</code> of its refusals (RFC 9209)</td>
+</tr>
+<tr>
+<td><code>packetTooBig</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with <code>CAP_NET_RAW</code>), at most 10 a second per target and 100 over the proxy, from the address the target sent to (<code>stats.packetTooBigNoSource</code> when a wildcard socket cannot tell it, <code>stats.packetTooBigFailed</code> when the raw socket does not send it); without the privilege the payload is only dropped (<code>stats.packetTooBig</code>)</td>
+</tr>
+<tr>
+<td><code>socketFactory</code></td>
+<td><code>suspend (InetSocketAddress) -&gt; DatagramIo</code></td>
+<td><code>{ DatagramIo.open(it) }</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>opens a tunnel's UDP socket on a wildcard address of the target's family</td>
+</tr>
+</tbody>
+</table>
+<h2 id="http2settings">Http2Settings</h2>
+<p><code>Http2Settings(...)</code> (<em>experimental</em>, constructor parameters, immutable). Used by the Ktor client (<code>http2 { settings = … }</code>) and
+server (<code>http2Settings = …</code>); a bad value throws <code>IllegalArgumentException</code> when the object is built. Guide: <a href="ktor.html#http2-on-the-client">Ktor: HTTP/2 on
+the client</a>, <a href="ktor.html#http2-on-the-server">on the server</a>; limits against floods: threat model 3.23.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>headerTableSize</code></td>
+<td><code>Int</code></td>
+<td>4096</td>
+<td>0..65 536</td>
+<td>0.3.0</td>
+<td><code>SETTINGS_HEADER_TABLE_SIZE</code>: the HPACK dynamic table the peer may use towards us</td>
+</tr>
+<tr>
+<td><code>maxConcurrentStreams</code></td>
+<td><code>Int</code></td>
+<td>100</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td><code>SETTINGS_MAX_CONCURRENT_STREAMS</code>: streams the peer may have open towards us; a stream the peer reset still counts until its handler has finished</td>
+</tr>
+<tr>
+<td><code>initialStreamWindow</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>524 288 (512 KiB)</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td><code>SETTINGS_INITIAL_WINDOW_SIZE</code>: the receive window each stream starts with</td>
+</tr>
+<tr>
+<td><code>maxStreamWindow</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>6 291 456 (6 MiB)</td>
+<td>at least <code>initialStreamWindow</code></td>
+<td>0.3.0</td>
+<td>the largest a stream's receive window grows to while the application reads faster than the window</td>
+</tr>
+<tr>
+<td><code>initialConnectionWindow</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>786 432 (768 KiB)</td>
+<td>at least 65 535</td>
+<td>0.3.0</td>
+<td>the connection's receive window</td>
+</tr>
+<tr>
+<td><code>maxConnectionWindow</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>15 728 640 (15 MiB)</td>
+<td>at least <code>initialConnectionWindow</code></td>
+<td>0.3.0</td>
+<td>the largest the connection's receive window grows to</td>
+</tr>
+<tr>
+<td><code>maxFrameSize</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>16 384</td>
+<td>16 384..16 777 215</td>
+<td>0.3.0</td>
+<td><code>SETTINGS_MAX_FRAME_SIZE</code>: the largest frame payload we accept</td>
+</tr>
+<tr>
+<td><code>maxHeaderListSize</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>65 536 (64 KiB)</td>
+<td>1..2^30 - 1</td>
+<td>0.3.0</td>
+<td><code>SETTINGS_MAX_HEADER_LIST_SIZE</code>: the largest field section we decode (name + value + 32 per field); a larger one fails only its stream, its compressed form is buffered up to twice this, beyond that the connection ends</td>
+</tr>
+<tr>
+<td><code>settingsAckTimeout</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td>positive</td>
+<td>0.3.0</td>
+<td>how long our SETTINGS may go unacknowledged before the connection ends with <code>SETTINGS_TIMEOUT</code></td>
+</tr>
+<tr>
+<td><code>maxContinuationFrames</code></td>
+<td><code>Int</code></td>
+<td>8</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td>CONTINUATION frames allowed in one field block; more ends the connection (<code>ENHANCE_YOUR_CALM</code>)</td>
+</tr>
+<tr>
+<td><code>maxControlFramesQueued</code></td>
+<td><code>Int</code></td>
+<td>10 000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>control frames (SETTINGS and PING acknowledgements, RST_STREAM, WINDOW_UPDATE) queued for the peer</td>
+</tr>
+<tr>
+<td><code>maxEmptyFrames</code></td>
+<td><code>Int</code></td>
+<td>100</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td>DATA frames in a row with no content and no END_STREAM; more ends the connection</td>
+</tr>
+<tr>
+<td><code>resetBurst</code></td>
+<td><code>Int</code></td>
+<td>1000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>a server's budget for the client's RST_STREAM frames (Rapid Reset), burst (as nghttp2)</td>
+</tr>
+<tr>
+<td><code>resetsPerSecond</code></td>
+<td><code>Int</code></td>
+<td>33</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td>refill rate of that budget per second; 0: it never refills</td>
+</tr>
+<tr>
+<td><code>maxHeaderBlockTime</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td>positive</td>
+<td>0.3.0</td>
+<td>how long one field block (HEADERS and its CONTINUATION frames) may take to arrive</td>
+</tr>
+<tr>
+<td><code>glitchBurst</code></td>
+<td><code>Int</code></td>
+<td>10 000</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>burst of the glitch budget (PRIORITY, unknown frame types, SETTINGS, empty DATA, an unanswered-data PING, every stream error the peer causes)</td>
+</tr>
+<tr>
+<td><code>glitchesPerSecond</code></td>
+<td><code>Int</code></td>
+<td>330</td>
+<td>at least 0</td>
+<td>0.3.0</td>
+<td>refill rate of the glitch budget per second; 0: it never refills</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ktor-client-engine">Ktor client engine</h2>
+<p><code>HttpClient(Kuicksilver) { engine { … } }</code> (<code>KuicksilverEngineConfig</code>). Values are checked when the engine is created.
+Guide: <a href="ktor.html#client">Ktor: Client</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trust</code></td>
+<td><code>TrustConfig</code></td>
+<td><code>TrustConfig.Platform</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>server verification for HTTP/3, HTTP/2 and HTTP/1.1 alike</td>
+</tr>
+<tr>
+<td><code>identity</code></td>
+<td><code>TlsIdentity?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>client certificate</td>
+</tr>
+<tr>
+<td><code>tls</code></td>
+<td><code>TlsConfig.Builder.() -&gt; Unit</code></td>
+<td><code>{}</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>further TLS settings, applied after <code>trust</code> and <code>identity</code> (which it can therefore replace); <code>alpn</code> and <code>serverName</code> come from the request and are set after it, so the block cannot change them (use <code>TrustConfig.ExpectedName</code> to verify another name)</td>
+</tr>
+<tr>
+<td><code>quic</code></td>
+<td><code>QuicConfig</code></td>
+<td><code>QuicConfig.Default</code></td>
+<td>its <code>connectionIdLength</code> and <code>http3.endpoint.connectionIdLength</code> agree: the one left at 8 follows the other; two different explicit values fail the engine's creation</td>
+<td>0.2.0</td>
+<td>QUIC transport of HTTP/3 connections</td>
+</tr>
+<tr>
+<td><code>maxIdleConnectionsPerRoute</code></td>
+<td><code>Int</code></td>
+<td>4</td>
+<td>at least 0</td>
+<td>0.2.0</td>
+<td>idle HTTP/1.1 keep-alive connections kept per route; not a connection limit</td>
+</tr>
+<tr>
+<td><code>http11Hints</code> (<em>experimental</em>)</td>
+<td><code>Set&lt;HostPort&gt;</code></td>
+<td>empty</td>
+<td></td>
+<td>0.3.0</td>
+<td>servers known to handle HTTP/1.1 (RFC 9112 section 6.1 user configuration): chunked request bodies go to them at once, without the first-contact <code>OPTIONS</code> probe; the origin, or for plain <code>http</code> through an HTTP proxy the proxy</td>
+</tr>
+<tr>
+<td><code>assumeHttp11</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>every server is known to handle HTTP/1.1: no first-contact <code>OPTIONS</code> probe anywhere</td>
+</tr>
+<tr>
+<td><code>maxConnectionsCount</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>1000</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>TCP connections (HTTP/1.1 and HTTP/2) of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout)</td>
+</tr>
+<tr>
+<td><code>maxConnectionsPerRoute</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>100</td>
+<td>at least 1</td>
+<td>0.2.0</td>
+<td>TCP connections to one route (scheme, host, port, proxy); an HTTP/2 connection counts once however many requests it carries</td>
+</tr>
+<tr>
+<td><code>idleTimeout</code> (<em>experimental</em>)</td>
+<td><code>Duration</code></td>
+<td>5 min</td>
+<td>positive</td>
+<td>0.2.0</td>
+<td>idle HTTP/1.1 connections, and HTTP/2 and HTTP/3 connections without requests, are closed after this</td>
+</tr>
+<tr>
+<td><code>maxConnectionLifetime</code> (<em>experimental</em>)</td>
+<td><code>Duration</code></td>
+<td>infinite</td>
+<td>positive</td>
+<td>0.2.0</td>
+<td>age after which a connection takes no new requests</td>
+</tr>
+<tr>
+<td><code>connectTimeout</code></td>
+<td><code>Duration</code></td>
+<td>10 s</td>
+<td></td>
+<td>0.2.0</td>
+<td>connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the wait for a pool slot share it) when <code>HttpTimeout</code> sets none; a WebSocket over HTTP/1.1 also waits at most this long for the answer to its opening handshake (<code>ConnectTimeoutException</code>)</td>
+</tr>
+<tr>
+<td><code>connectionAttemptDelay</code> (<em>experimental</em>)</td>
+<td><code>Duration</code></td>
+<td>250 ms</td>
+<td>100 ms..2 s, or <code>Duration.INFINITE</code>; anything else fails the engine's creation</td>
+<td>0.3.0</td>
+<td>Happy Eyeballs (RFC 8305) for the TCP and QUIC connects: the delay before the next address is tried while earlier attempts are still pending (never less than 10 ms after the last start, also when it failed); <code>INFINITE</code> tries one address after another (<a href="ktor.html#happy-eyeballs">Ktor: Happy Eyeballs</a>)</td>
+</tr>
+<tr>
+<td><code>dns</code> (<em>experimental</em>)</td>
+<td><code>Dns</code></td>
+<td><code>Dns.System</code></td>
+<td><code>Dns.System</code>, <code>Dns.blocking { }</code>, a <code>FamilyDns</code> or your own <code>Dns</code></td>
+<td>0.3.0</td>
+<td>resolves host names (the origin's, an alternative's, an HTTPS record target's, a proxy's; never an IP literal, never the origin's behind an HTTP or <code>socks5h</code> proxy); the answer is sorted by RFC 6724 and raced with Happy Eyeballs over TCP and QUIC; unspecified, multicast and broadcast answers are dropped (the system's too), at most 32 addresses per family; bounded by the connect timeout; SNI and certificate checks use the host name, never the answer (<a href="ktor.html#name-resolution-experimental">Ktor: Name resolution</a>)</td>
+</tr>
+<tr>
+<td><code>webSocketMaxMessageSize</code> (<em>experimental</em>)</td>
+<td><code>Long</code> (bytes)</td>
+<td>16 777 216 (16 MiB)</td>
+<td>at least 1</td>
+<td>0.3.0</td>
+<td>the largest WebSocket frame, and message once reassembled, the client takes (RFC 6455 section 10.4); an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and <code>PerMessageDeflate</code>'s <code>maxInflatedMessageSize</code> (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value (<a href="ktor.html#client">Ktor: Client</a>)</td>
+</tr>
+<tr>
+<td><code>logger</code> (<em>experimental</em>)</td>
+<td><code>KuicksilverLogger?</code></td>
+<td><code>null</code> (keeps <code>http3.endpoint.logger</code>)</td>
+<td></td>
+<td>0.2.0</td>
+<td>the engine's and its QUIC endpoint's diagnostics</td>
+</tr>
+<tr>
+<td><code>eventListener</code> (<em>experimental</em>)</td>
+<td><code>KuicksilverEventListener?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>call, protocol, race, Alt-Svc, DNS and pool events (<a href="ktor.html#observability-experimental">Ktor: Observability</a>)</td>
+</tr>
+<tr>
+<td><code>proxy</code> (Ktor)</td>
+<td><code>ProxyConfig?</code></td>
+<td><code>null</code></td>
+<td>HTTP and SOCKS5 proxies; off the JVM an <code>https://</code> proxy URL is TLS to the proxy (since 0.3.0; a <code>java.net.Proxy</code> has no scheme, so on the JVM an <code>https://</code> proxy comes from <code>proxyResolver</code>); other types fail each request with <code>UnsupportedOperationException</code></td>
+<td>0.2.0</td>
+<td>TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for <code>https</code> and WebSockets, absolute form for <code>http</code>; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied</td>
+</tr>
+<tr>
+<td><code>proxyResolver</code> (<em>experimental</em>)</td>
+<td><code>ProxyResolver</code></td>
+<td><code>ProxyResolvers.System</code></td>
+<td><code>System</code>, <code>Environment</code>, <code>None</code> or your own</td>
+<td>0.3.0</td>
+<td>the proxy for requests <code>proxy</code> does not cover, per scheme, host and port (kept 30 s); each lookup is bounded by the engine's <code>connectTimeout</code> (not a per-request <code>HttpTimeout</code>) and fails the request with <code>ProxyException</code> beyond it; loopback is always direct with the built-ins; docs/guide/ktor.md, &quot;Proxies&quot;</td>
+</tr>
+<tr>
+<td><code>connectUdpProxy</code> (<em>experimental</em>)</td>
+<td><code>ConnectUdpProxy?</code></td>
+<td><code>null</code></td>
+<td>a template that passes RFC 9298 section 2</td>
+<td>0.3.0</td>
+<td>a CONNECT-UDP proxy (MASQUE) for HTTP/3: the <code>https</code> requests its <code>applies</code> admits go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly, and neither use nor learn <code>Alt-Svc</code>; <code>proxy</code> and <code>proxyResolver</code> keep deciding for the others (<a href="ktor.html#http3-through-a-connect-udp-proxy-experimental">HTTP/3 through a CONNECT-UDP proxy</a>)</td>
+</tr>
+<tr>
+<td><code>pacFullWebSocketUrl</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>—</td>
+<td>0.3.0</td>
+<td>with <code>ProxyResolvers.System</code> on Apple platforms and Windows: the PAC script the system settings name (inline, or by an <code>https://</code> or local <code>file:///</code> URL; never one WPAD found or one over plain <code>http://</code>) gets a <code>wss://</code> URI whole, path and query included (RFC 6455 section 4.1); off, every script gets <code>wss://host[:port]/</code> only, as browsers give it (CVE-2016-3763, CVE-2016-5134); docs/guide/ktor.md, &quot;Proxies&quot;</td>
+</tr>
+<tr>
+<td><code>proxyCredentials</code> (<em>experimental</em>)</td>
+<td><code>ProxyCredentials?</code></td>
+<td><code>null</code></td>
+<td>SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929)</td>
+<td>0.3.0</td>
+<td>for the explicit <code>proxy</code> only (a resolver's proxy carries its own <code>ResolvedProxy.credentials</code>); SOCKS5 username/password when the proxy picks it; <code>Proxy-Authorization: Basic</code> on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins; in clear to an <code>http://</code> or SOCKS5 proxy, only inside TLS to an <code>https://</code> one</td>
+</tr>
+<tr>
+<td><code>proxyTls</code> (<em>experimental</em>)</td>
+<td><code>(TlsConfig.Builder.() -&gt; Unit)?</code></td>
+<td><code>null</code></td>
+<td>—</td>
+<td>0.3.0</td>
+<td>the TLS of connections to an <code>https://</code> proxy (<code>ResolvedProxy.https</code>); null: the <code>tls</code> block over <code>trust</code>, then that trust without an <code>ExpectedName</code> or <code>Pinned</code> (the origin's name and keys), no client certificate; a block starts from that trust and may set anything; SNI and the verified name are the proxy's host and ALPN <code>http/1.1</code>, whatever it sets (<a href="ktor.html#proxies">Ktor: Proxies</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>pipelining</code> (from Ktor's <code>HttpClientEngineConfig</code>) is not used.</p>
+<h3 id="http2-client-options">HTTP/2 client options</h3>
+<p><code>http2 { … }</code> (<code>Http2ClientConfig</code>, <em>experimental</em>; guide: <a href="ktor.html#http2-on-the-client">HTTP/2 on the client</a>):</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.3.0</td>
+<td>offer <code>h2</code> and <code>http/1.1</code> in ALPN on every <code>https://</code> connection over TCP (not WebSockets), over TLS 1.3 and, when <code>tls</code> allows it, TLS 1.2 (a server's renegotiation request then ends the connection with PROTOCOL_ERROR, RFC 9113 section 9.2.1); <code>false</code> offers only <code>http/1.1</code>, as in 0.2</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td><code>Http2Settings</code></td>
+<td><code>Http2Settings()</code></td>
+<td>0.3.0</td>
+<td>our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23)</td>
+</tr>
+<tr>
+<td><code>pingInterval</code></td>
+<td><code>Duration</code></td>
+<td><code>Duration.INFINITE</code></td>
+<td>0.3.0</td>
+<td>a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with <code>IllegalArgumentException</code></td>
+</tr>
+<tr>
+<td><code>priorKnowledge</code></td>
+<td><code>Set&lt;HostPort&gt;</code></td>
+<td>empty</td>
+<td>0.3.0</td>
+<td>the <code>http://</code> origins (host and port as in the URL) whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for <code>https://</code>, through an HTTP proxy in a CONNECT tunnel; cleartext, so only servers on a trusted network (<a href="ktor.html#h2c-on-the-client">h2c on the client</a>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="http3-client-options">HTTP/3 client options</h3>
+<p><code>http3 { … }</code> (<code>Http3ClientConfig</code>; guide: <a href="ktor.html#http3-on-the-client">HTTP/3 on the client</a>):</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>discovery</code></td>
+<td><code>Http3DiscoveryMode</code></td>
+<td><code>Auto</code></td>
+<td>0.2.0</td>
+<td><code>Auto</code> (TCP first, HTTP/3 after <code>Alt-Svc</code>), <code>Preferred</code> (HTTP/3 first, TCP fallback), <code>H3Only</code>, <code>H1Only</code> (no HTTP/3; TCP is HTTP/1.1 or HTTP/2)</td>
+</tr>
+<tr>
+<td><code>quicHints</code></td>
+<td><code>Set&lt;HostPort&gt;</code></td>
+<td>empty</td>
+<td>0.2.0</td>
+<td>origins treated as <code>Preferred</code> in <code>Auto</code> mode; <code>HostPort(host, port)</code> compares the host exactly as in URLs</td>
+</tr>
+<tr>
+<td><code>altSvcStore</code></td>
+<td><code>AltSvcStore</code></td>
+<td><code>InMemoryAltSvcStore()</code></td>
+<td>0.2.0</td>
+<td>where alternatives live; <code>FileAltSvcStore(path)</code> keeps them across restarts (on the JVM and Android also <code>FileAltSvcStore(file)</code> with a <code>java.io.File</code>, which works from API 24)</td>
+</tr>
+<tr>
+<td><code>clearOnNetworkChange</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.2.0</td>
+<td>drop alternatives without <code>persist=1</code> when the network changes (<code>networkId</code>, else the networks <code>connectionMigration</code> follows; with <code>networkId</code> also across restarts, RFC 7838 section 2.2); <code>false</code> keeps them</td>
+</tr>
+<tr>
+<td><code>httpsRecords</code> (<em>experimental</em>)</td>
+<td><code>HttpsRecordSource</code></td>
+<td><code>HttpsRecordSource.Off</code></td>
+<td>0.3.0</td>
+<td>HTTPS resource records (RFC 9460) as a source of HTTP/3 in <code>Auto</code>: <code>System</code> (the OS resolver) or <code>Exchange { query -&gt; response }</code> (your DNS-over-HTTPS client) (<a href="ktor.html#https-records-experimental">HTTPS records</a>)</td>
+</tr>
+<tr>
+<td><code>httpsRecordExtraWait</code> (<em>experimental</em>)</td>
+<td><code>Duration</code></td>
+<td>50 ms</td>
+<td>0.3.0</td>
+<td>how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with <code>IllegalArgumentException</code></td>
+</tr>
+<tr>
+<td><code>hardDelay</code></td>
+<td><code>Duration?</code></td>
+<td><code>null</code> (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s)</td>
+<td>0.2.0</td>
+<td>head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or <code>Duration.INFINITE</code> (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with <code>IllegalArgumentException</code></td>
+</tr>
+<tr>
+<td><code>networkId</code></td>
+<td><code>() -&gt; String?</code></td>
+<td><code>{ null }</code> (one network)</td>
+<td>0.2.0</td>
+<td>identifies the current network; a change forgets broken marks, QUIC confirmation, HTTPS records and alternatives without <code>persist=1</code>; when it is not set, the networks <code>connectionMigration</code> follows take its place; the engine caches HTTPS records only when it sees the network</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td><code>Http3Settings</code></td>
+<td><code>Http3Settings.Default</code></td>
+<td>0.2.0</td>
+<td>HTTP/3 settings of the engine's connections</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td><code>QuicEndpointConfig</code></td>
+<td><code>QuicEndpointConfig.Default</code></td>
+<td>0.2.0</td>
+<td>the client QUIC endpoint (bound to <code>0.0.0.0:0</code>, a dual-stack socket on the accelerated transport; a loopback server, <code>127.0.0.0/8</code> or <code>::1</code>, is reached from up to two more, one per family, bound to <code>127.0.0.1</code> and <code>::1</code> and created at first use; all share the session tickets)</td>
+</tr>
+<tr>
+<td><code>earlyData</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.2.0</td>
+<td>0-RTT for GET, HEAD and OPTIONS without a body on resumed connections</td>
+</tr>
+<tr>
+<td><code>qlog</code> (<em>experimental</em>)</td>
+<td><code>QlogSink?</code></td>
+<td><code>null</code> (keeps <code>quic.qlog</code>)</td>
+<td>0.2.0</td>
+<td>a qlog trace per HTTP/3 connection</td>
+</tr>
+<tr>
+<td><code>connectionListener</code> (<em>experimental</em>)</td>
+<td><code>ConnectionListener?</code></td>
+<td><code>null</code> (keeps <code>endpoint.listener</code>)</td>
+<td>0.2.0</td>
+<td>lifecycle of every QUIC connection</td>
+</tr>
+<tr>
+<td><code>webTransportIgnoresProxy</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.3.0</td>
+<td><code>HttpClient.webTransport</code> connects directly although a proxy applies to the URL; otherwise such a call fails with <code>UnsupportedOperationException</code> (<a href="ktor.html#webtransport-on-the-client-experimental">WebTransport on the client</a>)</td>
+</tr>
+<tr>
+<td><code>webTransportIgnoresConnectUdpProxy</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.3.0</td>
+<td><code>webTransport</code> to a URL <code>connectUdpProxy</code> applies to connects directly instead of being refused (its sessions do not go through the tunnel)</td>
+</tr>
+<tr>
+<td><code>maxWebTransportSessions</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>64</td>
+<td>0.3.0</td>
+<td>WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with <code>IllegalStateException</code></td>
+</tr>
+<tr>
+<td><code>http3Allowed</code> (<em>experimental</em>)</td>
+<td><code>() -&gt; Boolean</code></td>
+<td><code>{ true }</code></td>
+<td>0.3.0</td>
+<td>kill switch read once per <code>https://</code> request and <code>webTransport</code> call (not with <code>H1Only</code>): false sends a request over TCP, HTTP/2 included (<code>H3Only</code> requests and <code>webTransport</code> fail with <code>UnsupportedOperationException</code>); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes (<a href="ktor.html#turning-http3-off-remotely">Turning HTTP/3 off remotely</a>)</td>
+</tr>
+<tr>
+<td><code>diagnosticsLogLevel</code> (<em>experimental</em>)</td>
+<td><code>LogLevel?</code></td>
+<td><code>Info</code></td>
+<td>0.3.0</td>
+<td>level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at <code>Debug</code>; <code>null</code> writes none (<a href="ktor.html#why-did-this-request-not-use-http3">Why did this request not use HTTP/3?</a>)</td>
+</tr>
+<tr>
+<td><code>connectionMigration</code> (<em>experimental</em>)</td>
+<td><code>Http3ConnectionMigration?</code></td>
+<td><code>null</code> (connections stay on the network they were opened on)</td>
+<td>0.3.0</td>
+<td>pooled HTTP/3 connections follow the network (RFC 9000 section 9); <code>Http3ConnectionMigration.followDefaultNetwork(connectivity)</code> on Android, <code>followDefaultNetwork()</code> on iOS and macOS, your own <code>NetworkMigrator</code> elsewhere; events go to <code>connectionMigrated</code> (<a href="ktor.html#connection-migration">Connection migration</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ktor-server-engine">Ktor server engine</h2>
+<p><code>embeddedServer(Kuicksilver, configure = { … })</code> (<code>KuicksilverApplicationEngine.Configuration</code>). Guide:
+<a href="ktor.html#server">Ktor: Server</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tlsConnector(identity) { … }</code></td>
+<td></td>
+<td></td>
+<td>0.2.0</td>
+<td>a TLS connector: HTTP/1.1 (and HTTP/2 with <code>http2</code>) over TLS on TCP and HTTP/3 on UDP on the same port (<a href="ktor.html#http3-on-the-server">Ktor: HTTP/3 on the server</a>)</td>
+</tr>
+<tr>
+<td><code>identity</code></td>
+<td><code>TlsIdentity?</code></td>
+<td><code>null</code></td>
+<td>0.2.0</td>
+<td>turns every plain connector (<code>port = …</code>, <code>connector { }</code>) into a TLS connector; a <code>TlsIdentity.Reloadable</code> can be replaced at run time (<a href="ktor.html#certificate-rotation">Certificate rotation</a>)</td>
+</tr>
+<tr>
+<td><code>identityReloadInterval</code> (<em>experimental</em>)</td>
+<td><code>Duration?</code></td>
+<td><code>null</code></td>
+<td>0.3.0</td>
+<td>at least 1 s; how often the PEM files <code>EngineMain</code> read (the identity and <code>kuicksilver.tls.clientCa</code>) are checked for a renewed certificate or CA bundle (key <code>kuicksilver.tls.reloadInterval</code>); set without those files, the start fails (<a href="ktor.html#certificate-rotation">Certificate rotation</a>)</td>
+</tr>
+<tr>
+<td><code>connectionIdleTimeoutSeconds</code></td>
+<td><code>Int</code></td>
+<td>45</td>
+<td>0.2.0</td>
+<td>an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes</td>
+</tr>
+<tr>
+<td><code>requestHeaderTimeoutSeconds</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>30</td>
+<td>0.2.1</td>
+<td>positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then <code>408 Request Timeout</code> and close when part of a head arrived, a close without a response when nothing did (<a href="ktor.html#server">Server</a>); it also bounds <code>maxHeaderBlockTime</code> of <code>http2Settings</code> and <code>http3Settings</code></td>
+</tr>
+<tr>
+<td><code>maxTcpConnections</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>10,000</td>
+<td>0.3.0</td>
+<td>at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below <code>ulimit -n</code> (<a href="ktor.html#connection-limits">Connection limits</a>)</td>
+</tr>
+<tr>
+<td><code>maxTcpConnectionsPerIp</code> (<em>experimental</em>)</td>
+<td><code>Int?</code></td>
+<td><code>null</code> (off)</td>
+<td>0.3.0</td>
+<td>at least 1, or <code>null</code>; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to <code>connectionRefused</code>; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly (<a href="ktor.html#connection-limits">Connection limits</a>); on a connector with <code>proxyProtocol</code> the address is the proxy's, so it limits each proxy</td>
+</tr>
+<tr>
+<td><code>http3</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.2.0</td>
+<td>serve HTTP/3 on every TLS connector</td>
+</tr>
+<tr>
+<td><code>http2</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.3.0</td>
+<td>offer <code>h2</code> before <code>http/1.1</code> in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with <code>versions = TlsVersions.Tls12And13</code>; plain connectors serve h2c only with their own <code>h2c</code>) (<a href="ktor.html#http2-on-the-server">HTTP/2 on the server</a>)</td>
+</tr>
+<tr>
+<td><code>webSocketsOverHttp2</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.3.0</td>
+<td>with <code>http2</code>: advertise <code>SETTINGS_ENABLE_CONNECT_PROTOCOL</code> and serve RFC 8441 WebSockets (Extended CONNECT) to <code>webSocket {}</code> routes; <code>false</code> leaves WebSockets on HTTP/1.1 (<a href="ktor.html#websockets-over-http2">WebSockets over HTTP/2</a>)</td>
+</tr>
+<tr>
+<td><code>http2Settings</code> (<em>experimental</em>)</td>
+<td><code>Http2Settings</code></td>
+<td><code>Http2Settings()</code></td>
+<td>0.3.0</td>
+<td>windows, SETTINGS and flood limits of every HTTP/2 connection; its <code>maxHeaderBlockTime</code> is bounded by <code>requestHeaderTimeoutSeconds</code></td>
+</tr>
+<tr>
+<td><code>http2RepeatOffenderPenalty</code> (<em>experimental</em>)</td>
+<td><code>Duration</code></td>
+<td><code>Duration.ZERO</code> (off)</td>
+<td>0.3.0</td>
+<td>not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer (<a href="ktor.html#http2-on-the-server">HTTP/2 on the server</a>)</td>
+</tr>
+<tr>
+<td><code>altSvc</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.2.0</td>
+<td>add <code>Alt-Svc: h3=&quot;:&lt;port&gt;&quot;; ma=86400</code> to HTTP/1.1 and HTTP/2 responses over TLS, and on HTTP/2 also send it as an ALTSVC frame per origin, refreshed every 12 hours (RFC 7838 sections 3, 4; not when the application set its own, not on 421); <code>engine.http3Advertising</code> changes it at run time (<a href="ktor.html#turning-http3-off-on-the-server">Turning HTTP/3 off on the server</a>)</td>
+</tr>
+<tr>
+<td><code>quic</code></td>
+<td><code>QuicConfig</code></td>
+<td><code>QuicConfig.Default</code></td>
+<td>0.2.0</td>
+<td>QUIC transport of the HTTP/3 listeners</td>
+</tr>
+<tr>
+<td><code>quicMaxIdleTimeout</code></td>
+<td><code>Duration?</code></td>
+<td><code>null</code></td>
+<td>0.2.0</td>
+<td><code>quic.maxIdleTimeout</code>, applied only while <code>quic</code> is not assigned (assigning any <code>QuicConfig</code>, <code>QuicConfig.Default</code> included, uses that config's own timeout)</td>
+</tr>
+<tr>
+<td><code>udpSocketCount</code></td>
+<td><code>Int</code></td>
+<td>1</td>
+<td>0.2.0</td>
+<td>endpoint loops per UDP port (<code>QuicEndpointConfig.loops</code>; every platform since 0.3.0)</td>
+</tr>
+<tr>
+<td><code>quicMaxConnections</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>10,000</td>
+<td>0.3.0</td>
+<td>at least 1; QUIC connections each HTTP/3 listener holds over all its <code>udpSocketCount</code> loops, handshakes included (<code>QuicEndpointConfig.maxConnections</code>); beyond it new Initials are dropped silently (<code>EndpointStats.connectionsRefusedLimits</code>)</td>
+</tr>
+<tr>
+<td><code>quicMaxConnectionsPerIp</code> (<em>experimental</em>)</td>
+<td><code>Int?</code></td>
+<td>256</td>
+<td>0.3.0</td>
+<td>at least 1, or <code>null</code> (off); QUIC connections of one client IP on each HTTP/3 listener over all its loops, ports ignored (<code>QuicEndpointConfig.maxConnectionsPerIp</code>); beyond it new Initials are dropped silently and the client times out. Behind a NAT, <code>kube-proxy</code> with <code>externalTrafficPolicy: Cluster</code> or a UDP load balancer that does not keep client addresses every client shares one address: raise it or turn it off (<a href="deployment.html#quic-connection-limits">QUIC connection limits</a>)</td>
+</tr>
+<tr>
+<td><code>quicAcceptQueue</code> (<em>experimental</em>)</td>
+<td><code>Int</code></td>
+<td>128</td>
+<td>0.3.0</td>
+<td>at least 1; handshaken QUIC connections waiting for the HTTP/3 accept loop on each listener (<code>QuicEndpointConfig.acceptQueue</code>); while full, a new client is refused with CONNECTION_REFUSED (<code>EndpointStats.connectionsRefusedAcceptQueue</code>)</td>
+</tr>
+<tr>
+<td><code>quicAdmission</code></td>
+<td><code>ConnectionAdmission?</code></td>
+<td><code>null</code> (<code>ConnectionAdmission.default()</code>)</td>
+<td>0.2.0</td>
+<td>Retry policy</td>
+</tr>
+<tr>
+<td><code>quicLoadBalancer</code> (<em>experimental</em>)</td>
+<td><code>QuicLbConfig?</code></td>
+<td><code>null</code></td>
+<td>0.3.0</td>
+<td>QUIC-LB connection IDs of every HTTP/3 listener (<code>QuicEndpointConfig.loadBalancer</code>; its length must equal <code>quic.connectionIdLength</code>); <code>engine.updateLoadBalancer(next)</code> changes it on the running engine (<a href="quic.html#behind-a-load-balancer">Behind a load balancer</a>)</td>
+</tr>
+<tr>
+<td><code>http3Settings</code></td>
+<td><code>Http3Settings</code></td>
+<td><code>Http3Settings.Default</code></td>
+<td>0.2.0</td>
+<td>HTTP/3 settings; its <code>maxHeaderBlockTime</code> is bounded by <code>requestHeaderTimeoutSeconds</code></td>
+</tr>
+<tr>
+<td><code>webSocketsOverHttp3</code></td>
+<td><code>Boolean</code></td>
+<td><code>true</code></td>
+<td>0.2.0</td>
+<td>accept RFC 9220 WebSockets (turns <code>enableConnectProtocol</code> on); with <code>false</code> a WebSocket CONNECT gets 501</td>
+</tr>
+<tr>
+<td><code>webSocketMaxMessageSize</code> (<em>experimental</em>)</td>
+<td><code>Long</code> (bytes)</td>
+<td>16 777 216 (16 MiB)</td>
+<td>0.3.0</td>
+<td>at least 1; the largest WebSocket frame, and message once reassembled, the server takes from a client (RFC 6455 section 10.4), over HTTP/1.1, HTTP/2 and HTTP/3; an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and <code>PerMessageDeflate</code>'s <code>maxInflatedMessageSize</code> (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value (<a href="ktor.html#server">Ktor: Server</a>)</td>
+</tr>
+<tr>
+<td><code>webTransport</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.3.0</td>
+<td>serve WebTransport to <code>webTransport(path) { }</code> routes (turns <code>http3Settings.webTransport</code> and <code>enableConnectProtocol</code> on; needs QUIC datagrams) (<a href="ktor.html#webtransport-over-http3-experimental">WebTransport</a>)</td>
+</tr>
+<tr>
+<td><code>connectUdp</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.3.0</td>
+<td>take CONNECT-UDP requests (RFC 9298) into the pipeline for <code>connectUdp(proxy)</code> routes (turns <code>enableConnectProtocol</code> on); without it they are answered 501; no configuration-file key (<a href="ktor.html#connect-udp-over-http3-experimental">CONNECT-UDP over HTTP/3</a>)</td>
+</tr>
+<tr>
+<td><code>quicEarlyData</code> (<em>experimental</em>)</td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td>0.2.0</td>
+<td>accept 0-RTT; requests are handled by <code>http3Settings.earlyData</code></td>
+</tr>
+<tr>
+<td><code>logger</code> (<em>experimental</em>)</td>
+<td><code>KuicksilverLogger?</code></td>
+<td><code>null</code> (the endpoint default, <code>KuicksilverLogger.Stderr</code>)</td>
+<td>0.2.0</td>
+<td>the HTTP/3 endpoints' diagnostics</td>
+</tr>
+<tr>
+<td><code>qlog</code> (<em>experimental</em>)</td>
+<td><code>QlogSink?</code></td>
+<td><code>null</code></td>
+<td>0.2.0</td>
+<td>added to <code>quic</code></td>
+</tr>
+<tr>
+<td><code>connectionListener</code> (<em>experimental</em>)</td>
+<td><code>ConnectionListener?</code></td>
+<td><code>null</code></td>
+<td>0.2.0</td>
+<td>lifecycle of every QUIC connection</td>
+</tr>
+<tr>
+<td><code>eventListener</code> (<em>experimental</em>)</td>
+<td><code>KuicksilverServerEventListener?</code></td>
+<td><code>null</code></td>
+<td>0.2.0</td>
+<td>connection and request events over every protocol</td>
+</tr>
+<tr>
+<td><code>engine.http3Stats</code> (<em>experimental</em>, on the running engine)</td>
+<td><code>List&lt;EndpointStats&gt;</code></td>
+<td>empty before the start</td>
+<td>0.3.0</td>
+<td>the QUIC endpoint counters of every HTTP/3 listener, one per connector serving HTTP/3: datagrams, drops, refusals by admission, limits and the accept queue, handshakes (<a href="deployment.html#observability">Observability</a>)</td>
+</tr>
+<tr>
+<td><code>engine.http3Advertising</code> (<em>experimental</em>, on the running engine)</td>
+<td><code>Http3Advertising</code></td>
+<td><code>On</code></td>
+<td>0.3.0</td>
+<td><code>On</code>; <code>Clear</code> (<code>Alt-Svc: clear</code> on HTTP/1.1, HTTP/2 and HTTP/3 responses and in HTTP/2 ALTSVC frames, HTTP/3 still served); <code>Drain</code> (<code>clear</code>, GOAWAY to live HTTP/3 connections, new QUIC connections refused with CONNECTION_REFUSED); read per response and per new client (<a href="ktor.html#turning-http3-off-on-the-server">Turning HTTP/3 off on the server</a>)</td>
+</tr>
+<tr>
+<td><code>shutdownGracePeriod</code>, <code>shutdownTimeout</code> (Ktor)</td>
+<td></td>
+<td>Ktor's</td>
+<td>0.2.0</td>
+<td><code>stop</code> sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period (<a href="ktor.html#graceful-stop">Graceful stop</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>The other <code>QuicEndpointConfig</code> limits of the HTTP/3 listener (<code>initialQueueCap</code>, <code>maxConnectionLifetime</code>, the stateless
+rate limits, …) keep their defaults and are not configurable from the engine. Ktor's <code>connectionGroupSize</code>,
+<code>workerGroupSize</code> and <code>callGroupSize</code> are not used (the engine runs on <code>Dispatchers.IO</code>).</p>
+<h3 id="tls-connector">TLS connector</h3>
+<p><code>tlsConnector(identity) { … }</code> (<code>KuicksilverTlsConnector.Builder</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>identity</code></td>
+<td><code>TlsIdentity</code></td>
+<td>the argument</td>
+<td></td>
+<td>0.2.0</td>
+<td>certificate chain and key for TCP and QUIC</td>
+</tr>
+<tr>
+<td><code>host</code></td>
+<td><code>String</code></td>
+<td><code>&quot;0.0.0.0&quot;</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>bind address for TCP and UDP</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td><code>Int</code></td>
+<td>443</td>
+<td>0..65 535</td>
+<td>0.2.0</td>
+<td>TCP port and UDP port of HTTP/3; 0 picks a free pair (<code>resolvedConnectors()</code>)</td>
+</tr>
+<tr>
+<td><code>clientAuth</code></td>
+<td><code>ClientAuth</code></td>
+<td><code>None</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>ask for or require client certificates</td>
+</tr>
+<tr>
+<td><code>trust</code></td>
+<td><code>TrustConfig?</code></td>
+<td><code>null</code></td>
+<td><code>AnchoredCa</code> or <code>ReloadableCa</code> (optionally under <code>Pinned</code>) when <code>clientAuth</code> is not <code>None</code></td>
+<td>0.2.0</td>
+<td>verifies client certificates; a <code>ReloadableCa</code> rotates for TCP and QUIC alike</td>
+</tr>
+<tr>
+<td><code>cipherSuites</code></td>
+<td><code>CipherSuites</code></td>
+<td><code>CipherSuites.Default</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>TLS 1.3 suites</td>
+</tr>
+<tr>
+<td><code>sniSelector</code></td>
+<td><code>(suspend (ClientHelloInfo) -&gt; ServerTlsOverride?)?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.2.0</td>
+<td>identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's <code>alpn</code> without <code>h3</code> keeps that name off HTTP/3 and out of <code>Alt-Svc</code>, one of <code>h3</code> alone keeps it off TCP, one without <code>http/1.1</code> refuses a TCP client without ALPN) (<a href="ktor.html#certificate-per-name-sni">Certificate per name</a>)</td>
+</tr>
+<tr>
+<td><code>ocspStapling</code> (<em>experimental</em>)</td>
+<td><code>OcspStapling?</code></td>
+<td><code>null</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>the OCSP response stapled on TCP and QUIC (<a href="tls.html#certificate-revocation">Certificate revocation</a>)</td>
+</tr>
+<tr>
+<td><code>trustedGateway</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>true turns off the <code>421 Misdirected Request</code> for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway (<a href="ktor.html#misdirected-requests">Misdirected requests</a>)</td>
+</tr>
+<tr>
+<td><code>versions</code> (<em>experimental</em>)</td>
+<td><code>TlsVersions</code></td>
+<td><code>Tls13</code></td>
+<td></td>
+<td>0.3.0</td>
+<td><code>Tls12And13</code> serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 (<a href="ktor.html#tls-12-on-the-server">TLS 1.2 on the server</a>)</td>
+</tr>
+<tr>
+<td><code>keyExchangeGroups</code> (<em>experimental</em>)</td>
+<td><code>KeyExchangeGroups</code></td>
+<td><code>KeyExchangeGroups.Default</code></td>
+<td>no key shares; with <code>versions</code> <code>Tls12And13</code> at least one elliptic curve</td>
+<td>0.3.0</td>
+<td>the server's key-exchange groups for TCP and HTTP/3, in its order of preference; with <code>Tls12And13</code> and client certificates, a TLS 1.2 client's P-256 certificate needs <code>secp256r1</code> in the list (<a href="tls.html#key-exchange-groups">Key exchange groups</a>)</td>
+</tr>
+<tr>
+<td><code>proxyProtocol</code> (<em>experimental</em>)</td>
+<td><code>ProxyProtocolConfig?</code></td>
+<td><code>null</code> (off)</td>
+<td>at least one trusted source</td>
+<td>0.3.0</td>
+<td>every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes <code>call.request.origin</code>; <code>maxTcpConnectionsPerIp</code> then counts the proxy; HTTP/3 takes none (<a href="ktor.html#proxy-protocol">PROXY protocol</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>EngineMain</code> keys (<a href="ktor.html#enginemain-and-configuration-keys">EngineMain and configuration keys</a>):
+<code>kuicksilver.tls.certificateChain</code> and <code>kuicksilver.tls.privateKey</code> (PEM files, set together),
+<code>kuicksilver.tls.clientAuth</code> (<code>none</code>, <code>optional</code> or <code>required</code>) and <code>kuicksilver.tls.clientCa</code> (the PEM file of the CAs
+client certificates are verified against; set together), <code>kuicksilver.tls.versions</code> (<code>tls13</code> or <code>tls12And13</code>),
+<code>kuicksilver.tls.keyExchangeGroups</code> (a list of <code>KeyExchangeGroups</code> names, the server's most preferred first, or one string
+of them separated by <code>:</code> or <code>,</code>),
+<code>kuicksilver.tls.ocspStapling</code> (a DER OCSP response file, read again with <code>kuicksilver.tls.reloadInterval</code>), <code>kuicksilver.tls.trustedGateway</code> (<code>true</code>/<code>false</code>),
+<code>kuicksilver.tls.reloadInterval</code> (how often those files are checked for a renewed certificate or CA bundle; off by default),
+<code>kuicksilver.http3</code>, <code>kuicksilver.http2</code>, <code>kuicksilver.webSocketsOverHttp2</code> (<code>true</code>/<code>false</code>), <code>kuicksilver.h2c</code> (<code>off</code>, <code>withHttp11</code> or
+<code>only</code>: h2c on the cleartext deployment port; refused with the identity files), <code>kuicksilver.http2RepeatOffenderPenalty</code>,
+<code>kuicksilver.maxTcpConnections</code>, <code>kuicksilver.maxTcpConnectionsPerIp</code> (<code>0</code> or absent is off),
+<code>kuicksilver.quicMaxConnections</code>, <code>kuicksilver.quicMaxConnectionsPerIp</code> (<code>0</code> is off), <code>kuicksilver.quicAcceptQueue</code>, <code>kuicksilver.altSvc</code>, <code>kuicksilver.webSocketsOverHttp3</code> (<code>true</code>/<code>false</code>), <code>kuicksilver.udpSocketCount</code>,
+<code>kuicksilver.proxyProtocol.trustedSources</code> (a list, or one comma-separated string; turns the PROXY protocol on for the
+deployment port), <code>kuicksilver.proxyProtocol.headerTimeout</code> (a duration), <code>kuicksilver.proxyProtocol.maxHeaderSize</code>, and
+<code>ktor.deployment.connectionIdleTimeoutSeconds</code>.</p>
+<h3 id="plain-connector">Plain connector</h3>
+<p><code>plainConnector { … }</code> (<code>KuicksilverPlainConnector.Builder</code>, experimental) is Ktor's <code>connector { }</code> with two more options:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>host</code></td>
+<td><code>String</code></td>
+<td><code>&quot;0.0.0.0&quot;</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>bind address</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td><code>Int</code></td>
+<td>80</td>
+<td>0..65 535</td>
+<td>0.3.0</td>
+<td>TCP port; 0 picks a free one (<code>resolvedConnectors()</code>)</td>
+</tr>
+<tr>
+<td><code>trustedGateway</code></td>
+<td><code>Boolean</code></td>
+<td><code>false</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>true serves absolute-form <code>https://</code> targets, which a plain connection otherwise answers <code>421 Misdirected Request</code> (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway (<a href="ktor.html#misdirected-requests">Misdirected requests</a>)</td>
+</tr>
+<tr>
+<td><code>proxyProtocol</code> (<em>experimental</em>)</td>
+<td><code>ProxyProtocolConfig?</code></td>
+<td><code>null</code> (off)</td>
+<td>at least one trusted source</td>
+<td>0.3.0</td>
+<td>every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes <code>call.request.origin</code>; <code>maxTcpConnectionsPerIp</code> then counts the proxy (<a href="ktor.html#proxy-protocol">PROXY protocol</a>)</td>
+</tr>
+<tr>
+<td><code>h2c</code></td>
+<td><code>H2cMode</code></td>
+<td><code>H2cMode.Off</code></td>
+<td></td>
+<td>0.3.0</td>
+<td>HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): <code>WithHttp11</code> serves HTTP/1.1 and h2c on the port, told apart by the client preface within the request-head deadline; <code>Only</code> serves h2c alone (anything else is a PROTOCOL_ERROR); <code>Upgrade: h2c</code> is never taken; cleartext, so only behind a trusted network or proxy; a connector the configuration's <code>identity</code> makes TLS refuses it at start (<a href="ktor.html#h2c-on-the-server">h2c on the server</a>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="proxy-protocol">PROXY protocol</h3>
+<p><code>proxyProtocol { … }</code> (<code>ProxyProtocolConfig.Builder</code>, experimental), on either connector:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Range</th>
+<th>Since</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trustedSources</code> (<code>trust(…)</code>)</td>
+<td><code>MutableList&lt;String&gt;</code></td>
+<td>empty</td>
+<td>at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs</td>
+<td>0.3.0</td>
+<td>the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6</td>
+</tr>
+<tr>
+<td><code>headerTimeout</code></td>
+<td><code>Duration</code></td>
+<td>5 s</td>
+<td>at least 3 s (the spec's &quot;at least 3 seconds to cover a TCP retransmit&quot;); cut to what is left of <code>requestHeaderTimeoutSeconds</code>, which must be at least 3 on a PROXY connector (the start fails below)</td>
+<td>0.3.0</td>
+<td>the whole header must arrive within it, counted from accept, or the connection is closed</td>
+</tr>
+<tr>
+<td><code>maxHeaderSize</code></td>
+<td><code>Int</code> (bytes)</td>
+<td>4096</td>
+<td>232..65 551</td>
+<td>0.3.0</td>
+<td>the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ktor-network">ktor-network</h2>
+<p><code>Socket.tls(config, context)</code> and <code>Socket.tlsServer(config, context)</code> take a <code>TlsConfig</code> of the matching role (and a
+<code>CoroutineContext</code>, empty by default); everything else comes from the <code>TlsConfig</code>.</p>
+<h2 id="system-properties-and-environment-variables">System properties and environment variables</h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Kind</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kuicksilver.ktor.versionCheck</code></td>
+<td>JVM / Android system property</td>
+<td>checked</td>
+<td><code>false</code> skips the Ktor 3.6.x check of the engines (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#ktor-versions">stability</a>)</td>
+</tr>
+<tr>
+<td><code>kuicksilver.native.workdir</code></td>
+<td>JVM system property</td>
+<td><code>&lt;java.io.tmpdir&gt;/kuicksilver-native-&lt;user&gt;</code></td>
+<td>where <code>libksl</code> is extracted; must be a private directory of this user</td>
+</tr>
+<tr>
+<td><code>kuicksilver.native.path</code></td>
+<td>JVM system property</td>
+<td>unset</td>
+<td>load <code>libksl</code> from this file, without the hash check</td>
+</tr>
+<tr>
+<td><code>kuicksilver.native.system</code></td>
+<td>JVM system property</td>
+<td>unset</td>
+<td><code>true</code> loads <code>ksl</code> with <code>System.loadLibrary</code>, without the hash check</td>
+</tr>
+<tr>
+<td><code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code></td>
+<td>environment, Linux Kotlin/Native</td>
+<td>unset</td>
+<td>the CA store of <code>TrustConfig.Platform</code>; when set, they replace the distribution paths (<a href="tls.html#linux-trust-store">Linux trust store</a>)</td>
+</tr>
+<tr>
+<td><code>SSLKEYLOGFILE</code></td>
+<td>environment</td>
+<td></td>
+<td>never read implicitly; <code>keylogFromEnvironment()</code> reads it on request. A <code>libksl</code> built against the system OpenSSL (Linux) refuses to load while it is set</td>
+</tr>
+</tbody>
+</table>
+<h2 id="fixed-limits">Fixed limits</h2>
+<p>Not configurable, listed so you can plan around them:</p>
+<table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Client endpoint's RTT memory</td>
+<td>the last smoothed RTT (1 ms..10 s) of connections that ended on the endpoint's own socket, per server address and port, at most 256 addresses (least recently stored dropped); replaces <code>initialRtt</code> for the next connection to that address</td>
+</tr>
+<tr>
+<td>PMTUD</td>
+<td>base 1200 bytes, 20-byte steps, 3 probes per size, a new search every 10 minutes, a 60 s pause after a black hole</td>
+</tr>
+<tr>
+<td>Retry tokens</td>
+<td>valid for 10 s</td>
+</tr>
+<tr>
+<td>Glitch bucket</td>
+<td>1000 tokens, 33 back per second (QUIC and HTTP/3)</td>
+</tr>
+<tr>
+<td>Connection ID rotation</td>
+<td>every migration and every 10 000 1-RTT packets</td>
+</tr>
+<tr>
+<td>Reassembly</td>
+<td>256 gaps per stream, 4096 per connection</td>
+</tr>
+<tr>
+<td>qlog per connection</td>
+<td>64 MiB; after that the connection is not traced further; at most 4096 HTTP/3 events queued for the endpoint loop (more are dropped)</td>
+</tr>
+<tr>
+<td>TCP client session cache</td>
+<td>384 sessions (six tickets for each of 64 origins) per Ktor client engine (one process-wide cache for <code>Socket.tls</code> and <code>TlsConnection.client</code>)</td>
+</tr>
+<tr>
+<td>Alt-Svc</td>
+<td>8 alternatives per origin, 1000 origins; default <code>ma</code> 86 400 s; broken marks 5 min doubling up to 2 days</td>
+</tr>
+<tr>
+<td>Ktor client race head start</td>
+<td>100 ms..2 s when derived from the RTT</td>
+</tr>
+<tr>
+<td>Datagram slots of <code>QuicEndpoint</code></td>
+<td>1500 bytes (hence the <code>maxUdpPayloadSize</code> ceiling)</td>
+</tr>
+<tr>
+<td>Portable JVM socket buffers</td>
+<td>8 MiB send and receive</td>
+</tr>
+</tbody>
+</table>
+
+</main></div>
+</body>
+</html>

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS) - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li class="current"><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="publishing-an-app-that-uses-kuicksilver-app-store-mac-app-store-notarized-macos">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</h1>
+<p><strong>What this page is for.</strong> It tells the owner of an iOS, Mac App Store or notarized macOS app that embeds Kuicksilver what
+to answer Apple (export compliance, privacy manifest, App Review) and what to file with the U.S. export authority, with
+templates to copy.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Your app links Kuicksilver: the klibs <code>io.kuicksilver:kuicksilver-http3</code>, <code>-quic</code> or <code>-ktor-client</code> (version <code>0.3.0</code> or
+newer), or <code>Kuicksilver.xcframework</code> through the Swift package <code>kuicksilver-swift</code> (from 0.3.0;
+<a href="ios.html#choosing-how-to-consume-it">iOS: Choosing how to consume it</a>).</li>
+<li>Minimum OS versions: iOS 15; macOS 12 (Kotlin/Native) or macOS 11 (JVM) (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>You can open your app in App Store Connect and edit its <code>Info.plist</code>.</li>
+</ul>
+<p><strong>How to use this page.</strong> This is a procedure, not an API: work through sections 1 to 6 in order, then copy what you
+need from <a href="#templates">Templates</a>. The iOS build itself is in <a href="ios.html">iOS</a>.</p>
+<p>This page walks through what Apple and the U.S. export rules ask of an app that embeds Kuicksilver, and ends with
+templates you can copy and fill in. The iOS build itself (frameworks, privacy manifest, size, device checks) is in
+<a href="ios.html">ios.md</a>.</p>
+<blockquote>
+<p><strong>Not legal advice.</strong> Export classification and the answers you give Apple are the app owner's decision and
+responsibility. This page summarises the sources as of 2026-10-13 and links them; check them, and ask counsel when
+the stakes are real. The project cannot classify your app for you.</p>
+</blockquote>
+<p>Sources used: Apple, <a href="https://developer.apple.com/documentation/security/complying-with-encryption-export-regulations">Complying with encryption export regulations</a>,
+<a href="https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance/">Overview of export compliance</a>,
+<a href="https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/">Export compliance documentation for encryption</a>,
+<a href="https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption"><code>ITSAppUsesNonExemptEncryption</code></a>,
+the App Store Connect API <a href="https://developer.apple.com/documentation/appstoreconnectapi/appencryptiondeclaration/attributes-data.dictionary"><code>AppEncryptionDeclaration</code> attributes</a>
+(the same questions the web form asks), <a href="https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api">required reason API</a>;
+the EAR as published in the eCFR: <a href="https://www.ecfr.gov/current/title-15/subtitle-B/chapter-VII/subchapter-C/part-740/section-740.17">15 CFR 740.17</a>
+(License Exception ENC) and <a href="https://www.ecfr.gov/current/title-15/part-742">Supplement No. 8 to Part 742</a>
+(self-classification report); BIS, <a href="https://www.bis.gov/learn-support/encryption-controls">encryption controls</a>.</p>
+<h2 id="1-export-compliance">1. Export compliance</h2>
+<p><strong>Why Kuicksilver counts as non-exempt encryption.</strong> Apple treats encryption that is part of its operating systems
+(HTTPS through <code>URLSession</code>, for example) as typically exempt from export documentation, and other encryption as not.
+Kuicksilver ships its own TLS 1.3 (OpenSSL 3.5, statically linked) to secure QUIC, so an app that links it &quot;implements
+standard encryption algorithms instead of, or in addition to, using or accessing the encryption in Apple's operating
+systems&quot;. Only standard, published algorithms are used (no proprietary cryptography).</p>
+<p><strong><code>ITSAppUsesNonExemptEncryption</code>.</strong> Without this Info.plist key, App Store Connect asks the encryption questions for
+every build you upload (TestFlight builds show &quot;Missing Compliance&quot; until answered). With Kuicksilver linked, set it to
+<code>true</code>. <code>false</code> means &quot;no encryption, or only exempt encryption&quot;, which is not the case for a Kuicksilver app even if
+you only use it as a client. If App Store Connect issues a code after reviewing uploaded documentation, add it as
+<code>ITSEncryptionExportComplianceCode</code>.</p>
+<p><strong>What App Store Connect asks.</strong> The questionnaire records, in order (the field names are those of the API):</p>
+<ol>
+<li>Does the app use, contain or incorporate cryptography? (<code>usesEncryption</code>)</li>
+<li>Is it exempt based on its use of encryption and availability? (<code>exempt</code>)</li>
+<li>Does it implement proprietary encryption algorithms? (<code>containsProprietaryCryptography</code>)</li>
+<li>Does it implement standard encryption algorithms instead of, or in addition to, the encryption in Apple's operating
+systems? (<code>containsThirdPartyCryptography</code>)</li>
+<li>Will it be distributed on the App Store in France? (<code>availableOnFrenchStore</code>)</li>
+</ol>
+<p>Apple's documentation table then says what to upload: encryption limited to the operating system needs nothing; an
+&quot;industry standard algorithm, not provided within the Apple operating system&quot; needs the <strong>French encryption
+declaration</strong>, and only if you distribute in France; proprietary algorithms additionally need a CCATS from BIS (not
+the case with Kuicksilver). The French declaration is filed with ANSSI; App Store Connect takes the resulting document
+under App Information &gt; App Encryption Documentation, and Apple says it reviews it in about two business days.</p>
+<p><strong>The usual U.S. path.</strong> An app that uses standard cryptography to secure its own communication and is sold or given
+away to the general public is normally a &quot;mass market&quot; item: it is exported under License Exception ENC,
+15 CFR 740.17(b)(1), and after self-classification is classified <strong>5D992.c</strong> (mass-market software), &quot;removed from EI
+and NS controls&quot;. The annual <strong>self-classification report</strong> (740.17(e)(3), format in Supplement No. 8 to Part 742)
+applies to mass-market <em>components</em> and certain &quot;executable software&quot; and to items that stay in 5x002; a finished
+mass-market app is outside it, but the recordkeeping of part 762 applies (keep your classification reasoning). If you
+ship a <em>component</em> (for example an SDK built on Kuicksilver for other developers), the report can apply to you: see the
+template below. ENC never covers the embargoed destinations of Country Groups E:1/E:2.</p>
+<p><strong>Mac App Store</strong> uses the same App Store Connect questions and Info.plist keys. <strong>Notarized apps outside the store</strong>
+see no questionnaire, but the EAR applies to the export the same way.</p>
+<h2 id="2-why-the-app-uses-its-own-cryptography">2. Why the app uses its own cryptography</h2>
+<p>App Review or a compliance contact may ask why the app does not use Apple's encryption. The answer is technical and
+short: QUIC needs a TLS 1.3 stack with an interface that Apple's TLS APIs do not offer. The texts in
+<a href="#3-why-non-apple-encryption">Templates</a> are ready to paste.</p>
+<h2 id="3-privacy-manifest">3. Privacy manifest</h2>
+<p>Ship <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-native/apple/PrivacyInfo.xcprivacy"><code>kuicksilver-native/apple/PrivacyInfo.xcprivacy</code></a> or
+merge its entries into your app's manifest (the Maven artifacts do not carry the file; <a href="#6-privacy-manifest">template 6</a>
+below is the same manifest, ready to paste) (<a href="ios.html#privacy-manifest">ios.md, Privacy manifest</a> explains the audit):
+no tracking, no collected data, and one required-reason category, file timestamp APIs with reason <code>C617.1</code> (OpenSSL's
+file loaders and the key-log file check call <code>stat</code>/<code>fstat</code>/<code>lstat</code> on files inside the app container). Apple requires
+manifests on iOS, iPadOS, tvOS, visionOS and watchOS; a macOS app may carry the same file. Re-run
+<code>tools/check/ios-private-api.py</code> on your Release binary when you upgrade: it prints the required-reason APIs it finds
+(a single file; <a href="ios.html#checks">ios.md, Checks</a> says how to run it without the repository).</p>
+<h2 id="4-infoplist-and-entitlements">4. Info.plist and entitlements</h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>When</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ITSAppUsesNonExemptEncryption</code></td>
+<td>always with Kuicksilver</td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td><code>ITSEncryptionExportComplianceCode</code></td>
+<td>only if App Store Connect gave you a code</td>
+<td>the code</td>
+</tr>
+<tr>
+<td><code>NSLocalNetworkUsageDescription</code></td>
+<td>the app talks to LAN devices (a server on the phone, LAN peers, discovery); iOS 14+, macOS 15+</td>
+<td>why, in the user's words</td>
+</tr>
+<tr>
+<td><code>NSBonjourServices</code></td>
+<td>the app advertises or browses Bonjour services</td>
+<td>e.g. <code>_myservice._udp</code></td>
+</tr>
+<tr>
+<td><code>com.apple.security.network.client</code> (macOS App Sandbox)</td>
+<td>any client: QUIC, HTTP/3, TLS</td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td><code>com.apple.security.network.server</code> (macOS App Sandbox)</td>
+<td>the app accepts connections: a QUIC endpoint with <code>server</code>, the Ktor server engine</td>
+<td><code>true</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>iOS apps have no network entitlements; App Transport Security does not apply to Kuicksilver's own sockets.</li>
+<li><strong>Hardened runtime and notarization</strong> (macOS): no exception entitlements are needed. Kotlin/Native compiles ahead of
+time and allocates ordinary read-write memory; OpenSSL is built without dynamic engines or modules. Checked on
+2026-10-13 by signing a Kotlin/Native test binary of <code>kuicksilver-tls</code> with <code>codesign --options runtime</code> and no
+entitlements and running its handshake tests (11 passed). Do not add <code>com.apple.security.cs.allow-jit</code>,
+<code>allow-unsigned-executable-memory</code> or <code>disable-library-validation</code> for Kuicksilver.</li>
+<li>With the App Sandbox, test the signed, sandboxed build: a missing <code>network.server</code> shows up only when a peer
+connects.</li>
+</ul>
+<h2 id="5-do-you-need-your-own-crypto-at-all">5. Do you need your own crypto at all?</h2>
+<p>If the app only needs an HTTP client, Ktor's <strong>Darwin engine</strong> runs on <code>URLSession</code>, which negotiates HTTP/3 by itself
+when the server advertises it (iOS 15 and macOS 12 or later) and uses the operating system's encryption: no
+non-exempt encryption, no French declaration, no OpenSSL in the binary. Choose Kuicksilver when you need what
+<code>URLSession</code> does not give you:</p>
+<ul>
+<li>a raw QUIC API: your own protocol over streams, QUIC datagrams (RFC 9221), stream priorities, connection migration
+under your control;</li>
+<li>a server (HTTP/3, QUIC, or TLS over TCP) inside the app;</li>
+<li>control over 0-RTT (opt-in, replay-safe methods only), TLS policy (pins, a private CA, TOFU) and transport settings;</li>
+<li>the same protocol stack and behaviour on Android, the JVM, Linux and Windows.</li>
+</ul>
+<h2 id="6-app-review">6. App Review</h2>
+<ul>
+<li><strong>IPv6-only networks.</strong> Apple reviews apps on an IPv6-only network with NAT64/DNS64 and rejects apps that fail
+there. Bind <code>::</code>, connect by host name, never ship IPv4 literals. Test it with macOS Internet Sharing's NAT64 option
+(<a href="ios.html#device-checklist">ios.md, Device checklist</a>, item 5).</li>
+<li><strong>QUIC uses UDP</strong>, usually to port 443. Networks that block UDP fall back to nothing unless your app has a TCP path;
+say in the review notes what the reviewer should see if UDP is blocked.</li>
+<li><strong>Checklist before you submit:</strong>
+<ul>
+<li class="task"><input type="checkbox" disabled> <code>ITSAppUsesNonExemptEncryption = true</code>; the questionnaire answered once; French declaration uploaded if you
+distribute in France.</li>
+<li class="task"><input type="checkbox" disabled> Privacy manifest included; <code>ios-private-api.py</code> on the Release binary reports no non-public symbols and no
+required-reason API missing from the manifest.</li>
+<li class="task"><input type="checkbox" disabled> Another OpenSSL or BoringSSL in the app: nothing to do, Kuicksilver's OpenSSL symbols are renamed (the project's
+<code>tools/check/ios-symbols.sh</code> proves it for each release, <a href="ios.html#checks">ios.md, Checks</a>).</li>
+<li class="task"><input type="checkbox" disabled> Size impact measured from your app's linker map (the project's measurement, on the 0.2.0 code: about 3.4 MB
+for OpenSSL + Kuicksilver, about 5.6 MB with the Kotlin runtime in an app that has no other Kotlin;
+<a href="ios.html#size">ios.md, Size</a>).</li>
+<li class="task"><input type="checkbox" disabled> Tested on a device, Wi-Fi and cellular, and on NAT64.</li>
+<li class="task"><input type="checkbox" disabled> <code>NSLocalNetworkUsageDescription</code>/<code>NSBonjourServices</code> present if and only if the app uses the LAN.</li>
+<li class="task"><input type="checkbox" disabled> Review notes filled in (template below), with a test server the reviewer can reach without an account.</li>
+</ul>
+</li>
+</ul>
+<h2 id="templates">Templates</h2>
+<p>How to use them: copy a block, replace every <code>&lt;PLACEHOLDER&gt;</code>, delete the lines that do not apply. They describe a
+typical app that uses Kuicksilver for its network traffic with standard algorithms only; where your app differs (a
+server, an SDK for other developers, extra cryptography of your own) the notes say what changes. Not legal advice:
+the answers are yours to give.</p>
+<h3 id="1-app-store-connect-encryption-questions">1. App Store Connect encryption questions</h3>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Typical Kuicksilver app</th>
+<th>When the answer differs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Does your app use, contain or incorporate cryptography?</td>
+<td><strong>Yes</strong></td>
+<td>never &quot;No&quot; while Kuicksilver is linked</td>
+</tr>
+<tr>
+<td>Is it exempt (based on its use of encryption and availability)?</td>
+<td><strong>No</strong></td>
+<td>Apple's exemptions cover encryption limited to the OS; Kuicksilver brings its own</td>
+</tr>
+<tr>
+<td>Does it implement any proprietary encryption algorithms?</td>
+<td><strong>No</strong> (TLS 1.3 and QUIC are IETF standards; OpenSSL implements published algorithms)</td>
+<td>&quot;Yes&quot; only if <em>your</em> code adds unpublished cryptography: then a CCATS from BIS is needed</td>
+</tr>
+<tr>
+<td>Does it implement standard encryption algorithms instead of, or in addition to, the encryption in Apple's operating systems?</td>
+<td><strong>Yes</strong></td>
+<td>same answer for a client, a server mode or both</td>
+</tr>
+<tr>
+<td>Will it be available on the App Store in France?</td>
+<td><strong>Yes / No</strong> (your choice)</td>
+<td>&quot;Yes&quot;: upload the French encryption declaration (ANSSI)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="2-infoplist">2. Info.plist</h3>
+<pre><code class="language-xml">&lt;!-- Export compliance: Kuicksilver embeds OpenSSL (TLS 1.3 for QUIC). See docs/guide/app-store.md. --&gt;
+&lt;key&gt;ITSAppUsesNonExemptEncryption&lt;/key&gt;
+&lt;true/&gt;
+&lt;!-- Only after App Store Connect approved uploaded documentation and showed a code: --&gt;
+&lt;key&gt;ITSEncryptionExportComplianceCode&lt;/key&gt;
+&lt;string&gt;&lt;CODE FROM APP STORE CONNECT&gt;&lt;/string&gt;
+
+&lt;!-- Only if the app talks to devices on the local network: --&gt;
+&lt;key&gt;NSLocalNetworkUsageDescription&lt;/key&gt;
+&lt;string&gt;&lt;APP NAME&gt; connects to &lt;WHAT, e.g. &quot;your camera / other phones running &lt;APP NAME&gt;&quot;&gt; on your local network to &lt;WHY&gt;.&lt;/string&gt;
+&lt;!-- Only if the app advertises or browses Bonjour services: --&gt;
+&lt;key&gt;NSBonjourServices&lt;/key&gt;
+&lt;array&gt;
+    &lt;string&gt;_&lt;SERVICE&gt;._udp&lt;/string&gt;
+&lt;/array&gt;
+</code></pre>
+<p>macOS App Sandbox (<code>&lt;APP NAME&gt;.entitlements</code>):</p>
+<pre><code class="language-xml">&lt;key&gt;com.apple.security.app-sandbox&lt;/key&gt;
+&lt;true/&gt;
+&lt;key&gt;com.apple.security.network.client&lt;/key&gt;
+&lt;true/&gt;
+&lt;!-- Only if the app accepts connections (QUIC/HTTP/3 server): --&gt;
+&lt;key&gt;com.apple.security.network.server&lt;/key&gt;
+&lt;true/&gt;
+</code></pre>
+<h3 id="3-why-non-apple-encryption">3. Why non-Apple encryption</h3>
+<p>Long version (paste and adjust):</p>
+<blockquote>
+<p><APP NAME> by <COMPANY> uses QUIC (IETF RFC 9000 and RFC 9001) and HTTP/3 to <WHAT THE APP USES QUIC FOR>. QUIC
+builds its security on TLS 1.3 in a way that requires direct access to the TLS handshake: the QUIC implementation
+must receive the handshake messages for each encryption level separately, install the traffic secrets for each
+level itself, and carry QUIC transport parameters inside the TLS handshake. Apple's TLS interfaces (Security and
+Network frameworks) do not expose these steps to a third-party QUIC implementation, so the app includes the
+Kuicksilver library, which uses OpenSSL 3.5 as its TLS 1.3 implementation. Only standard, published algorithms
+are used: AES-GCM and ChaCha20-Poly1305 for encryption, X25519 and the X25519/ML-KEM hybrid for key exchange, ECDSA
+and RSA signature verification, and HKDF with SHA-2. The cryptography is used only to authenticate the
+servers the app connects to and to encrypt the app's own network traffic; it is not offered to users or other apps
+as a general-purpose encryption function. Server certificates are verified with Apple's trust evaluation (SecTrust)
+and the system trust store. The app contains no proprietary or non-standard cryptography.</p>
+</blockquote>
+<p>One line:</p>
+<blockquote>
+<p><APP NAME> implements QUIC/HTTP-3, which needs a TLS 1.3 stack Apple's APIs do not expose, so it embeds OpenSSL
+(standard algorithms only) solely to authenticate servers and encrypt its own network traffic.</p>
+</blockquote>
+<p>If the app also runs a server, add: &quot;The app can also accept connections from <WHO> on the local network, secured the
+same way.&quot;</p>
+<h3 id="4-app-review-notes">4. App Review notes</h3>
+<pre><code class="language-text">Network features: &lt;APP NAME&gt; uses QUIC and HTTP/3 (UDP, port &lt;443&gt;) to &lt;WHAT THE APP DOES OVER THE NETWORK&gt;.
+How to test: &lt;STEPS, e.g. &quot;open the Live tab; data from https://&lt;TEST SERVER&gt; appears within a few seconds&quot;&gt;.
+No account is needed. &lt;OR: Demo account: &lt;USER&gt; / &lt;PASSWORD&gt;.&gt;
+Test server: https://&lt;TEST SERVER&gt;:&lt;PORT&gt; is public and accepts the review device.
+If UDP is blocked on the review network, &lt;WHAT THE REVIEWER SEES, e.g. &quot;the app falls back to HTTPS over TCP&quot; or
+&quot;the status line shows 'QUIC unavailable on this network'&quot;&gt;.
+IPv6: the app connects by host name and works on IPv6-only (NAT64) networks; tested on &lt;DATE&gt;.
+Local network: &lt;ONLY IF USED: &quot;the Share tab serves a page to nearby devices; iOS asks for local network access the
+first time&quot;&gt;.
+Encryption: standard TLS 1.3 via the embedded Kuicksilver/OpenSSL library to secure the app's own traffic;
+ITSAppUsesNonExemptEncryption is set.
+</code></pre>
+<h3 id="5-annual-self-classification-report-only-if-it-applies">5. Annual self-classification report (only if it applies)</h3>
+<p>A finished mass-market app is normally outside 740.17(e)(3) (see section 1); the report is for mass-market
+components and certain executable software classified 5A992/5D992, and for items that stay in 5A002/5D002 after
+self-classification, exported under 740.17(b)(1). <strong>Verify with your counsel whether it applies to you.</strong> Format:
+Supplement No. 8 to Part 742, a <code>.csv</code> file whose first line is exactly the twelve headers below, one row per product,
+no empty cells, company columns repeated on every row.</p>
+<pre><code class="language-csv">PRODUCT NAME,MODEL NUMBER,MANUFACTURER,ECCN,AUTHORIZATION TYPE,ITEM TYPE,SUBMITTER NAME,TELEPHONE NUMBER,E-MAIL ADDRESS,MAILING ADDRESS,NON-U.S. COMPONENTS,NON-U.S. MANUFACTURING LOCATIONS
+&lt;PRODUCT NAME&gt;,&lt;VERSION OR N/A&gt;,SELF,5D992,MMKT,Mobility and mobile applications n.e.s.,&lt;COMPANY&gt;,&lt;PHONE&gt;,&lt;EMAIL&gt;,&lt;ADDRESS&gt;,&lt;YES/NO&gt;,&lt;CITY COUNTRY OR NONE&gt;
+</code></pre>
+<p><code>AUTHORIZATION TYPE</code> is <code>MMKT</code> for mass market or <code>ENC</code>; <code>ITEM TYPE</code> comes from the list in the supplement (for an
+SDK, &quot;Other (please specify)&quot; with a short description may fit better). Send it for each calendar year by
+<strong>February 1</strong> of the next year, by email to <code>crypt-supp8@bis.doc.gov</code> <strong>and</strong> <code>enc@nsa.gov</code>, subject
+&quot;self-classification report&quot;, stating the period covered and a contact. A product is reported once; in a year with no
+new products, an email saying nothing has changed is sent instead.</p>
+<h3 id="6-privacy-manifest">6. Privacy manifest</h3>
+<pre><code class="language-xml">&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+    &lt;!-- Kuicksilver does no tracking and contacts no tracking domains. Set these for YOUR app's own behaviour. --&gt;
+    &lt;key&gt;NSPrivacyTracking&lt;/key&gt;
+    &lt;false/&gt;
+    &lt;key&gt;NSPrivacyTrackingDomains&lt;/key&gt;
+    &lt;array/&gt;
+    &lt;!-- Kuicksilver collects no data. Add the data types your app collects. --&gt;
+    &lt;key&gt;NSPrivacyCollectedDataTypes&lt;/key&gt;
+    &lt;array/&gt;
+    &lt;key&gt;NSPrivacyAccessedAPITypes&lt;/key&gt;
+    &lt;array&gt;
+        &lt;!-- Kuicksilver: OpenSSL's file loaders and the key-log file check call stat/fstat/lstat on files inside the
+             app container (type, owner, link count; never sent anywhere). --&gt;
+        &lt;dict&gt;
+            &lt;key&gt;NSPrivacyAccessedAPIType&lt;/key&gt;
+            &lt;string&gt;NSPrivacyAccessedAPICategoryFileTimestamp&lt;/string&gt;
+            &lt;key&gt;NSPrivacyAccessedAPITypeReasons&lt;/key&gt;
+            &lt;array&gt;
+                &lt;string&gt;C617.1&lt;/string&gt;
+            &lt;/array&gt;
+        &lt;/dict&gt;
+        &lt;!-- Add your app's own categories here (for example NSPrivacyAccessedAPICategoryUserDefaults, CA92.1). --&gt;
+    &lt;/array&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+</code></pre>
+
+</main></div>
+</body>
+</html>

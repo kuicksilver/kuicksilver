@@ -1,0 +1,1466 @@
+{
+ "benchmarks": {
+  "env": {
+   "commit": "01da5c08d2e18af9c33eef827f7e5d1b2f4e7e7c",
+   "date": "2026-10-20T19:55Z to 23:55Z"
+  },
+  "goodput": [
+   {
+    "client": "msquic",
+    "measurement": "crosstraffic",
+    "median_kbps": null,
+    "ok": 0,
+    "runs": 1,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "msquic",
+    "measurement": "goodput",
+    "median_kbps": 9429.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "quiche",
+    "measurement": "crosstraffic",
+    "median_kbps": 5392.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "quiche",
+    "measurement": "goodput",
+    "median_kbps": 9273.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "quinn",
+    "measurement": "crosstraffic",
+    "median_kbps": 3903.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "quinn",
+    "measurement": "goodput",
+    "median_kbps": 9401.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "msquic",
+    "measurement": "crosstraffic",
+    "median_kbps": null,
+    "ok": 0,
+    "runs": 1,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "msquic",
+    "measurement": "goodput",
+    "median_kbps": 9434.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "quiche",
+    "measurement": "crosstraffic",
+    "median_kbps": 5812.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "quiche",
+    "measurement": "goodput",
+    "median_kbps": 9286.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "quinn",
+    "measurement": "crosstraffic",
+    "median_kbps": 4186.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "quinn",
+    "measurement": "goodput",
+    "median_kbps": 9404.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "crosstraffic",
+    "median_kbps": 7978.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "msquic"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "goodput",
+    "median_kbps": 9204.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "msquic"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "crosstraffic",
+    "median_kbps": 8732.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "msquic"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "goodput",
+    "median_kbps": 9248.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "msquic"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "crosstraffic",
+    "median_kbps": 5008.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quiche"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "goodput",
+    "median_kbps": 9378.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quiche"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "crosstraffic",
+    "median_kbps": 5378.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quiche"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "goodput",
+    "median_kbps": 9386.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quiche"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "crosstraffic",
+    "median_kbps": 3826.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quinn"
+   },
+   {
+    "client": "kuicksilver",
+    "measurement": "goodput",
+    "median_kbps": 9313.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quinn"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "crosstraffic",
+    "median_kbps": 3898.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quinn"
+   },
+   {
+    "client": "kuicksilver-native",
+    "measurement": "goodput",
+    "median_kbps": 9348.0,
+    "ok": 5,
+    "runs": 5,
+    "server": "quinn"
+   }
+  ],
+  "handshakes": [
+   {
+    "client": "kuicksilver-native",
+    "median": 1749.8,
+    "runs": 5,
+    "server": "kuicksilver"
+   },
+   {
+    "client": "kuicksilver-native",
+    "median": 1524.4,
+    "runs": 5,
+    "server": "kuicksilver-native"
+   },
+   {
+    "client": "kuicksilver-native",
+    "median": 1099.7,
+    "runs": 5,
+    "server": "kuicksilver-native-amd64"
+   },
+   {
+    "client": "kuicksilver-native",
+    "median": 3543.0,
+    "runs": 5,
+    "server": "msquic"
+   },
+   {
+    "client": "kuicksilver-native",
+    "median": 227.6,
+    "runs": 5,
+    "server": "quiche"
+   },
+   {
+    "client": "kuicksilver-native",
+    "median": 3452.2,
+    "runs": 5,
+    "server": "quinn"
+   }
+  ]
+ },
+ "conformance": [
+  {
+   "failed": 0,
+   "host": "Linux x64 (manylinux2014 container) (linux-x64 server)",
+   "passed": 146,
+   "skipped": 0,
+   "status": "pass",
+   "suite": "h2spec",
+   "tests": 146,
+   "variant": "tls"
+  },
+  {
+   "failed": 0,
+   "host": "Linux x64 (manylinux2014 container) (linux-x64 server)",
+   "passed": 146,
+   "skipped": 0,
+   "status": "pass",
+   "suite": "h2spec",
+   "tests": 146,
+   "variant": "h2c"
+  }
+ ],
+ "dir": "dev",
+ "fuzz": {
+  "campaign": {
+   "conclusion": "failure",
+   "date": "2026-11-14T09:21:18Z",
+   "run_id": 43580155023,
+   "sha": "546d3f7f49adaf144e200523ea9258922199722c",
+   "targets": {},
+   "url": "https://github.com/kuicksilver/kuicksilver/actions/runs/43580155023"
+  },
+  "corpus": {
+   "client.svcb": {
+    "bytes": 17993,
+    "files": 159
+   },
+   "http2.connectionClient": {
+    "bytes": 121739,
+    "files": 638
+   },
+   "http2.connectionServer": {
+    "bytes": 381682,
+    "files": 663
+   },
+   "http2.frames": {
+    "bytes": 39575,
+    "files": 105
+   },
+   "http2.hpackDecode": {
+    "bytes": 21590,
+    "files": 120
+   },
+   "http2.hpackRoundTrip": {
+    "bytes": 43395,
+    "files": 195
+   },
+   "http3.capsules": {
+    "bytes": 3306,
+    "files": 67
+   },
+   "http3.h3Frames": {
+    "bytes": 59098,
+    "files": 289
+   },
+   "http3.qpackDecode": {
+    "bytes": 12480,
+    "files": 282
+   },
+   "ksl.parsers": {
+    "bytes": 31727,
+    "files": 53
+   },
+   "quic.connectionNull": {
+    "bytes": 216839,
+    "files": 2505
+   },
+   "quic.connectionTls": {
+    "bytes": 150956,
+    "files": 2308
+   },
+   "quic.endpointRoute": {
+    "bytes": 1057530,
+    "files": 622
+   },
+   "quic.frameDecode": {
+    "bytes": 27657,
+    "files": 267
+   },
+   "quic.multiPacket": {
+    "bytes": 2349130,
+    "files": 910
+   },
+   "quic.packetHeader": {
+    "bytes": 16913,
+    "files": 65
+   },
+   "quic.packetRecvClient": {
+    "bytes": 451520,
+    "files": 776
+   },
+   "quic.packetRecvServer": {
+    "bytes": 247646,
+    "files": 235
+   },
+   "quic.postHandshake": {
+    "bytes": 397177,
+    "files": 880
+   },
+   "quic.rememberedTicket": {
+    "bytes": 5665,
+    "files": 86
+   },
+   "quic.replayRegister": {
+    "bytes": 9401,
+    "files": 158
+   },
+   "quic.retryPacket": {
+    "bytes": 4368,
+    "files": 75
+   },
+   "quic.streamReassembler": {
+    "bytes": 56691,
+    "files": 210
+   },
+   "quic.transportParameters": {
+    "bytes": 8337,
+    "files": 98
+   },
+   "tls.clientHelloScan": {
+    "bytes": 7676,
+    "files": 44
+   },
+   "tls.zeroRttHello": {
+    "bytes": 1426,
+    "files": 73
+   }
+  },
+  "regression": {
+   "failed": 0,
+   "host": "macOS arm64",
+   "tests": 996
+  },
+  "targets": [
+   "quic.frameDecode",
+   "quic.packetHeader",
+   "quic.transportParameters",
+   "quic.streamReassembler",
+   "quic.retryPacket",
+   "quic.endpointRoute",
+   "quic.packetRecvServer",
+   "quic.packetRecvClient",
+   "quic.multiPacket",
+   "quic.postHandshake",
+   "quic.connectionNull",
+   "quic.connectionTls",
+   "quic.replayRegister",
+   "quic.rememberedTicket",
+   "quic.zeroRttConnection",
+   "quic.bbrInvariants",
+   "tls.clientHelloScan",
+   "tls.zeroRttHello",
+   "http3.h3Frames",
+   "http3.capsules",
+   "http3.qpackDecode",
+   "http3.h3Connection",
+   "http3.udpTemplate",
+   "http3.udpDatagrams",
+   "http2.frames",
+   "http2.hpackDecode",
+   "http2.connectionServer",
+   "http2.connectionClient",
+   "http2.hpackRoundTrip",
+   "ktor-network.inflate",
+   "ktor-network.wsGuard",
+   "client.svcb",
+   "client.h1Response",
+   "server.h1Request",
+   "server.proxyHeader",
+   "ksl.parsers"
+  ]
+ },
+ "interop": [
+  {
+   "client": "JDK HttpClient",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h1/clear (Upgrade: h2c not taken)"
+  },
+  {
+   "client": "JDK HttpClient",
+   "failed": 0,
+   "failures": [],
+   "passed": 2,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 2,
+   "wire": "h2"
+  },
+  {
+   "client": "JDK HttpClient",
+   "failed": 0,
+   "failures": [],
+   "passed": 3,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 3,
+   "wire": "wss"
+  },
+  {
+   "client": "Ktor CIO",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "TLS 1.2 refused"
+  },
+  {
+   "client": "Ktor CIO",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h1/clear"
+  },
+  {
+   "client": "Ktor CIO",
+   "failed": 0,
+   "failures": [],
+   "passed": 9,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 9,
+   "wire": "ws"
+  },
+  {
+   "client": "Ktor Java",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h1/TLS"
+  },
+  {
+   "client": "Ktor Java",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h2"
+  },
+  {
+   "client": "Ktor Java",
+   "failed": 0,
+   "failures": [],
+   "passed": 9,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 9,
+   "wire": "wss"
+  },
+  {
+   "client": "Ktor OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h1/TLS"
+  },
+  {
+   "client": "Ktor OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h2"
+  },
+  {
+   "client": "Ktor OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h2c"
+  },
+  {
+   "client": "Ktor OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 9,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 9,
+   "wire": "wss"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Ktor CIO",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h1/clear"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 9,
+   "server": "Ktor CIO",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 9,
+   "wire": "ws"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 19,
+   "server": "Ktor Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 19,
+   "wire": "h1/TLS"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 20,
+   "server": "Ktor Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 20,
+   "wire": "h2"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Ktor Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h2c"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 20,
+   "server": "Ktor Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 20,
+   "wire": "h3"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 9,
+   "server": "Ktor Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 9,
+   "wire": "wss"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 5,
+   "server": "Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 5,
+   "wire": "h2"
+  },
+  {
+   "client": "Kuicksilver",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Netty",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h2c"
+  },
+  {
+   "client": "Netty HTTP/3",
+   "failed": 0,
+   "failures": [],
+   "passed": 5,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 5,
+   "wire": "h3"
+  },
+  {
+   "client": "OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h2"
+  },
+  {
+   "client": "OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 1,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 1,
+   "wire": "h2c"
+  },
+  {
+   "client": "OkHttp",
+   "failed": 0,
+   "failures": [],
+   "passed": 3,
+   "server": "Kuicksilver",
+   "skipped": 0,
+   "status": "pass",
+   "tests": 3,
+   "wire": "wss"
+  }
+ ],
+ "lanes": [
+  "android-24",
+  "android-35",
+  "apple",
+  "apple-native",
+  "jdk-17",
+  "jdk-25",
+  "jvm-jar",
+  "linux-arm64",
+  "linux-native",
+  "linux-native-arm64",
+  "linux-x64",
+  "windows-jvm",
+  "windows-others",
+  "windows-testing"
+ ],
+ "perf": null,
+ "platforms": [
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "Linux arm64",
+     "modules": 10,
+     "passed": 6844,
+     "problems": [],
+     "skipped": 42,
+     "status": "pass",
+     "tests": 6886
+    },
+    {
+     "failed": 0,
+     "host": "Linux x64",
+     "modules": 10,
+     "passed": 6844,
+     "problems": [],
+     "skipped": 42,
+     "status": "pass",
+     "tests": 6886
+    },
+    {
+     "failed": 0,
+     "host": "Linux x64 (JDK 17)",
+     "modules": 10,
+     "passed": 6844,
+     "problems": [],
+     "skipped": 42,
+     "status": "pass",
+     "tests": 6886
+    },
+    {
+     "failed": 0,
+     "host": "Linux x64 (JDK 25)",
+     "modules": 10,
+     "passed": 6844,
+     "problems": [],
+     "skipped": 42,
+     "status": "pass",
+     "tests": 6886
+    },
+    {
+     "failed": 0,
+     "host": "Windows Server 2025, JVM",
+     "modules": 8,
+     "passed": 6751,
+     "problems": [],
+     "skipped": 47,
+     "status": "pass",
+     "tests": 6798
+    },
+    {
+     "failed": 0,
+     "host": "macOS arm64",
+     "modules": 11,
+     "passed": 7086,
+     "problems": [],
+     "skipped": 43,
+     "status": "pass",
+     "tests": 7129
+    }
+   ],
+   "status": "pass",
+   "target": "jvm"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "Android API 24 (x86_64 emulator)",
+     "modules": 9,
+     "passed": 5378,
+     "problems": [],
+     "skipped": 9,
+     "status": "pass",
+     "tests": 5387
+    },
+    {
+     "failed": 0,
+     "host": "Android API 35 (x86_64 emulator)",
+     "modules": 9,
+     "passed": 5378,
+     "problems": [],
+     "skipped": 9,
+     "status": "pass",
+     "tests": 5387
+    }
+   ],
+   "status": "pass",
+   "target": "android"
+  },
+  {
+   "compiled": [
+    {
+     "host": "macOS arm64 (Xcode 27)",
+     "outcome": "success",
+     "target": "iosArm64"
+    }
+   ],
+   "hosts": [],
+   "status": "compiled",
+   "target": "iosArm64"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "macOS arm64 (Xcode 27)",
+     "modules": 9,
+     "passed": 5512,
+     "problems": [],
+     "skipped": 6,
+     "status": "pass",
+     "tests": 5518
+    }
+   ],
+   "status": "pass",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "macOS arm64 (Xcode 27)",
+     "modules": 9,
+     "passed": 5509,
+     "problems": [],
+     "skipped": 6,
+     "status": "pass",
+     "tests": 5515
+    }
+   ],
+   "status": "pass",
+   "target": "macosArm64"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "Linux x64 (manylinux2014 container)",
+     "modules": 9,
+     "passed": 5434,
+     "problems": [],
+     "skipped": 6,
+     "status": "pass",
+     "tests": 5440
+    }
+   ],
+   "status": "pass",
+   "target": "linuxX64"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "Linux arm64 (Ubuntu 24.04 container)",
+     "modules": 9,
+     "passed": 5434,
+     "problems": [],
+     "skipped": 6,
+     "status": "pass",
+     "tests": 5440
+    }
+   ],
+   "status": "pass",
+   "target": "linuxArm64"
+  },
+  {
+   "compiled": [],
+   "hosts": [
+    {
+     "failed": 0,
+     "host": "Windows Server 2025",
+     "modules": 9,
+     "passed": 5457,
+     "problems": [],
+     "skipped": 6,
+     "status": "pass",
+     "tests": 5463
+    }
+   ],
+   "status": "pass",
+   "target": "mingwX64"
+  }
+ ],
+ "process": [
+  "#1-a-test-that-fails-before-the-fix",
+  "#2-review-the-code-and-the-rfc-text",
+  "#4-the-rfc-compliance-matrix-and-the-threat-model",
+  "#5-integration-and-the-local-gate",
+  "#6-hosted-ci",
+  "#7-before-a-release-soak-fuzzing-benchmarks",
+  "#8-the-release"
+ ],
+ "ref": "612511494c503adf8ad86282557ae3f808ee935c",
+ "rfc": {
+  "open": [
+   {
+    "details": "rfc/9000.md#s7-2-the-servers-source-connection-id-is",
+    "rfc": "RFC 9000",
+    "section": "QUIC",
+    "since": "0.3.0",
+    "status": "🔶",
+    "summary": "The client adopts the SCID of the first Initial it takes and discards later long-header packets with another SCID, except that an ACK-only Initial from the client's own DCID (msquic) is processed without fixing the SCID, against two MUSTs of §7.2.",
+    "topic": "§7.2 — the server's Source Connection ID is fixed by the first Initial"
+   },
+   {
+    "details": "rfc/8899.md#s3-probing-black-holes-ptb-timers",
+    "rfc": "RFC 8899",
+    "section": "QUIC",
+    "since": "0.3.0",
+    "status": "🔶",
+    "summary": "Probe loss is no congestion signal, a probe fails on loss detection but not within 1 s of its sending, black holes fall back to 1200 bytes, Packet Too Big messages are validated hints, and the search repeats every 600 s.",
+    "topic": "§3, §4.3, §4.6, §5.1.1 — probing, black holes, Packet Too Big, timers"
+   },
+   {
+    "details": "rfc/6961.md#status-request-v2",
+    "rfc": "RFC 6961",
+    "section": "TLS",
+    "since": "—",
+    "status": "❌",
+    "summary": "The multiple certificate status extension is deprecated by RFC 9846 and no longer recommended by RFC 9325, so it is never sent.",
+    "topic": "`status_request_v2` (obsoleted by RFC 9846)"
+   },
+   {
+    "details": "rfc/9325.md#s4-2-deterministic-ecdsa",
+    "rfc": "RFC 9325",
+    "section": "TLS",
+    "since": "0.3.0",
+    "status": "🔶",
+    "summary": "Handshake ECDSA signatures use OpenSSL's nonce from the key, the digest and fresh randomness, not the RECOMMENDED RFC 6979 deterministic ECDSA, an accepted deviation.",
+    "topic": "§4.2 — deterministic ECDSA"
+   },
+   {
+    "details": "rfc/9114.md#s4-6-server-push",
+    "rfc": "RFC 9114",
+    "section": "HTTP",
+    "since": "—",
+    "status": "❌",
+    "summary": "Server push is not planned; push frames are refused with the error codes of each role.",
+    "topic": "§4.6, §7.2.3, §7.2.5, §7.2.7 — server push"
+   },
+   {
+    "details": "rfc/9298.md#s3-2-http1-and-http2",
+    "rfc": "RFC 9298",
+    "section": "HTTP",
+    "since": "—",
+    "status": "❌",
+    "summary": "CONNECT-UDP is offered over HTTP/3 only, where §6 says UDP proxying should run.",
+    "topic": "§3.2, §3.3; §3.4, §3.5 over HTTP/2 — HTTP/1.1 and HTTP/2"
+   },
+   {
+    "details": "rfc/9113.md#s8-4-server-push",
+    "rfc": "RFC 9113",
+    "section": "HTTP",
+    "since": "—",
+    "status": "❌",
+    "summary": "Server push is not planned: the client disables it and refuses PUSH_PROMISE, and the server never pushes.",
+    "topic": "§6.6, §8.4 — server push"
+   },
+   {
+    "details": "rfc/1928-1929.md#s3-gssapi",
+    "rfc": "RFC 1928",
+    "section": "HTTP",
+    "since": "—",
+    "status": "❌",
+    "summary": "The GSSAPI method is not offered, so a proxy that requires it is refused.",
+    "topic": "§3 — GSSAPI method"
+   },
+   {
+    "details": "rfc/6455.md#s4-1-connecting-through-a-proxy",
+    "rfc": "RFC 6455",
+    "section": "HTTP",
+    "since": "0.3.0",
+    "status": "🔶",
+    "summary": "At most one WebSocket per remote host is in the CONNECTING state and a configured proxy is used, with PAC and WPAD run by the engine itself on Apple, by WinHTTP on Windows (not verified at runtime) and by the platform selector on the JVM and Android, and a PAC script gets a `wss` URI as its origin only unless the application opts in for the script the settings name (an owner-approved security deviation from the PAC URI rule, as browsers and Android do).",
+    "topic": "§4.1 (client: connecting, through a proxy) — connecting, through a proxy"
+   }
+  ],
+  "sections": {
+   "HTTP": {
+    "✅": 150,
+    "❌": 4,
+    "⬜": 2,
+    "🔶": 1
+   },
+   "QUIC": {
+    "✅": 66,
+    "❌": 0,
+    "⬜": 1,
+    "🔶": 2
+   },
+   "TLS": {
+    "✅": 29,
+    "❌": 1,
+    "⬜": 1,
+    "🔶": 1
+   }
+  },
+  "total": {
+   "✅": 245,
+   "❌": 5,
+   "⬜": 4,
+   "🔶": 4
+  }
+ },
+ "run": {
+  "date": "2026-11-20T10:11:44Z",
+  "event": "push",
+  "id": 44717133396,
+  "url": "https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396"
+ },
+ "runner": [],
+ "schema": 2,
+ "sha": "612511494c503adf8ad86282557ae3f808ee935c",
+ "sizes": [
+  {
+   "bytes": 4105140,
+   "kind": "aar",
+   "name": "kuicksilver-native.aar",
+   "target": ""
+  },
+  {
+   "bytes": 3136864,
+   "kind": "aar-so",
+   "name": "libksl.so",
+   "target": "arm64-v8a"
+  },
+  {
+   "bytes": 2452564,
+   "kind": "aar-so",
+   "name": "libksl.so",
+   "target": "armeabi-v7a"
+  },
+  {
+   "bytes": 3991504,
+   "kind": "aar-so",
+   "name": "libksl.so",
+   "target": "x86_64"
+  },
+  {
+   "bytes": 13150776,
+   "kind": "framework",
+   "name": "Kuicksilver.framework",
+   "target": "ios-arm64-simulator"
+  },
+  {
+   "bytes": 13163480,
+   "kind": "framework",
+   "name": "Kuicksilver.framework",
+   "target": "ios-arm64"
+  },
+  {
+   "bytes": 9518734,
+   "kind": "zip",
+   "name": "Kuicksilver.xcframework.zip",
+   "target": ""
+  },
+  {
+   "bytes": 931721,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 931731,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 931723,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 2087468,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 2087478,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 2087470,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 2363470,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 2363480,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 2370949,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 648443,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 648453,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 648445,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 1427996,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 1428006,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 1427998,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 301719,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 301729,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 301721,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 4792139,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 4792149,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 4792141,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 935616,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 935626,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 935618,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 6780279,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "iosArm64"
+  },
+  {
+   "bytes": 6770553,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "iosSimulatorArm64"
+  },
+  {
+   "bytes": 7121841,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "macosArm64"
+  },
+  {
+   "bytes": 3430776,
+   "kind": "jni",
+   "name": "libksl_7_linux_aarch_64.so",
+   "target": "linux_aarch_64"
+  },
+  {
+   "bytes": 4259800,
+   "kind": "jni",
+   "name": "libksl_7_linux_x86_64.so",
+   "target": "linux_x86_64"
+  },
+  {
+   "bytes": 3056904,
+   "kind": "jni",
+   "name": "libksl_7_osx_aarch_64.dylib",
+   "target": "osx_aarch_64"
+  },
+  {
+   "bytes": 3997072,
+   "kind": "jni",
+   "name": "libksl_7_osx_x86_64.dylib",
+   "target": "osx_x86_64"
+  },
+  {
+   "bytes": 4567552,
+   "kind": "jni",
+   "name": "libksl_7_windows_x86_64.dll",
+   "target": "windows_x86_64"
+  },
+  {
+   "bytes": 8016503,
+   "kind": "jar",
+   "name": "kuicksilver-native-jvm-0.3.0-SNAPSHOT.jar",
+   "target": ""
+  },
+  {
+   "bytes": 931723,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 931721,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 931721,
+   "kind": "klib",
+   "name": "kuicksilver-http2",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 2087436,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 2087434,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 2087392,
+   "kind": "klib",
+   "name": "kuicksilver-http3",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 2145458,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 2145456,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 2168548,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-client",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 646631,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 646629,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 650670,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-network",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 1427971,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 1427969,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 1426831,
+   "kind": "klib",
+   "name": "kuicksilver-ktor-server",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 301721,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 301719,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 303934,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 4741415,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 4741413,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 4741368,
+   "kind": "klib",
+   "name": "kuicksilver-quic",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 302875,
+   "kind": "klib",
+   "name": "kuicksilver-soak",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 908411,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 908404,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 942247,
+   "kind": "klib",
+   "name": "kuicksilver-tls",
+   "target": "mingwX64"
+  },
+  {
+   "bytes": 11369587,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "linuxArm64"
+  },
+  {
+   "bytes": 11987221,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "linuxX64"
+  },
+  {
+   "bytes": 11887500,
+   "kind": "klib",
+   "name": "kuicksilver-native",
+   "target": "mingwX64"
+  }
+ ],
+ "snapshot": {
+  "date": "2026-11-20T09:32:18Z",
+  "sha": "612511494c503adf8ad86282557ae3f808ee935c"
+ },
+ "unmapped": [],
+ "version": "0.3.0-SNAPSHOT"
+}

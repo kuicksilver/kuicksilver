@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Матрица платформ - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/platforms.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/platforms.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/platforms.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/platforms.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/platforms.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../../index.html">Kuicksilver</a><a href="../../guide/index.html">Руководство</a> <a href="../../api/index.html">Справочник API</a> <a href="../../ru/verify/index.html">Как мы проверяем</a><nav class="lang" aria-label="Язык"><a hreflang="en" lang="en" href="../../verify/platforms.html">English</a> <a hreflang="ru" lang="ru" href="../../ru/verify/platforms.html" aria-current="page">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../../zh/verify/platforms.html">简体中文</a></nav></header>
+<div class="snapshot" role="note">Снимок разработки (development snapshot) коммита 612511494c503adf8ad86282557ae3f808ee935c (2026-11-20T09:32:18Z), не релиз. <a href="../../../index.html">Все релизы</a></div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Как мы проверяем</a></li><li class=current><a href="platforms.html">Матрица платформ</a></li><li><a href="interop.html">Взаимодействие движков (engine interop)</a></li><li><a href="conformance.html">Наборы тестов соответствия</a></li><li><a href="fuzzing.html">Фаззинг и мутационное тестирование</a></li><li><a href="sizes.html">Размеры артефактов</a></li><li><a href="benchmarks.html">Бенчмарки</a></li><li><a href="rfc.html">Соответствие RFC</a></li><li><a href="how.html">Процесс</a></li></ul></nav><main>
+<p class="note">Перевод не вычитан носителем языка. Основной считается английская страница: <a href="../../verify/platforms.html" hreflang="en" lang="en">English</a></p>
+<h1>Матрица платформ</h1>
+<p class="prov">Данные из успешного прогона build.yml для коммита 612511494c503adf8ad86282557ae3f808ee935c, запущенного 2026-11-20 10:11 UTC. <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">Прогон CI 44717133396</a></p><p>Одна строка на таргет Kotlin и хост CI, на котором он запускался. Прогон считает каждый тест каждого модуля этого таргета.</p>
+<table><thead><tr><th>Таргет</th><th>Хост CI</th><th class=num>Модули</th><th class=num>Тесты</th><th class=num>Прошли</th><th class=num>Упали</th><th class=num>Пропущены</th><th>Статус</th></tr></thead><tbody><tr><td><code>jvm</code></td><td>Linux arm64</td><td class=num>10</td><td class=num>6 886</td><td class=num>6 844</td><td class=num>0</td><td class=num>42</td><td><span class="pass">успех</span></td></tr><tr><td><code>jvm</code></td><td>Linux x64</td><td class=num>10</td><td class=num>6 886</td><td class=num>6 844</td><td class=num>0</td><td class=num>42</td><td><span class="pass">успех</span></td></tr><tr><td><code>jvm</code></td><td>Linux x64 (JDK 17)</td><td class=num>10</td><td class=num>6 886</td><td class=num>6 844</td><td class=num>0</td><td class=num>42</td><td><span class="pass">успех</span></td></tr><tr><td><code>jvm</code></td><td>Linux x64 (JDK 25)</td><td class=num>10</td><td class=num>6 886</td><td class=num>6 844</td><td class=num>0</td><td class=num>42</td><td><span class="pass">успех</span></td></tr><tr><td><code>jvm</code></td><td>Windows Server 2025, JVM</td><td class=num>8</td><td class=num>6 798</td><td class=num>6 751</td><td class=num>0</td><td class=num>47</td><td><span class="pass">успех</span></td></tr><tr><td><code>jvm</code></td><td>macOS arm64</td><td class=num>11</td><td class=num>7 129</td><td class=num>7 086</td><td class=num>0</td><td class=num>43</td><td><span class="pass">успех</span></td></tr><tr><td><code>android</code></td><td>Android API 24 (x86_64 emulator)</td><td class=num>9</td><td class=num>5 387</td><td class=num>5 378</td><td class=num>0</td><td class=num>9</td><td><span class="pass">успех</span></td></tr><tr><td><code>android</code></td><td>Android API 35 (x86_64 emulator)</td><td class=num>9</td><td class=num>5 387</td><td class=num>5 378</td><td class=num>0</td><td class=num>9</td><td><span class="pass">успех</span></td></tr><tr><td><code>iosArm64</code></td><td>macOS arm64 (Xcode 27)</td><td class=num></td><td class=num></td><td class=num></td><td class=num></td><td class=num></td><td><span class="pass">собран</span> (собран в CI; iOS-устройства для запуска тестов нет)</td></tr><tr><td><code>iosSimulatorArm64</code></td><td>macOS arm64 (Xcode 27)</td><td class=num>9</td><td class=num>5 518</td><td class=num>5 512</td><td class=num>0</td><td class=num>6</td><td><span class="pass">успех</span></td></tr><tr><td><code>macosArm64</code></td><td>macOS arm64 (Xcode 27)</td><td class=num>9</td><td class=num>5 515</td><td class=num>5 509</td><td class=num>0</td><td class=num>6</td><td><span class="pass">успех</span></td></tr><tr><td><code>linuxX64</code></td><td>Linux x64 (manylinux2014 container)</td><td class=num>9</td><td class=num>5 440</td><td class=num>5 434</td><td class=num>0</td><td class=num>6</td><td><span class="pass">успех</span></td></tr><tr><td><code>linuxArm64</code></td><td>Linux arm64 (Ubuntu 24.04 container)</td><td class=num>9</td><td class=num>5 440</td><td class=num>5 434</td><td class=num>0</td><td class=num>6</td><td><span class="pass">успех</span></td></tr><tr><td><code>mingwX64</code></td><td>Windows Server 2025</td><td class=num>9</td><td class=num>5 463</td><td class=num>5 457</td><td class=num>0</td><td class=num>6</td><td><span class="pass">успех</span></td></tr></tbody></table>
+<p class="note">Наборы тестов JVM запускаются на нескольких хостах и JDK; каждая строка — отдельный прогон, поэтому один и тот же тест учитывается в каждой строке.</p>
+</main></div>
+</body>
+</html>

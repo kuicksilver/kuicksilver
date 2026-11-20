@@ -1,0 +1,432 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>QuicTlsSession</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-tls/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-tls/commonMain" data-filter=":kuicksilver-tls/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-tls::io.kuicksilver.tls/QuicTlsSession///PointingToDeclaration//-1635407269">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-tls</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.tls</a><span class="delimiter">/</span><span class="current">QuicTlsSession</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Quic</span><wbr><span>Tls</span><wbr><span><span>Session</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><div class="block"><div class="block"><span class="token annotation builtin">@</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-subclass-opt-in-required/index.html"><span class="token annotation builtin">SubclassOptInRequired</span></a><span class="token punctuation">(</span><span>markerClass<span class="token operator"> = </span><span class="token punctuation">[</span><span><a href="../../../kuicksilver-native/io.kuicksilver.annotations/-experimental-kuicksilver-api/index.html">ExperimentalKuicksilverApi::class</a></span><wbr><span class="token punctuation">]</span></span><wbr><span class="token punctuation">)</span></div></div><span class="token keyword">interface </span><a href="index.html">QuicTlsSession</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/QuicTlsSession.kt#L240">source</a>)</span></span></div><p class="paragraph">The TLS handshake of one QUIC connection, driven by the transport without any I/O of its own (RFC 9001 section 4).</p><p class="paragraph">A call in the wrong state throws <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a>; an error reported by TLS itself throws <a href="../-tls-exception/index.html">TlsException</a> (most failures arrive as <a href="../-drive-result/-failed/index.html">DriveResult.Failed</a> instead). The native layer's exceptions never escape.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-1988018455%2FProperties%2F-1635407269" anchor-label="earlyDataAccepted" id="-1988018455%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="early-data-accepted.html"><span>early</span><wbr><span>Data</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1988018455%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="early-data-accepted.html">earlyDataAccepted</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Client: true when the server accepted our 0-RTT, false when it rejected it, null when none was attempted or the answer has not arrived (RFC 9001 section 4.6.2). Server: true when 0-RTT of this connection was accepted, false when the client offered it and we refused, null otherwise.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-444120256%2FProperties%2F-1635407269" anchor-label="keyExchangeGroup" id="-444120256%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="key-exchange-group.html"><span>key</span><wbr><span>Exchange</span><wbr><span><span>Group</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-444120256%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="key-exchange-group.html">keyExchangeGroup</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The key-exchange group of the handshake (<a href="../-key-exchange-groups/index.html">KeyExchangeGroups</a> names, e.g. <a href="../-key-exchange-groups/-companion/-x25519-m-l-k-e-m768.html">KeyExchangeGroups.X25519MLKEM768</a>) once it completed; null before, and for a session that is not the OpenSSL-backed one.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1502056970%2FProperties%2F-1635407269" anchor-label="localCertificates" id="-1502056970%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="local-certificates.html"><span>local</span><wbr><span><span>Certificates</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1502056970%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="local-certificates.html">localCertificates</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-certificate/index.html">Certificate</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The chain this side presents, leaf first: a server's identity snapshot taken for this handshake (the <a href="../-tls-config/sni-selector.html">TlsConfig.sniSelector</a> override once <a href="resume-sni.html">resumeSni</a> applied it), a client's certificate; empty without one. The default (an implementation without certificates) is empty.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="872840014%2FProperties%2F-1635407269" anchor-label="negotiatedAlpn" id="872840014%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="negotiated-alpn.html"><span>negotiated</span><wbr><span><span>Alpn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="872840014%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="negotiated-alpn.html">negotiatedAlpn</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The application protocol agreed through ALPN (RFC 7301), or null before the handshake completes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1361061780%2FProperties%2F-1635407269" anchor-label="peerCertificateCompression" id="-1361061780%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="peer-certificate-compression.html"><span>peer</span><wbr><span>Certificate</span><wbr><span><span>Compression</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1361061780%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">val </span><a href="peer-certificate-compression.html">peerCertificateCompression</a><span class="token operator">: </span><a href="../-certificate-compression/index.html">CertificateCompression</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The algorithm the peer's certificate chain came compressed with (RFC 8879), null when it came uncompressed, has not come, or the session failed. The default (an implementation without certificate compression) is null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1074652191%2FProperties%2F-1635407269" anchor-label="peerCertificates" id="1074652191%2FProperties%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="peer-certificates.html"><span>peer</span><wbr><span><span>Certificates</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1074652191%2FProperties%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">val </span><a href="peer-certificates.html">peerCertificates</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-certificate/index.html">Certificate</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The chain the peer presented, leaf first; empty before its Certificate message arrives or when it sent none.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-2024188833%2FFunctions%2F-1635407269" anchor-label="close" id="-2024188833%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../-load-balancer-key/index.html#-2024188833%2FFunctions%2F-1635407269"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2024188833%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">expect </span><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="../-load-balancer-key/index.html#-2024188833%2FFunctions%2F-1635407269"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-897863021%2FFunctions%2F-1635407269" anchor-label="drive" id="-897863021%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="drive.html"><span><span>drive</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-897863021%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="drive.html"><span class="token function">drive</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-drive-result/index.html">DriveResult</a></div><div class="brief "><p class="paragraph">Advances the handshake with the data provided so far and reports what it needs next; poll <a href="next-event.html">nextEvent</a> after every call. Not thread-safe: one session is driven by one connection loop.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1359524739%2FFunctions%2F-1635407269" anchor-label="enableEarlyData" id="-1359524739%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="enable-early-data.html"><span>enable</span><wbr><span>Early</span><wbr><span><span>Data</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1359524739%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="enable-early-data.html"><span class="token function">enableEarlyData</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">context<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">?</span><span class="token punctuation">, </span></span><span class="parameter ">admission<span class="token operator">: </span><a href="../-early-data-admission/index.html">EarlyDataAdmission</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Call before the first <a href="drive.html">drive</a>. Client (<a href="enable-early-data.html">context</a> and <a href="enable-early-data.html">admission</a> null): requests 0-RTT with the resumed ticket and returns false when there is none or it does not allow early data. Server (session created with early data): <a href="enable-early-data.html">context</a> (1..64 bytes, the configuration digest of RFC 9001 section 4.6.3) is bound into issued tickets and must match the resumed one, and <a href="enable-early-data.html">admission</a> decides each hello's early data; returns true.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="947845520%2FFunctions%2F-1635407269" anchor-label="exportKeyingMaterial" id="947845520%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="export-keying-material.html"><span>export</span><wbr><span>Keying</span><wbr><span><span>Material</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="947845520%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="export-keying-material.html"><span class="token function">exportKeyingMaterial</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">label<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">context<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">?</span><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></div><div class="brief "><p class="paragraph">The RFC 9846 section 7.5 exporter: <a href="export-keying-material.html">length</a> bytes for <a href="export-keying-material.html">label</a> and <a href="export-keying-material.html">context</a> (null for none); only after the handshake, before it <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a>. The result is secret material on the heap by design (threat model 3.7); wipe it after use.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-388217002%2FFunctions%2F-1635407269" anchor-label="nextEvent" id="-388217002%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="next-event.html"><span>next</span><wbr><span><span>Event</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-388217002%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="next-event.html"><span class="token function">nextEvent</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-tls-event/index.html">TlsEvent</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The next queued event, or null when there is none; call until null after each <a href="provide.html">provide</a> and <a href="drive.html">drive</a>. A failed session has none.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-997520258%2FFunctions%2F-1635407269" anchor-label="pendingCryptoBytes" id="-997520258%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="pending-crypto-bytes.html"><span>pending</span><wbr><span>Crypto</span><wbr><span><span>Bytes</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-997520258%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="pending-crypto-bytes.html"><span class="token function">pendingCryptoBytes</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">level<span class="token operator">: </span><a href="../-encryption-level/index.html">EncryptionLevel</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">CRYPTO bytes <a href="provide.html">provide</a>d at <a href="pending-crypto-bytes.html">level</a> that TLS has not read yet. The transport counts them toward the memory of an unfinished handshake and, once TLS reads a higher level, treats any left at a lower one as a PROTOCOL_VIOLATION (RFC 9001 section 4.1.3). TLS holds at most 256 KiB unread per level: <a href="provide.html">provide</a> beyond that, or at a level below the one TLS reads, throws <a href="../-tls-exception/index.html">TlsException</a>. Zero for a closed or failed session.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-259983669%2FFunctions%2F-1635407269" anchor-label="provide" id="-259983669%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="provide.html"><span><span>provide</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-259983669%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="provide.html"><span class="token function">provide</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">level<span class="token operator">: </span><a href="../-encryption-level/index.html">EncryptionLevel</a><span class="token punctuation">, </span></span><span class="parameter ">data<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token punctuation">, </span></span><span class="parameter ">offset<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">0</span><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span>data.size - offset</span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Hands TLS the CRYPTO data <code class="lang-kotlin">data[offset, +length)</code> received at <a href="provide.html">level</a>, in stream order without gaps (the transport reassembles it, RFC 9001 section 4.1.3); then call <a href="drive.html">drive</a>. Throws <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-index-out-of-bounds-exception/index.html">IndexOutOfBoundsException</a> for a bad range.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1442972703%2FFunctions%2F-1635407269" anchor-label="resume" id="-1442972703%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="resume.html"><span><span>resume</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1442972703%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="resume.html"><span class="token function">resume</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">ticket<span class="token operator">: </span><a href="../-quic-session-ticket/index.html">QuicSessionTicket</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">Client: resume <a href="resume.html">ticket</a> (it is consumed and closed by this session); call before the first <a href="drive.html">drive</a>. False when TLS refused it, when it was issued under another server name than this session's (RFC 9846 section 4.7.1: clients "SHOULD only resume if the SNI value matches the one used in the original session"; DNS names compare case-insensitively), or when the check below failed (the handshake then is a full one).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1247546957%2FFunctions%2F-1635407269" anchor-label="resumeSni" id="-1247546957%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="resume-sni.html"><span>resume</span><wbr><span><span>Sni</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1247546957%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">fun </span><a href="resume-sni.html"><span class="token function">resumeSni</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">selection<span class="token operator">: </span><a href="../-sni-selection/index.html">SniSelection</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Resumes a handshake paused at <a href="../-drive-result/-want-sni/index.html">DriveResult.WantSni</a> with <a href="resume-sni.html">selection</a> from this session's <a href="select-sni.html">selectSni</a>, then call <a href="drive.html">drive</a>: the chosen identity's chain, key and settings take over this handshake; no override goes on with the default identity, or ends the handshake with the selection's alert (the next <a href="drive.html">drive</a> returns <a href="../-drive-result/-failed/index.html">DriveResult.Failed</a>). Takes <a href="resume-sni.html">selection</a> over and closes it, also when it throws: <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a> when no selection is pending or the session is closed, <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a> for a selection another session made.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1394300096%2FFunctions%2F-1635407269" anchor-label="resumeVerify" id="1394300096%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="resume-verify.html"><span>resume</span><wbr><span><span>Verify</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1394300096%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="resume-verify.html"><span class="token function">resumeVerify</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">result<span class="token operator">: </span><a href="../-verify-result/index.html">VerifyResult</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Resumes a handshake paused at <a href="../-drive-result/-want-verify/index.html">DriveResult.WantVerify</a> with the verdict, usually from <a href="verify-peer.html">verifyPeer</a>; then call <a href="drive.html">drive</a>. A <a href="../-verify-result/-rejected/index.html">VerifyResult.Rejected</a> makes TLS send its alert and the next <a href="drive.html">drive</a> return <a href="../-drive-result/-failed/index.html">DriveResult.Failed</a>. Throws <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a> when no verification is pending.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1228914891%2FFunctions%2F-1635407269" anchor-label="selectSni" id="1228914891%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="select-sni.html"><span>select</span><wbr><span><span>Sni</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1228914891%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="select-sni.html"><span class="token function">selectSni</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">clientHello<span class="token operator">: </span><a href="../-client-hello-info/index.html">ClientHelloInfo</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-sni-selection/index.html">SniSelection</a></div><div class="brief "><p class="paragraph">Server, for a <a href="../-drive-result/-want-sni/index.html">DriveResult.WantSni</a>: asks <a href="../-tls-config/sni-selector.html">TlsConfig.sniSelector</a> about <a href="select-sni.html">clientHello</a> and builds the configuration of the identity it chose. Safe to call off the connection loop: it reads the configuration only, never the handshake. Never throws for the selector's sake: an exception from it, or an override that does not suit QUIC, becomes a selection that ends the handshake with <code class="lang-kotlin">internal_error</code>. Pass the result to <a href="resume-sni.html">resumeSni</a>, or <a href="../-sni-selection/close.html">close</a> it. <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-state-exception/index.html">IllegalStateException</a> when the configuration has no <code class="lang-kotlin">sniSelector</code>, and from the default: a session that never answers <a href="../-drive-result/-want-sni/index.html">DriveResult.WantSni</a> has nothing to select.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-241583613%2FFunctions%2F-1635407269" anchor-label="setQuicVersion" id="-241583613%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="set-quic-version.html"><span>set</span><wbr><span>Quic</span><wbr><span><span>Version</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-241583613%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="set-quic-version.html"><span class="token function">setQuicVersion</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">version<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">The QUIC version whose labels derive the Handshake and 1-RTT keys (RFC 9369 section 3.3). A client sets its Original Version before the first <a href="drive.html">drive</a> and the server's version (from its Initial header) before providing the ServerHello; a server lets <code class="lang-kotlin">ksl</code> choose per RFC 9368. Unknown version: IllegalArgumentException; once Handshake keys exist: IllegalStateException.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-578045528%2FFunctions%2F-1635407269" anchor-label="setTransportParameters" id="-578045528%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="set-transport-parameters.html"><span>set</span><wbr><span>Transport</span><wbr><span><span>Parameters</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-578045528%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">fun </span><a href="set-transport-parameters.html"><span class="token function">setTransportParameters</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">encoded<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Sets the local transport parameters, already encoded (RFC 9000 section 18), carried in the <code class="lang-kotlin">quic_transport_parameters</code> extension (RFC 9001 section 8.2); call it before the first <a href="drive.html">drive</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1310518364%2FFunctions%2F-1635407269" anchor-label="verifyPeer" id="1310518364%2FFunctions%2F-1635407269" data-filterable-set=":kuicksilver-tls/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-tls/commonMain" data-filterable-set=":kuicksilver-tls/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="verify-peer.html"><span>verify</span><wbr><span><span>Peer</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1310518364%2FFunctions%2F-1635407269"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-tls/commonMain"><div class="symbol monospace"><span class="token keyword">abstract </span><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="verify-peer.html"><span class="token function">verifyPeer</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">chain<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-certificate/index.html">Certificate</a><span class="token operator">&gt;</span></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-verify-result/index.html">VerifyResult</a></div><div class="brief "><p class="paragraph">Runs the configured trust (platform, custom, TOFU, pins) for a <a href="../-drive-result/-want-verify/index.html">DriveResult.WantVerify</a>; the caller then passes the result to <a href="resume-verify.html">resumeVerify</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

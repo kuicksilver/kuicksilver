@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Взаимодействие движков (engine interop) - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/interop.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/interop.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/interop.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/interop.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/interop.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../../index.html">Kuicksilver</a><a href="../../guide/index.html">Руководство</a> <a href="../../api/index.html">Справочник API</a> <a href="../../ru/verify/index.html">Как мы проверяем</a><nav class="lang" aria-label="Язык"><a hreflang="en" lang="en" href="../../verify/interop.html">English</a> <a hreflang="ru" lang="ru" href="../../ru/verify/interop.html" aria-current="page">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../../zh/verify/interop.html">简体中文</a></nav></header>
+<div class="snapshot" role="note">Снимок разработки (development snapshot) коммита 612511494c503adf8ad86282557ae3f808ee935c (2026-11-20T09:32:18Z), не релиз. <a href="../../../index.html">Все релизы</a></div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Как мы проверяем</a></li><li><a href="platforms.html">Матрица платформ</a></li><li class=current><a href="interop.html">Взаимодействие движков (engine interop)</a></li><li><a href="conformance.html">Наборы тестов соответствия</a></li><li><a href="fuzzing.html">Фаззинг и мутационное тестирование</a></li><li><a href="sizes.html">Размеры артефактов</a></li><li><a href="benchmarks.html">Бенчмарки</a></li><li><a href="rfc.html">Соответствие RFC</a></li><li><a href="how.html">Процесс</a></li></ul></nav><main>
+<p class="note">Перевод не вычитан носителем языка. Основной считается английская страница: <a href="../../verify/interop.html" hreflang="en" lang="en">English</a></p>
+<h1>Взаимодействие движков (engine interop)</h1>
+<p class="prov">Данные из успешного прогона build.yml для коммита 612511494c503adf8ad86282557ae3f808ee935c, запущенного 2026-11-20 10:11 UTC. <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">Прогон CI 44717133396</a></p><p>Ktor-движки Kuicksilver (клиент и сервер) против движков Netty и CIO из Ktor, OkHttp, HttpClient из JDK и кодеков HTTP/2 и HTTP/3 из Netty — в одной JVM через loopback. Сценарии и найденные расхождения описаны в <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/spec/interop.md">docs/spec/interop.md</a></p>
+<h2>Клиент × сервер</h2>
+<table><thead><tr><th>Клиент \ сервер</th><th>Ktor CIO</th><th>Ktor Netty</th><th>Kuicksilver</th><th>Netty</th></tr></thead><tbody><tr><td>JDK HttpClient</td><td>—</td><td>—</td><td><span class="pass">h1/clear (Upgrade: h2c not taken) ✓</span> <span class="pass">h2 ✓</span> <span class="pass">wss ✓</span></td><td>—</td></tr><tr><td>Ktor CIO</td><td>—</td><td>—</td><td><span class="pass">TLS 1.2 refused ✓</span> <span class="pass">h1/clear ✓</span> <span class="pass">ws ✓</span></td><td>—</td></tr><tr><td>Ktor Java</td><td>—</td><td>—</td><td><span class="pass">h1/TLS ✓</span> <span class="pass">h2 ✓</span> <span class="pass">wss ✓</span></td><td>—</td></tr><tr><td>Ktor OkHttp</td><td>—</td><td>—</td><td><span class="pass">h1/TLS ✓</span> <span class="pass">h2 ✓</span> <span class="pass">h2c ✓</span> <span class="pass">wss ✓</span></td><td>—</td></tr><tr><td>Kuicksilver</td><td><span class="pass">h1/clear ✓</span> <span class="pass">ws ✓</span></td><td><span class="pass">h1/TLS ✓</span> <span class="pass">h2 ✓</span> <span class="pass">h2c ✓</span> <span class="pass">h3 ✓</span> <span class="pass">wss ✓</span></td><td>—</td><td><span class="pass">h2 ✓</span> <span class="pass">h2c ✓</span></td></tr><tr><td>Netty HTTP/3</td><td>—</td><td>—</td><td><span class="pass">h3 ✓</span></td><td>—</td></tr><tr><td>OkHttp</td><td>—</td><td>—</td><td><span class="pass">h2 ✓</span> <span class="pass">h2c ✓</span> <span class="pass">wss ✓</span></td><td>—</td></tr></tbody></table>
+<h2>Пары</h2>
+<table><thead><tr><th>Клиент</th><th>Сервер</th><th>Протокол</th><th class=num>Тесты</th><th class=num>Прошли</th><th class=num>Упали</th><th class=num>Пропущены</th><th>Статус</th></tr></thead><tbody><tr><td>JDK HttpClient</td><td>Kuicksilver</td><td>h1/clear (Upgrade: h2c not taken)</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>JDK HttpClient</td><td>Kuicksilver</td><td>h2</td><td class=num>2</td><td class=num>2</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>JDK HttpClient</td><td>Kuicksilver</td><td>wss</td><td class=num>3</td><td class=num>3</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor CIO</td><td>Kuicksilver</td><td>TLS 1.2 refused</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor CIO</td><td>Kuicksilver</td><td>h1/clear</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor CIO</td><td>Kuicksilver</td><td>ws</td><td class=num>9</td><td class=num>9</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor Java</td><td>Kuicksilver</td><td>h1/TLS</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor Java</td><td>Kuicksilver</td><td>h2</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor Java</td><td>Kuicksilver</td><td>wss</td><td class=num>9</td><td class=num>9</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor OkHttp</td><td>Kuicksilver</td><td>h1/TLS</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor OkHttp</td><td>Kuicksilver</td><td>h2</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor OkHttp</td><td>Kuicksilver</td><td>h2c</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Ktor OkHttp</td><td>Kuicksilver</td><td>wss</td><td class=num>9</td><td class=num>9</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor CIO</td><td>h1/clear</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor CIO</td><td>ws</td><td class=num>9</td><td class=num>9</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor Netty</td><td>h1/TLS</td><td class=num>19</td><td class=num>19</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor Netty</td><td>h2</td><td class=num>20</td><td class=num>20</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor Netty</td><td>h2c</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor Netty</td><td>h3</td><td class=num>20</td><td class=num>20</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Ktor Netty</td><td>wss</td><td class=num>9</td><td class=num>9</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Netty</td><td>h2</td><td class=num>5</td><td class=num>5</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Kuicksilver</td><td>Netty</td><td>h2c</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>Netty HTTP/3</td><td>Kuicksilver</td><td>h3</td><td class=num>5</td><td class=num>5</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>OkHttp</td><td>Kuicksilver</td><td>h2</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>OkHttp</td><td>Kuicksilver</td><td>h2c</td><td class=num>1</td><td class=num>1</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr><tr><td>OkHttp</td><td>Kuicksilver</td><td>wss</td><td class=num>3</td><td class=num>3</td><td class=num>0</td><td class=num>0</td><td><span class="pass">успех</span></td></tr></tbody></table>
+<h2>QUIC Interop Runner</h2>
+<p class="nodata">Для этого коммита не запускался: матрица QUIC Interop Runner гоняется раз в неделю и по запросу, а не на каждый коммит.</p>
+</main></div>
+</body>
+</html>

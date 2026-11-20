@@ -1,0 +1,346 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http3Connection</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http3/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http3/commonMain" data-filter=":kuicksilver-http3/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http3::io.kuicksilver.http3/Http3Connection///PointingToDeclaration//748033675">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http3</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http3</a><span class="delimiter">/</span><span class="current">Http3Connection</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Http3Connection</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Http3Connection</a> : <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-auto-closeable/index.html">AutoCloseable</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Http3Connection.kt#L40">source</a>)</span></span></div><p class="paragraph">An HTTP/3 connection over a <a href="../../../kuicksilver-quic/io.kuicksilver.quic/-quic-connection/index.html">QuicConnection</a> whose ALPN is <code class="lang-kotlin">h3</code> (RFC 9114). Create one with <a href="-companion/client.html">client</a> or <a href="-companion/server.html">server</a>: both open the control and QPACK streams and send SETTINGS at once, without waiting for the peer's (RFC 9114 section 6.2.1). The peer's transport parameters must allow those three unidirectional streams (section 6.2); when they cannot be opened within three seconds the connection closes with H3_GENERAL_PROTOCOL_ERROR.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button><button class="section-tab" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION,EXTENSION_PROPERTY,EXTENSION_FUNCTION">Members &amp; Extensions</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="-78919504%2FClasslikes%2F748033675" anchor-label="Companion" id="-78919504%2FClasslikes%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-companion/index.html"><span><span>Companion</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-78919504%2FClasslikes%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-companion/index.html">Companion</a></div><div class="brief "><p class="paragraph">Factories that start HTTP/3 on a QUIC connection.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="1156915109%2FProperties%2F748033675" anchor-label="closed" id="1156915109%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="closed.html"><span><span>closed</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1156915109%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="closed.html">closed</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-deferred/index.html">Deferred</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-throwable/index.html">Throwable</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Completes when the connection is gone: an <a href="../-http3-exception/index.html">Http3Exception</a> for HTTP/3 closes, the transport's exception otherwise.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1130485894%2FProperties%2F748033675" anchor-label="goAwayReceived" id="-1130485894%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="go-away-received.html"><span>go</span><wbr><span>Away</span><wbr><span><span>Received</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1130485894%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="go-away-received.html">goAwayReceived</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-state-flow/index.html">StateFlow</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator">?</span><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The id of the last GOAWAY received (RFC 9114 section 5.2), null before any.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1592261492%2FProperties%2F748033675" anchor-label="peerSettings" id="-1592261492%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="peer-settings.html"><span>peer</span><wbr><span><span>Settings</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1592261492%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="peer-settings.html">peerSettings</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/-state-flow/index.html">StateFlow</a><span class="token operator">&lt;</span><a href="../-http3-peer-settings/index.html">Http3PeerSettings</a><span class="token operator">?</span><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The peer's SETTINGS once they arrived.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1425738733%2FProperties%2F748033675" anchor-label="quic" id="-1425738733%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="quic.html"><span><span>quic</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1425738733%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="quic.html">quic</a><span class="token operator">: </span><a href="../../../kuicksilver-quic/io.kuicksilver.quic/-quic-connection/index.html">QuicConnection</a></div><div class="brief "><p class="paragraph">The QUIC connection this HTTP/3 connection runs on (paths, statistics, transport close).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-552303397%2FProperties%2F748033675" anchor-label="role" id="-552303397%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="role.html"><span><span>role</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-552303397%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="role.html">role</a><span class="token operator">: </span><a href="../-http3-role/index.html">Http3Role</a></div><div class="brief "><p class="paragraph">Our side: <a href="request.html">request</a> and <a href="connect.html">connect</a> are client-only, <a href="accept-request.html">acceptRequest</a> is server-only.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1922059214%2FProperties%2F748033675" anchor-label="settings" id="1922059214%2FProperties%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="settings.html"><span><span>settings</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1922059214%2FProperties%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="settings.html">settings</a><span class="token operator">: </span><a href="../-http3-settings/index.html">Http3Settings</a></div><div class="brief "><p class="paragraph">The local settings we advertised and enforce; <a href="peer-settings.html">peerSettings</a> holds the other side's.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="630822626%2FFunctions%2F748033675" anchor-label="acceptRequest" id="630822626%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="accept-request.html"><span>accept</span><wbr><span><span>Request</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="630822626%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="accept-request.html"><span class="token function">acceptRequest</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-http3-server-request/index.html">Http3ServerRequest</a></div><div class="brief "><p class="paragraph">Server: the next request; malformed requests are answered at the stream level and never returned. A caller cancelled while it waits takes no request with it: the next call returns it. A wrapper that is itself cancelled after this returned (<code class="lang-kotlin">withTimeout</code>, <code class="lang-kotlin">async</code>, <code class="lang-kotlin">withContext</code>) may still drop the request it got, so accept in one long-lived loop rather than polling with a timeout. Each request returned holds one of the client's streams (its <code class="lang-kotlin">MAX_STREAMS</code> credit) until the application is done with it; see <a href="../-http3-server-request/index.html">Http3ServerRequest</a> for when that is. A request kept without that holds its stream until the connection ends.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-683482830%2FFunctions%2F748033675" anchor-label="close" id="-683482830%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="close.html"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-683482830%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Closes with H3_NO_ERROR, without waiting for the close to finish.</p></div><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">code<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-long/index.html">Long</a><span class="token operator"> = </span>Http3ErrorCode.NO_ERROR<span class="token punctuation">, </span></span><span class="parameter ">reason<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator"> = </span><span class="token string">""</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Closes with an HTTP/3 error code (H3_NO_ERROR by default) in CONNECTION_CLOSE 0x1d.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="907203391%2FFunctions%2F748033675" anchor-label="connect" id="907203391%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connect.html"><span><span>connect</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="907203391%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="connect.html"><span class="token function">connect</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="../-http3-request/index.html">Http3Request</a><span class="token punctuation">, </span></span><span class="parameter ">protocol<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-http3-stream/index.html">Http3Stream</a></div><div class="brief "><p class="paragraph">Client: Extended CONNECT (RFC 9220) with <code class="lang-kotlin">:protocol</code> = <a href="connect.html">protocol</a> (<code class="lang-kotlin">websocket</code>, ...; a token, RFC 8441 section 4). Waits for the peer's SETTINGS and needs <code class="lang-kotlin">SETTINGS_ENABLE_CONNECT_PROTOCOL</code> (<a href="../-http3-exception/-settings/index.html">Http3Exception.Settings</a> otherwise); a non-2xx answer throws <a href="../-http3-exception/-connect-rejected/index.html">Http3Exception.ConnectRejected</a>, and a 2xx that enables the Capsule Protocol against RFC 9297 section 3.2 (with <code class="lang-kotlin">content-length</code>, <code class="lang-kotlin">content-type</code> or <code class="lang-kotlin">transfer-encoding</code>, or a 204, 205 or 206) is malformed: the stream is aborted with H3_MESSAGE_ERROR and <a href="../-http3-exception/-message-error/index.html">Http3Exception.MessageError</a> is thrown. The method of <a href="connect.html">request</a> is replaced by CONNECT.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-687084911%2FFunctions%2F748033675" anchor-label="connectUdp" id="-687084911%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../connect-udp.html"><span>connect</span><wbr><span><span>Udp</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-687084911%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="index.html">Http3Connection</a><span class="token punctuation">.</span><a href="../connect-udp.html"><span class="token function">connectUdp</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">template<span class="token operator">: </span><a href="../-udp-proxy-template/index.html">UdpProxyTemplate</a><span class="token punctuation">, </span></span><span class="parameter ">targetHost<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token punctuation">, </span></span><span class="parameter ">targetPort<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">headers<span class="token operator">: </span><a href="../-http3-headers/index.html">Http3Headers</a><span class="token operator"> = </span>Http3Headers.Empty<span class="token punctuation">, </span></span><span class="parameter ">closeTimeout<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator"> = </span>5.seconds</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-udp-tunnel/index.html">UdpTunnel</a></div><div class="brief "><p class="paragraph">Client: opens a UDP tunnel through the proxy at the other end of this connection (RFC 9298 section 3.4): an Extended CONNECT with <code class="lang-kotlin">:protocol</code> <code class="lang-kotlin">connect-udp</code>, the <code class="lang-kotlin">:scheme</code>, <code class="lang-kotlin">:authority</code> and <code class="lang-kotlin">:path</code> of <a href="../connect-udp.html">template</a> expanded for <a href="../connect-udp.html">targetHost</a> and <a href="../connect-udp.html">targetPort</a>, <code class="lang-kotlin">capsule-protocol: ?1</code> and <a href="../connect-udp.html">headers</a> (a <code class="lang-kotlin">proxy-authorization</code>, for example). The template is checked before anything is sent (section 2), and so is the target (section 3): <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-illegal-argument-exception/index.html">IllegalArgumentException</a> otherwise. Any answer other than a 2xx fails the call with <a href="../-http3-exception/-connect-rejected/index.html">Http3Exception.ConnectRejected</a>, whose headers carry the proxy's <code class="lang-kotlin">proxy-status</code> (section 3.5: "Any response other than a successful response indicates that the request has failed"); a server without Extended CONNECT fails it with <a href="../-http3-exception/-settings/index.html">Http3Exception.Settings</a>. Datagrams may be sent once this returns.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="857137243%2FFunctions%2F748033675" anchor-label="goAway" id="857137243%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="go-away.html"><span>go</span><wbr><span><span>Away</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="857137243%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="go-away.html"><span class="token function">goAway</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Graceful shutdown with GOAWAY (RFC 9114 section 5.2). A server announces 2^62-4, waits about two round trips, then announces the first request id it will not process (those are reset with H3_REQUEST_REJECTED, which clients may retry elsewhere); once its accepted requests are answered and acknowledged, the client closes the connection with H3_NO_ERROR (a Kuicksilver client does once it read its responses), or the server does three seconds later. A client sends GOAWAY(0) and stops issuing requests (a request after it fails with <a href="../-http3-exception/-request-not-processed/index.html">Http3Exception.RequestNotProcessed</a>, retry-safe, as one above a received GOAWAY); a client that receives GOAWAY closes with H3_NO_ERROR once it is idle.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-983602881%2FFunctions%2F748033675" anchor-label="request" id="-983602881%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="request.html"><span><span>request</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-983602881%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="request.html"><span class="token function">request</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="../-http3-request/index.html">Http3Request</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-http3-response/index.html">Http3Response</a></div><div class="brief "><p class="paragraph">Client: sends <a href="request.html">request</a> and returns at its final response; interim (1xx) responses go to <code class="lang-kotlin">onInformational</code>. Fails with <a href="../-http3-exception/-request-not-processed/index.html">Http3Exception.RequestNotProcessed</a> after GOAWAY, with <a href="../-http3-exception/index.html">Http3Exception</a> stream errors for this request (the connection lives on), and with the connection's error once it is gone. Cancelling the call resets the stream with H3_REQUEST_CANCELLED. A request the peer would have to treat as malformed (RFC 9114 sections 4.2, 4.3.1: see <a href="../-http3-request/index.html">Http3Request</a>) throws IllegalArgumentException before a stream is opened; so do its trailers, which also abandon the request (the stream is reset with H3_REQUEST_CANCELLED). A request with a <code class="lang-kotlin">protocol</code> (Extended CONNECT) waits for the peer's SETTINGS and throws IllegalArgumentException unless they enable it (RFC 9220 section 3); <a href="connect.html">connect</a> is the usual way to make one. A request that fails, also with IllegalStateException on a server's connection, ends its <a href="../-http3-request/body.html">Http3Request.body</a> with the exception it throws, so a coroutine writing the body is released, its next write failing with that exception; except one that fails with <a href="../-http3-exception/-request-not-processed/index.html">Http3Exception.RequestNotProcessed</a> whose <code class="lang-kotlin">neverSent</code> is true: that body was never read and can be sent again.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="166236083%2FFunctions%2F748033675" anchor-label="webTransport" id="166236083%2FFunctions%2F748033675" data-filterable-set=":kuicksilver-http3/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="EXTENSION_FUNCTION" data-filterable-current=":kuicksilver-http3/commonMain" data-filterable-set=":kuicksilver-http3/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="../web-transport.html"><span>web</span><wbr><span><span>Transport</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="166236083%2FFunctions%2F748033675"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http3/commonMain"><div class="symbol monospace"><span class="token keyword">suspend </span><span class="token keyword">fun </span><a href="index.html">Http3Connection</a><span class="token punctuation">.</span><a href="../web-transport.html"><span class="token function">webTransport</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">request<span class="token operator">: </span><a href="../-http3-request/index.html">Http3Request</a><span class="token punctuation">, </span></span><span class="parameter ">protocols<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">&gt;</span><span class="token operator"> = </span>emptyList()</span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-web-transport-session/index.html">WebTransportSession</a></div><div class="brief "><p class="paragraph">Client: opens a WebTransport session with an Extended CONNECT to <a href="../web-transport.html">request</a>'s authority and path (its method is replaced by CONNECT). Needs <code class="lang-kotlin">Http3Settings.webTransport</code> on this connection (IllegalStateException otherwise) and waits up to ten seconds for the server's SETTINGS, which must offer WebTransport, Extended CONNECT and HTTP datagrams (<a href="../-http3-exception/-settings/index.html">Http3Exception.Settings</a> otherwise), then up to ten seconds for the answer to the CONNECT (<a href="../-web-transport-exception/-timeout/index.html">WebTransportException.Timeout</a> otherwise; the CONNECT is reset with H3_REQUEST_CANCELLED). The draft the server speaks picks the <code class="lang-kotlin">:protocol</code> token: <code class="lang-kotlin">webtransport-h3</code> for draft-15 and later, else <code class="lang-kotlin">webtransport</code> with <code class="lang-kotlin">sec-webtransport-http3-draft02: 1</code>. <a href="../web-transport.html">protocols</a> are offered in <code class="lang-kotlin">WT-Available-Protocols</code> (printable ASCII each); a <code class="lang-kotlin">WT-Protocol</code> answer that names another protocol closes the session with WT_ALPN_ERROR and throws <a href="../-web-transport-exception/-alpn/index.html">WebTransportException.Alpn</a>, one that is no valid Structured Field String is ignored (<a href="../-web-transport-session/protocol.html">WebTransportSession.protocol</a> is null). A non-2xx answer throws <a href="../-http3-exception/-connect-rejected/index.html">Http3Exception.ConnectRejected</a> (redirects are not followed, section 3.2). Several sessions share the connection when both sides declared WebTransport flow control (section 5.1), up to <code class="lang-kotlin">Http3Settings.webTransportMaxSessions</code>; one more, or a second without flow control, throws <a href="../-web-transport-exception/-connection-full/index.html">WebTransportException.ConnectionFull</a> before anything is sent, and a server that refuses one more (its limit, section 5.2) answers with H3_REQUEST_REJECTED, <a href="../-http3-exception/-request-not-processed/index.html">Http3Exception.RequestNotProcessed</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

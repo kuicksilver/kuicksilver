@@ -1,0 +1,421 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>Http2Settings</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-http2/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-http2/commonMain" data-filter=":kuicksilver-http2/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-http2::io.kuicksilver.http2/Http2Settings///PointingToDeclaration//-1846193142">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-http2</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.http2</a><span class="delimiter">/</span><span class="current">Http2Settings</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span><span>Http2Settings</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">Http2Settings</a><span class="token punctuation">(</span><span class="parameters "><span class="parameter "><span class="token keyword">val </span>headerTableSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxConcurrentStreams<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">100</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>initialStreamWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxStreamWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>initialConnectionWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxConnectionWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxFrameSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxHeaderListSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>settingsAckTimeout<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator"> = </span>10.seconds<span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxContinuationFrames<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">8</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxControlFramesQueued<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxEmptyFrames<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">100</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>resetBurst<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>resetsPerSecond<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">33</span><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>maxHeaderBlockTime<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator"> = </span>10.seconds<span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>glitchBurst<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter "><span class="token keyword">val </span>glitchesPerSecond<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">330</span></span></span><span class="token punctuation">)</span><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/Http2Settings.kt#L16">source</a>)</span></span></div><p class="paragraph">The local side of an HTTP/2 connection: the SETTINGS we send (RFC 9113 section 6.5.2), our flow-control windows and the limits we hold the peer to (threat model 3.23). Every limit is per connection; the defaults follow the QUIC defaults of this project for the windows and the published fixes of other HTTP/2 stacks for the flood limits. The constructor throws IllegalArgumentException for a value out of range.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="-533340117%2FConstructors%2F-1846193142" anchor-label="Http2Settings" id="-533340117%2FConstructors%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-http2-settings.html"><span><span>Http2Settings</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-533340117%2FConstructors%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">headerTableSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxConcurrentStreams<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">100</span><span class="token punctuation">, </span></span><span class="parameter ">initialStreamWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxStreamWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">initialConnectionWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxConnectionWindow<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxFrameSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxHeaderListSize<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">settingsAckTimeout<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator"> = </span>10.seconds<span class="token punctuation">, </span></span><span class="parameter ">maxContinuationFrames<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">8</span><span class="token punctuation">, </span></span><span class="parameter ">maxControlFramesQueued<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">maxEmptyFrames<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">100</span><span class="token punctuation">, </span></span><span class="parameter ">resetBurst<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">resetsPerSecond<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">33</span><span class="token punctuation">, </span></span><span class="parameter ">maxHeaderBlockTime<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a><span class="token operator"> = </span>10.seconds<span class="token punctuation">, </span></span><span class="parameter ">glitchBurst<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">glitchesPerSecond<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">330</span></span></span><span class="token punctuation">)</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="958947963%2FProperties%2F-1846193142" anchor-label="glitchBurst" id="958947963%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="glitch-burst.html"><span>glitch</span><wbr><span><span>Burst</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="958947963%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="glitch-burst.html">glitchBurst</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The burst of the glitch budget; default 10 000 (the numbers are nghttp2's). Counted events: PRIORITY, unknown frame types, SETTINGS, empty DATA without END_STREAM, a PING with no DATA or HEADERS of ours since the previous PING (a bandwidth probe that follows our data is free, as grpc-go's ping strikes), and every stream error the peer causes.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1886002040%2FProperties%2F-1846193142" anchor-label="glitchesPerSecond" id="1886002040%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="glitches-per-second.html"><span>glitches</span><wbr><span>Per</span><wbr><span><span>Second</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1886002040%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="glitches-per-second.html">glitchesPerSecond</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The refill rate of the glitch budget per second; 0: it never refills; default 330, as nghttp2.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1628550684%2FProperties%2F-1846193142" anchor-label="headerTableSize" id="-1628550684%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="header-table-size.html"><span>header</span><wbr><span>Table</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1628550684%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="header-table-size.html">headerTableSize</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">SETTINGS_HEADER_TABLE_SIZE: the HPACK dynamic table the peer may use towards us, 0..65 536 bytes; default 4096.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1765070860%2FProperties%2F-1846193142" anchor-label="initialConnectionWindow" id="-1765070860%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="initial-connection-window.html"><span>initial</span><wbr><span>Connection</span><wbr><span><span>Window</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1765070860%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="initial-connection-window.html">initialConnectionWindow</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The connection's receive window, at least the protocol's 65 535; default 768 KiB.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2009660818%2FProperties%2F-1846193142" anchor-label="initialStreamWindow" id="2009660818%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="initial-stream-window.html"><span>initial</span><wbr><span>Stream</span><wbr><span><span>Window</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2009660818%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="initial-stream-window.html">initialStreamWindow</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">SETTINGS_INITIAL_WINDOW_SIZE: the receive window each stream starts with; default 512 KiB.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-390280868%2FProperties%2F-1846193142" anchor-label="maxConcurrentStreams" id="-390280868%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-concurrent-streams.html"><span>max</span><wbr><span>Concurrent</span><wbr><span><span>Streams</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-390280868%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-concurrent-streams.html">maxConcurrentStreams</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">SETTINGS_MAX_CONCURRENT_STREAMS: streams the peer may have open towards us, 0..2^31 - 1; default 100. A stream the peer reset still counts until its handler has finished.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="999983700%2FProperties%2F-1846193142" anchor-label="maxConnectionWindow" id="999983700%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-connection-window.html"><span>max</span><wbr><span>Connection</span><wbr><span><span>Window</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="999983700%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-connection-window.html">maxConnectionWindow</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The largest the connection's receive window grows to; default 15 MiB.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2002426533%2FProperties%2F-1846193142" anchor-label="maxContinuationFrames" id="2002426533%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-continuation-frames.html"><span>max</span><wbr><span>Continuation</span><wbr><span><span>Frames</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2002426533%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-continuation-frames.html">maxContinuationFrames</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">CONTINUATION frames allowed in one field block; more ends the connection (ENHANCE_YOUR_CALM); default 8.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-167032990%2FProperties%2F-1846193142" anchor-label="maxControlFramesQueued" id="-167032990%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-control-frames-queued.html"><span>max</span><wbr><span>Control</span><wbr><span>Frames</span><wbr><span><span>Queued</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-167032990%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-control-frames-queued.html">maxControlFramesQueued</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Control frames (SETTINGS and PING acknowledgements, RST_STREAM, WINDOW_UPDATE) queued for the peer; default 10 000.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="692584549%2FProperties%2F-1846193142" anchor-label="maxEmptyFrames" id="692584549%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-empty-frames.html"><span>max</span><wbr><span>Empty</span><wbr><span><span>Frames</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="692584549%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-empty-frames.html">maxEmptyFrames</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">DATA frames in a row with no content and no END_STREAM; more ends the connection; default 100.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1086149430%2FProperties%2F-1846193142" anchor-label="maxFrameSize" id="-1086149430%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-frame-size.html"><span>max</span><wbr><span>Frame</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1086149430%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-frame-size.html">maxFrameSize</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">SETTINGS_MAX_FRAME_SIZE: the largest frame payload we accept, 16 384..16 777 215; default 16 384.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1141474421%2FProperties%2F-1846193142" anchor-label="maxHeaderBlockTime" id="-1141474421%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-header-block-time.html"><span>max</span><wbr><span>Header</span><wbr><span>Block</span><wbr><span><span>Time</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1141474421%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-header-block-time.html">maxHeaderBlockTime</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">How long one field block (HEADERS and its CONTINUATION frames) may take to arrive; default 10 s.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1860176470%2FProperties%2F-1846193142" anchor-label="maxHeaderListSize" id="1860176470%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-header-list-size.html"><span>max</span><wbr><span>Header</span><wbr><span>List</span><wbr><span><span>Size</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1860176470%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-header-list-size.html">maxHeaderListSize</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">SETTINGS_MAX_HEADER_LIST_SIZE: the largest field section we decode (name + value + 32 per field), 1..2^30 - 1; default 64 KiB. A field block above it fails only its stream; its compressed form (HEADERS plus CONTINUATION) is buffered up to twice this before decoding, and beyond that the connection ends.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-177696782%2FProperties%2F-1846193142" anchor-label="maxStreamWindow" id="-177696782%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="max-stream-window.html"><span>max</span><wbr><span>Stream</span><wbr><span><span>Window</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-177696782%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="max-stream-window.html">maxStreamWindow</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The largest a stream's receive window grows to while the application reads faster than the window; default 6 MiB.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-858566301%2FProperties%2F-1846193142" anchor-label="resetBurst" id="-858566301%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="reset-burst.html"><span>reset</span><wbr><span><span>Burst</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-858566301%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="reset-burst.html">resetBurst</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">A server's budget for the client's RST_STREAM frames (Rapid Reset), burst; default 1000, as nghttp2.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="730086873%2FProperties%2F-1846193142" anchor-label="resetsPerSecond" id="730086873%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="resets-per-second.html"><span>resets</span><wbr><span>Per</span><wbr><span><span>Second</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="730086873%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="resets-per-second.html">resetsPerSecond</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The refill rate of that budget per second; 0: it never refills (the burst is all a connection gets); default 33, as nghttp2.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-900799079%2FProperties%2F-1846193142" anchor-label="settingsAckTimeout" id="-900799079%2FProperties%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="settings-ack-timeout.html"><span>settings</span><wbr><span>Ack</span><wbr><span><span>Timeout</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-900799079%2FProperties%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="settings-ack-timeout.html">settingsAckTimeout</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-duration/index.html">Duration</a></div><div class="brief "><p class="paragraph">How long our SETTINGS may go unacknowledged before the connection ends with SETTINGS_TIMEOUT; default 10 s.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="518552104%2FFunctions%2F-1846193142" anchor-label="toString" id="518552104%2FFunctions%2F-1846193142" data-filterable-set=":kuicksilver-http2/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-http2/commonMain" data-filterable-set=":kuicksilver-http2/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-string.html"><span>to</span><wbr><span><span>String</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="518552104%2FFunctions%2F-1846193142"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-http2/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="to-string.html"><span class="token function">toString</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">For logs: every setting.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

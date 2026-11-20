@@ -1,0 +1,451 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>EndpointCore</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-quic/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-quic/commonMain" data-filter=":kuicksilver-quic/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-quic::io.kuicksilver.quic/EndpointCore///PointingToDeclaration//42191490">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-quic</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.quic</a><span class="delimiter">/</span><span class="current">EndpointCore</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Endpoint</span><wbr><span><span>Core</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">EndpointCore</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt#L61">source</a>)</span></span></div><p class="paragraph">The sans-IO endpoint (ADR-0004): routes datagrams to connections by keyed connection ID, queues client Initials for <a href="../-connection-admission/index.html">ConnectionAdmission</a>, creates server connections in <a href="process-pending.html">processPending</a>, and answers unknown versions, forged tokens and unknown short-header CIDs statelessly under a rate limit. One endpoint loop drives it; nothing here is thread-safe.</p><p class="paragraph">A new client Initial takes two steps: <a href="handle-datagram.html">handleDatagram</a> runs only the cheap checks (1200 bytes, version, DCID length, reflective source port) and copies the datagram into a bounded queue; the runtime then calls <a href="process-pending.html">processPending</a> once per receive batch, which checks the Retry token, the hard limits and the admission policy, and creates the connection.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="CONSTRUCTOR">
+        <h2 class="tableheader">Constructors</h2>
+        <div class="table"><a data-name="538923289%2FConstructors%2F42191490" anchor-label="EndpointCore" id="538923289%2FConstructors%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-togglable="CONSTRUCTOR" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-endpoint-core.html"><span>Endpoint</span><wbr><span><span>Core</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="538923289%2FConstructors%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">constructor</span><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">config<span class="token operator">: </span><a href="../-quic-endpoint-config/index.html">QuicEndpointConfig</a><span class="token punctuation">, </span></span><span class="parameter ">random<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.random/-random/index.html">Random</a><span class="token punctuation">, </span></span><span class="parameter ">loopIndex<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">0</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">An endpoint with its own Retry, NEW_TOKEN and reset keys; <a href="loop-index.html">loopIndex</a> is its routing byte in a group (0 alone).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="1317610100%2FProperties%2F42191490" anchor-label="acceptBacklog" id="1317610100%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="accept-backlog.html"><span>accept</span><wbr><span><span>Backlog</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1317610100%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">var </span><a href="accept-backlog.html">acceptBacklog</a><span class="token operator">: </span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator"> -&gt; </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Connections that completed their handshake and wait for the application's <code class="lang-kotlin">accept()</code>; the loop replaces the default (this core's own queue).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2029330353%2FProperties%2F42191490" anchor-label="config" id="-2029330353%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="config.html"><span><span>config</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2029330353%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="config.html">config</a><span class="token operator">: </span><a href="../-quic-endpoint-config/index.html">QuicEndpointConfig</a></div><div class="brief "><p class="paragraph">The endpoint's settings; its <code class="lang-kotlin">server</code> decides whether client Initials are admitted at all.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="365435128%2FProperties%2F42191490" anchor-label="connectionCount" id="365435128%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connection-count.html"><span>connection</span><wbr><span><span>Count</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="365435128%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="connection-count.html">connectionCount</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Connections this endpoint holds, in any state, until they are closed and removed.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="556343182%2FProperties%2F42191490" anchor-label="dirtyConnections" id="556343182%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="dirty-connections.html"><span>dirty</span><wbr><span><span>Connections</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="556343182%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="dirty-connections.html">dirtyConnections</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Connections touched since <a href="clear-dirty.html">clearDirty</a>: a datagram, a timer, an application command or creation; the loop's flush visits only these.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="782441505%2FProperties%2F42191490" anchor-label="hasStateless" id="782441505%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="has-stateless.html"><span>has</span><wbr><span><span>Stateless</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="782441505%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="has-stateless.html">hasStateless</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-boolean/index.html">Boolean</a></div><div class="brief "><p class="paragraph">True while stateless answers wait in <a href="poll-stateless.html">pollStateless</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2127461595%2FProperties%2F42191490" anchor-label="loopIndex" id="2127461595%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="loop-index.html"><span>loop</span><wbr><span><span>Index</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2127461595%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="loop-index.html">loopIndex</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">This endpoint's loop in a group (0 for a single loop): the routing byte of every server connection ID it issues (with a QUIC-LB configuration, the loop its IDs hash to).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1041194755%2FProperties%2F42191490" anchor-label="pendingInitials" id="1041194755%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="pending-initials.html"><span>pending</span><wbr><span><span>Initials</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1041194755%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="pending-initials.html">pendingInitials</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Client Initials copied in by <a href="handle-datagram.html">handleDatagram</a> and not yet decided by <a href="process-pending.html">processPending</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1645972458%2FProperties%2F42191490" anchor-label="stats" id="1645972458%2FProperties%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="stats.html"><span><span>stats</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1645972458%2FProperties%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="stats.html">stats</a><span class="token operator">: </span><a href="../-endpoint-stats/index.html">EndpointStats</a></div><div class="brief "><p class="paragraph">Counters since the endpoint started.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="-367946388%2FFunctions%2F42191490" anchor-label="clearDirty" id="-367946388%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="clear-dirty.html"><span>clear</span><wbr><span><span>Dirty</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-367946388%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="clear-dirty.html"><span class="token function">clearDirty</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Empties <a href="dirty-connections.html">dirtyConnections</a> once the loop flushed every connection on it.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-452167503%2FFunctions%2F42191490" anchor-label="close" id="-452167503%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="close.html"><span><span>close</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-452167503%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="close.html"><span class="token function">close</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Frees the queue, the stateless buffer and every connection's native resources.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-573499085%2FFunctions%2F42191490" anchor-label="connect" id="-573499085%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connect.html"><span><span>connect</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-573499085%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="connect.html"><span class="token function">connect</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">client<span class="token operator">: </span><a href="../-quic-client-config/index.html">QuicClientConfig</a><span class="token punctuation">, </span></span><span class="parameter ">remote<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a></div><div class="brief "><p class="paragraph">A new client connection to <a href="connect.html">remote</a>; its first <a href="../-connection-core/poll.html">ConnectionCore.poll</a> produces the Initial datagrams. Throws <a href="../-quic-exception/-connection-lost/-internal/index.html">QuicException.ConnectionLost.Internal</a> when 16 draws of its connection ID all hit one this endpoint already routes (RFC 9000 section 10.3.2; only likely with a short <code class="lang-kotlin">connectionIdLength</code> and many connections).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2061593332%2FFunctions%2F42191490" anchor-label="connections" id="2061593332%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="connections.html"><span><span>connections</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2061593332%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="connections.html"><span class="token function">connections</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">Connections in creation order (for the loop).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="108304023%2FFunctions%2F42191490" anchor-label="handleDatagram" id="108304023%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="handle-datagram.html"><span>handle</span><wbr><span><span>Datagram</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="108304023%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="handle-datagram.html"><span class="token function">handleDatagram</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">data<span class="token operator">: </span><a href="../../../kuicksilver-native/io.kuicksilver.native/-packet-buffer/index.html">PacketBuffer</a><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">from<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">ecn<span class="token operator">: </span><a href="../-ecn/index.html">Ecn</a><span class="token punctuation">, </span></span><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">Routes one datagram; returns the connection that took it, or null when it was dropped, answered statelessly or queued as a new client Initial (those become connections in <a href="process-pending.html">processPending</a>).</p></div><div class="symbol monospace"><span class="token keyword">fun </span><a href="handle-datagram.html"><span class="token function">handleDatagram</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">data<span class="token operator">: </span><a href="../../../kuicksilver-native/io.kuicksilver.native/-packet-buffer/index.html">PacketBuffer</a><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">from<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">ecn<span class="token operator">: </span><a href="../-ecn/index.html">Ecn</a><span class="token punctuation">, </span></span><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">socket<span class="token operator">: </span><a href="../-path-id/index.html">PathId</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><a href="handle-datagram.html">handleDatagram</a> for a datagram that arrived on the client socket <a href="handle-datagram.html">socket</a> of a migrating connection (RFC 9000 section 9).</p></div><div class="symbol monospace"><span class="token keyword">fun </span><a href="handle-datagram.html"><span class="token function">handleDatagram</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">data<span class="token operator">: </span><a href="../../../kuicksilver-native/io.kuicksilver.native/-packet-buffer/index.html">PacketBuffer</a><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token punctuation">, </span></span><span class="parameter ">from<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token punctuation">, </span></span><span class="parameter ">ecn<span class="token operator">: </span><a href="../-ecn/index.html">Ecn</a><span class="token punctuation">, </span></span><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">socket<span class="token operator">: </span><a href="../-path-id/index.html">PathId</a><span class="token punctuation">, </span></span><span class="parameter ">local<span class="token operator">: </span><a href="https://api.ktor.io/ktor-network/io.ktor.network.sockets/-inet-socket-address/index.html">InetSocketAddress</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><a href="handle-datagram.html">handleDatagram</a> with <a href="handle-datagram.html">local</a>, the address of ours the datagram was sent to (<a href="../-packet-batch/local-address.html">PacketBatch.localAddress</a>; null when the socket cannot tell). A server keeps it as the local end of the path the datagram opens or belongs to (RFC 9000 section 9: a path is the 4-tuple) and sends that path's datagrams, and any stateless answer to this one, from it: on a wildcard bind of a multi-address host, a VIP or behind IPVS-DR the client hears back from the address it sent to.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1557714759%2FFunctions%2F42191490" anchor-label="markDirty" id="-1557714759%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="mark-dirty.html"><span>mark</span><wbr><span><span>Dirty</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1557714759%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="mark-dirty.html"><span class="token function">markDirty</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">core<span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Puts <a href="mark-dirty.html">core</a> on <a href="dirty-connections.html">dirtyConnections</a> so the next flush polls it; call it after touching a connection from outside <a href="handle-datagram.html">handleDatagram</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1999106007%2FFunctions%2F42191490" anchor-label="nextAccepted" id="1999106007%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="next-accepted.html"><span>next</span><wbr><span><span>Accepted</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1999106007%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="next-accepted.html"><span class="token function">nextAccepted</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The next server connection the application has not taken yet.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1236463112%2FFunctions%2F42191490" anchor-label="ownerLoop" id="1236463112%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="owner-loop.html"><span>owner</span><wbr><span><span>Loop</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1236463112%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="owner-loop.html"><span class="token function">ownerLoop</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">data<span class="token operator">: </span><a href="../../../kuicksilver-native/io.kuicksilver.native/-packet-buffer/index.html">PacketBuffer</a><span class="token punctuation">, </span></span><span class="parameter ">length<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">The loop that owns the connection a datagram belongs to, from its DCID in our format (<span data-unresolved-link="io.kuicksilver.quic.endpoint/CidRoute/ownerLoop/#io.kuicksilver.native.PacketBuffer#kotlin.Int#kotlin.Int/PointingToDeclaration/">CidRoute.ownerLoop</span>: the routing byte, or with a QUIC-LB configuration the loop the ID hashes to), or -1: Version Negotiation, a client endpoint, a DCID not in our format, or a long header naming this loop or no loop of the group (an Initial is then admitted where it lands). The endpoint runtime forwards a datagram whose owner is another loop: a flow the kernel hashed onto this socket after a rebind, or the answer to a group's client connection (<a href="connect.html">connect</a>), which the kernel hashes onto any loop's socket from the first Initial on.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="527707424%2FFunctions%2F42191490" anchor-label="pollStateless" id="527707424%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="poll-stateless.html"><span>poll</span><wbr><span><span>Stateless</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="527707424%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="poll-stateless.html"><span class="token function">pollStateless</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">out<span class="token operator">: </span><a href="../-packet-batch/index.html">PacketBatch</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Stateless answers (Version Negotiation, Retry, Stateless Reset, Initial CONNECTION_CLOSE) to send.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1114196508%2FFunctions%2F42191490" anchor-label="processPending" id="1114196508%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="process-pending.html"><span>process</span><wbr><span><span>Pending</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1114196508%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="process-pending.html"><span class="token function">processPending</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">now<span class="token operator">: </span><a href="../-time-mark/index.html">TimeMark</a><span class="token punctuation">, </span></span><span class="parameter ">max<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator"> = </span><span class="token constant">64</span></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">Decides up to <a href="process-pending.html">max</a> queued client Initials: a duplicate of a connection created meanwhile is routed to it; a forged or expired Retry token is refused with INVALID_TOKEN; a full accept queue is refused with CONNECTION_REFUSED; the hard limits <code class="lang-kotlin">maxConnections</code> and <code class="lang-kotlin">maxConnectionsPerIp</code> drop; then <a href="../-quic-endpoint-config/admission.html">QuicEndpointConfig.admission</a> decides. Returns the number of connections created. The runtime calls it after every receive batch; what it leaves waits for the next one.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="796486530%2FFunctions%2F42191490" anchor-label="remove" id="796486530%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="remove.html"><span><span>remove</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="796486530%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="remove.html"><span class="token function">remove</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">core<span class="token operator">: </span><a href="../-connection-core/index.html">ConnectionCore</a></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Forgets a closed connection, every ID that routed to it and its per-IP slot.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-155682821%2FFunctions%2F42191490" anchor-label="updateLoadBalancer" id="-155682821%2FFunctions%2F42191490" data-filterable-set=":kuicksilver-quic/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-quic/commonMain" data-filterable-set=":kuicksilver-quic/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="update-load-balancer.html"><span>update</span><wbr><span>Load</span><wbr><span><span>Balancer</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-155682821%2FFunctions%2F42191490"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-quic/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="update-load-balancer.html"><span class="token function">updateLoadBalancer</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">config<span class="token operator">: </span><a href="../-quic-lb-config/index.html">QuicLbConfig</a><span class="token operator">?</span></span></span><span class="token punctuation">)</span></div><div class="brief "><p class="paragraph">Sans IO, for an endpoint that is not one loop of a group (whose loops change together through <a href="../-quic-endpoint/update-load-balancer.html">QuicEndpoint.updateLoadBalancer</a>): new IDs use <a href="update-load-balancer.html">config</a> at once, and every live server connection gets an ID of it that retires the earlier ones (<a href="../-quic-endpoint/update-load-balancer.html">QuicEndpoint.updateLoadBalancer</a> has the rules and the exceptions). Call it on the thread that drives this endpoint, then flush (<a href="dirty-connections.html">dirtyConnections</a>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

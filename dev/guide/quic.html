@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QUIC with Kuicksilver - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li class="current"><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="quic-with-kuicksilver">QUIC with Kuicksilver</h1>
+<p><strong>What this page is for.</strong> It explains the QUIC layer on its own: configuring, binding an endpoint, opening streams, and the
+transport features (0-RTT, migration, congestion control, load balancing, datagrams, qlog). For HTTP/3 see
+<a href="http3.html">HTTP/3</a>; for Ktor see <a href="ktor.html">Ktor engines</a>.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Dependency: <code>io.kuicksilver:kuicksilver-quic:0.3.0</code> or newer (it brings <code>kuicksilver-tls</code>).
+Built with Kotlin 2.4.20: JVM and Android need Kotlin 2.3 or newer, Kotlin/Native 2.4.x
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#kotlin-version">Kotlin version</a>).</li>
+<li>Platforms: JVM 17 or newer, Android <code>minSdk</code> 24, iOS 15, macOS 12 (macOS 11 on the JVM), Linux, Windows
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>).</li>
+<li>A <code>TlsConfig</code> with ALPN set: a server needs an identity (certificate chain and private key), a client needs a trust
+configuration (<a href="tls.html#configuration">TLS: Configuration</a>).</li>
+</ul>
+<p><strong>Minimal example.</strong> <a href="#a-complete-example-custom-alpn-streams-and-datagrams">A complete example</a> runs both sides of an
+application protocol of your own (its ALPN, a stream, datagrams) with every value defined;
+<a href="#binding-an-endpoint-and-connecting">Binding an endpoint and connecting</a> opens a connection;
+<a href="#opening-a-stream-and-echoing">Opening a stream and echoing</a> and <a href="#accepting-on-the-server">Accepting on the server</a> are
+the two sides of an echo.</p>
+<p><a id="imports"></a>
+<strong>Imports.</strong> The code blocks on this page start after their imports; these are the imports they use, and the test that
+compiles them fails when a name moves. <code>InetSocketAddress</code> is ktor-network's <code>io.ktor.network.sockets.InetSocketAddress</code>
+on every target, not <code>java.net.InetSocketAddress</code>. Experimental API needs <code>@file:OptIn(ExperimentalKuicksilverApi::class)</code>
+or the module-wide opt-in (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#stability-levels">stability</a>). The Android and Apple samples under
+<a href="#network-changes">Network changes</a> also use <code>io.kuicksilver.quic.followDefaultNetwork</code> (one extension per platform), and
+<a href="#testing-your-application">Testing your application</a> uses <code>io.kuicksilver.testing.MemoryNetwork</code>.</p>
+<pre><code class="language-kotlin">// guide:quic:imports
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.discard
+import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeFully
+import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.ConnectionAdmission
+import io.kuicksilver.quic.ConnectionCore
+import io.kuicksilver.quic.ConnectionInfo
+import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.Datagram
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DatagramPolicy
+import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.Ecn
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.MemoryTokenStore
+import io.kuicksilver.quic.NetworkMigrator
+import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.PathEvent
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicLbConfig
+import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.incomingConnections
+import io.kuicksilver.quic.incomingStreams
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.quic.quicClientConfig
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.quicEndpointConfig
+import io.kuicksilver.quic.quicServerConfig
+import io.kuicksilver.quic.rebind
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.io.IOException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
+import kotlin.random.Random
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+</code></pre>
+<p>Kuicksilver's QUIC layer (<code>io.kuicksilver:kuicksilver-quic</code>) implements QUIC v1 (RFC 9000/9001/9002) and, when
+configured, the compatible version negotiation of RFC 9368/9369 towards QUIC v2 (RFC 9369). There are two levels of
+API: a coroutine wrapper (<code>QuicEndpoint</code>/<code>QuicConnection</code>/<code>QuicStream</code>) for applications, and a sans-IO core
+(<code>ConnectionCore</code>/<code>EndpointCore</code>) for callers with their own event loop (ADR-0004). The code blocks below compile and
+run as <code>GuideSamplesTest</code> (<code>kuicksilver-quic/src/jvmTest</code>).</p>
+<h2 id="a-complete-example-custom-alpn-streams-and-datagrams">A complete example: custom ALPN, streams and datagrams</h2>
+<p>Two programs that speak a protocol of their own over QUIC, without HTTP: the server runs on the JVM (or on Kotlin/Native
+Linux, Apple or Windows, which serve on the accelerated socket), the client on any target, a Kotlin/Native executable
+included. Both name the same ALPN; the client verifies the server against a private CA. The block is common code: a
+test compiles it for the JVM and every Kotlin/Native target and runs it with the common tests.</p>
+<pre><code class="language-kotlin">val dir = &quot;/etc/my-proto&quot;   // where the PEM files are
+// guide:quic:custom-alpn
+// the PEM files, read with kotlinx-io: common code, the same on every target
+val chainPem = SystemFileSystem.source(Path(dir, &quot;fullchain.pem&quot;)).buffered().use { it.readString() }   // leaf first
+val keyPem = SystemFileSystem.source(Path(dir, &quot;privkey.pem&quot;)).buffered().use { it.readString() }       // PKCS#8
+val caPem = SystemFileSystem.source(Path(dir, &quot;ca.pem&quot;)).buffered().use { it.readString() }             // the client trusts it
+val scope = CoroutineScope(Dispatchers.Default)
+// ALPN: both sides list it, or the handshake ends with no_application_protocol (120)
+val myProtocol = listOf(&quot;my-proto/1&quot;)
+// the server: JVM, or Kotlin/Native on Linux, Apple and Windows
+val serverTls = tlsConfig(TlsRole.Server) {
+    alpn = myProtocol
+    identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+}
+val server = QuicEndpoint.bind(
+    InetSocketAddress(&quot;0.0.0.0&quot;, 4433),
+    quicEndpointConfig { this.server = quicServerConfig(serverTls) { quic = quicConfig { maxIdleTimeout = 30.seconds } } },
+)
+val serving = scope.launch {
+    server.incomingConnections().collect { connection -&gt;
+        launch {
+            // datagrams: each one sent back as it comes
+            try {
+                connection.datagrams.collect { d: Datagram -&gt; connection.sendDatagram(d.data) }
+            } catch (e: IOException) { /* the flow ends with the connection's QuicException.ConnectionLost */ }
+        }
+        launch {
+            // streams: one line in, one line out (the flow completes when the connection ends)
+            connection.incomingStreams().collect { stream -&gt;
+                launch {
+                    try {
+                        val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
+                        stream.output.writeStringUtf8(&quot;echo: $line\n&quot;)
+                        stream.output.flushAndClose()
+                    } catch (e: IOException) { /* the client reset the stream or left */ }
+                }
+            }
+        }
+    }
+}
+// the client: any target, Kotlin/Native included
+val clientTls = tlsConfig(TlsRole.Client) {
+    serverName = &quot;server.test&quot;   // SNI, and the name the server's certificate must carry
+    alpn = myProtocol
+    trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem))   // a private CA; TrustConfig.Platform for a public one
+}
+val client = QuicEndpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 0))
+val connection = client.connect(InetSocketAddress(&quot;server.test&quot;, 4433), quicClientConfig(clientTls))
+val stream = connection.openBidi()
+stream.output.writeStringUtf8(&quot;ping\n&quot;)
+stream.output.flushAndClose()
+val reply: String? = stream.input.readLine(LineEnding.Lenient)    // &quot;echo: ping&quot;
+connection.sendDatagram(&quot;tick&quot;.encodeToByteArray())               // a ByteArray out; datagrams are never retransmitted
+val echoed: Datagram = connection.datagrams.first()               // a Datagram in; its payload is echoed.data, a ByteArray
+connection.close(code = 0, reason = &quot;done&quot;)
+client.close()
+</code></pre>
+<ul>
+<li><strong>ALPN.</strong> Any non-empty list of protocol names; the server picks the first of its own that the client offers. Without
+a common one the server closes with the TLS alert <code>no_application_protocol</code> (120) and the client sees
+<code>TransportClosed(code = 0x0178)</code> (<a href="troubleshooting.html#the-handshake-fails-with-an-alpn-mismatch">troubleshooting</a>).</li>
+<li><strong>Names.</strong> <code>connect</code> resolves a host name in the <code>InetSocketAddress</code> once, through the system resolver, and uses the
+first address; <code>serverName</code> in the TLS configuration is what goes into SNI and what the certificate is checked against,
+so connecting to an IP literal with <code>serverName</code> set works.</li>
+<li><strong>Reading lines.</strong> <code>readLine(LineEnding.Lenient)</code> (ktor-io) reads one line and accepts both <code>\n</code> and <code>\r\n</code>; it returns
+null at the end of the stream. The other samples on this page and the README read the same way.</li>
+<li><strong>Datagrams.</strong> <code>sendDatagram</code> takes a <code>ByteArray</code>; <code>datagrams</code> is a <code>Flow&lt;Datagram&gt;</code> whose <code>data</code> is the payload. Both
+sides support datagrams by default; see <a href="#datagrams-rfc-9221">Datagrams</a> for the queues, the size limit and what
+<code>trySendDatagram</code> answers.</li>
+</ul>
+<p>A Kotlin/Native executable for this client needs nothing beyond the dependency; the klib carries OpenSSL and <code>ksl</code>
+statically. On Linux the binary needs glibc, the system zlib (<code>libz.so.1</code>) and <code>libresolv.so.2</code> where it runs
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">Platforms</a>). Replace <code>0.3.0</code> with the version you use:</p>
+<!-- guide-sync: not compiled (a Gradle build script) -->
+<pre><code class="language-kotlin">// build.gradle.kts
+plugins {
+    kotlin(&quot;multiplatform&quot;) version &quot;2.4.20&quot;   // Kotlin/Native consumers need Kotlin 2.4.x
+}
+repositories { mavenCentral() }
+kotlin {
+    jvm()                                      // the server
+    linuxX64 { binaries.executable { entryPoint = &quot;com.example.main&quot; } }
+    macosArm64 { binaries.executable { entryPoint = &quot;com.example.main&quot; } }
+    sourceSets.commonMain.dependencies {
+        implementation(project.dependencies.platform(&quot;io.kuicksilver:kuicksilver-bom:0.3.0&quot;))
+        implementation(&quot;io.kuicksilver:kuicksilver-quic&quot;)
+    }
+}
+</code></pre>
+<p><code>./gradlew linkReleaseExecutableLinuxX64</code> writes <code>build/bin/linuxX64/releaseExecutable/&lt;project&gt;.kexe</code>.</p>
+<h2 id="configuration">Configuration</h2>
+<p>A <code>QuicConfig</code> is immutable; build it with the <code>quicConfig</code> DSL. It carries the transport settings
+(windows, idle timeout, versions, congestion controller, migration, resource limits); TLS identity and trust come from the usual <code>TlsConfig</code>
+(<code>docs/guide/tls.md</code>). The configs that wrap it have DSL entry points of their own: <code>quicClientConfig(tls) { }</code>,
+<code>quicServerConfig(tls) { }</code> and <code>quicEndpointConfig { }</code> (each <code>Builder</code> stays available). Every option with its default
+and range is in the <a href="configuration.html">configuration reference</a>.</p>
+<pre><code class="language-kotlin">// guide:quic:config
+val quic = quicConfig {
+    maxIdleTimeout = 30.seconds
+    initialStreamWindow = 512 * 1024L
+    maxBidiStreams = 100
+    versions = listOf(VersionProfile.V1)   // preference order; listOf(VersionProfile.V2, VersionProfile.V1) opts into v2 (RFC 9368/9369)
+    greaseQuicBit = true                    // RFC 9287
+}
+</code></pre>
+<p>QUIC is stricter than TLS over TCP about the <code>TlsConfig</code> it accepts (RFC 9001 section 4): TLS 1.3 only, a non-empty
+<code>alpn</code> list, and no <code>TLS_AES_128_CCM_8_SHA256</code>. Building a <code>QuicClientConfig</code> or
+<code>QuicServerConfig</code> from a config that breaks one of these throws <code>TlsException.Config</code> right away, not at the first
+<code>connect</code>.</p>
+<p><code>initialRtt</code> is the round-trip time assumed before the first sample (default 333 ms, RFC 9002 §6.2.2; allowed range
+(0, 10 s]). Until an ACK gives a real sample, a lost flight is resent after a PTO of 3 x <code>initialRtt</code>, doubling each
+time: 1 s, 2 s, 4 s at the default, so a handshake under heavy loss gets three retransmissions within a peer's typical
+10 s handshake timeout. A lower value repairs a lost first flight sooner at the price of spurious retransmissions when
+the real RTT is longer (quic-go starts at 100 ms: 300 ms, 600 ms, 1.2 s ...). Consider lowering it when the peers use
+<code>X25519MLKEM768</code> (each first flight spans two datagrams, so a loss is twice as likely) or for mobile clients on lossy
+radio links with modest RTTs; keep the default for satellite or other long-RTT paths. It also sets the floor of a path
+validation, max(3 x PTO, 6 x <code>initialRtt</code>) (RFC 9000 §8.2.4).</p>
+<pre><code class="language-kotlin">// guide:quic:initial-rtt
+val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+</code></pre>
+<p>Flow control: each stream starts with a receive window of <code>initialStreamWindow</code> (default 512 KiB) and the connection
+with <code>initialConnectionWindow</code> (768 KiB). A window is updated each time the application has read a quarter of it and
+doubles, up to <code>maxStreamWindow</code> (6 MiB) / <code>maxConnectionWindow</code> (15 MiB), only while the application reads a whole
+window in less than four smoothed RTTs, that is faster than the window lets the peer send (quic-go's auto-tuning rule);
+the connection window stays at least 1.5 x the largest stream window. A busy reader's window settles at 4–8 x the
+bandwidth-delay product, a slow reader keeps the initial window, and the ceilings bound the unread data one connection
+can hold. The defaults are quic-go's. A sender blocked by a window repeats <code>DATA_BLOCKED</code> / <code>STREAM_DATA_BLOCKED</code> while
+it stays blocked, and the receiver answers a stale report with its current limit, so a lost window update costs a few
+PTOs, not a stall. The repeats come 1, 2, 4 and then 8 PTOs apart for the first 32, then twice as far apart each time,
+up to a third of the idle timeout (the smaller of both sides' <code>maxIdleTimeout</code>; 10 s when both are zero). They are
+acknowledged, so a connection blocked because its peer stopped reading stays open, at the cost of about three small
+packets per idle period (about 95 in 10 minutes with the default 30 s); bound such a wait in the application if it must
+not last. A report at a new limit goes out at once and starts the fast gaps again.</p>
+<p>A client that prefers v2 but must start in v1 (the widely deployed version) sets <code>initialVersion = VersionProfile.V1</code>
+with <code>versions = listOf(VersionProfile.V2, VersionProfile.V1)</code>: the first flight is v1, the server upgrades it through
+compatible version negotiation (RFC 9368 section 2.3).</p>
+<h2 id="binding-an-endpoint-and-connecting">Binding an endpoint and connecting</h2>
+<p>A socket error inside the endpoint loop ends the endpoint: every connection fails with <code>ConnectionLost.Internal</code>,
+<code>accept()</code> and <code>connect()</code> throw <code>EndpointClosing</code>. A send that the socket refuses (a packet filter answering EPERM, an
+unreachable route) only loses that batch of datagrams; loss detection resends what mattered. <code>close()</code> closes the socket
+first, waits for a receive that is still inside the socket call, and frees the packet buffers only then. On a closed
+connection <code>trySendDatagram</code> throws the connection's <code>ConnectionLost</code> instead of answering <code>QueueFull</code>, and a write on a
+stream the peer stopped with <code>STOP_SENDING</code> fails with <code>ClosedWriteChannelException</code> whose cause is
+<code>StreamError.Stopped</code>, including <code>flushAndClose()</code>.</p>
+<p><code>QuicEndpoint.bind</code> starts one endpoint loop that drives every connection it owns (docs/architecture.md, <code>kuicksilver-quic</code>). A client-only endpoint
+needs no <code>server</code> in its <code>QuicEndpointConfig</code>.</p>
+<p>The endpoint's socket comes from <code>DatagramIo.open(local, prefer)</code>. On Linux and Android the default
+(<code>IoPreference.Accelerated</code>) is the <code>ksl</code> socket: batches of up to 64 datagrams per syscall with UDP GSO and GRO,
+ECN marks read and written per datagram, DF in probe mode for PMTUD, and <code>SO_REUSEPORT</code> for several loops on one
+port. On macOS and iOS (JVM and Kotlin/Native) it is the same <code>ksl</code> socket without GSO and GRO, which Darwin lacks:
+batches leave as one <code>sendmsg</code> per datagram, ECN marks and DF work as on Linux, and <code>SO_REUSEPORT</code> is not offered
+(several loops share one socket there, <a href="#several-loops-on-one-port">Several loops on one port</a>).
+On Linux, Android and Apple a wildcard address (<code>0.0.0.0</code> or <code>::</code>) gives a dual-stack socket, as NIO does: one socket
+bound to <code>::</code> sends to and receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address
+keeps its own family. On Windows (Kotlin/Native and the JVM) the <code>ksl</code> socket is Winsock: <code>WSASendMsg</code>/<code>WSARecvMsg</code>,
+USO/URO and ECN where the Windows version grants them (<code>io.capabilities</code> tells), DF, an exclusive bind and no
+<code>SO_REUSEPORT</code> (several loops share one socket); a wildcard address gives a dual-stack socket there too (on a host without IPv6,
+<code>0.0.0.0</code> falls back to an IPv4 socket).
+With <code>IoPreference.Portable</code>, or where <code>ksl</code> cannot open its socket, the portable socket is used (NIO on the JVM,
+<code>ktor-network</code> on Native); <code>io.capabilities</code> says what the socket can do and the core adapts (ECN validation, PMTUD) per
+path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it <code>bind</code> with a <code>server</code> throws
+<code>UnsupportedOperationException</code>, since the portable Native socket is client-only (ADR-0006). Socket buffer sizes, GSO
+and GRO on a server host: <a href="deployment.html#the-host">Deploying the HTTP/3 server: The host</a>.</p>
+<pre><code class="language-kotlin">// guide:quic:client-connect
+val client = QuicEndpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 0))
+val connection = client.connect(
+    serverAddress,   // an InetSocketAddress; the TLS config carries the name to verify
+    quicClientConfig(tlsClientConfig) { this.quic = quic },
+)
+</code></pre>
+<h2 id="opening-a-stream-and-echoing">Opening a stream and echoing</h2>
+<p><code>QuicStream</code> exposes a ktor-io <code>ByteReadChannel</code>/<code>ByteWriteChannel</code> pair; closing <code>output</code> sends a FIN, cancelling
+<code>input</code> sends <code>STOP_SENDING</code> and the connection survives.</p>
+<p>Only the peer's FIN, with every byte before it read, ends <code>input</code>: then <code>isClosedForRead</code> is true, <code>readAvailable</code>
+returns -1 and <code>closedCause</code> is null. Any other end — a <code>RESET_STREAM</code>, a connection closed by either side (also
+with code 0), an idle timeout, a stateless reset, our own <code>stopSending</code> — fails every read with its cause
+(<code>QuicException.StreamError.Reset</code>, <code>QuicException.ConnectionLost</code>, …): <code>readAvailable</code>, <code>readByte</code>, <code>readRemaining</code>,
+<code>copyTo</code> and the rest throw instead of reporting an end, and the channel is not <code>isClosedForRead</code>. A loop that stops at
+-1 therefore cannot take a truncated stream for a complete one; <code>closedCause</code> still says why a channel failed. (ktor-io's
+own <code>ByteChannel</code> reports a cancelled channel as closed and answers -1 from <code>readAvailable</code>; <code>QuicStream.input</code> does not.)</p>
+<pre><code class="language-kotlin">// guide:quic:echo
+val stream = connection.openBidi()
+stream.output.writeStringUtf8(&quot;ping\n&quot;)
+stream.output.flushAndClose()
+val reply = stream.input.readLine(LineEnding.Lenient)
+connection.close(code = 0, reason = &quot;done&quot;)
+</code></pre>
+<h2 id="accepting-on-the-server">Accepting on the server</h2>
+<p>The server side accepts connections whose handshake already completed, then streams the peer opened in id order.</p>
+<pre><code class="language-kotlin">// guide:quic:server-accept
+val server = QuicEndpoint.bind(
+    InetSocketAddress(&quot;0.0.0.0&quot;, 4433),
+    quicEndpointConfig { this.server = quicServerConfig(tlsServerConfig) { this.quic = quic } },
+)
+val incoming = server.accept()
+val echoed = incoming.acceptStream()
+echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: &quot;&quot;)
+echoed.output.flushAndClose()
+</code></pre>
+<p>A server that serves several names gives its <code>TlsConfig</code> an <code>sniSelector</code>: each handshake's identity is chosen from its
+ClientHello as over TCP (<a href="tls.html#certificate-per-name-sni">TLS: Certificate per name</a>). The selector runs off the connection's
+loop while that handshake waits; a name it refuses closes the connection with CRYPTO_ERROR <code>unrecognized_name</code> (0x170),
+a failing selector with <code>internal_error</code> (0x150). <code>QuicConnection.localCertificates</code> is the chosen chain. Retry and the
+admission policy act before any TLS session exists, so they are the same with or without a selector.</p>
+<h2 id="0-rtt-opt-in-experimental">0-RTT (opt-in, experimental)</h2>
+<p>0-RTT lets a returning client send data with its first flight instead of one round trip later (RFC 9001 section 4.6;
+design in <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/adr/0015-0rtt-implementation.md">ADR-0015</a>). It is off on both sides by default.</p>
+<blockquote>
+<p><strong>Replay warning.</strong> An attacker who sees the client's first flight can send it to the server again (RFC 9846
+section 8). Write early only what is safe to execute twice, and act on anything else only after
+<code>awaitHandshake()</code>. The server limits replays (OpenSSL's ticket-age check, a window 10 s wide, one use per ticket in a replay
+register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
+another server process with shared ticket keys passes the age check alone.</p>
+</blockquote>
+<pre><code class="language-kotlin">// guide:quic:zero-rtt
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = QuicEndpoint.bind(addr, quicEndpointConfig {
+    this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
+})
+val client = QuicEndpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 0))
+val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
+val first = client.connect(addr, config)             // a full handshake; the server's ticket arrives shortly after it
+// ... the application uses `first`; once the ticket is in, later connections of this endpoint can resume
+val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist (a full handshake without a ticket)
+val s = c.openBidi(); s.output.writeFully(safeRequest); s.output.flush()   // travels in 0-RTT
+c.awaitHandshake()                                   // from here the connection is authenticated
+println(&quot;0-RTT accepted: ${c.earlyDataAccepted}&quot;)    // false: the server refused it; null: there was no ticket yet
+</code></pre>
+<p>The ticket is not there the moment <code>connect</code> returns: the server sends it after the handshake, so a <code>connectEarly</code> right
+after the first <code>connect</code> usually finds none and does a full handshake (<code>earlyDataAccepted</code> is then null).</p>
+<ul>
+<li><strong>Tickets</strong> are kept per client endpoint, used once, and checked against the current trust again before use. The
+remembered transport parameters (RFC 9000 section 7.4.1) set the limits of 0-RTT. Closing the endpoint drops them.</li>
+<li><strong>Rejection.</strong> When the server refuses 0-RTT (a changed configuration, a stale or replayed ticket), the client resets
+every stream it opened before the handshake completed (RFC 9001 section 4.6.2: it &quot;MUST reset the state of all
+streams&quot;): they fail with <code>QuicException.StreamError.EarlyDataRejected</code>, nothing of them reached the server, and
+<code>earlyDataAccepted</code> is false. The connection goes on with the server's new limits; send again on new streams what you
+still want. <code>Http3Connection.request</code> does that itself for its early requests. If the server chose another ALPN, or
+<code>EarlyDataState.Required</code> was asked for, the connection closes with <code>QuicException.ConnectionLost.ZeroRttRejected</code>.</li>
+<li><strong>Server side.</strong> With <code>earlyData = true</code>, <code>accept()</code> returns a connection as soon as its 0-RTT is accepted, so the
+application can answer in 0.5-RTT. <code>QuicStream.receivedEarly</code> marks streams whose data came in 0-RTT.
+<code>earlyDataContext</code> binds application settings into tickets, and <code>Http3Endpoint</code> puts its SETTINGS there.</li>
+<li><strong>Client certificates.</strong> A server that asks for client certificates cannot accept 0-RTT: building a
+<code>QuicServerConfig</code> with <code>earlyData = true</code> and a <code>clientAuth</code> other than <code>None</code> throws <code>IllegalArgumentException</code>
+(&quot;earlyData cannot be combined with client certificates&quot;), and the Ktor server's <code>quicEarlyData</code> fails the start the
+same way. A client with an identity may still ask for 0-RTT; such a server never offers it.</li>
+<li><strong>Keys.</strong> The client drops its 0-RTT key when the 1-RTT key arrives. The server drops its 0-RTT key 3 PTO after the
+first 1-RTT packet (RFC 9001 section 4.9.3).</li>
+</ul>
+<h2 id="address-tokens-new_token">Address tokens (NEW_TOKEN)</h2>
+<p>A server sends each client an address-validation token once the handshake is confirmed (see
+<a href="#admission-and-endpoint-limits">Admission and endpoint limits</a>). A client that keeps it and shows it on its next
+connection to that server skips the Retry round trip a busy or <code>AlwaysRetry</code> server asks unvalidated clients for, and
+the server's first flight is not held to three times what the client sent. Clients keep nothing by default: give the
+client configuration a <code>tokenStore</code> (experimental).</p>
+<pre><code class="language-kotlin">// guide:quic:token-store
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val tokens = MemoryTokenStore(maxServers = 256, tokensPerServer = 4)   // share it between connections
+val config = quicClientConfig(tlsClientConfig) { tokenStore = tokens }
+val first = client.connect(addr, config)    // the server's NEW_TOKEN lands in `tokens` after the handshake
+val next = client.connect(addr, config)     // its Initials carry the token: no Retry
+</code></pre>
+<blockquote>
+<p><strong>Privacy.</strong> A token is an identifier the server gave this client: a connection that presents it tells the server it
+comes from the same client as the earlier one, even from another network. Keep a store only where the server may link
+the connections anyway, and drop it when the user or the network identity changes.</p>
+</blockquote>
+<ul>
+<li><strong>Keys.</strong> Tokens are kept under <code>&quot;&lt;server name&gt;:&lt;port&gt;&quot;</code> (the TLS server name), or the IP literal and port without
+one, so a token never goes to another name on the same address (RFC 9000 section 8.1.3).</li>
+<li><strong>Single use.</strong> <code>take</code> removes the token; the server sends a fresh one on every connection. A Retry replaces the
+token for the rest of that connection's Initials.</li>
+<li><strong>Bounds.</strong> A connection keeps at most eight NEW_TOKEN tokens of at most 1024 bytes each; every further NEW_TOKEN
+frame spends a glitch token (<a href="#glitch-protection">Glitch protection</a>). <code>MemoryTokenStore</code> keeps the newest
+<code>tokensPerServer</code> per key and the <code>maxServers</code> keys used most recently (quic-go's LRU store).</li>
+<li><strong>Your own store.</strong> <code>take</code> runs in the coroutine that calls <code>connect</code>, <code>put</code> on the endpoint loop; both should be
+quick. A call that has not returned after 250 ms is cancelled (a warning, once per endpoint loop), and a store that
+throws is logged as a warning: either way the connection goes on without a token, so <code>connect</code> never waits longer
+than that for the store.</li>
+<li><strong>One process.</strong> A server's token keys live only in its process: a token survives neither a server restart nor a
+move to another server instance behind the same name (no shared keys between processes in 0.3.0). Such a token is
+treated as absent, so the client only loses the round trip it would have saved. A token presented to a server that no
+longer accepts it (another process, an expired one) costs nothing: the server treats it as absent.</li>
+</ul>
+<h2 id="serving-many-connections">Serving many connections</h2>
+<p><code>incomingConnections()</code> turns <code>accept()</code> into a <code>Flow</code> that completes when the endpoint closes, and
+<code>incomingStreams()</code> does the same for <code>acceptStream()</code>: it completes when the connection ends for any reason, whose
+cause stays in <code>closed</code>. Cancelling a collector leaves the endpoint or the connection alone.</p>
+<pre><code class="language-kotlin">// guide:quic:incoming
+supervisorScope {                                     // one failing connection or stream does not stop the others
+    server.incomingConnections().collect { connection -&gt;
+        launch {
+            connection.incomingStreams().collect { stream -&gt;
+                launch {
+                    try {
+                        if (stream.isUnidirectional) { stream.input.discard(); return@launch }   // a peer's uni stream: input only
+                        val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
+                        stream.output.writeStringUtf8(line + &quot;\n&quot;)
+                        stream.output.flushAndClose()
+                    } catch (e: IOException) { /* the peer reset the stream or left */ }
+                }
+            }
+        }
+    }
+}
+</code></pre>
+<p>A stream id says who opened it and in which directions (RFC 9000 section 2.1): <code>isUnidirectional</code> and
+<code>isClientInitiated</code> read it. A unidirectional stream has one half: ours only <code>output</code>, the peer's only <code>input</code>; touching
+the missing half throws <code>IllegalStateException</code>.</p>
+<h2 id="congestion-control">Congestion control</h2>
+<p>Every path runs CUBIC with HyStart++ (RFC 9438, RFC 9406) by default; NewReno stays available through
+<code>quicConfig { congestionController = { NewReno() } }</code>, and any <code>CongestionController</code> implementation can be plugged in.
+The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes and RTT samples (<code>onRttSample</code>), and
+answers with the window, the pacing rate and the burst size. Every ECN-CE report reaches <code>onEcnCe</code>, and like <code>onLoss</code>
+the controller reduces at most once per recovery period, which losses and CE reports share (RFC 9002 appendix B.6): a
+custom controller applies that check itself. A connection that migrates to a new IP starts the new path
+from the initial window; a NAT rebinding keeps the state.</p>
+<h3 id="choosing-a-congestion-controller">Choosing a congestion controller</h3>
+<table>
+<thead>
+<tr>
+<th>Controller</th>
+<th>Select with</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Cubic</code> (default)</td>
+<td>nothing</td>
+<td>general use; shares a bottleneck predictably with TCP and other QUIC stacks</td>
+</tr>
+<tr>
+<td><code>NewReno</code></td>
+<td><code>congestionController = { NewReno() }</code></td>
+<td>reference behaviour, tests</td>
+</tr>
+<tr>
+<td><code>Bbr</code> (experimental)</td>
+<td><code>congestionController = { Bbr() }</code></td>
+<td>lossy paths (radio, long-haul) and deep buffers where a loss-based controller collapses or bloats the queue</td>
+</tr>
+</tbody>
+</table>
+<p><code>Bbr</code> implements BBRv3 as specified by draft-ietf-ccwg-bbr-06: it paces at a windowed maximum of measured delivery rates and
+keeps about two bandwidth-delay products in flight, probes for more bandwidth every 2 to 3 seconds (or sooner on short
+paths), and drains the queue for 200 ms every 5 seconds (ProbeRTT) to refresh its minimum RTT. Loss counts only above 2 %
+of a probe's flight, and outside probes it trims the short-term model by 30 % per lossy round; an ECN-CE mark counts as a
+loss. When every packet of a loss episode is acknowledged after all (reordering, a delay spike), BBR undoes the episode:
+window, bounds and the interrupted probe or Startup come back. After an idle period it paces at its bandwidth estimate
+instead of bursting its window, and it is paced even on sub-millisecond paths. A new peer address starts a fresh model; a
+NAT rebinding keeps it. PMTUD changes keep the model in bytes and move the 4-datagram floor.</p>
+<p>When to use it: lossy paths (radio, long-haul) where a loss-based controller collapses, deep buffers where it bloats the
+queue, and paths with reordering. Keep CUBIC where the flow shares a bottleneck with TCP or other QUIC stacks and fairness
+matters more than throughput.</p>
+<p>On the simulator (virtual time; 50 Mbit/s, 40 ms, a buffer of one BDP unless noted; mean of 3 seeds; queue is the
+bottleneck's time-averaged queueing delay; <code>BbrSimulationTest</code>, <code>BbrHarshScenarioTest</code>, <code>BbrHighRateScenarioTest</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>BBR</th>
+<th>CUBIC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 % random loss</td>
+<td>37-40 Mbit/s</td>
+<td>2.7-2.9 Mbit/s</td>
+</tr>
+<tr>
+<td>10 % random loss</td>
+<td>1.3 Mbit/s</td>
+<td>0.7 Mbit/s</td>
+</tr>
+<tr>
+<td>1 % reordered by 8 ms</td>
+<td>43.5 Mbit/s</td>
+<td>3.0 Mbit/s</td>
+</tr>
+<tr>
+<td>clean, 4 BDP buffer</td>
+<td>46.7 Mbit/s, queue 2.2 ms, no loss</td>
+<td>48.1 Mbit/s, queue 111 ms</td>
+</tr>
+<tr>
+<td>clean, 8 BDP buffer</td>
+<td>46.7 Mbit/s, queue 2.3 ms</td>
+<td>48.0 Mbit/s, queue 274 ms</td>
+</tr>
+<tr>
+<td>0.25 BDP buffer</td>
+<td>46.7 Mbit/s</td>
+<td>47.6 Mbit/s</td>
+</tr>
+<tr>
+<td>ACKs aggregated into 8 ms batches</td>
+<td>47.1 Mbit/s, queue 5.2 ms</td>
+<td>48.1 Mbit/s, queue 33.9 ms</td>
+</tr>
+<tr>
+<td>3 of 4 ACKs lost</td>
+<td>43.5 Mbit/s, queue 3.2 ms</td>
+<td>43.7 Mbit/s, queue 26.9 ms</td>
+</tr>
+<tr>
+<td>300 ms RTT</td>
+<td>44.9 Mbit/s, queue 76 ms</td>
+<td>47.4 Mbit/s, queue 211 ms</td>
+</tr>
+<tr>
+<td>1 ms RTT</td>
+<td>47.6 Mbit/s</td>
+<td>48.3 Mbit/s</td>
+</tr>
+<tr>
+<td>50 -&gt; 5 -&gt; 50 Mbit/s steps</td>
+<td>4.8 Mbit/s at 5, 46.7 after the rise</td>
+<td>4.8, 48.2</td>
+</tr>
+<tr>
+<td>2 s blackhole</td>
+<td>half the link 0.4 s after it ends</td>
+<td>1.2 s</td>
+</tr>
+<tr>
+<td>ECN marking above 5 ms of queue</td>
+<td>46.5 Mbit/s, queue 0.3 ms</td>
+<td>43.3 Mbit/s, queue 1.5 ms</td>
+</tr>
+<tr>
+<td>1 Gbit/s, 10 ms, after 8 s idle</td>
+<td>948 Mbit/s, no stall</td>
+<td>955 Mbit/s</td>
+</tr>
+<tr>
+<td>1 Gbit/s, 0.2 ms RTT</td>
+<td>965 Mbit/s</td>
+<td>965 Mbit/s</td>
+</tr>
+</tbody>
+</table>
+<p>Caveats: BBR is experimental here (the draft is, too) and its API may change. Next to a loss-based flow it takes more or
+less than half depending on the buffer: sharing one BDP of buffer with CUBIC, BBR took 67-74 % (3 seeds); in an 8 BDP
+buffer the two split about evenly but CUBIC keeps the queue at 245 ms. Two BBR flows converge slowly: a flow starting 2 s after another had
+29-35 % of its rate over 5-10 s, 41-48 % over 15-20 s and 43-59 % over 20-40 s (3 seeds); with 40 ms against 100 ms RTT the
+longer flow got 55 % of the shorter one's rate. After the bottleneck rate drops, BBR keeps the old estimate for up to two
+probe cycles and fills the buffer as CUBIC does (400 ms of queue at 5 Mbit/s in the step scenario). Above about 2 % random loss BBRv3 backs off every lossy round by design and
+runs near its 4-datagram floor. At RTTs above about 1.5 s the 5 s ProbeRTT interrupts Startup's 3-round plateau test, so
+Startup ends only on loss (a finite buffer ends it). Pass <code>Bbr(random = ...)</code> to seed the probe jitter; without it the
+jitter is derived from send and ACK times. Each path gets its own controller, so return a fresh <code>Bbr()</code> from the factory.</p>
+<p>When the socket refuses datagrams (a send that fails, or a full send buffer that takes only part of a batch; the portable
+JVM socket waits up to 5 ms once for room), the rest of the batch is lost: loss recovery repairs it and
+<code>stats.datagramsDroppedSocket</code> counts it per connection. A steady rise there means the socket, not the network, is the
+bottleneck.</p>
+<h2 id="path-mtu">Path MTU</h2>
+<p>Datagrams start at 1200 bytes. On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
+towards min(<code>maxUdpPayloadSize</code>, the peer's <code>max_udp_payload_size</code>) (1452 by default; <code>QuicEndpoint</code> refuses a value above
+its 1500-byte datagram slots at <code>bind</code>/<code>connect</code>, the sans-IO core takes up to 65527), twenty bytes at a time, at most three tries per
+size; probes are not congestion controlled and their loss is not a congestion signal. Three consecutive lost large
+packets, or two PTOs in a row while sending above 1200, mean the path shrank: the connection drops back to 1200, tells
+the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
+raises <code>MtuUpdated(path, mtu)</code>, <code>stats.pathMtu</code> and <code>maxDatagramSize</code> follow, and queued datagrams that no longer fit are
+dropped (<code>stats.datagramsDroppedSend</code>). <code>pmtud = false</code> keeps 1200. The portable socket sets DF where the JDK has the
+option (<code>IP_DONTFRAGMENT</code>, JDK 19 and later; RFC 9000 section 14: &quot;MUST be set if possible&quot;) but reports no DF capability,
+so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
+search runs (1452 on loopback).</p>
+<p>ICMP helps only as a hint (<code>pmtudIcmpHints</code>, experimental, on by default; RFC 8899 section 4.6). On Linux and Android the
+accelerated socket reads ICMP Packet Too Big messages, and every accelerated socket reports a send the kernel refused as
+too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the connection's own packets on its active path
+and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (<code>EndpointStats.ptbAccepted</code>,
+<code>ptbIgnored</code>). A reported size above the one in use ends the larger probes at once instead of after three lost tries. One
+below it drops the MTU to 1200 at once, provisionally: a probe of the old size follows, and when it is acknowledged the
+old size comes back and further Packet Too Big messages are ignored for ten minutes (only a probe sent after the drop
+counts); when it is lost the search starts again from 1200, trying the reported size first (without the minute's
+black-hole pause). EMSGSIZE on a probe settles that size at once. ICMP is easy to forge, so nothing else trusts it: a
+forged message costs about one probe round trip at 1200 bytes every ten minutes (the probe goes once the congestion
+window has room for it), and with zero-length connection IDs, where the quote proves only the address and port, a
+Packet Too Big is ignored altogether. A congestion window still at its initial value when the size drops stays at the
+smaller initial window after a restore: an MTU change never raises the window in bytes (RFC 8899 section 3 item 7).</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Hints</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux, Android (accelerated socket)</td>
+<td>Packet Too Big and EMSGSIZE (with several loops on one shared socket, each Packet Too Big is offered to every loop, each counting it as accepted or ignored; one a loop has no room for counts as ignored)</td>
+</tr>
+<tr>
+<td>macOS, iOS, Windows (accelerated socket)</td>
+<td>EMSGSIZE only (no usable ICMP for an unconnected socket)</td>
+</tr>
+<tr>
+<td>Portable socket (NIO, ktor-network)</td>
+<td>none (no DF)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ecn">ECN</h2>
+<p>Each path validates ECN before relying on it (RFC 9000 section 13.4): the first ten packets go out with ECT(0); the peer's
+ACK_ECN counts must appear, never shrink and cover every newly acknowledged marked packet, and the path must not lose all
+ten test packets. A path that fails never marks again; a new path validates afresh. Received marks are counted per packet
+number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
+event per recovery period, the same recovery period a loss starts. The portable socket marks every datagram through IP_TOS (<code>ecnSend</code>) but cannot read marks, so
+with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
+Android, Apple, and Windows where <code>IP_ECN</code> is accepted, probed when the socket opens) marks and reads per datagram, and two of them validate both directions
+(<code>Capable</code>). Because the portable socket
+marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
+show <code>Disabled</code> from then on: a socket's <code>capabilities</code> that lose <code>ecnSend</code> or <code>df</code> reach the paths already on it, which
+stop marking or stop PMTUD and fall back to 1200 bytes; a gain applies to new paths only); the accelerated
+socket keeps marking, and only the failed path sends NotEct, so one client whose path bleaches marks does not turn ECN off
+for the server's other clients. <code>stats.ecnState</code> (an <code>EcnState</code>) says
+where a connection stands: <code>Disabled</code>, <code>Testing</code>, <code>Unknown</code>, <code>Capable</code> or <code>Failed</code>.</p>
+<h2 id="key-update">Key update</h2>
+<p>The core rotates 1-RTT keys as RFC 9001 section 6 describes: the next generation is derived when the current one is
+installed, a peer's update is followed automatically, and packets of the previous phase still decrypt until three PTOs
+after the first packet of the new phase arrived. A caller driving <code>ConnectionCore</code> directly can start an update once the
+handshake is confirmed and, for a later update, three PTOs after the peer acknowledged the current phase (section 6.5):</p>
+<pre><code class="language-kotlin">// guide:quic:key-update
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+if (core.initiateKeyUpdate(now)) println(&quot;key phase ${core.stats.keyUpdates}&quot;)   // false while RFC 9001 section 6.1 forbids it
+</code></pre>
+<p>The coroutine API exposes the same as <code>QuicConnection.keyUpdate()</code>, which suspends until RFC 9001 section 6.1 allows
+the update:</p>
+<pre><code class="language-kotlin">// guide:quic:key-update-api
+connection.keyUpdate()
+println(connection.stats.keyUpdates)   // ours and the peer's
+</code></pre>
+<p>The AEAD limits of RFC 9001 section 6.6 are enforced without configuration: at 7/8 of the confidentiality limit of an
+AES-GCM key the core updates keys on its own, and a connection that cannot update in time closes with
+<code>AEAD_LIMIT_REACHED</code>; too many packets failing authentication close it the same way (<code>stats.authenticationFailures</code>).</p>
+<h2 id="stateless-reset">Stateless reset</h2>
+<p>When a peer that keeps its reset key loses its state (a restart, a crash) it answers our packets with a Stateless Reset
+(RFC 9000 section 10.3).
+The connection then completes <code>closed</code> with <code>QuicException.ConnectionLost.StatelessReset</code>, every stream fails with the
+same cause, and nothing more is sent. Tokens are derived from a per-endpoint key that lives inside the native layer, so
+a server that restarts cannot reset connections of its previous life; a client has no way to learn the key from the
+connection IDs it sees. Datagrams that merely look like a reset are counted in <code>stats.invalidResets</code> and ignored.</p>
+<h2 id="migration-and-paths">Migration and paths</h2>
+<p><strong>Preferred address (server, experimental).</strong> <code>quicServerConfig(tls) { preferredAddress = PreferredAddress(ipv4, ipv6) }</code>
+makes the endpoint also listen on those addresses and offer them to clients in <code>preferred_address</code> (RFC 9000 section
+9.6), for example a server behind an anycast or load-balanced address that wants clients on its own unicast address. A
+client that moves there validates the path first; the server switches its connection to the preferred socket only once it
+validated the client's address there too (until then everything non-probing leaves the original socket), reports
+<code>PathChangeReason.PreferredAddress</code> and closes the original path. Nothing else happens on a preferred socket: a new
+connection is never started there, and nothing is answered statelessly. With <code>allowMigration = false</code> a move to the
+preferred address is still taken, but only from the client's current address. With several loops every loop listens on
+the preferred addresses as on the main one: with <code>SO_REUSEPORT</code> where the kernel balances, else on one shared socket per
+address. Each preferred socket binds the literal address it
+advertises (there is no NAT indirection: behind a NAT, advertise an address the server owns), which must not be the
+endpoint's own (<code>bind</code> refuses the same IP and port, the port of a socket bound to <code>0.0.0.0</code> for an IPv4 address, or
+the port of one bound to <code>::</code> for either family) nor use a reflection port (53, 123, 1900, 5353, 11211). If a preferred
+socket fails later, the endpoint degrades rather than failing. The preferred address is served by every loop or by none,
+so with several loops the whole group takes it down: every loop closes its preferred sockets and stops offering the
+address to new connections; connections that had moved there are closed with INTERNAL_ERROR, and a validation of the
+preferred address still under way fails, leaving its connection on the original address (RFC 9000 section 9.6.1).
+The close is attempted, but no socket is left on the preferred address to send it from, so a client that had moved
+there may not receive it and ends at its idle timeout instead. Datagrams still arriving for the preferred address are
+dropped (<code>datagramsDroppedStateless</code>), never answered from the main socket. The failure is logged as a warning and
+counted once in <code>EndpointStats.preferredAddressFailures</code>; everything on the main socket goes on.</p>
+<p>A client follows a server's preferred address by default (<code>followPreferredAddress</code>, experimental; RFC 9000 section 9.6):
+once the handshake is confirmed it validates a path to the address of the family it uses, with the server's
+sequence-1 connection ID, and moves there when the server answers. Only probes go there before that, and a failed
+validation leaves the connection where it was. A server reached on a public address cannot send the client to a
+loopback, link-local or private address, and nobody to an unspecified, multicast or broadcast one (the <code>Alt-Svc</code> rule).
+The server's <code>disable_active_migration</code> does not stop the move, and after it the client may migrate. A <code>migrate</code> while
+the preferred address is still being validated validates both from the new socket (RFC 9000 section 9.6.3): the
+original address on the new path, and the preferred address once more. If the preferred address answers first, the new
+path takes it, and <code>migrate</code> moves the connection there (the returned <code>PathEvent.Changed</code> names the new path, whose
+<code>remote</code> is the preferred address); otherwise the move goes to the original address, and the preferred address, should it
+still validate, moves the connection there with <code>PathChangeReason.PreferredAddress</code>.</p>
+<p>A server follows a client that changes address (RFC 9000 section 9). The first 1-RTT packet from a new address opens a
+path under validation: the server sends a <code>PATH_CHALLENGE</code> there (and to the previous address, against an off-path
+attacker replaying the client's packets), limits what it sends to the unvalidated address to three times what it
+received from it, and moves the connection only on a non-probing packet with the highest packet number seen. A NAT
+rebinding (same IP, new port) keeps the congestion window and RTT; a new IP starts from the initial window. When the
+new path never answers within three times the larger of the PTO and a new path's PTO (about 3 s) the server returns to the last validated path. A rebinding
+that happens before the handshake is complete (the client's retransmitted Initials arrive from a new port) cannot be
+answered yet: the server follows the latest decrypted Initial or Handshake packet, with a fresh three-times budget for
+the new address, sends a <code>PATH_CHALLENGE</code> there first and repeats it every PTO (the client answers once it holds
+1-RTT keys), and lets the handshake itself validate the address: a challenge that is never answered settles the path
+rather than closing the connection. A <code>PATH_CHALLENGE</code> of the active path always travels in its own 1200-byte
+datagram ahead of everything else, and no PMTU probe goes to an address still under validation. The core
+reports <code>PathEvent.Changed(old, new, reason)</code>, <code>PathEvent.Validated(path)</code> and <code>PathEvent.Failed(path)</code> events, and <code>pathState(id)</code>
+answers for any path (<code>Closed</code> once a path was closed or evicted, <code>Unknown</code> for an id never issued). Every migration and every 10 000 packets the connection switches to an unused connection ID of the
+peer and retires the old one; a connection ID the peer retired keeps routing for 3 × PTO so packets in flight still
+arrive (at most 32 retired IDs per connection route at once; beyond that the oldest stops early). <code>allowMigration = false</code> advertises <code>disable_active_migration</code> and drops datagrams from other addresses; a
+move to a loopback or link-local address from a connection that did not start on one is refused unless
+<code>allowMigrationToLoopback</code> is set.</p>
+<p>A client moves on its own with a second socket:</p>
+<pre><code class="language-kotlin">// guide:quic:migration
+val change = connection.migrate(DatagramIo.open(InetSocketAddress(&quot;0.0.0.0&quot;, 0)))   // addPath + probe + switchTo
+println(&quot;now on ${change.new.localAddress} (${change.reason})&quot;)
+</code></pre>
+<p><code>addPath(io)</code> opens a path through another socket, <code>probe()</code> validates it with a <code>PATH_CHALLENGE</code> (and re-validates a path
+already validated), <code>switchTo()</code> moves the connection, <code>close()</code> forgets the path and closes its socket on the loop (on the active path it
+throws <code>IllegalStateException</code> and changes nothing). <code>migrate</code> does the
+three in a row and throws <code>PathValidationException</code> (an <code>IllegalStateException</code>, &quot;path validation failed&quot;) when the new
+socket never hears back, leaving the connection where it was.</p>
+<p>Migration timing: a probe on a new path must carry a connection ID of the server that no other path used, so an
+observer cannot link the two networks (RFC 9000 section 9.5). The server issues its spare IDs, up to the client's
+<code>active_connection_id_limit</code> (default 4), in its first 1-RTT flight (section 5.1.1), so they normally arrive with the
+handshake. If the network changes before they did (a lost datagram, a peer that issues late), <code>probe()</code> does not
+reuse the active path's ID: it waits up to three times the larger of the PTO and a new path's PTO (about 3 s) for a <code>NEW_CONNECTION_ID</code>, probes as soon as
+one arrives, and otherwise fails with <code>PathFailureReason.NoSpareConnectionId</code> (<code>PathEvent.Failed.reason</code>,
+<code>PathValidationException.reason</code>) rather than as a silent path. Migrating right after <code>connect()</code> therefore needs no
+wait of its own. <code>paths</code> lists the live paths (the first is the one the connection started on), <code>activePath</code> is the one it sends on now,
+and <code>pathEvents</code> reports <code>Validated</code>, <code>Failed</code> and <code>Changed</code>, for
+the peer's moves too, and <code>SocketLost</code> when the system took a path's socket away (see
+<a href="#suspended-apps-and-lost-sockets">Suspended apps and lost sockets</a>). Migration needs a confirmed handshake and a server that did not advertise <code>disable_active_migration</code>;
+when the active path fails validation and no other validated path remains, the connection closes with
+<code>ConnectionLost.NoViablePath</code>.</p>
+<h2 id="network-changes">Network changes</h2>
+<p>A phone moves between Wi-Fi and cellular; the connection can follow it instead of dying with the old network.
+<code>NetworkMigrator</code> (experimental) watches a <code>Flow</code> of the platform's network handles and migrates a client connection
+whenever the network changes:</p>
+<pre><code class="language-kotlin">// guide:quic:network-migrator
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress(&quot;0.0.0.0&quot;, 0)) }, scope)
+val log = scope.launch { migrator.events.collect { println(&quot;network: $it&quot;) } }
+migrator.start()
+</code></pre>
+<p>The first network the flow reports is the one the connection is on already. Each different network gets a socket from
+<code>openIo</code> and a <code>migrate</code> (new path, <code>PATH_CHALLENGE</code>, switch); on success the previous path and its socket are closed and
+<code>events</code> reports <code>MigrationEvent.Migrated(old, new, path)</code>. When the new network never answers, <code>openIo</code> throws or the
+server advertised <code>disable_active_migration</code> (RFC 9000 section 18.2), the new socket is closed, the connection stays
+where it was and <code>events</code> reports <code>Failed(network, cause)</code>. When the cause is a <code>PathValidationException</code> with
+<code>NoSpareConnectionId</code> (the network changed before the server's spare connection IDs arrived and none came in time),
+the migrator tries the same network again as soon as one arrives, unless the network changed meanwhile. A <code>null</code> means no network: <code>NetworkLost</code> is reported and the
+migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
+moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
+nothing is reported for it (<code>openIo</code> itself is not cancelled, so keep it short: the socket it returns is closed). The
+path closed after a migration is the one the connection was really on, also when it moved since (a fallback, the peer).
+<code>network</code> is the network the connection is on as far as the migrator knows. <code>close()</code> (thread-safe, like <code>start()</code>)
+stops following: a migration that has not switched yet is abandoned and its path and socket closed, one already
+switching completes and reports <code>Migrated</code>; the connection stays open. The migrator also stops when the connection
+ends, without a <code>Failed</code> for the migration it cut short. If the network flow throws, <code>SourceFailed(cause)</code> is the last
+event and the migrator stops; the exception never reaches <code>scope</code>. Only a client migrates (RFC 9000 section 9): a
+server connection is refused with <code>IllegalArgumentException</code>.</p>
+<p>On Android, <code>followDefaultNetwork</code> does the wiring (API 24+):</p>
+<pre><code class="language-kotlin">// guide:quic:android-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val cm = context.getSystemService(ConnectivityManager::class.java)
+val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
+lifecycleScope.launch { migrator.events.collect { Log.i(&quot;quic&quot;, &quot;$it&quot;) } }
+</code></pre>
+<p>It feeds <code>ConnectivityManager.registerDefaultNetworkCallback</code> into a started <code>NetworkMigrator</code> (<code>cm.defaultNetworks()</code>
+is the flow alone). All migrators of one <code>ConnectivityManager</code> share a single callback, registered with the first and
+unregistered after the last, because Android refuses more than about 100 callbacks per app (<code>TooManyRequestsException</code>,
+reported as <code>SourceFailed</code>). It opens each new socket with
+<code>DatagramIo.open(local, network, prefer)</code>, which binds it to that network with <code>Network.bindSocket</code> before it carries a
+datagram: the portable socket before <code>bind</code>, the accelerated one through a duplicate of its descriptor that is closed
+again. The default network at the call is taken as the one the connection is on (a socket that is not bound to a
+network follows the default one). The AAR declares <code>ACCESS_NETWORK_STATE</code>, which the callback needs; nothing else is
+added to the manifest. What stays with the app: the callback only fires while the process runs, so a connection in a
+background process that Android froze or killed moves (or is lost) when the app is back; Doze and app standby cut
+network access whatever the default network is; and a server that advertised <code>disable_active_migration</code> is never moved
+(<code>Failed</code> events), so the app reconnects instead. As in Chromium's QUIC session pool, losing the network does not close
+the connection: if no network returns within the idle timeout, the connection closes as usual.</p>
+<p>On iOS and macOS, <code>followDefaultNetwork(scope)</code> does the same with the Network framework:</p>
+<pre><code class="language-kotlin">// guide:quic:apple-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val migrator = connection.followDefaultNetwork(scope)   // started; migrator.close() stops it
+scope.launch { migrator.events.collect { println(&quot;quic: $it&quot;) } }
+</code></pre>
+<p><code>nwPathUpdates()</code> is the flow alone: one <code>NWPathMonitor</code> (C API, on its own dispatch queue) per process, started with the
+first collector and cancelled after the last, reporting an <code>NwPathKey</code> for a satisfied path (the preferred interface's
+index and kind, <code>Wifi</code>, <code>Cellular</code>, <code>Wired</code>, <code>Loopback</code> or <code>Other</code>) and <code>null</code> while the path is not satisfied; a path
+update that keeps the interface (a new address, a DNS change) is not a new network. Each new socket comes from
+<code>DatagramIo.open(local, interfaceIndex, prefer)</code>, which sets <code>IP_BOUND_IF</code> (<code>IPV6_BOUND_IF</code> for an IPv6 address) on the
+accelerated socket before it carries a datagram, so the connection leaves through the new interface even before the system
+prefers it. The portable socket cannot be bound: when the accelerated one is refused it is unbound and follows the default
+route. No entitlement or <code>Info.plist</code> key is needed for a client; a server on the local network needs
+<code>NSLocalNetworkUsageDescription</code>.</p>
+<h3 id="suspended-apps-and-lost-sockets">Suspended apps and lost sockets</h3>
+<p>iOS reclaims the sockets of an app it suspends: back in the foreground, <code>sendmsg</code> and <code>recvmsg</code> fail with <code>ENOTCONN</code>,
+<code>EBADF</code>, <code>EPIPE</code> or <code>ENOTSOCK</code>, and an interface that went away answers <code>ENETDOWN</code>, <code>ENETUNREACH</code> or <code>EHOSTUNREACH</code>. Both transports
+(the accelerated <code>ksl</code> socket and the portable <code>ktor-network</code> one) turn these errors into <code>SocketDefunctException</code>; a custom
+<code>DatagramIo</code> throws it for the same conditions. The endpoint loop then stops reading and writing that socket, without
+retrying it in a loop, and every connection reports <code>PathEvent.SocketLost(path, cause)</code> for its paths on it; the
+connection is not closed. Recovery is a move to a fresh socket:</p>
+<pre><code class="language-kotlin">// guide:quic:socket-lost
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+connection.pathEvents.collect { e -&gt;
+    if (e is PathEvent.SocketLost &amp;&amp; e.path.id == connection.activePath?.id) connection.rebind()
+}
+</code></pre>
+<p><code>rebind(local, prefer)</code> opens <code>DatagramIo.open</code> on the wildcard address of the peer's family (the loopback address of its family for a peer on <code>127.0.0.0/8</code> or <code>::1</code>), <code>migrate</code>s there (the new path
+is validated first) and closes the path it left. Like any migration it needs an unused connection ID of the server (RFC
+9000 section 9.5), which arrives within a round trip after the handshake: the probe waits for one, and if none comes in
+time the move fails with <code>PathValidationException</code> (<code>PathFailureReason.NoSpareConnectionId</code>) and the connection stays
+where it was. A <code>NetworkMigrator</code> (and so <code>followDefaultNetwork</code>) does this on its own when the active path's socket is
+lost while a network is up, reported as <code>Migrated</code> with <code>old == new</code>, and tries again once a spare ID arrives. Until a
+move, the connection's idle timeout runs: a suspension longer than the idle timeout (and than the server's) ends the
+connection as usual, so an app that returns after minutes reconnects, ideally with 0-RTT. A client endpoint whose own
+socket was lost keeps its connections for the move but refuses <code>connect</code> at once with <code>SocketDefunctException</code>: bind a
+new endpoint. A server endpoint's own socket is the exception: its clients address that port, so a lost server socket
+ends the endpoint as before. iOS gives a suspended app no CPU, so nothing runs during the suspension;
+<code>beginBackgroundTask</code> buys about 30 seconds to finish a transfer, and only the foreground can serve.</p>
+<h2 id="glitch-protection">Glitch protection</h2>
+<p>Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
+without moving anything forward: a
+<code>STREAMS_BLOCKED</code> repeating the same limit, a <code>NEW_CONNECTION_ID</code> for a sequence
+number we already hold, a <code>RETIRE_CONNECTION_ID</code> for an ID that is already retired (one for a sequence number we never issued is a
+<code>PROTOCOL_VIOLATION</code>) or one that retires more than twice the IDs we keep issued within 3 PTO (its replacement then waits
+until an earlier retired ID stops routing), a third PING-only packet within one
+RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID
+can forge such packets (RFC 9000 section 12.2). A <code>MAX_DATA</code>, <code>MAX_STREAM_DATA</code> or <code>MAX_STREAMS</code> that raises nothing is
+ignored for free: it is what a retransmitted or reordered update looks like (quic-go repeats <code>MAX_STREAMS</code> in every
+packet until it is acknowledged, a thousand times in one interop run). So is a <code>DATA_BLOCKED</code> or <code>STREAM_DATA_BLOCKED</code>:
+a stale one is answered with the current <code>MAX_DATA</code> / <code>MAX_STREAM_DATA</code> at once, at most once per RTT per connection or
+stream, and a repeat within that RTT is not answered (quiche reports <code>DATA_BLOCKED</code> in almost every packet of a
+download, about a thousand times in two seconds). An empty
+bucket closes the connection with <code>PROTOCOL_VIOLATION</code> and the reason <code>excessive peer activity (0x10=…)</code>, listing the frame types that spent the tokens; <code>closed</code> then
+completes with <code>ConnectionLost.TransportClosed(code = 0x0a)</code>. Honest peers never spend: retransmitted data,
+keep-alive PINGs and real flow-control updates cost nothing, and <code>stats.glitchTokensSpent</code> stays at zero through a
+lossy transfer. Set <code>glitchProtection = false</code> in <code>quicConfig { }</code> to turn it off for a connection.</p>
+<h2 id="several-loops-on-one-port">Several loops on one port</h2>
+<p>A server endpoint can run <code>loops</code> endpoint loops, each with its own single-threaded dispatcher, its own admission state
+and its own reset key; the Retry and NEW_TOKEN keys are shared by the loops, so a token one loop issued validates a
+client on any of them. The loop that admits a connection owns it for life: its index is the routing byte of
+every connection ID that loop issues (with a QUIC-LB configuration, the loop the ID hashes to). <code>accept()</code> is one queue
+over all loops, <code>connect</code> picks loops in turn, and a connection it opens issues connection IDs that name its loop as well.
+No loop ever answers a Stateless Reset for a connection ID that names another loop. The loops share the port in one of
+two ways, chosen by the platform (there is no switch):</p>
+<ul>
+<li><strong>Kernel balancing</strong> (Linux, Android): each loop has its own accelerated socket bound with <code>SO_REUSEPORT</code>, and the
+kernel hashes every client flow onto one of them. Receiving, decrypting and sending all run in parallel. A datagram
+that lands on another loop after a NAT rebind is copied to the owner.</li>
+<li><strong>In-process routing</strong> (macOS, iOS, Windows, and any endpoint with a caller-supplied <code>io</code>): the loops share one socket.
+Darwin hands a port's unicast datagrams to one <code>SO_REUSEPORT</code> socket only, and Windows binds with <code>SO_EXCLUSIVEADDRUSE</code>,
+so neither can balance. One receiver thread reads the socket and hands each datagram to the loop its connection ID names
+(a new client's Initial goes to a loop chosen by a keyed hash of its connection ID, the same loop for its
+retransmissions); every loop sends through its own clone of the socket (<code>ksl_udp_sender</code>), or through the caller's
+socket under a lock. A migrated or rebound client reaches its loop directly. A Stateless Reset from a peer, which names
+no connection ID of ours, goes to the loop whose connection holds the peer's reset token, and an ICMP Packet Too Big
+(Linux and Android) to every loop, each checking it against its own connections. A loop that falls behind has 512
+datagrams waiting at most: the receiver drops the rest for that loop, counted in <code>EndpointStats.datagramsDispatchDropped</code>,
+and never waits for it, so the other loops go on. Each loop's ring holds 512 slots of 1500 bytes on the heap,
+768 KB per loop for each shared socket (the main one and each preferred address). A failed socket fails the loops as
+their own would: the main one ends the endpoint, a preferred-address one takes the preferred address down.</li>
+</ul>
+<p>What each mode buys: handshakes (most of a server's CPU) and the work of many connections spread over the loops in both.
+In-process routing keeps receiving sequential: one receive system call per datagram on Darwin, so a bulk transfer over
+many connections gains less than handshakes do, and the gain stops where that one receiver is saturated. One connection
+never runs faster with more loops: it lives on one loop, by design. More loops than cores gain nothing. Measured on an
+Apple Silicon Mac with in-process routing (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/benchmarks.md#several-loops-on-one-socket-s34-2026-11-07">Benchmarks: Several loops on one socket</a>):
+4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes, where the
+receiver's one <code>recvmsg</code> per datagram is saturated.</p>
+<p>Inside each loop a flush visits only the connections something happened to since the last one, and the timers sit in a
+heap, so neither grows with the number of idle connections.</p>
+<pre><code class="language-kotlin">// guide:quic:loops
+val withLoops = QuicEndpointConfig.Builder().apply { this.server = serverConfig; loops = 4 }.build()
+</code></pre>
+<p><code>QuicEndpoint.bind(InetSocketAddress(&quot;0.0.0.0&quot;, 4433), withLoops)</code> then starts the four loops on port 4433.</p>
+<h2 id="behind-a-load-balancer">Behind a load balancer</h2>
+<p>Experimental, after draft-ietf-quic-load-balancers-21 (QUIC-LB; a draft, not an RFC, so the format may still change).
+Several servers behind one address normally rely on the load balancer hashing the 4-tuple, which breaks when a client's
+address changes (<a href="deployment.html#connection-ids-and-several-instances">Deploying: Connection IDs and several instances</a>).
+A QUIC-LB load balancer routes by connection ID instead: each server writes its server ID into every connection ID it
+issues, and the balancer reads it back. Give the endpoint the configuration your load balancer's configuration agent
+assigned this server:</p>
+<pre><code class="language-kotlin">// guide:quic:load-balancer
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val lbKey = KslQuicCrypto.newLoadBalancerKey(keyBytes) // wipes keyBytes; the endpoint takes its own copy
+val lb = QuicLbConfig(configId = 1, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = lbKey)
+val behindLb =
+    quicEndpointConfig {
+        server = serverConfig
+        loadBalancer = lb   // 1 + 3 + 4 = 8 bytes: the default connectionIdLength
+    }
+</code></pre>
+<p>A connection ID is then <code>first octet || server ID || nonce</code>: the first octet carries <code>configId</code> (0..6) in its three high
+bits and the length of the rest in its five low bits. With an AES <code>key</code> the server ID and nonce are encrypted (one AES
+block when they are 16 bytes together, a four-pass Feistel network otherwise), so only the load balancer can tell which
+server a connection is on; without one they travel in clear, and the server then hands each connection only its
+handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
+native layer once (<code>newLoadBalancerKey</code> wipes your array); an endpoint takes its own copy when it is given the
+configuration, so you may close your handle after <code>bind</code> or <code>updateLoadBalancer</code>. <code>connectionIdLength</code> must equal <code>1 + serverId + nonceLength</code> and be at least 8; a plaintext configuration
+cannot be combined with a <code>preferredAddress</code>.</p>
+<p>Nonces come from a counter, permuted with a key derived from the configuration key (in clear, a key of the process),
+so they show no pattern and none repeats: every endpoint of the process that uses the same key and nonce length (in
+clear, the same nonce length), with any server ID, draws from one counter. These counters live as long as the process.
+The draft forbids reusing a nonce (section 9.6), and a new process knows nothing of the last one's counter, so either
+give the configuration a <code>nonceReservation</code>, or give each process start a key no earlier process used (a fresh key per
+start and per instance). A plaintext configuration (no key) must have a reservation: its nonces travel in clear, and
+<code>QuicLbConfig</code> refuses one without. A reservation stores a high-water mark durably (<code>load()</code>, <code>store(mark)</code>, for instance an fsync'd file per key),
+one block of 65,536 nonces ahead of need, and the next process starts past it; in clear it also keeps a 16-byte random
+<code>secret()</code> that keys the permutation. A crash skips the rest of a block and never reuses one. A failed <code>store</code> is
+retried after a back-off counted in receive batches (one, doubling to 1,024, times the loops; about one store a round, nothing drawn
+meanwhile) and counted in <code>EndpointStats.loadBalancerReservationFailures</code>; once the reserved nonces are used up, the
+requests in between get an unroutable ID.</p>
+<p>To roll out a new configuration (a new key, say), give it to the load balancers first, then to each server:</p>
+<pre><code class="language-kotlin">// guide:quic:load-balancer-update
+val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
+val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
+endpoint.updateLoadBalancer(next)
+</code></pre>
+<p>New connection IDs use it at once, and every live connection gets one NEW_CONNECTION_ID under it that retires its
+earlier IDs; those keep routing (and can still be answered with a Stateless Reset) until the client retired them. A
+second change while a connection's client has not yet retired what the first one asked for waits for those retirements
+(RFC 9000 section 5.1.2), then goes out. A codepoint that the current or previous configuration holds can only be given
+that same configuration again. Pass <code>null</code> when the server has no valid configuration: it then issues unroutable IDs
+(codepoint <code>0b111</code>, which the balancer routes by 4-tuple), gives new connections a single ID and
+<code>disable_active_migration</code>, and live connections keep the IDs they have and get no new ones. The same happens on its own
+when a configuration's nonces run out: after 2^(8 x <code>nonceLength</code>) nonces of its key (2^32 for 4 bytes, shared by every
+endpoint of the process with that key; Retry packets and connection attempts draw them too, at most at the stateless
+rate limits), counted in <code>EndpointStats.loadBalancerNoncesExhausted</code> and logged at <code>Warn</code>; then roll out a new key. A
+connection that had its full set of IDs then keeps them and gets no more; one whose configuration changes to plaintext
+gets exactly one plaintext ID. A
+server ID used in clear must never be used encrypted, or the other way round (the call refuses it).</p>
+<p>The Ktor server takes the configuration as <code>quicLoadBalancer</code> and changes it with <code>engine.updateLoadBalancer(next)</code>;
+<code>Http3Endpoint.updateLoadBalancer</code> does the same for an HTTP/3 endpoint, and <code>EndpointCore.updateLoadBalancer</code> for a
+sans-IO endpoint driven by your own loop.</p>
+<p>With several loops on one port, every loop issues IDs of the same configuration; the loop that owns an ID is the one it
+hashes to under a key the loops share (whatever the ID's codepoint), so a datagram that lands on another loop is still
+forwarded to its owner. A loop that draws a nonce whose ID hashes to another loop keeps it for that loop (up to 1,024 per
+loop); past that it issues the ID itself and the group records the exception (up to 65,536 live IDs, each leaving
+with its ID; when that many live, the nonce is spent unused rather than any live exception dropped). The SCID of a Retry takes no exception (a client that never comes back would
+never release it): its nonce is spent unused past a full pool, counted in <code>EndpointStats.loadBalancerNoncesWasted</code>. After
+a Retry the connection keeps that SCID as its one server ID; one of the previous configuration then gets the change's
+NEW_CONNECTION_ID that retires it, and an unroutable one made only because no nonce was reserved is replaced. An
+update builds the new configuration on <code>Dispatchers.IO</code> (a reservation's first <code>store</code> may fsync there), off the
+endpoint's loops, and switches to it on them, one update at a time; a caller cancelled after the switch leaves it in force. The call cannot be
+cancelled while it waits for the reservation's <code>store</code> or for a loop: a store that hangs, or a wedged loop, holds it (a
+group switches on loop 0 and the other loops move their connections in the background, after the call returned; one
+that does not within 5 s is logged and moves them at its next receive batch).
+Later stores run on the loop that draws past half a block; after a failed store the retries are paced by the receive
+batches of every loop (never by the requests themselves, so a flood of them cannot drive it), with the back-off scaled
+by the number of loops, so
+the group makes about one try a round however its traffic is spread. The hash also takes a client's random
+first Initial DCID for one of ours one time in 32 (when its first octet happens to encode our length); that client's
+datagrams then all go to the loop the DCID hashes to: an extra copy between loops for about 1 in 32 new connections. The
+Stateless Reset rule stays: a loop answers an unknown connection ID only when the stateless rate limit would let the
+answer out, it carries the current or previous configuration's codepoint, decrypts to this server's ID (within a budget
+of decryptions a second, per address and in total) and hashes to that loop; unroutable IDs are never answered.</p>
+<h2 id="admission-and-endpoint-limits">Admission and endpoint limits</h2>
+<p>A server decides per new client Initial whether to create a connection. <code>handleDatagram</code> runs only cheap checks on an
+unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no reflective source port such as 53 or
+123) and copies it into a bounded queue of <code>initialQueueCap</code> (1024) entries; the loop then calls <code>processPending</code> once
+per receive batch. That step checks the Retry token, the accept queue, the hard limits (<code>maxConnections</code>,
+<code>maxConnectionsPerIp</code>, 256 per IP by default; both count the whole endpoint, every loop, as <code>acceptQueue</code> does) and asks <code>ConnectionAdmission.admit(attempt)</code>, which answers <code>Allow</code>,
+<code>Retry</code>, <code>Drop</code> or <code>Close(code)</code>. <code>acceptQueue</code> (128 by default, shared by all loops) counts only the connections
+waiting for <code>accept()</code>, not the handshakes in flight (unvalidated Initials from spoofed sources must not lock real
+clients out). While it is full, a new client Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying
+CONNECTION_REFUSED (0x02), under the same rate limits as Retry and Version Negotiation: the client's <code>connect</code> fails
+at once with <code>ConnectionLost.TransportClosed(code = 0x02)</code> and no TLS handshake is spent on it. The queue never holds
+more: a handshake admitted earlier that completes while <code>acceptQueue</code> connections wait is closed with
+CONNECTION_REFUSED as well. An application whose <code>accept()</code> loop lags behind bursts raises <code>acceptQueue</code>. Handshakes in
+flight are bounded by <code>maxConnections</code>, <code>maxConnectionsPerIp</code> and the admission policy (Retry).</p>
+<pre><code class="language-kotlin">// guide:quic:admission
+val config = quicEndpointConfig {
+    server = serverConfig
+    admission = ConnectionAdmission.default(maxInflightHandshakes = 256, maxHandshakeBufferBytes = 8L * 1024 * 1024)
+    maxConnectionsPerIp = 64
+    maxConnectionLifetime = 12.hours        // closed with NO_ERROR when it passes
+}
+</code></pre>
+<p>The default policy asks an unvalidated client for a Retry when the attempt would be more than <code>maxInflightHandshakes</code>
+concurrent handshakes or the unfinished handshakes already hold more than <code>maxHandshakeBufferBytes</code>, and always lets in
+a client whose Retry or NEW_TOKEN token already validated its address (the hard limits still apply); <code>ConnectionAdmission.AlwaysRetry</code> makes
+every unvalidated client prove its address first. A <code>Retry</code> for an attempt whose Retry token already validated the
+address is a contract violation: the endpoint drops the Initial and counts it in <code>EndpointStats.admissionContractViolations</code>
+instead of sending a second Retry. An exception out of <code>admit</code> is treated as <code>Drop</code> and counted the same way. Stateless
+answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) are rate limited per address
+(<code>statelessPerAddressPerSecond</code>, 8) and in total (<code>statelessTotalPerSecond</code>, 1000). <code>QuicEndpoint.stats</code> exposes every
+counter, summed over the loops (see <a href="#observability">Observability</a>).</p>
+<p><strong>NEW_TOKEN.</strong> Once a connection's handshake is confirmed, the server sends the client one address-validation token
+(RFC 9000 section 8.1.3), and one more each time the client is validated on a new IP address, at most four per
+connection. A client that shows such a token on a later connection from the same IP address arrives as a validated
+<code>ConnectionAttempt</code> (<code>addressValidated = true</code>): <code>AlwaysRetry</code> lets it in without a Retry, and the server's first flight
+is not held to three times what the client sent. The token is <code>0x02 | nonce | AEAD(issuedAt)</code> under keys that live only
+in this process (shared by every loop, rotated hourly; tokens do not survive a restart and do not work on another
+instance), bound to the client's IP address but not its port, valid for
+<code>QuicServerConfig.newTokenLifetime</code> (24 hours; null issues none) and accepted once: a register of the tokens it
+accepted, kept for at least the lifetime, treats a second use as no token.</p>
+<p>The register holds at least <code>newTokenReplayCapacity</code> tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
+token is shown; about 32 bytes per token, rounded up to a power of two). It never forgets a token early: once it is full
+(first in parts, as its 64 stripes fill unevenly), a returning client's token is treated as absent, not accepted
+twice, so the client gets whatever the policy gives a client without a token (a Retry under <code>AlwaysRetry</code> or under
+load). Entries age out one to two lifetimes after they were added. A server that expects more returning clients per
+lifetime raises the capacity or shortens the lifetime (the register only has to cover one lifetime); a rising
+<code>newTokensRejected</code> with normal traffic says it is full. An attacker can fill it only with tokens it was issued: one
+completed handshake per token (four per connection at most, each for another IP it owns), each shown once from its
+IP, so filling the default takes over a million connections within a day, about 12 a second for 24 hours, and costs
+honest clients only the round trip their tokens would have saved.</p>
+<p>A token that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the
+Initial is treated as one without a token, and <code>newTokensRejected</code> counts it. A policy may still answer a token holder
+with a Retry. Clients keep tokens only with a <code>tokenStore</code> (<a href="#address-tokens-new_token">Address tokens</a>).</p>
+<pre><code class="language-kotlin">// guide:quic:new-token
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val config = quicEndpointConfig {
+    server = quicServerConfig(tlsServerConfig) { newTokenLifetime = 6.hours }   // null: issue none
+    admission = ConnectionAdmission.AlwaysRetry   // returning clients with a token skip the Retry
+}
+</code></pre>
+<h2 id="reliable-stream-reset-experimental">Reliable stream reset (experimental)</h2>
+<p><code>QuicConfig.resetStreamAt = true</code> advertises <code>reset_stream_at</code> (draft-ietf-quic-reliable-stream-reset). When the peer
+advertised it too, <code>QuicStream.resetAt(code, reliableSize)</code> abandons a stream like <code>reset</code> but keeps delivering its first
+<code>reliableSize</code> bytes, retransmitting them as needed; the peer reads them and then fails with the reset. Only bytes
+already flushed to the stream count (a larger size is cut to them). Without the peer's parameter <code>resetAt</code> is a plain
+<code>reset</code>, and the prefix may be lost. The frame waits until every reliable byte was sent once, so its final size stays
+within the peer's flow control (draft-11 section 4): with little credit the reset reaches the peer later, after the
+reliable bytes. Both codepoints of the parameter are sent and accepted, 0x1d and the unregistered one of earlier drafts, as quic-go does.
+A server that accepts 0-RTT but drops a remembered <code>reset_stream_at</code> is treated like one that lowers a limit
+(PROTOCOL_VIOLATION). Once RESET_STREAM_AT is in play on a stream, a later reset with another error code is STREAM_STATE_ERROR. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
+above its final size, closes the connection with FRAME_ENCODING_ERROR. <code>QuicConnection.resetStreamAtEnabled</code> tells
+whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.</p>
+<h3 id="final-sizes-experimental">Final sizes (experimental)</h3>
+<p><code>QuicStream.sentFinalSize</code> and <code>QuicStream.receivedFinalSize</code> are <code>Deferred&lt;Long&gt;</code> values that complete with the final
+size of each half of a stream (RFC 9000 section 4.5), the flow-control credit it used as both sides count it. The
+sending half's size is known once its reset is queued (<code>reset</code>, the reset that answers the peer's STOP_SENDING, or
+<code>resetAt</code> once its frame goes out) or once its FIN first went out; the receiving half's as soon as the peer's FIN,
+RESET_STREAM or RESET_STREAM_AT arrives, also when the bytes were never read or after <code>stopSending</code>. A protocol that
+counts data across streams, such as WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.4), needs it for a
+stream that was reset. The size counts every byte of the stream, an application's own header too: WebTransport
+subtracts its stream header itself. A stream sent in 0-RTT reports its size only after the server accepted the early
+data; a rejection fails both with <code>QuicException.StreamError.EarlyDataRejected</code>, a lost connection with its
+<code>ConnectionLost</code>, and a half the stream does not have at once with IllegalStateException. Every caller gets the same
+<code>Deferred</code>: await it, never cancel it. In the sans-IO core the same moments raise <code>ConnectionEvent.StreamFinalSize</code>,
+once per half.</p>
+<p><code>QuicStream.receivedOffset</code> is a <code>StateFlow&lt;Long&gt;</code> of the highest offset of the peer's half received so far, read or
+not and in order or not, and then its final size: what QUIC flow control counts (RFC 9000 section 4.1), so a protocol
+with limits of its own across streams can check bytes nobody has read yet.</p>
+<p><code>QuicStream.sendReleased</code> is the sending counterpart: a <code>StateFlow&lt;Long&gt;</code> of the bytes of our half the connection's send
+buffer (<code>maxSendBuffer</code>, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
+of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
+shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
+that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
+up to date from its first read on, which catches up with what was released before.</p>
+<h2 id="datagrams-rfc-9221">Datagrams (RFC 9221)</h2>
+<p>Both sides advertise <code>max_datagram_frame_size</code> (65 535 by default; <code>maxDatagramFrameSize = 0</code> turns the extension off and
+rejects DATAGRAM frames). On the sans-IO core, <code>maxDatagramPayload</code> says how many bytes fit one frame for the current
+peer and MTU, less 32 bytes kept for a short ACK next to a full-size datagram (0 when the peer does not support datagrams); a <code>DatagramSender</code> set on the core is asked for frames while
+each 1-RTT packet is built with an open congestion window, and learns through <code>onAcked</code> / <code>onLost</code> what became of each
+id — datagrams are never retransmitted. Received payloads wait in a queue of 128 (<code>datagramReceiveQueue</code>); when it is
+full the oldest is dropped and counted in <code>stats.datagramsDropped</code> (which also counts received UDP datagrams the connection
+discarded unprocessed: from an unknown server address, a late Initial, a full undecryptable-packet buffer). The core raises <code>DatagramsReadable</code> and hands them out
+with <code>readDatagram</code>.</p>
+<p>On a <code>QuicConnection</code>:</p>
+<pre><code class="language-kotlin">// guide:quic:datagrams
+connection.sendDatagram(reading, DatagramPolicy.LatestWins(key = &quot;temperature&quot;))   // replaces a queued reading of the same key
+when (val r = connection.trySendDatagram(frame, DatagramPolicy.Reject)) { DatagramSendResult.QueueFull -&gt; dropFrame(); DatagramSendResult.Closed -&gt; stop(); else -&gt; {} }
+peer.datagrams.collect { d -&gt; handle(d.data) }   // on the receiving end (the other connection of the pair)
+</code></pre>
+<p><code>sendDatagram</code> copies the payload into the loop's send queue of 32 datagrams / 1 MiB (<code>datagramSendQueue</code>,
+<code>datagramSendQueueBytes</code>). <code>DropOldest</code> (the default) and <code>LatestWins</code> never wait: a full queue drops its oldest entry, or
+the entry with the same key. The hand-over to the loop is bounded too (at most another <code>datagramSendQueue</code> datagrams), so
+a burst that outruns the loop drops its oldest datagrams even on an idle network; send a burst you cannot lose under
+<code>Reject</code>. <code>Reject</code> makes <code>trySendDatagram</code> answer <code>QueueFull</code> and <code>sendDatagram</code> suspend until room
+returns. <code>trySendDatagram</code> never enters the loop and allocates only the copy plus a small wrapper. A payload above
+<code>maxDatagramSize</code> (a <code>StateFlow</code>, following the path MTU) gives <code>TooLarge</code> / <code>DatagramTooLarge</code>; without datagram support
+on either side you get <code>Unsupported</code> / <code>DatagramUnsupported</code>. <code>datagrams</code> reads the core's 128-entry queue directly, so
+what nobody collected in time is dropped there and counted in <code>stats.datagramsDropped</code> (beside the UDP datagrams the
+connection discarded unprocessed). Datagrams go ahead of stream data; <em>experimental</em>: <code>sendDatagram(data, policy, priority)</code> and <code>trySendDatagram(data, policy, priority)</code> schedule one by RFC 9218 urgency instead, so it does not go
+ahead of strictly more urgent streams' data (the sans-IO hook is <code>DatagramSender.nextUrgency</code>). The urgency is strict
+both ways: more urgent bulk streams hold such datagrams back, and the datagrams go ahead of streams of the same or a
+lower urgency, so a flood of them starves those. The send queue keeps one FIFO per urgency: a datagram never waits
+behind a less urgent one, and datagrams of one urgency leave in the order they were queued (all RFC 9221 asks). HTTP/3
+sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-16
+section 3.4).</p>
+<h2 id="testing-your-application">Testing your application</h2>
+<p><code>io.kuicksilver.testing.MemoryNetwork</code> (module <code>kuicksilver-testing</code>) is a UDP network in memory: every <code>open(address)</code>
+binds a <code>DatagramIo</code> there, and a datagram reaches the socket bound to its destination or vanishes. Give it to endpoints
+through <code>QuicEndpointConfig.io</code> and the whole stack runs unchanged, OpenSSL TLS included, on every platform and without
+ports. <code>cut(address)</code> makes an address go dark (and <code>restore</code> brings it back), <code>mtu</code> drops larger datagrams, <code>dropped</code>
+counts what vanished; it is safe to share between endpoint loops on different threads. Like a UDP socket, each socket
+holds at most <code>receiveBuffer</code> unread datagrams (256 by default) and drops what arrives on top, a datagram larger than the
+receiver's slot is dropped rather than truncated, and <code>open</code> on port 0 binds a free ephemeral port (49152 and up) unless
+<code>assignEphemeralPorts = false</code>. Marks are always bleached: sockets report no ECN.</p>
+<pre><code class="language-kotlin">// guide:quic:memory-network
+val network = MemoryNetwork()
+val wifi = InetSocketAddress(&quot;10.0.0.1&quot;, 50000)
+val server = QuicEndpoint.bind(InetSocketAddress(&quot;10.0.0.2&quot;, 443), quicEndpointConfig { this.server = serverConfig; io = { network.open(it) } })
+val client = QuicEndpoint.bind(wifi, quicEndpointConfig { io = { network.open(it) } })
+val connection = client.connect(server.localAddress, quicClientConfig(tlsClientConfig))
+val accepted = server.accept()
+echo(connection, accepted, 1024)                                       // ... the application talks
+network.cut(wifi)                                                      // the Wi-Fi goes dark
+connection.migrate(network.open(InetSocketAddress(&quot;10.0.0.3&quot;, 50000)))   // and the client moves to LTE
+</code></pre>
+<p><code>samples/realtime-telemetry</code> is a complete application built this way: its common tests run over <code>MemoryNetwork</code>,
+its JVM and macOS tests over real UDP.</p>
+<h2 id="lifecycle-and-errors">Lifecycle and errors</h2>
+<p>A connection ends exactly once, and <code>closed</code> completes with the reason: <code>ApplicationClosed</code> (ours or the peer's
+<code>close(code)</code>), <code>TransportClosed</code> (a protocol error, a TLS alert as <code>0x0100 + alert</code>), <code>Timeout</code>, <code>StatelessReset</code>,
+<code>NoViablePath</code>, <code>VersionNegotiation</code> or <code>Internal</code>. From then on everything that waits on the connection fails with that
+same exception: <code>openBidi</code>, <code>acceptStream</code>, <code>sendDatagram</code>, <code>keyUpdate</code>, <code>addPath</code>, <code>exportKeyingMaterial</code>, the stream
+channels (a writer waiting for send-buffer room gets <code>ClosedWriteChannelException</code> with it as the cause) and the
+<code>datagrams</code> flow, which throws it even after a local <code>close</code>; <code>incomingStreams()</code> completes instead. <code>trySendDatagram</code>
+throws it too rather than answering <code>QueueFull</code>, so a caller retrying on <code>QueueFull</code> cannot spin on a dead connection.
+Cancelling your own coroutine is never turned into a <code>QuicException</code>; a cancelled <code>connect</code> closes the connection it
+started (CONNECTION_CLOSE, then the closing period). After <code>QuicEndpoint.close()</code>, <code>accept()</code> throws <code>EndpointClosing</code>
+even for connections that had completed their handshake and were still waiting in the accept queue.</p>
+<p><code>close(code, reason)</code> suspends until the CONNECTION_CLOSE is sent; <code>close()</code> from <code>AutoCloseable</code> sends code 0 without
+waiting. <code>QuicEndpoint.close()</code> is asynchronous too: it closes every connection and the socket on the loop after it
+returns, and <code>connect</code>/<code>accept</code> throw <code>EndpointClosing</code> from then on. <code>pathEvents</code> is a hot flow without replay, so start
+collecting it before <code>migrate</code> or <code>probe</code>. <code>stats</code> can be read from any thread; it is a snapshot whose fields are read
+without a lock.</p>
+<h2 id="observability">Observability</h2>
+<p>Everything below is experimental (<code>@ExperimentalKuicksilverApi</code>) except <code>QuicConnection.stats</code>, <code>QuicEndpoint.stats</code> with
+the first <code>EndpointStats</code> counters (<code>initialsDropped</code> to <code>connectionsCreated</code>) and <code>DirectoryQlogSink</code>, which are stable
+(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md">stability</a>). None of it costs anything per packet unless you turn it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
+event, not per datagram.</p>
+<p><strong>Counters.</strong> <code>QuicEndpoint.stats</code> is an <code>EndpointStats</code> snapshot summed over every loop, cheap enough to scrape every
+few seconds from any thread (fields are read without a lock and may lag the loop by a few events):</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Connections</td>
+<td><code>connectionsActive</code>, <code>connectionsCreated</code>, <code>connectionsAccepted</code> (handed to <code>accept()</code>)</td>
+</tr>
+<tr>
+<td>Refusals</td>
+<td><code>connectionsRefusedAcceptQueue</code>, <code>connectionsRefusedAdmission</code> (policy <code>Drop</code>/<code>Close</code>), <code>connectionsRefusedLimits</code> (<code>maxConnections</code>, <code>maxConnectionsPerIp</code>), <code>connectionsRefusedShutdown</code></td>
+</tr>
+<tr>
+<td>Handshakes</td>
+<td><code>handshakesCompleted</code>, <code>handshakesFailedTimeout</code>, <code>handshakesFailedTls</code> (a TLS alert either way), <code>handshakesFailedOther</code></td>
+</tr>
+<tr>
+<td>0-RTT</td>
+<td><code>zeroRttOffered</code>, <code>zeroRttAccepted</code>, <code>zeroRttRejected</code></td>
+</tr>
+<tr>
+<td>Datagrams</td>
+<td><code>datagramsReceived</code>, <code>datagramsSent</code>, <code>datagramsDroppedSocket</code>, <code>datagramsDroppedQueue</code>, <code>datagramsDroppedUndecryptable</code>, <code>datagramsDroppedStateless</code></td>
+</tr>
+<tr>
+<td>Stateless work</td>
+<td><code>initialsDropped</code> (new Initials discarded: a full Initial queue, <code>maxConnections</code>, <code>maxConnectionsPerIp</code>, reflective source ports, admission <code>Drop</code>), <code>retriesSent</code>, <code>invalidTokens</code>, <code>versionNegotiations</code>, <code>statelessResets</code>, <code>statelessRateLimited</code></td>
+</tr>
+<tr>
+<td>Address tokens</td>
+<td><code>newTokensIssued</code>, <code>newTokensAccepted</code>, <code>newTokensRejected</code> (NEW_TOKEN; see <a href="#admission-and-endpoint-limits">Admission and endpoint limits</a>)</td>
+</tr>
+<tr>
+<td>Paths</td>
+<td><code>pathValidations</code>, <code>pathValidationFailures</code></td>
+</tr>
+<tr>
+<td>Internal failures</td>
+<td><code>uncaughtFailures</code>, <code>sendFailures</code>, <code>listenerFailures</code>, <code>admissionContractViolations</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-kotlin">// guide:quic:stats
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val stats = server.stats
+println(&quot;${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused&quot;)
+</code></pre>
+<p><code>QuicConnection.stats</code> has the per-connection view (RTT, congestion window, losses, path MTU).</p>
+<p><strong>Logger.</strong> <code>QuicEndpointConfig.logger</code> takes a <code>KuicksilverLogger</code>: two methods, <code>isEnabled(level)</code> and
+<code>log(level, message, cause)</code>, so bridging it to SLF4J, Logcat or <code>os_log</code> is a few lines and the library depends on no
+logging framework. The default, <code>KuicksilverLogger.Stderr</code>, writes warnings and errors to standard error (what the
+library did before it had a logger); <code>KuicksilverLogger.None</code> drops everything and <code>KuicksilverLogger.stderr(level)</code>
+picks another threshold. <code>Debug</code> logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
+close with its reason), <code>Info</code> the endpoint's (shutting down, closing), <code>Warn</code> degradations (a fallback to the portable
+socket, a failing listener or qlog sink), <code>Error</code> a loop that died. A logger that throws is ignored and counted in
+<code>listenerFailures</code>. A line is built only when its level is enabled. The library never
+logs secrets: keys, traffic secrets, session tickets, Retry and address-validation tokens and reset tokens stay out of
+every level; connection IDs and addresses are logged.</p>
+<p><strong>Connection listener.</strong> <code>QuicEndpointConfig.listener</code> takes a <code>ConnectionListener</code> whose callbacks report
+<code>onOpened</code>, <code>onHandshakeCompleted</code>, <code>onZeroRtt</code> (accepted or rejected), <code>onPathChanged</code> and <code>onClosed</code> with the
+<code>ConnectionLost</code> reason: who closed (<code>initiator</code>), the code and, for a transport error, the frame type. They run on the
+loop that owns the connection, in order, exactly once each for opened and closed, so they must not block; an exception
+out of one, a <code>CancellationException</code> included, is logged and counted in <code>listenerFailures</code>, and the connection goes on. <code>ConnectionInfo.id</code> is the original destination connection ID in
+hex, the same name the connection's qlog trace has.</p>
+<pre><code class="language-kotlin">// guide:quic:observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val observed = quicEndpointConfig {
+    this.server = quicServerConfig(tlsServerConfig)
+    logger = KuicksilverLogger.stderr(LogLevel.Info)
+    listener = object : ConnectionListener {
+        override fun onClosed(connection: ConnectionInfo, reason: QuicException.ConnectionLost) {
+            println(&quot;${connection.id} ${connection.remoteAddress}: ${reason.message}&quot;)
+        }
+    }
+}
+</code></pre>
+<h2 id="graceful-shutdown">Graceful shutdown</h2>
+<p><code>QuicEndpoint.shutdown(grace)</code> takes an endpoint out of service without cutting connections short. From the call on, a
+new client's Initial is refused at once with a stateless CONNECTION_CLOSE carrying CONNECTION_REFUSED (the refusal of a
+full accept queue, under the same rate limits; counted in <code>connectionsRefusedShutdown</code>) and <code>connect</code> throws
+<code>EndpointClosing</code>; handshakes already in flight go on and still reach <code>accept()</code>. The live connections get <code>grace</code> to
+finish; QUIC itself has no &quot;go away&quot; signal, so tell your peers through your application protocol (HTTP/3 has GOAWAY:
+<code>Http3Endpoint.shutdown</code> and the Kuicksilver Ktor server's <code>stop(gracePeriod, timeout)</code> send it). Once the last
+connection has closed, or at the deadline, whatever is left is closed with an application CONNECTION_CLOSE (<code>code</code>, 0 by
+default) and the endpoint closes; <code>shutdown</code> returns when the socket is released, like <code>closeAndJoin</code>. Calling it again,
+or <code>close()</code>, ends the grace period at once.</p>
+<pre><code class="language-kotlin">// guide:quic:shutdown
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+server.shutdown(grace = 30.seconds)
+</code></pre>
+<h2 id="qlog">qlog</h2>
+<p><code>DirectoryQlogSink</code> writes one JSON-SEQ file per connection (schema <code>draft-ietf-quic-qlog-main-schema</code>/<code>quic-events</code>
+0.3; an HTTP/3 connection adds its own events, <a href="http3.html#qlog">HTTP/3: qlog</a>), named <code>&lt;odcid&gt;_&lt;client|server&gt;_&lt;random&gt;.sqlog</code> after the connection's original destination CID. On a server the
+client chooses that CID, so the sink treats the name as hostile: the directory is created owner-only (0700) when missing
+and refused when it is a symbolic link, belongs to another user, or is writable by group or others without the sticky
+bit (keep it out of <code>/tmp</code>); every file is created exclusively and never through a link, and the random suffix gives a
+client that reuses a CID a file of its own. qlog on a public server is a disk-exhaustion surface, so the sink has two
+ceilings besides the fixed 64 MiB per connection (<a href="configuration.html#fixed-limits">fixed limits</a>): at most <code>maxOpenTraces</code> traces open at once (256) and
+<code>maxTotalBytes</code> written over its lifetime (1 GiB); beyond them connections are not traced
+(<code>DirectoryQlogSink(dir, maxOpenTraces, maxTotalBytes)</code>, <em>experimental</em>). HTTP header and trailer values are
+redacted in the trace unless the sink sets <code>logHeaderValues</code> (the constructor's fourth parameter, <em>experimental</em>).</p>
+<pre><code class="language-kotlin">val qlogDir = &quot;/var/log/kuicksilver/qlog&quot;
+// guide:quic:qlog
+val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
+</code></pre>
+<p>On Android, <code>qlogDirectory(context, name = &quot;kuicksilver-qlog&quot;)</code> (experimental, 0.3.0, in <code>io.kuicksilver.quic.qlog</code>)
+returns a <code>DirectoryQlogSink</code> for the directory <code>name</code> in the app's cache directory. It creates the directory owner-only
+(0700) at once and checks it like any other. The cache directory is private to the app, is not backed up, and is the
+first thing the system clears when storage runs low. Pull the traces with <code>adb shell run-as &lt;package&gt; ls cache/kuicksilver-qlog</code>
+(debuggable builds). The helper works in release builds too, since a trace holds no keys. Below API 26 it throws
+<code>IllegalArgumentException</code>: without <code>java.nio.file</code> the directory cannot be checked, so qlog is refused there.</p>
+<p>A sink is called on the endpoint loop, so a file sink on a slow disk would slow every connection of the loop. Wrap it in
+<code>AsyncQlogSink</code>: the loop only queues records, and one writer on <code>Dispatchers.IO</code> (one thread at a time) opens, writes and
+closes the files. Its queue holds <code>queueCapacity</code> records (8192) over all connections; a record that finds it full is
+dropped and counted in <code>dropped</code>, so a stalled disk loses trace lines, never throughput. <code>sampleEvery = n</code> traces one
+connection in n; <code>flush()</code> waits for what is queued and <code>close()</code> stops the writer after it.</p>
+<pre><code class="language-kotlin">// guide:quic:qlog-async
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
+</code></pre>
+<h2 id="the-sans-io-core-directly">The sans-IO core directly</h2>
+<p><code>ConnectionCore</code> has no coroutines and no sockets (ADR-0004): <code>handleDatagram</code> feeds it a received datagram,
+<code>poll</code> fills a <code>PacketBatch</code> with what it wants to send, <code>nextTimeoutOrNever</code>/<code>onTimeout</code> drive its one timer, <code>nextEvent</code>
+drains application-visible events. A caller with its own loop (for example a real-time protocol with its own
+scheduler) can drive it directly instead of going through <code>QuicEndpoint</code>.</p>
+<pre><code class="language-kotlin">// guide:quic:core-loop
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val core = ConnectionCore.client(quic, tlsClientConfig, KslQuicCrypto, remote, Random, now)
+val out = PacketBatch(capacity = 4)
+try {
+    while (running) {
+        val n = core.poll(out, now)
+        for (i in 0 until n) send(out.buffer(i), out.length(i), out.address(i)!!)
+        val deadline = core.nextTimeoutOrNever()          // TimeMark.NEVER when no timer is armed; nextTimeout() is the nullable form
+        val datagram = receiveOrWaitUntil(deadline)       // your socket; returns null when the deadline passed first
+        now = clock()
+        if (datagram != null) core.handleDatagram(datagram.buffer, datagram.length, datagram.from, Ecn.NotEct, now)
+        else if (deadline &lt;= now) core.onTimeout(now)
+        while (true) { val event = core.nextEvent() ?: break; handle(event) }
+    }
+} finally { out.close() }
+</code></pre>
+<p>Stream events tell such a loop when to retry instead of polling: <code>StreamReadable</code> after new data, an end or a reset;
+<code>StreamWritable</code> once acknowledgements free send-buffer room after <code>writeStream</code> took fewer bytes than offered, or once the
+peer's <code>MAX_STREAM_DATA</code>/<code>MAX_DATA</code> gives credit to data that was waiting; <code>StreamsAvailable</code> once <code>MAX_STREAMS</code> raises a
+limit that refused <code>openStream</code>; <code>StreamFinished</code> once a stream is done in both directions and retired.</p>
+<p><code>core</code> is reached through <code>QuicConnection.core</code> too (<code>@ExperimentalKuicksilverApi</code>), but it must only be touched from
+the endpoint loop that owns it when the connection came from <code>QuicEndpoint</code>.</p>
+
+</main></div>
+</body>
+</html>

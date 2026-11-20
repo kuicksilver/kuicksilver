@@ -1,0 +1,173 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>ProxyResolvers</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-client/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-client/commonMain" data-filter=":kuicksilver-ktor-client/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-client::io.kuicksilver.ktor.client/ProxyResolvers///PointingToDeclaration//-816330356">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-client</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.client</a><span class="delimiter">/</span><span class="current">ProxyResolvers</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Proxy</span><wbr><span><span>Resolvers</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="index.html">ProxyResolvers</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/ProxyResolver.kt#L43">source</a>)</span></span></div><p class="paragraph">The built-in resolvers. <a href="-system.html">System</a> is the engine's default. Both <a href="-environment.html">Environment</a> and <a href="-system.html">System</a> connect directly to <code class="lang-kotlin">localhost</code>, <code class="lang-kotlin">*.localhost</code> and loopback addresses (127.0.0.0/8, ::1) whatever the settings say, as Go and Chrome do.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="-429088618%2FProperties%2F-816330356" anchor-label="Environment" id="-429088618%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-environment.html"><span><span>Environment</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-429088618%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-environment.html">Environment</a><span class="token operator">: </span><a href="../-proxy-resolver/index.html">ProxyResolver</a></div><div class="brief "><p class="paragraph">The environment variables, with curl's meaning: <code class="lang-kotlin">https_proxy</code> / <code class="lang-kotlin">HTTPS_PROXY</code> for <code class="lang-kotlin">https</code> and <code class="lang-kotlin">wss</code>, <code class="lang-kotlin">http_proxy</code> (lower case only: an <code class="lang-kotlin">HTTP_PROXY</code> header of a CGI request lands in <code class="lang-kotlin">HTTP_PROXY</code>, "httpoxy") for <code class="lang-kotlin">http</code> and <code class="lang-kotlin">ws</code>, then <code class="lang-kotlin">all_proxy</code> / <code class="lang-kotlin">ALL_PROXY</code>; <code class="lang-kotlin">no_proxy</code> / <code class="lang-kotlin">NO_PROXY</code> lists what goes direct: <code class="lang-kotlin">*</code>, names (<code class="lang-kotlin">example.com</code> also covers its subdomains, on a label boundary), IP addresses and CIDR ranges. A value is <code class="lang-kotlin">http://</code>, <code class="lang-kotlin">https://</code> (TLS to the proxy, <a href="../-resolved-proxy/-companion/https.html">ResolvedProxy.https</a>; port 443 when none is given), <code class="lang-kotlin">socks5://</code> (names resolved here), <code class="lang-kotlin">socks5h://</code> (names resolved by the proxy) or a bare <code class="lang-kotlin">host:port</code> (HTTP); its user info, if any, becomes the credentials. Any other scheme (<code class="lang-kotlin">socks4://</code>) fails the request.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-340269703%2FProperties%2F-816330356" anchor-label="None" id="-340269703%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-none.html"><span><span>None</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-340269703%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-none.html">None</a><span class="token operator">: </span><a href="../-proxy-resolver/index.html">ProxyResolver</a></div><div class="brief "><p class="paragraph">No proxy: every request connects directly (0.2's behaviour without <code class="lang-kotlin">proxy</code>).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1253316254%2FProperties%2F-816330356" anchor-label="System" id="-1253316254%2FProperties%2F-816330356" data-filterable-set=":kuicksilver-ktor-client/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-client/commonMain" data-filterable-set=":kuicksilver-ktor-client/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-system.html"><span><span>System</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1253316254%2FProperties%2F-816330356"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-client/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="-system.html">System</a><span class="token operator">: </span><a href="../-proxy-resolver/index.html">ProxyResolver</a></div><div class="brief "><p class="paragraph">The platform's proxy settings: on the JVM and Android <code class="lang-kotlin">java.net.ProxySelector.getDefault()</code> (system properties, <code class="lang-kotlin">java.net.useSystemProxies</code>, Android's per-network proxy and PAC); on Apple platforms the system's proxy settings (<code class="lang-kotlin">CFNetworkCopyProxiesForURL</code>, with its exceptions list); on Windows the user's Internet settings (<code class="lang-kotlin">WinHttpGetIEProxyConfigForCurrentUser</code>, with its bypass list); on Linux, which has no system API, <a href="-environment.html">Environment</a>. A proxy auto-configuration is run on Apple platforms by the engine itself (a PAC URL or script of the settings, or WPAD when they say "auto discover"; the script downloaded by the engine and run on JavaScriptCore, sandboxed and time-limited) and on Windows by WinHTTP (automatic detection, WPAD, or a PAC URL, <code class="lang-kotlin">WinHttpGetProxyForUrl</code>); a lookup waits for it at most 5 seconds (on Windows a WinHTTP call still running then is left to end on its own, and its answer is dropped). The script gets a <code class="lang-kotlin">ws://</code> URI whole, with its resource name (RFC 6455 section 4.1); <code class="lang-kotlin">wss</code> and <code class="lang-kotlin">https</code> as their origin only (<code class="lang-kotlin">wss://host[:port]/</code>), as browsers give them, since a script from WPAD could send a path's tokens out; <code class="lang-kotlin">http</code> as its origin too, because the engine keeps answers per scheme, host and port (browsers keep an <code class="lang-kotlin">http</code> path). <code class="lang-kotlin">KuicksilverEngineConfig.pacFullWebSocketUrl</code> gives the settings' own script (inline, or from an <code class="lang-kotlin">https</code> or local <code class="lang-kotlin">file</code> URL; never WPAD's) a <code class="lang-kotlin">wss://</code> URI whole. A script that cannot be fetched or run in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not run again in that time).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

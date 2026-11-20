@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting - Kuicksilver 0.3.0-SNAPSHOT</title>
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../index.html">Kuicksilver</a><span class="version">0.3.0-SNAPSHOT</span><a href="../../index.html">Home</a> <a href="../guide/index.html">Guide</a> <a href="../api/index.html">API reference</a></header>
+<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release. Releases: <a href="../../index.html">all versions</a>.</div>
+<div class="layout"><nav class="pages"><ul><li><a href="index.html">Guide</a></li><li><a href="quic.html">QUIC with Kuicksilver</a></li><li><a href="http3.html">HTTP/3 with Kuicksilver</a></li><li><a href="tls.html">TLS with Kuicksilver</a></li><li><a href="ktor.html">Ktor engines</a></li><li><a href="deployment.html">Deploying the HTTP/3 server</a></li><li><a href="ios.html">Kuicksilver on iOS</a></li><li><a href="app-store.html">Publishing an app that uses Kuicksilver (App Store, Mac App Store, notarized macOS)</a></li><li><a href="configuration.html">Configuration reference</a></li><li class="current"><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="building.html">Building from source</a></li></ul></nav><main>
+<h1 id="troubleshooting">Troubleshooting</h1>
+<p><strong>What this page is for.</strong> It lists the symptoms you may see with Kuicksilver (an exception, a log line, a counter that does
+not move), what causes each one and what to do about it.</p>
+<p><strong>Before you start</strong></p>
+<ul>
+<li>Have the exact text or code of the failure: the exception type and message, the log line, or the counter name.</li>
+<li>Know the module you use (QUIC, HTTP/3, the Ktor client or server) and its version. The entries describe 0.3.0 behaviour;
+some entries name the release that changed the behaviour (&quot;since 0.2.1&quot;, &quot;since 0.3.0&quot;); the CHANGELOG lists every change.</li>
+<li>A logger or a counter helps more than guessing; <a href="#getting-more-information">Getting more information</a> shows how to turn them on.</li>
+</ul>
+<p><strong>How to use this page.</strong> Search the page for the exact text, or find it in <a href="#find-your-symptom">Find your symptom</a>; the
+table sends you to the entry. Every option named here is listed with its default in the
+<a href="configuration.html">configuration reference</a>.</p>
+<p>Symptoms you may see with Kuicksilver, what causes them and what to do. Names of types, options and messages are the
+ones in the code; a message shown as <code>&quot;…&quot;</code> is the exception's or log line's text with the variable parts in angle
+brackets. Every option is listed with its default in the <a href="configuration.html">configuration reference</a>.</p>
+<p>Start with <a href="#getting-more-information">Getting more information</a>: most questions are answered faster by a log line, a
+counter or a qlog trace than by guessing.</p>
+<h2 id="find-your-symptom">Find your symptom</h2>
+<p>Search this page for the exact text or code you see; the table sends you to the entry.</p>
+<table>
+<thead>
+<tr>
+<th>What you see</th>
+<th>Entry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&quot;Handshake timeout after 10s&quot;</code>, <code>ConnectionLost.Timeout</code> with <code>TimeoutKind.Handshake</code>, <code>fallback = HandshakeTimeout</code></td>
+<td><a href="#connect-fails-with-handshake-timeout-after-10s">handshake timeout</a></td>
+</tr>
+<tr>
+<td><code>TransportClosed(code = 0x02)</code>, <code>CONNECTION_REFUSED</code>, <code>fallback = Refused</code></td>
+<td><a href="#connect-fails-at-once-with-transportclosedcode--0x02">CONNECTION_REFUSED</a> and <a href="#connections-are-refused-or-dropped">refusals and limits</a></td>
+</tr>
+<tr>
+<td><code>TlsException.Verify</code>, <code>VerifyReason.UnknownIssuer</code>, TLS alert 48 (<code>TransportClosed(code = 0x0130)</code>), alerts 42, 45</td>
+<td><a href="#the-handshake-fails-with-a-certificate-error">certificate errors</a></td>
+</tr>
+<tr>
+<td><code>no_application_protocol</code>, TLS alert 120 (<code>TransportClosed(code = 0x0178)</code>), <code>the server chose ALPN</code>, <code>ALPN h3 required</code></td>
+<td><a href="#the-handshake-fails-with-an-alpn-mismatch">ALPN mismatch</a></td>
+</tr>
+<tr>
+<td><code>&quot;Idle timeout after 30s&quot;</code>, <code>StatelessReset</code>, <code>ApplicationClosed</code></td>
+<td><a href="#connections-that-end">connections that end</a></td>
+</tr>
+<tr>
+<td><code>ConnectionLost.ZeroRttRejected</code>, <code>StreamError.EarlyDataRejected</code>, <code>fallback = ZeroRttRejected</code></td>
+<td><a href="#0-rtt-is-rejected">0-RTT is rejected</a></td>
+</tr>
+<tr>
+<td><code>Http11RequiredException</code>, <code>fallback = H2Refused</code>, <code>Http2Exception</code></td>
+<td><a href="#calls-over-http2-fail-or-a-server-misbehaves-with-http2">HTTP/2 failures</a></td>
+</tr>
+<tr>
+<td><code>kuicksilverDiagnostics.fallback</code>, <code>ProtocolReason</code>, <code>FallbackReason</code> (every value)</td>
+<td><a href="#the-ktor-client-never-uses-http3-or-stops-using-it">the client never uses HTTP/3</a></td>
+</tr>
+<tr>
+<td><code>EndpointStats.connectionsRefused*</code>, <code>initialsDropped</code>, <code>statelessRateLimited</code></td>
+<td><a href="#connections-are-refused-or-dropped">refusals and limits</a></td>
+</tr>
+<tr>
+<td><code>421 Misdirected Request</code> from the Ktor server, <code>&quot;421 Misdirected Request for &lt;host&gt;: …&quot;</code> in its debug log</td>
+<td><a href="#the-server-answers-421-misdirected-request">the server answers 421</a></td>
+</tr>
+<tr>
+<td>a warning ending &quot;it is not a trusted source of the PROXY protocol&quot;, <code>connectionRefused</code> with <code>PROXY protocol header</code>, a server behind a load balancer that resets every connection</td>
+<td><a href="#a-proxy-protocol-connector-resets-connections">the PROXY protocol</a></td>
+</tr>
+<tr>
+<td><code>ConnectTimeoutException</code> on the Ktor client</td>
+<td><a href="#requests-wait-and-then-fail-with-connecttimeoutexception">requests wait and then fail</a></td>
+</tr>
+<tr>
+<td>a TLS 1.2 client refused with <code>protocol_version</code> or <code>handshake_failure</code>, <code>kuicksilver.tls.versions</code> refused</td>
+<td><a href="#a-tls-12-client-cannot-connect-to-the-server">TLS 1.2 clients</a></td>
+</tr>
+<tr>
+<td><code>KslException.NativeLoad</code>, <code>Unavailable</code></td>
+<td><a href="#kslexceptionnativeload-or-kslloaderavailability-is-unavailable">native library</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="getting-more-information">Getting more information</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>How to turn it on</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Logger</td>
+<td><code>QuicEndpointConfig.logger = KuicksilverLogger.stderr(LogLevel.Debug)</code>; Ktor client <code>engine { logger = … }</code>; Ktor server <code>logger = …</code></td>
+<td><code>Debug</code>: each connection's lifecycle (<code>&quot;&lt;client|server&gt; connection &lt;id&gt; opened, peer &lt;address&gt;&quot;</code>, <code>&quot;connection &lt;id&gt; handshake complete, ALPN &lt;alpn&gt;&quot;</code>, <code>&quot;connection &lt;id&gt; path changed (&lt;reason&gt;): &lt;old&gt; -&gt; &lt;new&gt;&quot;</code>, <code>&quot;connection &lt;id&gt; closed[ before its handshake completed]: &lt;reason&gt;&quot;</code>); <code>Info</code>: an endpoint shutting down or closing; <code>Warn</code>: degradations such as the fallback to the portable socket; <code>Error</code>: an endpoint loop that died. Lines on standard error start with <code>kuicksilver: &lt;LEVEL&gt;</code></td>
+</tr>
+<tr>
+<td>Connection listener</td>
+<td><code>QuicEndpointConfig.listener</code> (Ktor: <code>http3 { connectionListener }</code>, server <code>connectionListener</code>)</td>
+<td><code>onOpened</code>, <code>onHandshakeCompleted</code>, <code>onZeroRtt</code>, <code>onPathChanged</code> and <code>onClosed</code> with the <code>QuicException.ConnectionLost</code> reason</td>
+</tr>
+<tr>
+<td>Endpoint counters</td>
+<td><code>QuicEndpoint.stats</code> / <code>Http3Endpoint.stats</code> (<code>EndpointStats</code>); Ktor server <code>engine.http3Stats</code></td>
+<td>refusals (<code>connectionsRefusedAcceptQueue</code>, <code>connectionsRefusedAdmission</code>, <code>connectionsRefusedLimits</code>, <code>connectionsRefusedShutdown</code>, <code>initialsDropped</code>), failed handshakes (<code>handshakesFailedTimeout</code>, <code>handshakesFailedTls</code>, <code>handshakesFailedOther</code>), 0-RTT, datagrams dropped at the socket or in a queue, path validations, internal failures (<code>uncaughtFailures</code>, <code>sendFailures</code>, <code>listenerFailures</code>)</td>
+</tr>
+<tr>
+<td>Connection counters</td>
+<td><code>QuicConnection.stats</code> (<code>ConnectionStats</code>)</td>
+<td><code>smoothedRtt</code>, <code>minRtt</code>, <code>cwnd</code>, <code>bytesInFlight</code>, <code>lostPackets</code>, <code>ptoCount</code>, <code>pathMtu</code>, <code>ecnState</code>, <code>datagramsDropped</code>, <code>datagramsDroppedSend</code>, <code>datagramsDroppedSocket</code>, <code>glitchTokensSpent</code>, <code>authenticationFailures</code>, <code>invalidResets</code></td>
+</tr>
+<tr>
+<td>qlog</td>
+<td><code>quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }</code>; Ktor client <code>http3 { qlog = … }</code>; Ktor server <code>qlog = …</code>; on Android <code>qlogDirectory(context)</code> (API 26 and up) gives a sink in the app's cache directory</td>
+<td>one <code>&lt;odcid&gt;_&lt;client|server&gt;_&lt;random&gt;.sqlog</code> file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; <code>ConnectionInfo.id</code> and the logger's <code>&lt;id&gt;</code> are the same original destination connection ID</td>
+</tr>
+<tr>
+<td>Ktor client events</td>
+<td><code>engine { eventListener = object : KuicksilverEventListener() { … } }</code></td>
+<td>why a protocol was chosen (<code>protocolSelected</code> with a <code>ProtocolReason</code>), the race (<code>raceEnded</code>), <code>altSvcUsed</code>, <code>altSvcMarkedBroken</code>, <code>fallback</code>, <code>retry</code>, pool reuse</td>
+</tr>
+<tr>
+<td>Ktor client diagnostics</td>
+<td><code>response.kuicksilverDiagnostics</code>; the engine logger at <code>Info</code></td>
+<td>per response: the protocol, why not HTTP/3 (<code>FallbackReason</code>), the alternative, the race; one log line per such call</td>
+</tr>
+<tr>
+<td>Ktor server events</td>
+<td><code>eventListener = object : KuicksilverServerEventListener() { … }</code></td>
+<td>connections per protocol, <code>tlsHandshakeFailed</code>, requests with their failure</td>
+</tr>
+<tr>
+<td>Key log</td>
+<td><code>tlsConfig(…) { keylog = keylogFile(path) }</code> (<code>@DelicateKuicksilverApi</code>)</td>
+<td>TLS secrets for Wireshark; see <a href="#key-logging-is-refused">Key logging is refused</a></td>
+</tr>
+</tbody>
+</table>
+<p>The logger, the listeners and the newer <code>EndpointStats</code> counters are experimental API (<code>@ExperimentalKuicksilverApi</code>, see
+<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md">stability</a>); <code>QuicConnection.stats</code> and the first <code>EndpointStats</code> counters are stable. None of it costs
+anything per packet. Details: <a href="quic.html#observability">QUIC: Observability</a>,
+<a href="quic.html#qlog">QUIC: qlog</a>, <a href="ktor.html#observability-experimental">Ktor: Observability</a>.</p>
+<p>A failed connection's cause is always a <code>QuicException</code>: <code>QuicConnection.closed</code> completes with it, and every waiting
+call (<code>openBidi</code>, <code>acceptStream</code>, the stream channels, <code>sendDatagram</code>) fails with the same instance. Look at its type and
+fields before its message.</p>
+<h2 id="connecting">Connecting</h2>
+<h3 id="connect-fails-with-handshake-timeout-after-10s"><code>connect</code> fails with &quot;Handshake timeout after 10s&quot;</h3>
+<p><code>QuicException.ConnectionLost.Timeout</code> with <code>kind = TimeoutKind.Handshake</code>: nothing the handshake needed came back
+within <code>QuicConfig.handshakeTimeout</code> (10 s).</p>
+<p><strong>Which timeout fired.</strong> A raw QUIC <code>connect</code> has one timer, <code>QuicConfig.handshakeTimeout</code>. The Ktor client has two for an
+HTTP/3 setup, and the earlier one ends it: the connect timeout (<code>HttpTimeout</code>'s <code>connectTimeoutMillis</code>, else the engine's
+<code>connectTimeout</code>, 10 s) and the QUIC handshake timer (<code>engine { quic = quicConfig { handshakeTimeout = ... } }</code>, 10 s; with
+<code>http3 { earlyData = true }</code> it is cut to the connect timeout). Either way the response's diagnostics say
+<code>fallback = HandshakeTimeout</code>; <code>h3Failure</code> tells them apart: a <code>ConnectTimeoutException</code> is the connect timeout, a
+<code>QuicException.ConnectionLost.Timeout</code> (<code>h3Failure=Timeout</code> in the engine's log line) is the handshake timer. In <code>H3Only</code>
+mode the call fails with that exception itself. On the server, <code>EndpointStats.handshakesFailedTimeout</code> counts handshakes
+its own <code>handshakeTimeout</code> ended (the Ktor server sets it through <code>quic</code>).</p>
+<p><strong>Finding the cause, in order.</strong> Each step rules out a row of the table below:</p>
+<ol>
+<li>Does TCP work to the same host and port (<code>curl -sI https://host:port/</code>)? If not, the host or the port is wrong, or the
+server is down: this is not a QUIC problem.</li>
+<li>Does <code>curl --http3-only -sI https://host:port/</code> connect from the same network as the client? If it does, the problem is
+the client's network or its configuration (a VPN, a proxy, <code>H1Only</code>); if it does not, go on.</li>
+<li>Does UDP reach the server? <code>sudo tcpdump -ni any udp port &lt;port&gt;</code> on the server, or <code>EndpointStats.datagramsReceived</code>
+(Ktor server: <code>engine.http3Stats</code>) while the client tries. Nothing arrives: a firewall, a security group, a missing
+UDP port mapping or load balancer listener (first row).</li>
+<li>Initials arrive: are they refused or dropped? <code>connectionsRefusedLimits</code>, <code>initialsDropped</code> and <code>statelessRateLimited</code>
+growing point at the limits (second row, and source NAT below).</li>
+<li>The server answers (<code>datagramsSent</code> grows, <code>tcpdump</code> shows packets going out): does the client get them? Compare the
+source address of the answers with the address the client sent to (reply addresses below), and look for a tunnel with
+a small MTU on the path.</li>
+<li>The handshake starts and stalls: a qlog of both sides (<a href="quic.html#qlog">QUIC: qlog</a>) shows where, for instance
+retransmitted Initials (loss) or a long pause after the server's certificate (the platform verifier).</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Cause</th>
+<th>How to tell</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UDP is blocked between client and server (corporate firewall, captive portal, a cloud security group open for TCP 443 only)</td>
+<td>the server's <code>EndpointStats.datagramsReceived</code> does not move; TCP to the same port works; the Ktor client's <code>kuicksilverDiagnostics.fallback</code> is <code>HandshakeTimeout</code>, later <code>BrokenAlternative</code></td>
+<td>open UDP on the port (<a href="deployment.html#firewalls-and-security-groups">Deploying the HTTP/3 server</a>); with the Ktor client use <code>Http3DiscoveryMode.Auto</code> or <code>Preferred</code>, which fall back to HTTP/1.1 (<a href="#the-ktor-client-never-uses-http3-or-stops-using-it">The Ktor client never uses HTTP/3</a>)</td>
+</tr>
+<tr>
+<td>The server refuses silently: <code>maxConnections</code> (10 000) or <code>maxConnectionsPerIp</code> (256) reached</td>
+<td>server <code>EndpointStats.connectionsRefusedLimits</code>, <code>initialsDropped</code> (Ktor server: <code>engine.http3Stats</code>)</td>
+<td>raise the limits in <code>quicEndpointConfig { }</code> (Ktor server: <code>quicMaxConnections</code>, <code>quicMaxConnectionsPerIp</code>) or spread the load</td>
+</tr>
+<tr>
+<td>Wrong address or port, nothing listening</td>
+<td>no server traffic at all; on Kotlin/Native a QUIC server needs the accelerated socket</td>
+<td>check <code>QuicEndpoint.localAddress</code> on the server and the address the client resolved</td>
+</tr>
+<tr>
+<td>Heavy loss on the first flight (radio links, a peer using <code>X25519MLKEM768</code>, whose first flights span two datagrams)</td>
+<td>the qlog shows Initial retransmissions at 1 s, 2 s, 4 s</td>
+<td>lower <code>QuicConfig.initialRtt</code> (default 333 ms, at most 10 s), see <a href="quic.html#configuration">QUIC: Configuration</a>; a client endpoint that already finished a connection to the same server address starts from its last smoothed RTT on its own</td>
+</tr>
+<tr>
+<td>The client's platform verifier waits on slow OCSP or AIA fetches (<code>TrustConfig.Platform</code> on Apple and Windows)</td>
+<td>the handshake stalls after the server's certificate arrives (qlog)</td>
+<td>allow the verifier's network access, or verify against <code>AnchoredCa</code></td>
+</tr>
+<tr>
+<td>The server's answers leave from another address than the one the client sent to (a host with several addresses, a floating IP, a VIP for direct server return, with the portable socket or before 0.3.0)</td>
+<td><code>tcpdump</code> on the server shows answers whose source differs from the destination of the client's Initials; TCP to the same address works</td>
+<td>bind the connector's <code>host</code> to that address, or use the accelerated socket (<a href="deployment.html#reply-addresses">Deploying: Reply addresses</a>)</td>
+</tr>
+<tr>
+<td>Many clients behind one source address (a source NAT, <code>kube-proxy</code> with <code>externalTrafficPolicy: Cluster</code>, a UDP proxy) hit the stateless answer limit, 8 per second per address</td>
+<td><code>statelessRateLimited</code> grows while Retry packets or refusals are due; only some clients fail</td>
+<td>keep the client addresses (<code>externalTrafficPolicy: Local</code>); the Ktor server engine does not let you change that limit (<a href="deployment.html#kubernetes">Deploying: Kubernetes</a>)</td>
+</tr>
+<tr>
+<td>A tunnel or link on the path drops 1200-byte UDP datagrams (every client Initial datagram is at least 1200 bytes, RFC 9000 section 14.1)</td>
+<td>small UDP gets through, <code>tcpdump</code> on the client shows Initials going out and nothing back, or the server sees none</td>
+<td>fix the tunnel's MTU: QUIC cannot run below 1200 bytes; after the handshake a smaller path is <a href="#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole">black-hole detection</a>'s case</td>
+</tr>
+<tr>
+<td>The server's UDP port is closed and the network answers with ICMP unreachable</td>
+<td><code>tcpdump</code> on the client shows the ICMP answer</td>
+<td>the server's listener (<a href="#the-server-serves-http11-but-no-http3">The server serves HTTP/1.1 but no HTTP/3</a>); Kuicksilver does not report ICMP yet, so the client waits for its timeout (<code>fallback = UdpUnreachable</code> is reserved for it)</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>ConnectionLost.VersionNegotiation</code> instead (&quot;version negotiation failed: server offers [<versions>], we support
+[<versions>]&quot;) the server speaks none of <code>QuicConfig.versions</code>; add <code>VersionProfile.V2</code> or <code>V1</code> as the server expects.</p>
+<h3 id="connect-fails-at-once-with-transportclosedcode--0x02"><code>connect</code> fails at once with <code>TransportClosed(code = 0x02)</code></h3>
+<p>&quot;transport closed by Peer: code 0x2&quot;: the server refused with CONNECTION_REFUSED. A Kuicksilver server does that
+statelessly when its accept queue is full (<code>QuicEndpointConfig.acceptQueue</code>, 128 connections waiting for <code>accept()</code>)
+or while it shuts down (<code>QuicEndpoint.shutdown</code>, the Ktor server's <code>stop</code>). A handshake that completes into a full
+queue is closed with the reason &quot;accept queue full&quot;. The server counts them in <code>connectionsRefusedAcceptQueue</code> and
+<code>connectionsRefusedShutdown</code>.</p>
+<p>Fix on the server: accept faster (one coroutine per connection, <code>incomingConnections()</code>), or raise <code>acceptQueue</code> for
+bursty arrivals. On the client, retry after a delay; during a shutdown, connect to another instance. The Kuicksilver Ktor
+client does this by itself: the call falls back to HTTP/1.1 (<code>fallback = Refused</code>), the alternative is not marked
+broken, and the next call tries HTTP/3 again (<a href="ktor.html#racing-and-fallback">Ktor: Racing and fallback</a>).</p>
+<h3 id="the-handshake-fails-with-a-certificate-error">The handshake fails with a certificate error</h3>
+<p>The client closes with a TLS alert: <code>TransportClosed(code = 0x0100 + alert, initiator = Local)</code> whose <code>cause</code> is a
+<code>TlsException.Verify</code> with a <code>reason: VerifyReason</code>; over TCP you get the <code>TlsException.Verify</code> itself (on the JVM a
+<code>javax.net.ssl.SSLException</code>). The server sees <code>TransportClosed(initiator = Peer)</code> with a <code>TlsException.AlertReceived</code>
+(&quot;TLS alert received from the peer: <description> (<code>)&quot;) and counts it in <code>handshakesFailedTls</code>.</p>
+<p>Decide on <code>reason</code>, not on the message text (&quot;certificate verification failed: <reason>&quot;, for example
+<code>Expired</code> or <code>HostnameMismatch(expected=…, presented=[…])</code>):</p>
+<table>
+<thead>
+<tr>
+<th><code>VerifyReason</code></th>
+<th>Alert</th>
+<th>Usual cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UnknownIssuer</code></td>
+<td>48</td>
+<td>the chain does not lead to a trusted root: a private CA without <code>TrustConfig.AnchoredCa</code>, a server that does not send its intermediates, the JVM's <code>cacerts</code> lacking a corporate root (the JVM verifier uses the JDK store, not the OS store). Also the fallback for platform failures without a better mapping</td>
+</tr>
+<tr>
+<td><code>HostnameMismatch(expected, presented)</code></td>
+<td>42</td>
+<td>the certificate's names (<code>presented</code>) do not include <code>serverName</code>; connecting by IP literal to a certificate without that IP is the common case. Fix the name, or use <code>TrustConfig.ExpectedName</code> behind a proxy; the check cannot be disabled</td>
+</tr>
+<tr>
+<td><code>PinMismatch(chainPins)</code></td>
+<td>42</td>
+<td>no pin of <code>TrustConfig.Pinned</code> matches the validated chain (or a <code>TrustConfig.Tofu</code> key changed); <code>chainPins</code> lists what the chain has, leaf first. Rotate pins before rotating keys</td>
+</tr>
+<tr>
+<td><code>Expired</code>, <code>NotYetValid</code></td>
+<td>45</td>
+<td>certificate dates, or a wrong device clock</td>
+</tr>
+<tr>
+<td><code>Revoked</code>, <code>UnknownRevocationStatus</code></td>
+<td>44, 48</td>
+<td>the platform verifier's revocation policy (JVM PKIX, Apple, Windows soft-fail on the leaf)</td>
+</tr>
+<tr>
+<td><code>InvalidPurpose</code></td>
+<td>43</td>
+<td>the key usage or extended key usage forbids TLS server (or client) authentication</td>
+</tr>
+<tr>
+<td><code>BadSignature</code>, <code>BadEncoding</code>, <code>NoCertificate</code></td>
+<td>42</td>
+<td>a damaged chain, or a server that requires a client certificate the client did not configure (<code>identity</code>)</td>
+</tr>
+<tr>
+<td><code>CertificateTransparency</code></td>
+<td>46</td>
+<td>Android's CT policy rejected the chain</td>
+</tr>
+<tr>
+<td><code>Custom(text)</code></td>
+<td>46</td>
+<td>your <code>CertificateVerifier</code> or the platform said <code>text</code></td>
+</tr>
+</tbody>
+</table>
+<p>Linux Kotlin/Native without a CA store (distroless or <code>scratch</code> images) fails earlier, when the client configuration
+is built: <code>TlsException.Config</code> &quot;invalid TLS configuration: <native message>&quot;, the native message being &quot;ksl: no CA
+certificates for TrustConfig.Platform; searched <paths>; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or
+use AnchoredCa&quot;. When <code>SSL_CERT_FILE</code> or
+<code>SSL_CERT_DIR</code> is set, only those are searched (<a href="tls.html#linux-trust-store">TLS: Linux trust store</a>).</p>
+<h3 id="the-handshake-fails-with-an-alpn-mismatch">The handshake fails with an ALPN mismatch</h3>
+<p>QUIC needs both sides to agree on an application protocol (RFC 9001 section 8.1). Without a common one the server
+closes with the TLS alert <code>no_application_protocol</code> (120): the client sees <code>TransportClosed(code = 0x0178, initiator = Peer)</code>, and the server counts it in <code>handshakesFailedTls</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>What you see</th>
+<th>Cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ktor client, <code>fallback = TlsFailure</code></td>
+<td>the HTTP/3 attempt fails, the call goes over HTTP/1.1</td>
+<td>the server does not speak <code>h3</code> on that UDP port (another QUIC service, an HTTP/3 proxy for other protocols, or a server without HTTP/3); the Ktor engines offer <code>h3</code> themselves, check what runs on the port</td>
+</tr>
+<tr>
+<td><code>Http3Endpoint.connect</code> with your own <code>TlsConfig</code></td>
+<td><code>IllegalArgumentException</code> <code>&quot;the TLS configuration must offer ALPN \&quot;h3\&quot;&quot;</code></td>
+<td>add <code>h3</code> to <code>TlsConfig.alpn</code> (also <code>Http3Endpoint.bind</code>: <code>&quot;the server TLS configuration must offer ALPN \&quot;h3\&quot;&quot;</code>)</td>
+</tr>
+<tr>
+<td>Raw <code>QuicEndpoint</code> against an HTTP/3 server</td>
+<td><code>no_application_protocol</code>, or the server closes with &quot;ALPN h3 required&quot;</td>
+<td>the client's <code>TlsConfig.alpn</code> must list <code>h3</code>; an <code>alpn</code> that is empty is refused when the config is built</td>
+</tr>
+<tr>
+<td>Server accepts the connection but closes it at once with &quot;ALPN h3 required&quot;</td>
+<td><code>Http3Endpoint.accept</code> only keeps connections that negotiated <code>h3</code></td>
+<td>your client offered another protocol; use <code>Http3Endpoint.connect</code> or add <code>h3</code></td>
+</tr>
+<tr>
+<td><code>Http3Endpoint.connect</code> fails with <code>&quot;the server chose ALPN \&quot;&lt;alpn&gt;\&quot;, not \&quot;h3\&quot;&quot;</code></td>
+<td>the HTTP/3 session ends with <code>GENERAL_PROTOCOL_ERROR</code> when the server picked another protocol</td>
+<td>the server's <code>TlsConfig.alpn</code> lists it ahead of <code>h3</code> for this client; the order is the server's preference</td>
+</tr>
+<tr>
+<td>HTTP/3 to one name of a Kuicksilver server with an <code>sniSelector</code></td>
+<td><code>no_application_protocol</code> for that name only, and no <code>Alt-Svc</code> on its TCP responses</td>
+<td>the selector's answer for the name sets <code>alpn</code> without <code>h3</code>: the name is restricted to the protocols listed. Add <code>h3</code> to the list, or leave <code>alpn</code> out</td>
+</tr>
+<tr>
+<td>HTTPS over TCP to one name of a Kuicksilver server with an <code>sniSelector</code></td>
+<td><code>TlsException.AlertReceived</code> with <code>no_application_protocol</code> (120) for that name only</td>
+<td>the selector's answer for the name sets <code>alpn = listOf(&quot;h3&quot;)</code>: the name is served over HTTP/3 only (TLS over TCP never negotiates <code>h3</code>). Add <code>h2</code> or <code>http/1.1</code> to the list</td>
+</tr>
+<tr>
+<td>A Kuicksilver server answers a ClientHello with <code>decode_error</code> (50)</td>
+<td><code>TlsException.AlertReceived</code> with code 50 before the server's first flight</td>
+<td>the ClientHello's ALPN extension is malformed (RFC 7301 section 3.1: an empty list, an empty name, or lengths that do not add up). Fix the client's ALPN encoding</td>
+</tr>
+<tr>
+<td>A TLS client without ALPN (an old HTTP/1.1 client, <code>openssl s_client</code> without <code>-alpn</code>) to a Kuicksilver server</td>
+<td><code>no_application_protocol</code> (120) for some names only, or every name of a plain <code>TlsConfig</code> server</td>
+<td>the protocols in effect for the name leave out the server's <code>alpnFallback</code> (<code>http/1.1</code> on the Ktor connector): a client without ALPN can only speak HTTP/1.1 (RFC 9113 section 3.3). Add <code>http/1.1</code> to the selector's answer (or to <code>alpn</code>), or have the client offer <code>h2</code></td>
+</tr>
+<tr>
+<td>Over TCP (Ktor client)</td>
+<td>HTTP/1.1 where HTTP/2 was expected</td>
+<td>the server did not pick <code>h2</code>: it is not offered by the server (<code>http2 = false</code> on the Kuicksilver server), or <code>http2 { enabled = false }</code> on the client</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-handshake-fails-with-unrecognized_name-missing_extension-or-internal_error-server-with-an-sniselector">The handshake fails with <code>unrecognized_name</code>, <code>missing_extension</code> or <code>internal_error</code> (server with an <code>sniSelector</code>)</h3>
+<p>A server whose <code>TlsConfig</code> (or Ktor <code>tlsConnector</code>) has an <code>sniSelector</code> ends a handshake itself in three cases; a QUIC
+client sees <code>TransportClosed(initiator = Peer)</code> with the code, a TCP client <code>TlsException.AlertReceived</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Code (QUIC)</th>
+<th>Alert</th>
+<th>Cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0x0170</td>
+<td><code>unrecognized_name</code> (112)</td>
+<td>the selector answered <code>null</code> for the ClientHello's server name: it does not serve that name. Add it, or answer with a default identity</td>
+</tr>
+<tr>
+<td>0x016d</td>
+<td><code>missing_extension</code> (109)</td>
+<td>the ClientHello had no server name (the client connected to an address), the selector answered <code>null</code> and the server has no <code>identity</code> of its own. Give the server one, answer <code>serverName == null</code> too, or connect by name</td>
+</tr>
+<tr>
+<td>0x0150</td>
+<td><code>internal_error</code> (80)</td>
+<td>QUIC only: the selector threw, or its override does not suit QUIC (an empty <code>alpn</code>). The client reads no detail; the server's failure carries the exception as its cause</td>
+</tr>
+</tbody>
+</table>
+<h3 id="connections-are-refused-or-dropped">Connections are refused or dropped</h3>
+<p>A server endpoint answers a new client in one of three ways: it accepts, it refuses with CONNECTION_REFUSED (0x2, the
+client knows at once), or it drops the Initial silently (the client waits for its handshake timeout). The counters of
+<code>QuicEndpoint.stats</code> / <code>Http3Endpoint.stats</code> (<code>EndpointStats</code>) tell which:</p>
+<table>
+<thead>
+<tr>
+<th>Counter</th>
+<th>The client sees</th>
+<th>Cause</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>connectionsRefusedAcceptQueue</code></td>
+<td><code>TransportClosed(code = 0x02)</code></td>
+<td><code>acceptQueue</code> (128) handshaken connections wait for <code>accept()</code></td>
+<td>accept faster, or raise <code>acceptQueue</code> (Ktor server: <code>quicAcceptQueue</code>)</td>
+</tr>
+<tr>
+<td><code>connectionsRefusedShutdown</code></td>
+<td><code>TransportClosed(code = 0x02)</code></td>
+<td><code>QuicEndpoint.shutdown</code> (the Ktor server's <code>stop</code>) is running</td>
+<td>connect to another instance; wait for the new one</td>
+</tr>
+<tr>
+<td><code>connectionsRefusedLimits</code>, <code>initialsDropped</code></td>
+<td>nothing, then &quot;Handshake timeout after 10s&quot;</td>
+<td><code>maxConnections</code> (10 000) or <code>maxConnectionsPerIp</code> (256) reached (Ktor server: <code>quicMaxConnections</code>, <code>quicMaxConnectionsPerIp</code>), <code>initialQueueCap</code> overflow, or an Initial from a reflective source port (53, 123, 1900, 5353, 11211)</td>
+<td>raise the limit in <code>quicEndpointConfig { }</code> (Ktor server: <a href="deployment.html#quic-connection-limits">QUIC connection limits</a>), or find the client that holds the connections; a NAT puts many users behind one IP</td>
+</tr>
+<tr>
+<td><code>connectionsRefusedAdmission</code></td>
+<td>nothing, or the <code>ConnectionAdmission</code> close code</td>
+<td>your <code>ConnectionAdmission</code> said <code>Drop</code> or <code>Close(code)</code>, or the Ktor server is in <code>Drain</code> (it refuses new QUIC clients through its admission policy: <code>TransportClosed(code = 0x02)</code>); the default asks an unvalidated client for a Retry (it does not drop it) above 256 handshakes in flight or 8 MiB of handshake data</td>
+<td>check the admission policy and its <code>maxInflightHandshakes</code></td>
+</tr>
+<tr>
+<td><code>statelessRateLimited</code></td>
+<td>nothing</td>
+<td>Retry, Version Negotiation, Stateless Reset or refusals withheld by <code>statelessPerAddressPerSecond</code> (8) or <code>statelessTotalPerSecond</code> (1000)</td>
+<td>a flood or a scan; when real clients are hit, raise the limits in <code>quicEndpointConfig { }</code> (QUIC API). The Ktor server engine keeps them at their defaults and offers no option: make clients reach it from their own addresses instead (<a href="deployment.html#kubernetes">Deploying: Kubernetes</a>)</td>
+</tr>
+<tr>
+<td><code>invalidTokens</code>, <code>retriesSent</code></td>
+<td><code>INVALID_TOKEN</code></td>
+<td>a Retry token that expired or came from another address (the client moved, or a load balancer sent the second Initial to another server)</td>
+<td>keep a client's packets on one server; see <a href="deployment.html">Deploying</a></td>
+</tr>
+</tbody>
+</table>
+<p>The Ktor engines have their own limits: the client waits for a free connection beyond <code>maxConnectionsCount</code> or
+<code>maxConnectionsPerRoute</code> and fails with <code>ConnectTimeoutException</code> when the connect timeout runs out first (<a href="#requests-wait-and-then-fail-with-connecttimeoutexception">requests wait and then fail</a>).</p>
+<h3 id="quicclientconfig-or-quicserverconfig-cannot-be-built"><code>QuicClientConfig</code> or <code>QuicServerConfig</code> cannot be built</h3>
+<p><code>TlsException.Config</code> from <code>build()</code> means the <code>TlsConfig</code> cannot carry QUIC (RFC 9001 section 4): &quot;QUIC requires TLS
+1.3 only&quot;, &quot;QUIC requires a non-empty ALPN list&quot; or &quot;TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC&quot;. A client without a reference identity fails with &quot;a client needs serverName
+(or ExpectedName) as the reference identifier&quot;. <code>IllegalArgumentException</code> from a builder names the value out of range,
+for example &quot;keepAlive must be at most 3/4 of maxIdleTimeout&quot;, &quot;initialRtt must be positive and at most 10 s&quot; or
+&quot;server QuicConfig.connectionIdLength (<n>) must equal the endpoint's connectionIdLength (<m>) …&quot;.</p>
+<h2 id="connections-that-end">Connections that end</h2>
+<h3 id="idle-timeout-after-30s">&quot;Idle timeout after 30s&quot;</h3>
+<p><code>ConnectionLost.Timeout</code> with <code>kind = TimeoutKind.Idle</code>: nothing arrived for the idle timeout both peers agreed on, the
+smaller of our <code>QuicConfig.maxIdleTimeout</code> (30 s) and the peer's, never below 3 x PTO; <code>duration</code> is that value. No
+CONNECTION_CLOSE is sent.</p>
+<ul>
+<li><strong>A quiet but wanted connection</strong> (a push channel waiting for events): set <code>QuicConfig.keepAlive</code> to a PING interval
+of at most 3/4 of <code>maxIdleTimeout</code>, for example <code>keepAlive = 10.seconds</code>; PINGs then go out at least every half of the
+effective idle timeout, also when the peer's is shorter. A NAT on the path may forget an idle UDP mapping sooner than
+30 s; keep-alive covers that too.</li>
+<li><strong>The peer's timeout is shorter</strong>: the effective value is the minimum; raise it on both sides, or keep the connection busy with <code>keepAlive</code>. The Ktor server takes
+<code>quicMaxIdleTimeout</code> (when <code>quic</code> is not assigned; otherwise set <code>maxIdleTimeout</code> in <code>quic</code>).</li>
+<li><strong>The peer vanished</strong> (a server restarted without a Stateless Reset, a phone lost coverage): the timeout is the
+intended outcome. A client that follows networks (<a href="quic.html#network-changes">Network changes</a>) survives a change of
+network instead.</li>
+<li><strong>A stalled sender</strong>: if the application had data to send, check <code>QuicConnection.stats</code> (<code>cwnd</code>, <code>bytesInFlight</code>,
+<code>ptoCount</code>) and the qlog; report the trace if the connection stopped sending with credit available.</li>
+</ul>
+<p><code>maxConnectionLifetime</code> on the server endpoint ends connections deliberately: <code>TransportClosed(code = 0)</code> with the
+reason &quot;connection lifetime reached&quot;. The Ktor client's <code>idleTimeout</code> (5 minutes) is a separate pool timer that closes
+unused connections on the client side.</p>
+<h3 id="statelessreset-or-applicationclosed"><code>StatelessReset</code> or <code>ApplicationClosed</code></h3>
+<ul>
+<li><code>ConnectionLost.StatelessReset</code> (&quot;stateless reset received&quot;): the peer lost the connection's state and could still
+prove it was the endpoint that issued the connection ID (RFC 9000 section 10.3), for example a peer that keeps its
+reset key across a restart. Reconnect. A Kuicksilver peer cannot do that after a restart, and neither can another
+instance behind a load balancer: reset tokens come from a key of the endpoint that issued the connection
+(<a href="quic.html#stateless-reset">QUIC: Stateless reset</a>). Such an endpoint may answer with a Stateless Reset (only to a short-header packet whose
+connection ID has its format and loop index, or with QUIC-LB its configuration and server ID, and within its stateless rate limit), but its token does not match, so the client ignores it (counted in <code>ConnectionStats.invalidResets</code>), and the connection ends with
+&quot;Idle timeout&quot; instead (<a href="#idle-timeout-after-30s">Idle timeout</a>). Behind a load balancer, keep each client on one instance
+(<a href="deployment.html#connection-ids-and-several-instances">Deploying the HTTP/3 server: Connection IDs and several instances</a>),
+or let a QUIC-LB load balancer route by connection ID (<a href="quic.html#behind-a-load-balancer">QUIC: Behind a load balancer</a>).</li>
+<li><code>ConnectionLost.ApplicationClosed</code> (&quot;application closed by &lt;Local|Peer&gt;: code <n> (<reason>)&quot;): an application
+<code>close(code, reason)</code>. Over HTTP/3, <code>Http3Exception.fromQuic(e)</code> reads the code as an HTTP/3 error
+(<code>Http3Exception.Protocol</code> with an <code>Http3ErrorCode</code>, <code>H3_NO_ERROR</code> after a graceful GOAWAY).</li>
+</ul>
+<h3 id="transportclosed-with-a-protocol-error"><code>TransportClosed</code> with a protocol error</h3>
+<p>&quot;transport closed by &lt;Local|Peer&gt;: code 0x<code> (<reason>)&quot;. <code>code</code> is a <code>TransportError</code> (RFC 9000 section 20),
+<code>frameType</code> the frame that triggered it (0 if none), <code>initiator</code> who detected it.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Typical reason</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0x03 <code>FLOW_CONTROL_ERROR</code></td>
+<td>&quot;data beyond the flow control limit: <end> &gt; <limit>&quot;</td>
+<td>the peer sent beyond the window we granted: a peer bug</td>
+</tr>
+<tr>
+<td>0x04 <code>STREAM_LIMIT_ERROR</code></td>
+<td>&quot;stream <id> exceeds the limit of <n>&quot;</td>
+<td>the peer opened more streams than <code>maxBidiStreams</code> / <code>maxUniStreams</code> allowed</td>
+</tr>
+<tr>
+<td>0x0a <code>PROTOCOL_VIOLATION</code></td>
+<td>&quot;excessive peer activity (<frame types>)&quot;</td>
+<td>glitch protection: the peer kept sending frames that do no work (<a href="quic.html#glitch-protection">QUIC: Glitch protection</a>); <code>glitchProtection = false</code> turns it off for a peer you trust</td>
+</tr>
+<tr>
+<td>0x0f <code>AEAD_LIMIT_REACHED</code></td>
+<td>&quot;AEAD integrity limit reached&quot;, &quot;AEAD confidentiality limit reached without a possible key update&quot;</td>
+<td>too many forged packets, or a peer that never allowed a key update</td>
+</tr>
+<tr>
+<td>0x0100 + alert</td>
+<td>the TLS message</td>
+<td>see <a href="#the-handshake-fails-with-a-certificate-error">certificate errors</a></td>
+</tr>
+</tbody>
+</table>
+<p><code>ConnectionLost.Internal</code> is a bug or a failing endpoint loop: the connection is dropped without CONNECTION_CLOSE (the
+peer sees an idle timeout). A loop that died is logged at <code>Error</code> (&quot;endpoint <address> loop <n>: <what>; closing the
+endpoint&quot;), and exceptions that escaped a loop coroutine are counted in <code>EndpointStats.uncaughtFailures</code>. Please report
+it with the stack trace of its <code>cause</code>.</p>
+<h3 id="0-rtt-is-rejected">0-RTT is rejected</h3>
+<ul>
+<li><code>StreamError.EarlyDataRejected</code> on a stream opened before the handshake completed: the server rejected 0-RTT, and the
+client reset every such stream (RFC 9001 section 4.6.2); nothing of it reached the server. Send it again on a new
+stream after <code>awaitHandshake()</code> (the HTTP/3 client does this itself for its early requests).</li>
+<li><code>ConnectionLost.ZeroRttRejected</code> (&quot;0-RTT rejected&quot;): the server rejected 0-RTT and chose another ALPN than the ticket's,
+or the client asked for <code>EarlyDataState.Required</code> and got no 0-RTT. Retry on a new connection with <code>connectEarly</code> off
+or <code>Allowed</code>.</li>
+<li>0-RTT never happens: the server needs <code>QuicServerConfig.earlyData = true</code> (Ktor server <code>quicEarlyData</code>); a server
+that asks for client certificates cannot accept 0-RTT (building a <code>QuicServerConfig</code> with <code>earlyData = true</code> and a
+<code>clientAuth</code> other than <code>None</code> throws <code>IllegalArgumentException</code> &quot;earlyData cannot be combined with client
+certificates&quot;, and the Ktor server's start fails the same way); a ticket is single-use and lives in the endpoint (or Ktor engine) that received
+it, and a server whose configuration changed (ALPN, transport limits, HTTP/3 SETTINGS) refuses old tickets. The
+counters <code>zeroRttOffered</code>, <code>zeroRttAccepted</code> and <code>zeroRttRejected</code>, and <code>ConnectionListener.onZeroRtt</code>, show the
+outcome. Background: <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/adr/0015-0rtt-implementation.md">ADR-0015</a>.</li>
+</ul>
+<h2 id="migration-and-network-changes">Migration and network changes</h2>
+<h3 id="migrate-throws-pathvalidationexception"><code>migrate</code> throws <code>PathValidationException</code></h3>
+<p><code>PathValidationException</code> is an <code>IllegalStateException</code> with a <code>reason: PathFailureReason</code>; the connection stays on
+its old path and the new socket is closed.</p>
+<table>
+<thead>
+<tr>
+<th><code>reason</code></th>
+<th>Message</th>
+<th>Cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ValidationTimeout</code></td>
+<td>&quot;path validation failed&quot;</td>
+<td>no <code>PATH_RESPONSE</code> within max(3 x PTO, 6 x <code>initialRtt</code>): the new network cannot reach the server (a captive portal, no route, UDP blocked there)</td>
+</tr>
+<tr>
+<td><code>NoSpareConnectionId</code></td>
+<td>&quot;path validation failed: no spare connection ID from the peer&quot;</td>
+<td>the network changed before the server's spare connection IDs arrived (right after the handshake) and none came in time; retry, which <code>NetworkMigrator</code> does on its own as soon as one arrives</td>
+</tr>
+</tbody>
+</table>
+<p><code>migrate</code> and <code>addPath</code> also throw <code>IllegalStateException</code> for &quot;only a client migrates (RFC 9000 section 9)&quot;,
+&quot;migration before the handshake is confirmed (RFC 9000 section 9)&quot;, &quot;the peer advertised disable_active_migration&quot;
+(reconnect instead) and &quot;at most 4 paths&quot;. When the active path fails and no other validated path remains, the
+connection ends with <code>ConnectionLost.NoViablePath</code> (&quot;no viable path&quot;). The same reasons arrive as
+<code>PathEvent.Failed.reason</code> and <code>ConnectionEvent.PathFailed.reason</code>.</p>
+<h3 id="networkmigrator-reports-failed-or-sourcefailed"><code>NetworkMigrator</code> reports <code>Failed</code> or <code>SourceFailed</code></h3>
+<p><code>MigrationEvent.Failed(network, cause)</code>: the migration to <code>network</code> failed (the causes above, or <code>openIo</code> threw); the
+connection stays where it was. <code>MigrationEvent.SourceFailed(cause)</code> is the last event: the network flow threw (on
+Android, <code>TooManyRequestsException</code> when the app registers more than about 100 network callbacks; <code>followDefaultNetwork</code>
+shares one callback per <code>ConnectivityManager</code> to avoid it). <code>NetworkLost</code> means no network for now; the connection
+waits for its idle timeout. Android needs <code>ACCESS_NETWORK_STATE</code>, which the <code>kuicksilver-quic</code> AAR declares.</p>
+<h3 id="patheventsocketlost-after-an-ios-app-comes-back"><code>PathEvent.SocketLost</code> after an iOS app comes back</h3>
+<p>iOS reclaims the sockets of a suspended app; <code>sendmsg</code>/<code>recvmsg</code> then fail with <code>ENOTCONN</code>, <code>EBADF</code>, <code>EPIPE</code> or
+<code>ENOTSOCK</code>, and a vanished interface with <code>ENETDOWN</code>, <code>ENETUNREACH</code> or <code>EHOSTUNREACH</code>. Kuicksilver turns these into
+<code>SocketDefunctException</code>, stops using the socket and reports <code>PathEvent.SocketLost(path, cause)</code>; the connection is not
+closed. Call <code>QuicConnection.rebind()</code> (or let <code>followDefaultNetwork</code> / <code>NetworkMigrator</code> do it). A client endpoint whose
+own socket is gone refuses new connections with <code>SocketDefunctException</code> &quot;the endpoint's socket is gone: bind a new
+endpoint&quot;; bind a new <code>QuicEndpoint</code>. A server endpoint's socket loss ends the endpoint. Details:
+<a href="quic.html#suspended-apps-and-lost-sockets">QUIC: Suspended apps and lost sockets</a>.</p>
+<h2 id="throughput-and-packet-size">Throughput and packet size</h2>
+<h3 id="transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole">Transfers stall over a VPN or tunnel (MTU black hole)</h3>
+<p>DPLPMTUD raises the packet size above 1200 bytes only on sockets that set DF. A path that silently drops large packets
+(a tunnel with a small MTU that does not send ICMP) is detected: three lost packets above 1200 bytes, or two PTOs in a
+row while a large packet is unanswered, bring the connection back to 1200 and pause the search for 60 s
+(<a href="quic.html#path-mtu">QUIC: Path MTU</a>). Each drop costs a few round trips.</p>
+<ul>
+<li>Watch <code>ConnectionStats.pathMtu</code>, <code>ConnectionEvent.MtuUpdated</code> and the qlog.</li>
+<li>On a path you know is constrained, set <code>QuicConfig.pmtud = false</code> (stays at 1200) or lower <code>maxUdpPayloadSize</code>
+(default 1452, 1200..65527; a <code>QuicEndpoint</code> refuses more than 1500 with &quot;maxUdpPayloadSize <n> exceeds the endpoint
+runtime's 1500-byte datagram slots&quot;).</li>
+<li><code>pathMtu</code> stuck at 1200 on a healthy path means the socket has no DF: the portable socket is in use
+(<a href="#the-accelerated-socket-is-not-used">the accelerated socket is not used</a>).</li>
+</ul>
+<h3 id="throughput-is-far-below-the-link">Throughput is far below the link</h3>
+<ul>
+<li><strong>Loss-based collapse</strong> on lossy paths (radio, long-haul): try <code>quicConfig { congestionController = { Bbr() } }</code>
+(experimental; <a href="quic.html#choosing-a-congestion-controller">QUIC: Choosing a congestion controller</a>).</li>
+<li><strong>Receive windows</strong>: a slow reader keeps the initial windows (512 KiB per stream, 768 KiB per connection); they grow
+to <code>maxStreamWindow</code> (6 MiB) and <code>maxConnectionWindow</code> (15 MiB) only while the application reads a whole window in
+under four RTTs. On a long fat path, raise <code>initialStreamWindow</code> / <code>initialConnectionWindow</code> and the maxima.</li>
+<li><strong>Send buffer</strong>: <code>maxSendBuffer</code> (4 MiB) bounds unacknowledged data per connection; writers wait beyond it.</li>
+<li><strong>The socket refuses datagrams</strong>: a rising <code>ConnectionStats.datagramsDroppedSocket</code> (or <code>EndpointStats.datagramsDroppedSocket</code>)
+means the send buffer, not the network, is the bottleneck.</li>
+<li><strong>ECN</strong>: <code>ConnectionStats.ecnState</code> is <code>Failed</code> when a path bleached or mangled marks; that is harmless, ECN is just off.</li>
+</ul>
+<h2 id="platforms">Platforms</h2>
+<h3 id="the-accelerated-socket-is-not-used">The accelerated socket is not used</h3>
+<p>The accelerated <code>ksl</code> socket brings batching, ECN, DF (so PMTUD) and, on Linux, GSO/GRO. When it cannot open, the
+endpoint uses the portable socket (NIO on the JVM, <code>ktor-network</code> on Kotlin/Native): MTU 1200, no ECN marks read, one
+datagram per call.</p>
+<ul>
+<li>When a bind of the accelerated socket is refused, the logger says once per process at <code>Warn</code>: &quot;accelerated UDP socket
+refused on <address> (<reason>); using the portable socket&quot;. The reason is the failing system call and its error
+(&quot;<step>: <strerror>&quot;, on Windows &quot;<step>: WSA error <n>&quot;).</li>
+<li>When the one-time loopback probe fails, for example because a sandbox refuses every <code>bind</code>, the same once-per-process
+warning reads &quot;accelerated UDP socket unavailable (<reason>); using the portable socket&quot;. Without a logger line (a
+<code>KuicksilverLogger.None</code> endpoint), tell by <code>QuicConnection.stats.pathMtu</code> staying at 1200 and <code>ecnState</code> never
+reaching <code>Capable</code>.</li>
+<li>A QUIC server on Kotlin/Native needs the accelerated socket; without it <code>bind</code> with a <code>server</code> throws
+<code>UnsupportedOperationException</code> (&quot;a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple,
+Windows), which is unavailable here&quot;), and the Ktor server serves HTTP/1.1 only, logging &quot;HTTP/3 is not served on port
+<port>: <reason>&quot;.</li>
+</ul>
+<h3 id="a-quic-lb-configuration-is-refused">A QUIC-LB configuration is refused</h3>
+<p><code>QuicEndpointConfig.Builder.build()</code> refuses a <code>loadBalancer</code> whose <code>1 + serverId + nonceLength</code> differs from
+<code>connectionIdLength</code> (&quot;loadBalancer connection IDs are N bytes…&quot;), a <code>connectionIdLength</code> below 8, an endpoint without a
+server, and a plaintext configuration (no <code>key</code>) next to a <code>preferredAddress</code>. <code>updateLoadBalancer</code> throws
+<code>IllegalStateException</code> on an endpoint built without <code>loadBalancer</code> (the Ktor engine: without <code>quicLoadBalancer</code>), and
+<code>IllegalArgumentException</code> for another length, for a server ID this endpoint used in clear that is now encrypted, or the
+other way round (draft-ietf-quic-load-balancers-21 section 9.7: give the encrypted configuration other server IDs), and for
+a <code>configId</code> the current or previous configuration still holds with another key, server ID or nonce length (&quot;configId N
+still names the configuration before it&quot;: use another codepoint, or wait one more change). <code>EndpointStats.loadBalancerNoncesExhausted</code>
+above 0, with the <code>Warn</code> line &quot;QUIC-LB: the nonces of configuration … are spent&quot;, means the endpoint issues unroutable IDs:
+roll out a configuration with a new key. <code>loadBalancerReservationFailures</code> above 0, with the <code>Warn</code> line &quot;QUIC-LB: the nonce
+reservation could not be stored&quot;, means <code>QuicLbNonceReservation.store</code> threw (a full disk, say): fix the store; it is
+retried after a back-off. <code>IllegalArgumentException</code> &quot;every configuration with this key … must bring the same
+nonceReservation&quot; means two configurations of one key (or, in clear, one nonce length) disagree about the reservation. &quot;a plaintext configuration needs a nonceReservation&quot; means a <code>QuicLbConfig</code> without a key and without a reservation:
+plaintext nonces must survive a restart (draft section 9.6), so give it a <code>QuicLbNonceReservation</code>, or a key. See <a href="quic.html#behind-a-load-balancer">QUIC: Behind a load balancer</a>.</p>
+<h3 id="unsupportedoperationexception-for-loops--1"><code>UnsupportedOperationException</code> for <code>loops &gt; 1</code></h3>
+<p>Since 0.3.0 <code>loops &gt; 1</code> runs on every platform: where the kernel does not balance <code>SO_REUSEPORT</code> sockets (macOS, iOS,
+Windows) or with a custom <code>io</code>, the loops share one socket (<a href="quic.html#several-loops-on-one-port">QUIC: Several loops on one port</a>).
+<code>bind</code> still throws &quot;loops &gt; 1 needs the accelerated transport&quot; where the accelerated socket cannot open (a sandbox
+that refuses <code>bind</code>, a platform without <code>ksl_udp</code>) and no <code>io</code> is given: use <code>loops = 1</code> there (Ktor server:
+<code>udpSocketCount = 1</code>), or several processes behind a QUIC-aware load balancer (a QUIC-LB one: <a href="quic.html#behind-a-load-balancer">QUIC: Behind a load balancer</a>)
+(<a href="deployment.html#connection-ids-and-several-instances">Deploying the HTTP/3 server: Connection IDs and several instances</a>).</p>
+<h3 id="datagrams-lost-with-loops--1-on-macos-or-windows">Datagrams lost with <code>loops &gt; 1</code> on macOS or Windows</h3>
+<p><code>EndpointStats.datagramsDispatchDropped</code> above 0: a loop fell more than 512 datagrams behind the socket's receiver (more
+loops than cores, a blocking call on the loop, a flood of one loop's connection IDs). Its peers retransmit; the other
+loops are not held up. Use fewer loops than cores and keep blocking work off the endpoint's dispatchers.</p>
+<h3 id="windows">Windows</h3>
+<ul>
+<li>The accelerated socket is Winsock with <code>SO_EXCLUSIVEADDRUSE</code>: a port another socket holds is refused, and only one
+loop per port runs. ECN needs a Windows that accepts <code>IP_ECN</code> (probed when the socket opens, verified on Windows 11); USO/URO are used where Windows grants them
+(<code>DatagramIo.capabilities</code> tells).</li>
+<li>A wildcard bind (<code>0.0.0.0</code> or <code>::</code>) is dual-stack; on a host without IPv6, <code>0.0.0.0</code> falls back to an IPv4 socket.</li>
+<li><code>TrustConfig.Platform</code> verifies with CryptoAPI and the Windows root store, fetching missing intermediates through
+AIA; a revoked leaf is <code>Revoked</code>, an unknown revocation status is ignored.</li>
+<li>A server must be allowed through the Windows firewall for inbound UDP and TCP on its port
+(<a href="deployment.html#firewalls-and-security-groups">Deploying the HTTP/3 server</a>).</li>
+<li><code>keylogFile</code> on the JVM is refused (Windows has no POSIX permission view); on Kotlin/Native the file is only
+created (<a href="#key-logging-is-refused">key logging is refused</a>).</li>
+</ul>
+<h3 id="macos-and-ios">macOS and iOS</h3>
+<ul>
+<li><strong>App Sandbox (macOS)</strong>: a client needs <code>com.apple.security.network.client</code>, an app that accepts connections (a
+QUIC endpoint with <code>server</code>, the Ktor server) also <code>com.apple.security.network.server</code>. Test the signed, sandboxed
+build: a refused bind may only show as the <a href="#the-accelerated-socket-is-not-used">portable-socket symptoms</a>.
+<a href="app-store.html#4-infoplist-and-entitlements">Publishing on the App Store</a> has the entitlement templates.</li>
+<li><strong>Local network (iOS 14+, macOS 15+)</strong>: talking to LAN devices needs <code>NSLocalNetworkUsageDescription</code> (and
+<code>NSBonjourServices</code> for Bonjour); without it the system blocks the traffic. Loopback and Internet traffic need
+neither.</li>
+<li><strong>App Transport Security</strong> does not apply to Kuicksilver's own sockets.</li>
+<li>One endpoint loop per port; no GSO/GRO on Darwin.</li>
+<li>See <a href="ios.html#networking-rules-on-ios">iOS</a> for NAT64, backgrounding and the device checklist.</li>
+</ul>
+<h3 id="android">Android</h3>
+<p><code>INTERNET</code> (declared by the <code>kuicksilver-native</code> AAR) and <code>ACCESS_NETWORK_STATE</code> (by <code>kuicksilver-quic</code>, for
+<code>followDefaultNetwork</code>) come with the libraries. Doze and app standby cut network access whatever Kuicksilver does; a
+frozen background process reconnects when it runs again.</p>
+<p>Code shrinking (R8, <code>isMinifyEnabled</code> or <code>optimization { enable = true }</code>): <code>libksl</code>'s <code>JNI_OnLoad</code> finds the natives
+of <code>io.kuicksilver.native.KslNative</code> and the field <code>PacketBuffer.buffer</code> by name, so R8 must neither remove nor rename
+them. The <code>kuicksilver-native</code> AAR carries these rules as <code>proguard.txt</code>, and R8 applies them without any setup (since
+0.2.1; with 0.2.0 a minified release build failed to load the library, <code>KslLoader.availability()</code> answered
+<code>Unavailable</code> with <code>LoadFailed</code>, while debug builds worked). Add them to the app's own rules only if the build ignores
+consumer rules from dependencies:</p>
+<pre><code class="language-proguard">-keep,includedescriptorclasses class io.kuicksilver.native.KslNative {
+    native &lt;methods&gt;;
+}
+-keep class io.kuicksilver.native.PacketBuffer {
+    java.nio.ByteBuffer buffer;
+}
+</code></pre>
+<p>A JVM application that shrinks its jar (ProGuard in a Compose Desktop release build, R8 for a server) needs the same
+rules. The <code>kuicksilver-native</code> jar carries them as <code>META-INF/proguard/kuicksilver-native.pro</code>, which R8 reads by
+itself; with ProGuard, add the lines above to its configuration unless your setup applies rules embedded in jars.</p>
+<p>The Ktor client engine is found by <code>HttpClient()</code> (without an engine argument) through <code>ServiceLoader</code>, which creates
+<code>io.kuicksilver.ktor.client.KuicksilverEngineContainer</code> by name. The <code>kuicksilver-ktor-client</code> AAR and jar carry its keep
+rule in the same way (<code>proguard.txt</code>, <code>META-INF/proguard/kuicksilver-ktor-client.pro</code>; since 0.2.1). Without it, a
+shrunk JVM application lost the class and its <code>META-INF/services</code> entry, and <code>HttpClient()</code> picked another engine or
+none. With ProGuard, or a build that ignores embedded rules, add:</p>
+<pre><code class="language-proguard">-keep class io.kuicksilver.ktor.client.KuicksilverEngineContainer {
+    public &lt;init&gt;();
+}
+</code></pre>
+<h2 id="native-library">Native library</h2>
+<h3 id="kslexceptionnativeload-or-kslloaderavailability-is-unavailable"><code>KslException.NativeLoad</code> or <code>KslLoader.availability()</code> is <code>Unavailable</code></h3>
+<p>Check once at startup with <code>KslLoader.isAvailable()</code> / <code>availability()</code> (experimental) instead of catching the
+exception from the first connection. <code>NativeUnavailableReason</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Message (in <code>KslException.NativeLoad</code>, &quot;cannot load libksl for <platform>/<classifier>: <reason>&quot;)</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NoLibraryForPlatform</code></td>
+<td>&quot;resource META-INF/native/<name> not on the classpath&quot;</td>
+<td>the JVM jar has no library for this OS and CPU (see <a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#platforms">stability: Platforms</a>); musl (Alpine) is not supported</td>
+</tr>
+<tr>
+<td><code>LoadFailed</code></td>
+<td>the <code>UnsatisfiedLinkError</code> text &quot;…; if the work directory is mounted noexec set -Dkuicksilver.native.workdir&quot;</td>
+<td>the extraction directory (<code>&lt;java.io.tmpdir&gt;/kuicksilver-native-&lt;user&gt;</code>) is <code>noexec</code>: point <code>-Dkuicksilver.native.workdir</code> at an executable directory you own</td>
+</tr>
+<tr>
+<td><code>IntegrityMismatch</code></td>
+<td>&quot;work directory <dir> is a symbolic link / is not a directory / is owned by <owner>, not by this user / keeps group/other permissions … / cannot be read: …; set -Dkuicksilver.native.workdir to a directory only you own&quot; (a <code>-Dkuicksilver.native.workdir</code>; the default directory is replaced by a new private one instead, with a warning), or &quot;sha256 mismatch for <file>: resource was tampered with or corrupted&quot;, &quot;duplicate native resources with different content on the classpath&quot;</td>
+<td>use a private directory; remove the second, different copy of <code>kuicksilver-native</code> from the classpath (two Kuicksilver versions)</td>
+</tr>
+<tr>
+<td><code>AbiMismatch</code></td>
+<td><code>KslException.AbiMismatch</code> &quot;ksl ABI <n> in the native library, <m> expected&quot;</td>
+<td>the native library belongs to another Kuicksilver release, usually through <code>-Dkuicksilver.native.path</code> or <code>-Dkuicksilver.native.system=true</code>; use the library of the same version (<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/docs/stability.md#the-native-library-abi-ksl">stability</a>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>KslException.Version</code> (&quot;OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required&quot;) and <code>KslException.MissingSymbol</code>
+appear only with a library built against a system OpenSSL, as does <code>KslException.NativeLoad</code> &quot;SSLKEYLOGFILE is set and
+the system libssl may honour it; unset it (keylog)&quot;: such a library refuses to load while <code>SSLKEYLOGFILE</code> is set. The outcome of the first load attempt is cached for the
+process: fix the cause and restart.</p>
+<p>The loader also logs warnings, and loads anyway. They go to the <code>System.Logger</code> named <code>io.kuicksilver.native</code> at
+<code>WARNING</code>: with no logging setup that is <code>java.util.logging</code>, which prints them on standard error; an application whose
+logging framework provides a <code>System.LoggerFinder</code> (for example through an SLF4J or Log4j bridge) gets them there:</p>
+<ul>
+<li>&quot;native library work directory <dir>: <parent> is writable by others without the sticky bit / is writable by its
+group without the sticky bit / belongs to <owner>, not to this user or root, so another user could replace the library
+before it is loaded&quot;: a directory above <code>&lt;java.io.tmpdir&gt;/kuicksilver-native-&lt;user&gt;</code> lets another user rename the work
+directory, and neither <code>$XDG_RUNTIME_DIR</code> nor the user's cache directory could be used instead (a Kubernetes <code>emptyDir</code>
+mounted at <code>/tmp</code> is world-writable without the sticky bit). Set <code>-Dkuicksilver.native.workdir</code> to a directory below
+ones only you or root can write to; on a volume no other user's process can reach the warning is harmless.</li>
+<li>&quot;work directory <dir> is a symbolic link … ; this process uses the new private directory <dir> instead&quot;: the default
+directory exists but is not usable (another user created it, or it is a link); a new private directory for this
+process is used. It is removed at exit, or on Windows, where a loaded library cannot be deleted, by a later start
+(directories <code>kuicksilver-native-&lt;user&gt;-*</code> of this user untouched for ten minutes; never below a directory
+another user could rename them in, and on Linux without following a link). Remove the old directory if you
+created it yourself.</li>
+<li>&quot;work directory <dir> is owned by <owner>, not by this user; another user may be able to replace the library&quot; (or &quot;is a
+junction&quot;, &quot;keeps group/other permissions for <names>&quot;): Windows, a <code>-Dkuicksilver.native.workdir</code> that is not private
+to this user. Point it at a directory of your own.</li>
+</ul>
+<h2 id="ktor-engines">Ktor engines</h2>
+<h3 id="the-engine-fails-to-start-with-a-ktor-version-error">The engine fails to start with a Ktor version error</h3>
+<p><code>IllegalStateException</code>: &quot;Kuicksilver's Ktor engines support Ktor 3.6.x, but <artifact> <version> is on the classpath.
+…&quot;. Creating <code>HttpClient(Kuicksilver)</code> checks <code>ktor-client-core</code>, <code>ktor-http-cio</code>, <code>ktor-network</code>, <code>ktor-io</code> and
+<code>ktor-websockets</code>; starting the server checks <code>ktor-server-core</code>, <code>ktor-http-cio</code>, <code>ktor-network</code> and <code>ktor-io</code>. Align every <code>io.ktor</code> dependency to 3.6.x, best with
+<code>platform(&quot;io.ktor:ktor-bom:3.6.&lt;patch&gt;&quot;)</code>, and look for a library that pulls a newer Ktor
+(<code>./gradlew dependencies</code>). <code>-Dkuicksilver.ktor.versionCheck=false</code> skips the check at your own risk
+(<a href="ktor.html#supported-ktor-versions">Ktor: Supported Ktor versions</a>).</p>
+<h3 id="the-ktor-client-never-uses-http3-or-stops-using-it">The Ktor client never uses HTTP/3, or stops using it</h3>
+<p>Every response says why: <code>response.kuicksilverDiagnostics?.fallback</code> is a <code>FallbackReason</code> (<code>HandshakeTimeout</code> when UDP
+is blocked, <code>NoAlternative</code> without <code>Alt-Svc</code>, <code>BrokenAlternative</code>, <code>TlsFailure</code>, ...), with what to check for each in
+<a href="ktor.html#why-did-this-request-not-use-http3">Ktor: Why did this request not use HTTP/3?</a>; with
+<code>engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }</code> the engine logs one line per such call. The event
+listener tells the same story as it happens; check <code>KuicksilverEventListener.protocolSelected</code>'s <code>ProtocolReason</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Meaning and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Configuration</code></td>
+<td><code>discovery</code> is <code>H1Only</code> or <code>H3Only</code></td>
+</tr>
+<tr>
+<td><code>NotSecure</code></td>
+<td>the URL is not <code>https</code> (or <code>wss</code>): HTTP/3 needs TLS</td>
+</tr>
+<tr>
+<td><code>Proxy</code></td>
+<td>a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3</td>
+</tr>
+<tr>
+<td><code>Http3Disabled</code></td>
+<td><code>http3 { http3Allowed }</code> returned false: check the remote configuration behind it</td>
+</tr>
+<tr>
+<td><code>NoAlternative</code></td>
+<td><code>Auto</code> mode and the origin has not announced <code>h3</code> in <code>Alt-Svc</code> yet, or the entry expired; the first request always goes over HTTP/1.1. Use <code>quicHints</code> or <code>Preferred</code> for origins you know speak HTTP/3, and <code>FileAltSvcStore</code> to keep alternatives across restarts</td>
+</tr>
+<tr>
+<td><code>BrokenAlternative</code></td>
+<td>HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; <code>altSvcMarkedBroken</code> reported it. Set <code>networkId</code> so a network change forgets the marks</td>
+</tr>
+<tr>
+<td><code>Race</code></td>
+<td>the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; <code>hardDelay</code> overrides it), and (since 0.3.0) on a network where QUIC was never seen working HTTP/1.1 starts after 10 ms. The QUIC setup goes on and serves the next requests</td>
+</tr>
+<tr>
+<td><code>ExistingConnection</code></td>
+<td>an HTTP/3 connection to the origin was already open and carries the call</td>
+</tr>
+<tr>
+<td><code>WebSocket</code></td>
+<td>a WebSocket goes over TCP until the origin has an HTTP/3 connection that allows Extended CONNECT (RFC 9220): over an HTTP/2 connection of the origin that is open already and whose server allows Extended CONNECT (RFC 8441; <code>response.version</code> is <code>HTTP_2_0</code>), else over HTTP/1.1</td>
+</tr>
+<tr>
+<td><code>Fallback</code></td>
+<td>HTTP/3 failed for this request and it is repeated over TCP; <code>fallback</code> says why (<a href="#the-ktor-client-never-uses-http3-or-stops-using-it">the <code>FallbackReason</code> table</a>)</td>
+</tr>
+<tr>
+<td><code>HttpsRecord</code></td>
+<td>an endpoint of the origin's HTTPS record (<code>http3 { httpsRecords }</code>) that offers one transport only: TCP (its ALPN set has no <code>h3</code>), or HTTP/3 without TCP (<code>no-default-alpn</code>), so nothing raced</td>
+</tr>
+</tbody>
+</table>
+<p><code>response.kuicksilverDiagnostics?.fallback</code> (<code>FallbackReason</code>, also <code>fallback=</code> in the engine's log line) names the cause
+when a call that could have used HTTP/3 went over TCP; <code>null</code> when it went over HTTP/3. Every value:</p>
+<table>
+<thead>
+<tr>
+<th><code>FallbackReason</code></th>
+<th>Cause and action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NotSecure</code></td>
+<td>an <code>http://</code> or <code>ws://</code> URL; HTTP/3 needs TLS</td>
+</tr>
+<tr>
+<td><code>Proxy</code></td>
+<td>a proxy applies; exempt the host for HTTP/3</td>
+</tr>
+<tr>
+<td><code>Configuration</code></td>
+<td><code>discovery = H1Only</code></td>
+</tr>
+<tr>
+<td><code>Http3Disabled</code></td>
+<td><code>http3Allowed</code> returned false</td>
+</tr>
+<tr>
+<td><code>NoAlternative</code></td>
+<td><code>Auto</code> mode without <code>Alt-Svc</code> for the origin yet; see <code>quicHints</code>, <code>Preferred</code></td>
+</tr>
+<tr>
+<td><code>MisdirectedRequest</code></td>
+<td>the HTTP/3 alternative answered 421; it was dropped from the origin's alternatives (RFC 7838 section 6) and the call went over HTTP/1.1. The server's virtual host does not cover this authority on that port</td>
+</tr>
+<tr>
+<td><code>BrokenAlternative</code></td>
+<td>HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling</td>
+</tr>
+<tr>
+<td><code>WebSocket</code></td>
+<td>a WebSocket without an Extended CONNECT HTTP/3 connection</td>
+</tr>
+<tr>
+<td><code>HandshakeTimeout</code></td>
+<td>QUIC got no answer within the connect timeout: UDP blocked, see <a href="#connect-fails-with-handshake-timeout-after-10s">handshake timeout</a></td>
+</tr>
+<tr>
+<td><code>UdpUnreachable</code></td>
+<td>reserved, not produced yet: calls that would show it show <code>HandshakeTimeout</code></td>
+</tr>
+<tr>
+<td><code>H3NotReady</code></td>
+<td>HTTP/1.1 won the race before HTTP/3 answered; not a failure, the QUIC setup goes on</td>
+</tr>
+<tr>
+<td><code>Refused</code></td>
+<td>the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again (<a href="#connections-are-refused-or-dropped">refusals</a>). Any other code marks the alternative broken</td>
+</tr>
+<tr>
+<td><code>TlsFailure</code></td>
+<td>a TLS alert or a local verification failure in the QUIC handshake: <a href="#the-handshake-fails-with-a-certificate-error">certificate errors</a>, <a href="#the-handshake-fails-with-an-alpn-mismatch">ALPN mismatch</a></td>
+</tr>
+<tr>
+<td><code>Http3Error</code></td>
+<td>the HTTP/3 connection failed as a whole: an HTTP/3 or QPACK error, a stateless reset, an idle timeout, no viable path</td>
+</tr>
+<tr>
+<td><code>ZeroRttRejected</code></td>
+<td>the server rejected 0-RTT: <a href="#0-rtt-is-rejected">0-RTT is rejected</a></td>
+</tr>
+<tr>
+<td><code>GoAway</code></td>
+<td>the server did not process the request (GOAWAY, <code>H3_REQUEST_REJECTED</code>) on any attempt</td>
+</tr>
+<tr>
+<td><code>StreamFailed</code></td>
+<td>one request stream failed (reset, malformed response) and the idempotent request was repeated over HTTP/1.1</td>
+</tr>
+<tr>
+<td><code>Other</code></td>
+<td>any other HTTP/3 failure; <code>h3Failure</code> has the exception</td>
+</tr>
+<tr>
+<td><code>H2Refused</code></td>
+<td>the server answered HTTP/2 with <code>HTTP_1_1_REQUIRED</code>: <a href="#calls-over-http2-fail-or-a-server-misbehaves-with-http2">HTTP/2 failures</a></td>
+</tr>
+</tbody>
+</table>
+<p>An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only <code>h3</code>
+alternatives over verified TLS count (<a href="ktor.html#discovery-and-alt-svc">Ktor: Discovery and Alt-Svc</a>).</p>
+<h3 id="quic-misbehaves-in-production">QUIC misbehaves in production</h3>
+<p>When HTTP/3 causes trouble on some networks or after a release and you need it off before a fix ships, flip
+<code>http3 { http3Allowed }</code> from your remote configuration and, to drop the open connections at once, call
+<code>client.closeHttp3Connections()</code>: requests go over HTTP/1.1 from the next one on, calls in flight finish, and switching
+back needs no warm-up (<a href="ktor.html#turning-http3-off-remotely">Ktor: Turning HTTP/3 off remotely</a>). Clients in
+<code>H3Only</code> mode fail instead of using TCP. Before that, <code>response.kuicksilverDiagnostics</code> and a qlog trace
+(<a href="#getting-more-information">Getting more information</a>) usually tell what goes wrong.</p>
+<h3 id="requests-go-through-a-proxy-or-not-unexpectedly">Requests go through a proxy, or not, unexpectedly</h3>
+<p>Since 0.3.0 the Ktor client follows the platform's proxy settings by default (<code>proxyResolver = ProxyResolvers.System</code>), so a
+request may go through a proxy you did not configure in code, over HTTP/1.1 (<code>protocolSelected</code> reports
+<code>ProtocolReason.Proxy</code>). Set <code>proxyResolver = ProxyResolvers.None</code> to connect directly, exempt the host in the
+settings (<code>no_proxy</code>, the OS bypass list), or set <code>proxy</code> explicitly. On macOS, iOS and Windows a proxy
+auto-configuration (a PAC URL or script, or WPAD) is run (on Apple platforms by the engine itself, on Windows by
+WinHTTP), and a lookup waits for it at most 5 seconds; one that cannot be fetched or run in that time makes the engine
+log one warning (&quot;proxy auto-configuration (PAC or WPAD) script that could not be fetched or run&quot;) and those requests
+use the next setting (on Windows the fixed proxy), else connect directly. On Windows, when automatic detection finds no
+script, the engine logs that once at Info level instead (&quot;detect the proxy automatically (WPAD), and no proxy
+auto-configuration script was found&quot;), as detection is on by default there: those requests use the fixed proxy setting,
+if any, else connect directly, and detection runs again after 5 minutes.
+Set <code>proxy</code> or a <code>proxyResolver</code> of your own to decide the route yourself.
+A request that fails with <code>UnsupportedOperationException</code> (&quot;the proxy URL's scheme is not supported&quot;) has a proxy
+setting the engine cannot use, such as <code>socks4://</code>; it is never bypassed. The message does not name the scheme a proxy
+URL from the environment gave: a user name before <code>://</code> reads as one.</p>
+<h3 id="requests-through-an-https-proxy-fail-with-proxytlsexception">Requests through an <code>https://</code> proxy fail with <code>ProxyTlsException</code></h3>
+<p>The TLS handshake with the proxy itself failed; nothing of the request was sent. Its <code>cause</code> says why: a
+<code>TlsException.Verify</code> whose <code>reason</code> is <code>HostnameMismatch</code> means the proxy's certificate does not name the proxy's host
+as configured (an address where the certificate names a host, or the reverse; the origin's <code>ExpectedName</code> and pins do
+not apply to the proxy), another reason that its chain is not trusted: the proxy's trust is the engine's <code>trust</code>
+without pins unless <code>proxyTls = { trust = ... }</code> says otherwise, so a proxy under a corporate CA needs that CA there.
+An alert or a closed connection usually means the proxy does not speak TLS on that port (an <code>http://</code> proxy named as
+<code>https://</code>). A failure of the origin's TLS behind the proxy is a <code>TlsException</code>, not a <code>ProxyTlsException</code>.</p>
+<h3 id="h3only-requests-time-out"><code>H3Only</code> requests time out</h3>
+<p>With <code>Http3DiscoveryMode.H3Only</code> there is no fallback: when UDP is blocked the call fails with Ktor's
+<code>ConnectTimeoutException</code> (the engine's <code>connectTimeout</code>, 10 s, or <code>HttpTimeout</code>'s connect timeout) or the QUIC
+<code>ConnectionLost.Timeout</code> (&quot;Handshake timeout after 10s&quot;), whichever comes first. Use <code>Preferred</code> where TCP must remain
+possible.</p>
+<h3 id="requests-wait-and-then-fail-with-connecttimeoutexception">Requests wait and then fail with <code>ConnectTimeoutException</code></h3>
+<p>HTTP/1.1 requests beyond <code>maxConnectionsPerRoute</code> (100) or <code>maxConnectionsCount</code> (1000) wait in FIFO order and share
+the connect timeout. Over HTTP/2 a request waits only when every connection of its route is at the server's
+SETTINGS_MAX_CONCURRENT_STREAMS and the route has no room for another connection. A pile-up usually means response bodies that are never read or closed, which keep their
+connections. Read or cancel every body; raise the limits only for real concurrency. HTTP/3 requests instead wait for
+the server's stream credit (MAX_STREAMS) until the request or socket timeout
+(<a href="ktor.html#connection-pool">Ktor: Connection pool</a>).</p>
+<p>A WebSocket over HTTP/1.1 fails with <code>ConnectTimeoutException</code> (&quot;The WebSocket was not connected within the connect
+timeout&quot;) when the server accepted the connection but did not answer the opening handshake within the connect timeout.
+WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so the next one to that address waited for
+this one until then. That queue does not count against the connect timeout of the WebSockets in it: many WebSockets
+started at once to one address connect one after another, bounded only by each call's request timeout (<code>HttpTimeout</code>)
+or its cancellation.</p>
+<h3 id="a-tls-12-client-cannot-connect-to-the-server">A TLS 1.2 client cannot connect to the server</h3>
+<p>A client without TLS 1.3 (an older Android or JDK, an embedded HTTP stack, some scanners) gets a <code>protocol_version</code>
+alert: a TLS connector speaks TLS 1.3 only unless it allows TLS 1.2 with <code>versions = TlsVersions.Tls12And13</code>, the
+<code>EngineMain</code> key <code>kuicksilver.tls.versions = tls12And13</code>, or Ktor's <code>enabledProtocols = listOf(&quot;TLSv1.2&quot;, &quot;TLSv1.3&quot;)</code>
+(<a href="ktor.html#tls-12-on-the-server">TLS 1.2 on the server</a>). A TLS 1.2 client that still gets <code>handshake_failure</code> offers
+none of the profile's suites (only CBC, SHA-1 or static RSA ones), offers only RSA suites to a server with an ECDSA
+certificate, or leaves out Extended Master Secret: these are refused on purpose (RFC 9325 sections 3.5, 4.1 and 4.2).
+At startup, &quot;kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain&quot; means the key was set
+next to <code>-sslPort</code>: set <code>ktor.security.ssl.enabledProtocols</code> for that port instead; and &quot;the Kuicksilver engine serves
+[TLSv1.3] or [TLSv1.2, TLSv1.3]&quot; means <code>enabledProtocols</code> asked for TLS 1.2 alone or an older version.</p>
+<h3 id="a-chunked-body-fails-with-whitespace-before-the-end-of-a-chunk-size-line">A chunked body fails with &quot;Whitespace before the end of a chunk size line&quot;</h3>
+<p>The peer wrote a chunk-size line with SP or HTAB right before its CRLF (<code>5 \r\n</code>). RFC 9112 section 7.1 allows
+whitespace in that line only before the <code>;</code> of a chunk extension and around its <code>=</code>; since 0.2.1 both engines refuse
+any other (the server with 400, the client by failing the response), because a recipient that reads such a line
+otherwise than an intermediary is open to request smuggling. Fix the peer: it is out of the grammar, even where other
+implementations tolerate it.</p>
+<h3 id="h3bodyconsumed"><code>H3BodyConsumed</code></h3>
+<p>&quot;421 Misdirected Request from the alternative, and the request body was already consumed&quot;: a streamed
+<code>ReadChannelContent</code> body that HTTP/3 already read cannot be replayed on another connection. The same holds over HTTP/2
+for a request the server did not process (GOAWAY, REFUSED_STREAM) or answered with HTTP_1_1_REQUIRED. Send bodies the
+engine can replay (bytes, a <code>WriteChannelContent</code> writer) when such retries matter.</p>
+<h3 id="calls-over-http2-fail-or-a-server-misbehaves-with-http2">Calls over HTTP/2 fail, or a server misbehaves with HTTP/2</h3>
+<p>The client offers HTTP/2 to every <code>https://</code> server over TCP since 0.3.0 (<a href="ktor.html#http2-on-the-client">Ktor: HTTP/2 on the
+client</a>). A server or middlebox whose HTTP/2 is broken shows as <code>Http2Exception</code> failures
+(<code>StreamReset</code>, <code>ConnectionClosed</code>, <code>MalformedMessage</code>) where HTTP/1.1 worked before. <code>engine { http2 { enabled = false } }</code>
+offers only <code>http/1.1</code> again, as in 0.2; report the server's behaviour (with the <code>Http2Exception</code> and its code).</p>
+<ul>
+<li>A server that answers HTTP_1_1_REQUIRED is honoured: the route offers only <code>http/1.1</code> for 5 minutes, doubling up to
+2 days at each new refusal, and the request goes again over HTTP/1.1 when that is safe (idempotent with a body that
+can be sent again, or not processed). Otherwise, a POST say, the call fails with <code>Http11RequiredException</code>: send it
+again and it goes over HTTP/1.1. <code>ProtocolDiagnostics.fallback</code> is <code>H2Refused</code>
+for those calls, and the diagnostics line says <code>fallback=H2Refused</code> with the HTTP/3 reason as <code>h3Fallback=</code>.</li>
+<li><code>Http2Exception.MalformedMessage</code>: the server's response broke RFC 9113 section 8 (a connection-specific field such as
+<code>transfer-encoding</code> or <code>connection</code>, an uppercase field name, a content-length that does not match the body). Fix the
+server; the engine does not accept such responses over HTTP/2.</li>
+<li><code>Http2Exception.FieldSectionTooLarge</code>: the response's header fields exceed <code>http2 { settings.maxHeaderListSize }</code>
+(64 KiB); raise it only for a server you trust.</li>
+<li><code>Http2Exception.ConnectionClosed</code> mentioning PING: <code>pingInterval</code> is set and the server did not answer a PING within
+it; raise the interval or leave it at <code>Duration.INFINITE</code>.</li>
+</ul>
+<h3 id="the-server-serves-http11-but-no-http3">The server serves HTTP/1.1 but no HTTP/3</h3>
+<p>The server logs why:</p>
+<ul>
+<li>&quot;HTTP/3 is not served on port <port>: <reason>&quot;: the platform cannot run a QUIC server here.</li>
+<li>&quot;HTTP/3 is not served: no TCP + UDP pair free on one port number after 16 attempts (<cause>)&quot;: <code>port = 0</code>, and
+neither the UDP twin of a TCP port nor the TCP twin of a UDP port the OS picked was free.</li>
+<li>A fixed port whose UDP side is taken fails the start instead.</li>
+</ul>
+<p>Without HTTP/3 the server sends no <code>Alt-Svc</code>. Also check <code>http3 = true</code>, that a firewall passes UDP to the port, and
+that <code>altSvc</code> is on so clients learn about HTTP/3 (<a href="deployment.html">Deploying the HTTP/3 server</a> has a checklist for
+the network in front of the server). <code>Alt-Svc: clear</code> instead of <code>h3=…</code>, or new QUIC clients refused with
+CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean <code>engine.http3Advertising</code> is <code>Clear</code> or <code>Drain</code>
+(<a href="ktor.html#turning-http3-off-on-the-server">Ktor: Turning HTTP/3 off on the server</a>).</p>
+<h3 id="the-server-answers-421-misdirected-request">The server answers <code>421 Misdirected Request</code></h3>
+<p>Since 0.3.0 a TLS connector answers 421 to a request whose host the certificate of its connection does not name, and
+the application never sees the request (neither routing nor plugins such as CallLogging) (RFC 9110 section 7.4 requires the rejection). Browsers that reuse a connection
+for another host retry on a new connection and need nothing; the other causes are configuration. The engine logs each 421
+at debug level with the reason:</p>
+<ul>
+<li>&quot;421 Misdirected Request for <host>: the certificate of this connection does not name it&quot;: the certificate's
+subjectAltName must list every host and address clients use, <code>localhost</code>, <code>127.0.0.1</code> and the server's IP addresses
+included (as IP entries: a DNS entry <code>127.0.0.1</code> does not count). Wildcards cover one label (<code>*.example.com</code> covers
+<code>api.example.com</code>, not <code>example.com</code> or <code>a.b.example.com</code>), and the subject CN is never used. Clients that pin the
+key or use <code>TrustConfig.ExpectedName</code> to accept a certificate that names something else get 421 too: reissue the
+certificate with the name they connect to.</li>
+<li>&quot;421 Misdirected Request for <host>: the sniSelector chose this connection's TLS settings for another name&quot;: with an
+<code>sniSelector</code>, a request must be for the connection's SNI name, or an address when the client sent no SNI. A client
+that sends one name in TLS and another in <code>Host</code> (some test tools, <code>curl --resolve</code> set up for another name) gets this;
+send the same name in both. The same holds over HTTP/3, whose handshake the same selector chose for.</li>
+<li>&quot;421 Misdirected Request for <host>: an https request over a plain connection&quot;: a plain connector received
+<code>GET https://… HTTP/1.1</code>. Send origin-form requests, or terminate TLS here.</li>
+<li>&quot;421 Misdirected Request for <host>: not a valid host name or address&quot;: an internationalised name must arrive as an
+A-label (<code>xn--…</code>).</li>
+</ul>
+<p>Only when every client of a connector is a trusted gateway, such as a TLS-terminating proxy that re-encrypts with an
+internal certificate or forwards absolute <code>https://</code> targets, turn the check off for that connector:
+<code>tlsConnector { trustedGateway = true }</code> or <code>plainConnector { trustedGateway = true }</code>
+(<a href="ktor.html#misdirected-requests">Ktor: Misdirected requests</a>). Never set it on a connector that clients reach directly.</p>
+<h3 id="a-proxy-protocol-connector-resets-connections">A PROXY protocol connector resets connections</h3>
+<p>A connector with <code>proxyProtocol</code> serves only connections that start with a PROXY protocol header from one of its
+<code>trustedSources</code> (<a href="ktor.html#proxy-protocol">PROXY protocol</a>).</p>
+<table>
+<thead>
+<tr>
+<th>Cause</th>
+<th>How to tell</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The proxy's address is not in <code>trustedSources</code> (a new load balancer node, an IPv6 address, an address after SNAT)</td>
+<td>a warning &quot;Refused a connection from <address>&quot; ending &quot;it is not a trusted source of the PROXY protocol&quot;, <code>connectionRefused</code> with <code>PROXY protocol untrusted source</code></td>
+<td>add the address the server sees (the warning names it) or its block</td>
+</tr>
+<tr>
+<td>The proxy sends no header (PROXY protocol not turned on there, a health check without it)</td>
+<td><code>connectionRefused</code> with <code>PROXY protocol header</code>; the debug log &quot;the connection does not start with a PROXY protocol header&quot;</td>
+<td>turn it on in the proxy (HAProxy <code>send-proxy</code> or <code>send-proxy-v2</code>, nginx <code>proxy_protocol on</code>, AWS NLB target group attribute) for traffic and checks alike</td>
+</tr>
+<tr>
+<td>A version 2 header larger than <code>maxHeaderSize</code> (many or large TLVs)</td>
+<td>the debug log &quot;a PROXY protocol version 2 header of <n> bytes, over the limit of <max>&quot;</td>
+<td>raise <code>maxHeaderSize</code> (at most 65 551)</td>
+</tr>
+<tr>
+<td>The header takes longer than <code>headerTimeout</code></td>
+<td>the debug log &quot;no complete PROXY protocol header within <duration>&quot;</td>
+<td>a proxy sends it at once; check what sits between the proxy and the server</td>
+</tr>
+<tr>
+<td>Clients reach the port directly, not through the proxy</td>
+<td><code>connectionRefused</code> with <code>PROXY protocol untrusted source</code> for client addresses</td>
+<td>intended: only the proxy may connect; serve direct clients on another connector</td>
+</tr>
+</tbody>
+</table>
+<h2 id="key-logging-is-refused">Key logging is refused</h2>
+<p><code>keylogFile(path)</code> (<code>@DelicateKuicksilverApi</code>) refuses with <code>IllegalArgumentException</code> a path that is a symbolic link
+or not a regular file, a file with other hard links or owned by another user, and a file system without POSIX
+permissions (&quot;keylog file <path>: the file system has no POSIX permissions, refusing to log secrets there&quot;, which
+includes the JVM on Windows); on Android below API 26 &quot;… java.nio.file is unavailable (Android below API 26), refusing
+to log secrets there&quot;. Kotlin/Native says &quot;keylog file <path> refused: not a regular file of this user, a symlink, or
+not writable&quot;. On Android, <code>keylogFile(context)</code> returns <code>null</code> in a non-debuggable build. Use a fresh path in a
+directory only you can write. <code>SSLKEYLOGFILE</code> is never read implicitly; <code>keylogFromEnvironment()</code> reads it when you
+ask (<a href="tls.html#key-logging">TLS: Key logging</a>).</p>
+
+</main></div>
+</body>
+</html>

@@ -1,0 +1,391 @@
+<!doctype html>
+<html class="no-js" lang="en">
+<head><meta name="robots" content="noindex">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
+    <title>ProxyHeader</title>
+<link href="../../../images/logo-icon.svg" rel="icon" type="image/svg"><script>var pathToRoot = "../../../";</script>
+    <script>document.documentElement.classList.replace("no-js", "js");</script>
+    <script>const storage = localStorage.getItem("dokka-dark-mode")
+      if (storage == null) {
+        const osDarkSchemePreferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (osDarkSchemePreferred === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      } else {
+        const savedDarkMode = JSON.parse(storage)
+        if (savedDarkMode === true) {
+          document.getElementsByTagName("html")[0].classList.add("theme-dark")
+        }
+      }
+    </script>
+<script type="text/javascript" src="../../../scripts/sourceset_dependencies.js" async></script>
+<link href="../../../styles/style.css" rel="Stylesheet">
+<link href="../../../styles/main.css" rel="Stylesheet">
+<link href="../../../styles/prism.css" rel="Stylesheet">
+<link href="../../../styles/logo-styles.css" rel="Stylesheet">
+<link href="../../../ui-kit/ui-kit.min.css" rel="Stylesheet">
+<script type="text/javascript" src="../../../scripts/safe-local-storage_blocking.js"></script>
+<script type="text/javascript" src="../../../scripts/navigation-loader.js" async></script>
+<script type="text/javascript" src="../../../scripts/platform-content-handler.js" async></script>
+<script type="text/javascript" src="../../../scripts/main.js" defer></script>
+<script type="text/javascript" src="../../../scripts/prism.js" async></script>
+<script type="text/javascript" src="../../../ui-kit/ui-kit.min.js" defer></script></head>
+<body><div class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c" role="note"><strong>Development snapshot</strong> of <code>612511494c503adf8ad86282557ae3f808ee935c</code> (2026-11-20T09:32:18Z), not a release.</div>
+
+<div class="root">
+    <header class="navigation theme-dark" id="navigation-wrapper" role="banner">
+<a class="library-name--link" href="../../../index.html" tabindex="1">
+                    Kuicksilver
+            </a>        <button class="navigation-controls--btn navigation-controls--btn_toc ui-kit_mobile-only" id="toc-toggle" type="button">Toggle table of contents
+        </button>
+        <div class="navigation-controls--break ui-kit_mobile-only"></div>
+        <div class="library-version" id="library-version">0.3.0-SNAPSHOT
+        </div>
+        <div class="navigation-controls">
+        <ul class="filter-section filter-section_loading" id="filter-section" aria-label="Target filter">
+                <button class="platform-tag platform-selector common-like" data-active="" aria-pressed="true" data-filter=":kuicksilver-ktor-server/commonMain">common</button>
+            <div class="dropdown filter-section--dropdown" data-role="dropdown" id="filter-section-dropdown">
+                <button class="button button_dropdown filter-section--dropdown-toggle" role="combobox" data-role="dropdown-toggle" aria-controls="platform-tags-listbox" aria-haspopup="listbox" aria-expanded="false" aria-label="Toggle source sets"></button>
+                <ul role="listbox" id="platform-tags-listbox" class="dropdown--list" data-role="dropdown-listbox" aria-label="Target filter">
+                    <div class="dropdown--header"><span>Target filter</span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close target filter">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                        <li role="option" class="dropdown--option platform-selector-option common-like" tabindex="0">
+                            <label class="checkbox">
+                                <input type="checkbox" class="checkbox--input" id=":kuicksilver-ktor-server/commonMain" data-filter=":kuicksilver-ktor-server/commonMain">
+                                <span class="checkbox--icon"></span>
+                                common
+                            </label>
+                        </li>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </ul>
+            <button class="navigation-controls--btn navigation-controls--btn_theme" id="theme-toggle-button" type="button">Switch theme
+            </button>
+            <div class="navigation-controls--btn navigation-controls--btn_search" id="searchBar" role="button">Search in
+                API
+            </div>
+        </div>
+    </header>
+    <div id="container">
+        <nav id="leftColumn" class="sidebar" data-item-type="SECTION" data-item-config="{&quot;defaultSize&quot;: 280, &quot;minSize&quot;: 200, &quot;maxSize&quot;: 400}">
+            <a class="toc--skip-link" href="#main">Skip to content</a>
+            <div class="dropdown theme-dark_mobile" data-role="dropdown" id="toc-dropdown">
+                <ul role="listbox" id="toc-listbox" class="dropdown--list dropdown--list_toc-list" data-role="dropdown-listbox" aria-label="Table of contents">
+                    <div class="dropdown--header">
+                            <span>
+                                    Kuicksilver
+                            </span>
+                        <button class="button" data-role="dropdown-toggle" aria-label="Close table of contents">
+                            <i class="ui-kit-icon ui-kit-icon_cross"></i>
+                        </button>
+                    </div>
+                    <div class="sidebar--inner" id="sideMenu"></div>
+                </ul>
+                <div class="dropdown--overlay"></div>
+            </div>
+        </nav>
+        <div id="resizer" class="resizer" data-item-type="BAR"></div>
+        <div id="main" data-item-type="SECTION" role="main">
+<div class="main-content" data-page-type="classlike" id="content" pageids="kuicksilver-ktor-server::io.kuicksilver.ktor.server/ProxyHeader///PointingToDeclaration//133542148">
+  <div class="breadcrumbs"><a href="../../index.html">kuicksilver-ktor-server</a><span class="delimiter">/</span><a href="../index.html">io.kuicksilver.ktor.server</a><span class="delimiter">/</span><span class="current">ProxyHeader</span></div>
+  <div class="cover ">
+    <h1 class="cover"><span>Proxy</span><wbr><span><span>Header</span></span></h1>
+    <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">class </span><a href="index.html">ProxyHeader</a><span class="source-link-wrapper"><span class="source-link" data-element-type="source-link">(<a href="https://github.com/kuicksilver/kuicksilver/blob/612511494c503adf8ad86282557ae3f808ee935c/kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyHeader.kt#L129">source</a>)</span></span></div><p class="paragraph">The PROXY protocol header a connection began with (<a href="../-proxy-protocol-config/index.html">ProxyProtocolConfig</a>). <a href="source-address.html">ProxyHeader.sourceAddress</a> and <a href="destination-address.html">ProxyHeader.destinationAddress</a> are the client's address and the one it connected to on the proxy: IP literals (a dotted quad, or IPv6 as RFC 5952 recommends) for <a href="../-proxy-family/-inet/index.html">ProxyFamily.Inet</a> and <a href="../-proxy-family/-inet6/index.html">ProxyFamily.Inet6</a>, the socket path for <a href="../-proxy-family/-unix/index.html">ProxyFamily.Unix</a> (an abstract one as <code class="lang-kotlin">@</code> and its name), null for a <a href="../-proxy-command/-local/index.html">ProxyCommand.Local</a> header and for <a href="../-proxy-family/-unspecified/index.html">ProxyFamily.Unspecified</a>. The ports are null where the family has none.</p></div></div>
+  </div>
+  <div class="tabbedcontent">
+    <div class="tabs-section" tabs-section="tabs-section"><button class="section-tab" data-active="" data-togglable="CONSTRUCTOR,TYPE,PROPERTY,FUNCTION">Members</button></div>
+    <div class="tabs-section-body">
+      <div data-togglable="TYPE">
+        <h2 class="tableheader">Types</h2>
+        <div class="table"><a data-name="66620228%2FClasslikes%2F133542148" anchor-label="Companion" id="66620228%2FClasslikes%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="-companion/index.html"><span><span>Companion</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="66620228%2FClasslikes%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">object </span><a href="-companion/index.html">Companion</a></div><div class="brief "><p class="paragraph">The TLV types the spec defines.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="PROPERTY">
+        <h2 class="tableheader">Properties</h2>
+        <div class="table"><a data-name="224158260%2FProperties%2F133542148" anchor-label="alpn" id="224158260%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="alpn.html"><span><span>alpn</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="224158260%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="alpn.html">alpn</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">PP2_TYPE_ALPN</code>: the application protocol the client negotiated with the proxy, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1423027174%2FProperties%2F133542148" anchor-label="authority" id="-1423027174%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="authority.html"><span><span>authority</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1423027174%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="authority.html">authority</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">PP2_TYPE_AUTHORITY</code>: the host name the client sent the proxy (SNI), or null (also when it is not valid UTF-8).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-350575342%2FProperties%2F133542148" anchor-label="command" id="-350575342%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="command.html"><span><span>command</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-350575342%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="command.html">command</a><span class="token operator">: </span><a href="../-proxy-command/index.html">ProxyCommand</a></div><div class="brief "><p class="paragraph"><a href="../-proxy-command/-local/index.html">ProxyCommand.Local</a> or <a href="../-proxy-command/-proxy/index.html">ProxyCommand.Proxy</a>.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-2080168905%2FProperties%2F133542148" anchor-label="destinationAddress" id="-2080168905%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="destination-address.html"><span>destination</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-2080168905%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="destination-address.html">destinationAddress</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The address the client connected to, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1655676114%2FProperties%2F133542148" anchor-label="destinationPort" id="-1655676114%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="destination-port.html"><span>destination</span><wbr><span><span>Port</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1655676114%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="destination-port.html">destinationPort</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The port the client connected to, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2116924057%2FProperties%2F133542148" anchor-label="family" id="2116924057%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="family.html"><span><span>family</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2116924057%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="family.html">family</a><span class="token operator">: </span><a href="../-proxy-family/index.html">ProxyFamily</a></div><div class="brief "><p class="paragraph">The address family.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1503354853%2FProperties%2F133542148" anchor-label="netns" id="-1503354853%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="netns.html"><span><span>netns</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1503354853%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="netns.html">netns</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">PP2_TYPE_NETNS</code>: the network namespace the proxy accepted the connection in, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-1234183996%2FProperties%2F133542148" anchor-label="sourceAddress" id="-1234183996%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="source-address.html"><span>source</span><wbr><span><span>Address</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-1234183996%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="source-address.html">sourceAddress</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The client's address, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1682031041%2FProperties%2F133542148" anchor-label="sourcePort" id="1682031041%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="source-port.html"><span>source</span><wbr><span><span>Port</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1682031041%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="source-port.html">sourcePort</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The client's port, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-371633807%2FProperties%2F133542148" anchor-label="ssl" id="-371633807%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="ssl.html"><span><span>ssl</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-371633807%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="ssl.html">ssl</a><span class="token operator">: </span><a href="../-proxy-ssl/index.html">ProxySsl</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">PP2_TYPE_SSL</code>, parsed, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="2138004456%2FProperties%2F133542148" anchor-label="tlvs" id="2138004456%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="tlvs.html"><span><span>tlvs</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="2138004456%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="tlvs.html">tlvs</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-list/index.html">List</a><span class="token operator">&lt;</span><a href="../-proxy-tlv/index.html">ProxyTlv</a><span class="token operator">&gt;</span></div><div class="brief "><p class="paragraph">The TLVs of a version 2 header with the PROXY command and an address family, in order, <code class="lang-kotlin">PP2_TYPE_NOOP</code> left out; empty otherwise. A <code class="lang-kotlin">PP2_TYPE_CRC32C</code> TLV is listed after its checksum was verified.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="-168103180%2FProperties%2F133542148" anchor-label="transport" id="-168103180%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="transport.html"><span><span>transport</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="-168103180%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="transport.html">transport</a><span class="token operator">: </span><a href="../-proxy-transport/index.html">ProxyTransport</a></div><div class="brief "><p class="paragraph">The transport.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1899732529%2FProperties%2F133542148" anchor-label="uniqueId" id="1899732529%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="unique-id.html"><span>unique</span><wbr><span><span>Id</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1899732529%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="unique-id.html">uniqueId</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-byte-array/index.html">ByteArray</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph"><code class="lang-kotlin">PP2_TYPE_UNIQUE_ID</code>: the proxy's opaque ID of the connection (at most 128 bytes), or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="53268517%2FProperties%2F133542148" anchor-label="version" id="53268517%2FProperties%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="version.html"><span><span>version</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="53268517%2FProperties%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">val </span><a href="version.html">version</a><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></div><div class="brief "><p class="paragraph">1 (text) or 2 (binary).</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div data-togglable="FUNCTION">
+        <h2 class="tableheader">Functions</h2>
+        <div class="table"><a data-name="1702164893%2FFunctions%2F133542148" anchor-label="tlv" id="1702164893%2FFunctions%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="tlv.html"><span><span>tlv</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1702164893%2FFunctions%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">fun </span><a href="tlv.html"><span class="token function">tlv</span></a><span class="token punctuation">(</span><span class="parameters "><span class="parameter ">type<span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-int/index.html">Int</a></span></span><span class="token punctuation">)</span><span class="token operator">: </span><a href="../-proxy-tlv/index.html">ProxyTlv</a><span class="token operator">?</span></div><div class="brief "><p class="paragraph">The first TLV of <a href="tlv.html">type</a>, or null.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+<a data-name="1194378385%2FFunctions%2F133542148" anchor-label="toString" id="1194378385%2FFunctions%2F133542148" data-filterable-set=":kuicksilver-ktor-server/commonMain"></a>
+          <div class="table-row table-row_content" data-filterable-current=":kuicksilver-ktor-server/commonMain" data-filterable-set=":kuicksilver-ktor-server/commonMain">
+            <div class="main-subrow keyValue ">
+              <div class=""><span class="inline-flex">
+                  <div><a href="to-string.html"><span>to</span><wbr><span><span>String</span></span></a></div>
+<span class="anchor-wrapper"><span class="anchor-icon" pointing-to="1194378385%2FFunctions%2F133542148"></span>
+                    <div class="copy-popup-wrapper "><span class="copy-popup-icon"></span><span>Link copied to clipboard</span></div>
+                  </span></span></div>
+              <div>
+                <div class="title">
+                  <div class="platform-hinted " data-platform-hinted="data-platform-hinted"><div class="content sourceset-dependent-content" data-active="" data-togglable=":kuicksilver-ktor-server/commonMain"><div class="symbol monospace"><span class="token keyword">open </span><span class="token keyword">override </span><span class="token keyword">fun </span><a href="to-string.html"><span class="token function">toString</span></a><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">: </span><a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/-string/index.html">String</a></div><div class="brief "><p class="paragraph">For logs; addresses included, TLV values left out.</p></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    <div class="footer">
+        <div class="footer--container">
+            <a href="#content" id="go-to-top-link" class="footer--button footer--button_go-to-top"></a>
+            <div class="footer--content">
+                <div>
+                    <span>Generated by </span>
+                    <a class="footer--link footer--link_external" href="https://github.com/Kotlin/dokka">
+                        Dokka
+                    </a>
+                    <div>© 2026 Copyright</div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我们如何验证 - Kuicksilver 0.3.0-SNAPSHOT</title>
+<link rel="canonical" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/index.html">
+<link rel="alternate" hreflang="en" href="https://kuicksilver.github.io/kuicksilver/dev/verify/index.html">
+<link rel="alternate" hreflang="ru" href="https://kuicksilver.github.io/kuicksilver/dev/ru/verify/index.html">
+<link rel="alternate" hreflang="zh-CN" href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/index.html">
+<link rel="alternate" hreflang="x-default" href="https://kuicksilver.github.io/kuicksilver/dev/verify/index.html">
+<meta name="robots" content="noindex">
+<style>
+:root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; --link: #4493f8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "Noto Sans", Helvetica, Arial, sans-serif; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+header .name { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .version { color: var(--muted); }
+.layout { display: flex; max-width: 1280px; margin: 0 auto; }
+nav.pages { flex: 0 0 220px; padding: 16px; border-right: 1px solid var(--line); }
+nav.pages ul { list-style: none; padding: 0; margin: 0; }
+nav.pages li { margin: 4px 0; }
+nav.pages .current { font-weight: 600; }
+main { flex: 1 1 auto; min-width: 0; padding: 16px 32px 48px; }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 85%; }
+pre { background: var(--code); padding: 12px 16px; overflow-x: auto; border-radius: 6px; }
+:not(pre) > code { background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
+li.task { list-style: none; }
+h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
+h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
+@media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } }
+
+header nav.lang { margin-left: auto; display: flex; gap: 12px; }
+header nav.lang a[aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov { color: var(--muted); font-size: 90%; }
+.note { border-left: 4px solid var(--line); padding: 4px 12px; color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+.pass { color: #1a7f37; font-weight: 600; } .fail { color: #cf222e; font-weight: 600; } .warn { color: #9a6700; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .pass { color: #3fb950; } .fail { color: #f85149; } .warn { color: #d29922; } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badges img { margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><a class="name" href="../../../index.html">Kuicksilver</a><a href="../../guide/index.html">指南</a> <a href="../../api/index.html">API 参考</a> <a href="../../zh/verify/index.html">我们如何验证</a><nav class="lang" aria-label="语言"><a hreflang="en" lang="en" href="../../verify/index.html">English</a> <a hreflang="ru" lang="ru" href="../../ru/verify/index.html">Русский</a> <a hreflang="zh-CN" lang="zh-CN" href="../../zh/verify/index.html" aria-current="page">简体中文</a></nav></header>
+<div class="snapshot" role="note">提交 612511494c503adf8ad86282557ae3f808ee935c（2026-11-20T09:32:18Z）的开发快照（development snapshot），不是发布版本。 <a href="../../../index.html">所有发布版本</a></div>
+<div class="layout"><nav class="pages"><ul><li class=current><a href="index.html">我们如何验证</a></li><li><a href="platforms.html">平台矩阵</a></li><li><a href="interop.html">引擎互操作（engine interop）</a></li><li><a href="conformance.html">一致性测试套件</a></li><li><a href="fuzzing.html">模糊测试与变异测试</a></li><li><a href="sizes.html">构件大小</a></li><li><a href="benchmarks.html">基准测试</a></li><li><a href="rfc.html">RFC 合规性</a></li><li><a href="how.html">流程</a></li></ul></nav><main>
+<p class="note">本译文未经母语者审校。以英文页面为准： <a href="../../verify/index.html" hreflang="en" lang="en">English</a></p>
+<h1>我们如何验证</h1>
+<p class="prov">数据来自提交 612511494c503adf8ad86282557ae3f808ee935c 的成功 build.yml 运行，开始于 2026-11-20 10:11 UTC。 <a href="https://github.com/kuicksilver/kuicksilver/actions/runs/44717133396">CI 运行 44717133396</a></p>
+<p class=badges><img src="../../verify/badges/tests.svg" alt="tests"><img src="../../verify/badges/platforms.svg" alt="platforms"><img src="../../verify/badges/engine-interop.svg" alt="engine-interop"><img src="../../verify/badges/rfc.svg" alt="rfc"></p>
+<p>这些页面上的所有数字都由构建本文档所用提交的 CI 结果生成，没有任何手工填写的内容。如果某个部分没有该提交的结果，页面会明确说明。</p>
+<table><thead><tr><th>部分</th><th>内容</th></tr></thead><tbody><tr><td><a href="platforms.html">平台矩阵</a></td><td>每个 Kotlin 目标平台和 CI 主机上的测试数量。</td></tr><tr><td><a href="interop.html">引擎互操作（engine interop）</a></td><td>Kuicksilver 的 Ktor 引擎与其他客户端和服务器按协议逐一对测；QUIC Interop Runner。</td></tr><tr><td><a href="conformance.html">一致性测试套件</a></td><td>h2spec、h3spec 和 Autobahn：哪些在 CI 中运行，哪些尚未运行。</td></tr><tr><td><a href="fuzzing.html">模糊测试与变异测试</a></td><td>模糊测试目标、已提交的语料库、回归运行以及最近一次模糊测试活动。</td></tr><tr><td><a href="sizes.html">构件大小</a></td><td>各平台发布构件的大小。</td></tr><tr><td><a href="benchmarks.html">基准测试</a></td><td>吞吐量和握手的测量结果，以及测量的地点和时间。</td></tr><tr><td><a href="rfc.html">RFC 合规性</a></td><td>来自 RFC 合规矩阵：已满足、部分满足、已计划和不计划的要求。</td></tr><tr><td><a href="how.html">流程</a></td><td>每次变更都要经过的检查，以及如何自行验证一个发布版本。</td></tr></tbody></table>
+</main></div>
+</body>
+</html>
