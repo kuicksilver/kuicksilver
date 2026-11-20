@@ -64,8 +64,9 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   reported to OpenSSL as well.
 - **Ten carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
   the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length;
-  2026-11-20: the client's flight on a rejection, section 6.1.7, then the ALPN padding of section 6.1.3; 2026-11-21,
-  proposed and awaiting the owner's decision: the SVE probe of patch 10, a crash on load).
+  2026-11-20: the client's flight on a rejection, section 6.1.7, then the ALPN padding of section 6.1.3; decided
+  2026-11-21 (owner): patch 10, the SVE probe that crashed on load, carried verbatim from upstream cb5f5d00e4 / PR #33481
+  (openssl-4.1 658a1c947b), dropped with 4.1.1).
   Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and
   nothing else. The build carries ten minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom

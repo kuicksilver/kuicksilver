@@ -1618,8 +1618,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   that reports SVE2 without SVE, as an Android emulator on Apple M4 does (SME, no SVE; kernels without Linux's fix
   "arm64: Filter out SVE hwcaps when FEAT_SVE isn't implemented"): OpenSSL's CPU detection, run as the library loads,
   executed an SVE instruction to probe the vector length. The bundled OpenSSL carries a tenth patch (`patch_10`,
-  `openssl-4.1.0-armcap-sve2-without-sve.patch`), upstream's fix (openssl/openssl@cb5f5d00e4, in 4.1.1): the probe
-  runs only when SVE is reported too. Seen as every device test crashing on the local gate's API 34 emulator.
+  `openssl-4.1.0-armcap-sve2-without-sve.patch`; owner decision 2026-11-21, ADR-0019), upstream's fix carried verbatim
+  (openssl/openssl@cb5f5d00e4, pull request #33481; openssl-4.1 658a1c947b) and dropped with 4.1.1: the probe runs
+  only when SVE is reported too. Seen as every device test crashing on the local gate's API 34 emulator.
 - CONNECT-UDP proxy: a payload the tunnel's socket refused as too large for the path or link (EMSGSIZE or WSAEMSGSIZE:
   an interface or route toward the target with a smaller MTU, or, on a socket in DO mode only, an ICMP Packet Too Big,
   genuine or forged, that lowered the kernel's cached path MTU) ended the whole tunnel as a failed socket (reset and
