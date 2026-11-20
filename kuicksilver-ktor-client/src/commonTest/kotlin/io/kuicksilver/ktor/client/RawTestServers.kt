@@ -250,20 +250,41 @@ internal class UdpRelay(
     /** With [msquicProvisionalScid]: every new connection (a client Initial to a DCID not seen yet) gets a provisional Initial. */
     @kotlin.concurrent.Volatile var provisionalForEveryConnection: Boolean = false
 
+    /**
+     * With [msquicProvisionalScid], as msquic really does: only a connection whose client sends a third Initial datagram to
+     * its first DCID (a ClientHello of 3 datagrams: a resumption with ML-KEM and GREASE ECH) gets the provisional Initial,
+     * just before that third datagram reaches the server (msquic acknowledges after 2 ack-eliciting packets). Every such
+     * connection gets one.
+     */
+    @kotlin.concurrent.Volatile var onlyLargeClientHellos: Boolean = false
+
     /** How many provisional Initials the relay sent ([msquicProvisionalScid]). */
     @kotlin.concurrent.Volatile var provisionalInitialsSent: Int = 0
 
-    /** The DCIDs of client Initials seen, and the SCIDs of the server's long headers: a new connection's DCID is in neither. */
+    /** Client Initial datagrams per first DCID, and the server's SCIDs (a DCID that is one of those is no first DCID). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private val knownCids = kotlin.concurrent.atomics.AtomicReference(emptySet<String>())
+    private val initials = kotlin.concurrent.atomics.AtomicReference(emptyMap<String, Int>())
 
-    /** Adds [cid] to the known IDs; true when it was not known yet. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    fun addKnownCid(cid: String): Boolean {
+    private val serverScids = kotlin.concurrent.atomics.AtomicReference(emptySet<String>())
+
+    /** Counts a client Initial datagram to [dcid]; returns how many there were to it, 0 when [dcid] is a server's SCID. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    fun countInitial(dcid: String): Int {
         while (true) {
-            val now = knownCids.load()
-            if (cid in now) return false
-            if (knownCids.compareAndSet(now, now + cid)) return true
+            if (dcid in serverScids.load()) return 0
+            val now = initials.load()
+            val n = (now[dcid] ?: 0) + 1
+            if (initials.compareAndSet(now, now + (dcid to n))) return n
+        }
+    }
+
+    /** Notes a server SCID. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    fun addServerScid(scid: String) {
+        while (true) {
+            val now = serverScids.load()
+            if (scid in now || serverScids.compareAndSet(now, now + scid)) return
         }
     }
 
@@ -408,9 +429,16 @@ internal suspend fun udpRelay(
                         if (relay.msquicProvisionalScid) {
                             val bytes = d.packet.readByteArray()
                             val dcid = longHeaderCid(bytes, scid = false)
-                            val fresh = dcid != null && relay.addKnownCid(dcid)
-                            if (fresh && (relay.provisionalForEveryConnection || relay.provisionalInitialsSent == 0)) {
-                                msquicProvisionalInitial(bytes)?.let {
+                            val provisional = if (dcid != null) msquicProvisionalInitial(bytes) else null
+                            val n = if (provisional != null) relay.countInitial(dcid!!) else 0
+                            val due =
+                                if (relay.onlyLargeClientHellos) {
+                                    n == 3
+                                } else {
+                                    n == 1 && (relay.provisionalForEveryConnection || relay.provisionalInitialsSent == 0)
+                                }
+                            if (due) {
+                                provisional?.let {
                                     front.send(
                                         io.ktor.network.sockets
                                             .Datagram(kotlinx.io.Buffer().apply { write(it) }, d.address),
@@ -439,7 +467,7 @@ internal suspend fun udpRelay(
                         relay.serverDatagramsForwarded++
                         if (relay.msquicProvisionalScid) {
                             val scid = longHeaderCid(d.packet.peek().readByteArray(), scid = true)
-                            if (scid != null) relay.addKnownCid(scid)
+                            if (scid != null) relay.addServerScid(scid)
                         }
                         front.send(
                             io.ktor.network.sockets

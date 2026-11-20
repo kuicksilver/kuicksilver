@@ -1260,14 +1260,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with TRANSPORT_PARAMETER_ERROR (section 7.3). A handshake that can no longer complete ends at once: while nothing
   with CRYPTO came from the fixed SCID, a discarded packet from another SCID that decrypts and carries CRYPTO closes the
   connection silently with the new `QuicException.ConnectionLost.ServerConnectionIdChanged` (experimental) instead of the
-  handshake timeout, and the Ktor client reports `FallbackReason.ServerConnectionIdChanged` (experimental) and marks the
-  alternative broken. Before, such an ACK-only Initial was processed without fixing the SCID, so
+  handshake timeout, and the Ktor client reports `FallbackReason.ServerConnectionIdChanged` (experimental). It does not
+  mark the alternative broken for it: it drops the host's session tickets and stops resuming to it (no 0-RTT) for 5
+  minutes, doubling at each new failure up to 2 days and forgotten on a network change, so the next calls use HTTP/3 with
+  full handshakes. Before, such an ACK-only Initial was processed without fixing the SCID, so
   that an msquic server, which sends from the client's DCID until its listener accepts the connection and then switches
   to a new SCID that it also names in `initial_source_connection_id` (msquic#3762, #4905), could finish the handshake.
   msquic servers (IIS, .NET Kestrel on Windows) with a ClientHello of 3 or more datagrams (resumption with ML-KEM and ECH
   GREASE): QUIC fails per RFC 9000 section 7.3 (msquic#4905); requests go over TCP (`docs/guide/troubleshooting.md`,
-  "msquic servers and a large ClientHello"): with the default race after little extra wait, and with `earlyData` about two
-  round trips in instead of after the 10 s handshake or connect timeout. The RFC 9000 §7.2 row is ✅; the interop cells `msquic->kuicksilver` and
+  "msquic servers and a large ClientHello"): the Ktor client resumes only with `earlyData`, and then the failed call goes
+  over TCP about two round trips in instead of after the 10 s handshake or connect timeout, and later calls use HTTP/3
+  with full handshakes. The RFC 9000 §7.2 row is ✅; the interop cells `msquic->kuicksilver` and
   `msquic->kuicksilver-native` `resumption` and `zerortt` (and `transferloss`/`transfercorruption` when a ClientHello
   datagram is lost) are expected red because of msquic and leave `required.json` (`docs/spec/interop.md`).
 - Clients that verify with `ksl` (`TrustConfig.AnchoredCa`, and `Platform` on Linux Native, also inside `Pinned` and
@@ -3017,8 +3020,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   the client's own DCID left the SCID open, so a later Initial from any other SCID, a forged one included (Initial keys
   are public), could still become the server's ID; the client now accepts fewer packets. The early end of a handshake
   whose ServerHello comes from another SCID sends nothing and needs a forger who saw the client's first Initial, who could
-  already make the handshake fail (RFC 9000 sections 21.1.1.3 and 21.2); through the Ktor client it marks the alternative
-  broken (`docs/spec/threat-model.md`, section 3.5).
+  already make the handshake fail (RFC 9000 sections 21.1.1.3 and 21.2), though it widens the window for that to the
+  first CRYPTO when the server's first Initial carries none; through the Ktor client it suspends resumption to the host
+  for a backoff, not HTTP/3 (`docs/spec/threat-model.md`, section 3.5).
 - QUIC, receive memory (RFC 9000 section 21.7; the class of picoquic #2333, a receive bound that stops holding once the
   peer moved the window): the flow-control windows and the reassembly range limits were fixed ceilings, but a stream's
   reassembly buffer kept its allocation after the application read it: up to 1 MiB once drained, and its whole size,

@@ -2148,6 +2148,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest.negative_stalledApplicationTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest.negative_stalledSenderTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.msquicProvisionalScidWithEarlyDataIsServedWithoutATimeout
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.negative_aServerCidChangeOnResumptionKeepsHttp3WithFullHandshakes
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.negative_msquicProvisionalScidFallsBackToTcp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.negative_msquicProvisionalScidUnderTheDefaultRace
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.negative_msquicProvisionalScidWithEarlyDataFallsBackAtOnce
@@ -2587,6 +2588,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFa
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.aWholeStreamNotCutGetsAFin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.negative_aSessionCutByTheCloseWaitWithFramesQueuedIsReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.negative_aWriterThatEndedInsideAFrameIsReset
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.eitherClockEndsTheBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.negative_aNetworkChangeForgetsTheBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.theBackoffDoublesUpToTwoDaysAndEnds
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.hostJvmClientToAServerOnIos
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH1ToTheHost
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH3ToTheHost
@@ -4806,6 +4810,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.initial
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackAndPingInitialFromTheClientsOwnDcidIsAcknowledgedAndFixesTheScid
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackOnlyInitialFromAnotherScidFixesIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackOnlyInitialFromTheClientsOwnDcidFixesTheScid
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_anAckOnlyInitialFromAnotherScidBeforeTheServerHelloEndsNothing
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_clientDropsPacketFromUnknownServerAddress
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_coalescedInitialInSmallDatagramIsDiscarded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_duplicatePacketNumberAfterAead

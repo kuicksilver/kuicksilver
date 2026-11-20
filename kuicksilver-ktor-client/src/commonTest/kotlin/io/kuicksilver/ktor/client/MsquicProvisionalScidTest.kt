@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.get
+import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.writeStringUtf8
@@ -96,16 +97,21 @@ class MsquicProvisionalScidTest {
         }
 
     /**
-     * The default race (HTTP/3 first, TCP after a head start of 1.5 x the smoothed RTT, 100 ms to 2 s): the call is served
-     * over TCP with no wait to speak of, whether the QUIC attempt failed before the head start ran out
-     * (`ServerConnectionIdChanged`, the usual case on loopback) or TCP won first (`H3NotReady`, the losing setup fails in
-     * the background). Either way the alternative is marked broken, and the next call goes straight to TCP.
+     * The default race (HTTP/3 first, TCP after a head start of 1.5 x the smoothed RTT, 100 ms to 2 s), without `earlyData`,
+     * so without resumption: msquic answers a full ClientHello (2 datagrams) from a provisional SCID only when one of its
+     * datagrams is lost, as here on the first connection. The call is served over TCP with no wait to speak of, whether the
+     * QUIC attempt failed before the head start ran out (`ServerConnectionIdChanged`, the usual case on loopback) or TCP won
+     * first (`H3NotReady`, the losing setup failing right after). The alternative is not marked broken for it: the next call
+     * uses HTTP/3.
      */
     @Test fun negative_msquicProvisionalScidUnderTheDefaultRace() =
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = true) { port, _ ->
                 val marks = BrokenMarks()
                 testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = marks }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val loserSettled = CompletableDeferred<Unit>()
+                    engine.raceLoserSettledForTest = { loserSettled.complete(Unit) }
                     val t0 = TimeSource.Monotonic.markNow()
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("h1", r.bodyAsText())
@@ -120,18 +126,33 @@ class MsquicProvisionalScidTest {
 
                         FallbackReason.H3NotReady -> {
                             assertNull(d.h3Failure, "$d")
+                            withTimeoutOrNull(30.seconds) { loserSettled.await() } ?: kotlin.test.fail("the losing setup never settled")
                         }
 
                         else -> {
                             kotlin.test.fail("unexpected fallback: $d")
                         }
                     }
-                    val marked =
-                        withTimeoutOrNull(30.seconds) { marks.marked.await() } ?: kotlin.test.fail("the alternative was not marked broken")
-                    assertEquals("https://127.0.0.1:$port" to "127.0.0.1:$port", marked)
+                    assertTrue(!d.markedBroken && !marks.marked.isCompleted, "no broken mark for a server SCID change: $d")
+                    // the next call tries HTTP/3 again (the pooled HTTP/1.1 connection may still win its race); its setup succeeds
                     val again = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
-                    assertEquals(HttpProtocolVersion.HTTP_1_1, again.protocol)
-                    assertEquals(FallbackReason.BrokenAlternative, again.fallback, "$again")
+                    assertTrue(again.fallback != FallbackReason.BrokenAlternative, "$again")
+                    val target = io.ktor.http.Url("https://127.0.0.1:$port/")
+                    val request =
+                        io.ktor.client.request
+                            .HttpRequestBuilder()
+                            .apply { url(target) }
+                            .build()
+                    withTimeoutOrNull(30.seconds) {
+                        engine.h3
+                            .connection(
+                                io.kuicksilver.ktor.client.h3
+                                    .H3Target(target.host, target.host, target.port),
+                                request,
+                            ).quic
+                            .awaitHandshake()
+                    } ?: kotlin.test.fail("no HTTP/3 connection within 30 s")
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://127.0.0.1:$port/").version)
                 }
             }
         }
@@ -199,6 +220,77 @@ class MsquicProvisionalScidTest {
                 val took = t0.elapsedNow()
                 assertTrue(took < 5.seconds, "served once the switched ServerHello ended the 0-RTT attempt, not at 10 s: $took")
                 assertEquals(1, relay.provisionalInitialsSent)
+            }
+        }
+
+    /**
+     * As msquic really does, only a ClientHello of 3 datagrams (the resumption's) gets the provisional SCID. After one
+     * `ServerConnectionIdChanged` the origin's tickets go and its connections use a full handshake (2 datagrams, which
+     * msquic answers whole) for the backoff, so the next calls use HTTP/3 without resumption, not TCP, and the alternative
+     * is not marked broken. When the backoff ends, a new ticket is resumed again; the next failure doubles the backoff.
+     */
+    @Test fun negative_aServerCidChangeOnResumptionKeepsHttp3WithFullHandshakes() =
+        h3Test {
+            val tcpOpen = CompletableDeferred<Unit>()
+            msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true, acceptAfter = tcpOpen) { port, relay ->
+                val marks = BrokenMarks()
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    eventListener = marks
+                    // TCP only once HTTP/3 failed: a TCP win would cancel the resumed attempt before its ServerHello came
+                    http3 {
+                        earlyData = true
+                        hardDelay = Duration.INFINITE
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // the ticket arrived meanwhile
+                    assertTrue(engine.h3.ticketsForTest() > 0)
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    relay.onlyLargeClientHellos = true
+                    relay.msquicProvisionalScid = true
+                    tcpOpen.complete(Unit)
+                    var marked = CompletableDeferred<String>()
+                    engine.h3.noResumptionMarkedForTest = { marked.complete(it) }
+                    // the resumed connection: its 3-datagram ClientHello is answered from a provisional SCID
+                    val r = c.get(url)
+                    assertTrue(r.bodyAsText() in setOf("h1", "h3"), "${r.kuicksilverDiagnostics}")
+                    assertEquals(1, relay.provisionalInitialsSent, "the resumption ClientHello took 3 datagrams")
+                    assertEquals(
+                        "127.0.0.1",
+                        withTimeoutOrNull(30.seconds) { marked.await() } ?: kotlin.test.fail("no backoff: ${r.kuicksilverDiagnostics}"),
+                    )
+                    assertEquals(0, engine.h3.noResumption.levelForTest("127.0.0.1"))
+                    assertTrue(engine.h3.noResumption.avoids("127.0.0.1"))
+                    // the next calls: HTTP/3 with a full handshake, which msquic answers
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    val next = c.get(url)
+                    assertEquals("h3", next.bodyAsText(), "${next.kuicksilverDiagnostics}")
+                    val conn = engine.h3.connectionsForTest().single()
+                    conn.quic.awaitHandshake()
+                    assertNull(conn.quic.earlyDataAccepted, "a full handshake, no resumption")
+                    assertEquals(1, relay.provisionalInitialsSent, "its ClientHello fit 2 datagrams")
+                    assertTrue(!marks.marked.isCompleted, "the alternative was not marked broken")
+                    // the backoff ends: the next connection may resume again. It has no ticket yet (a full handshake in the
+                    // backoff keeps none), so it makes a full handshake that brings one; the one after it resumes, its
+                    // ClientHello is answered from a provisional SCID again, and the backoff doubles
+                    engine.h3.noResumption.expireForTest("127.0.0.1")
+                    assertTrue(!engine.h3.noResumption.avoids("127.0.0.1"))
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    assertEquals("h3", c.get(url).bodyAsText())
+                    assertEquals(1, relay.provisionalInitialsSent)
+                    val ticket = withTimeoutOrNull(30.seconds) { while (engine.h3.ticketsForTest() == 0) kotlinx.coroutines.yield() }
+                    assertNotNull(ticket, "the full handshake brought a ticket")
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    marked = CompletableDeferred()
+                    val third = c.get(url)
+                    third.bodyAsText()
+                    assertEquals(2, relay.provisionalInitialsSent, "resumed again after the backoff")
+                    val second = withTimeoutOrNull(30.seconds) { marked.await() }
+                    assertNotNull(second, "no second backoff: ${third.kuicksilverDiagnostics}")
+                    assertEquals(1, engine.h3.noResumption.levelForTest("127.0.0.1"), "the backoff doubled")
+                }
             }
         }
 

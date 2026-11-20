@@ -369,7 +369,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
  * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
- * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams) | nothing on the client: the server's QUIC stack (msquic#4905); calls go over TCP |
+ * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams, a resumption's) | nothing on the client: the server's QUIC stack (msquic#4905); this call went over TCP, the next ones use HTTP/3 without resumption for a while |
  *
  * New values may be added in later versions (docs/stability.md).
  */
@@ -466,8 +466,11 @@ public enum class FallbackReason {
     /**
      * The QUIC handshake failed because the server sent its handshake data from another Source Connection ID than its first
      * Initial ([io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged]; RFC 9000 sections 7.2 and 7.3):
-     * an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams (msquic#4905). The call went
-     * over TCP at once and the alternative is marked broken. Since 0.3.0.
+     * an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams (msquic#4905), which a
+     * resumption's (pre-shared key, ML-KEM, GREASE ECH) is. The call went over TCP at once. The alternative is not marked
+     * broken: the engine drops the host's session tickets and stops resuming to it (no 0-RTT) for 5 minutes, doubling at
+     * each new failure up to 2 days and forgotten on a network change, so the next calls use HTTP/3 with full handshakes,
+     * whose ClientHello fits 2 datagrams. Since 0.3.0.
      */
     ServerConnectionIdChanged,
 }

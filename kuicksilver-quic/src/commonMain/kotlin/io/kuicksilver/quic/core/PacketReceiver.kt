@@ -251,7 +251,7 @@ internal class PacketReceiver(
         ) {
             c.datagramsDropped++
             // the handshake cannot complete once the server's handshake data comes from another SCID before any came from the fixed
-            // one (msquic's provisional SCID, msquic#4905): end it now, not by the handshake timeout. Only a packet that decrypts and
+            // one (msquic's provisional SCID, msquic#4905): end it now, not by the handshake timeout. Only an Initial that decrypts and
             // carries CRYPTO counts, and nothing is sent: the packet stays discarded (section 7.2) and a CONNECTION_CLOSE would go to
             // an ID nobody authenticated. A stranger's flight after the real ServerHello (serverCryptoSeen) is only discarded
             if (switchedServerHandshake(data, type)) {
@@ -556,34 +556,35 @@ internal class PacketReceiver(
 
     /**
      * Client, for a long-header packet discarded for its SCID (RFC 9000 section 7.2): whether the handshake is still running,
-     * nothing with CRYPTO came from the fixed SCID yet, and this packet decrypts with the keys of its level and carries a CRYPTO
-     * frame. It is unprotected in place to find out; it is discarded either way, and decrypting it records nothing.
+     * nothing with CRYPTO came from the fixed SCID yet, and this packet is an Initial that decrypts with the Initial keys (of
+     * the negotiated version under a compatible upgrade) and carries a CRYPTO frame. It is unprotected in place to find out:
+     * one AEAD open per such packet, counted toward the RFC 9001 section 6.6 limit when it fails, as any other. It is
+     * discarded either way, and decrypting it records nothing (no packet number, no ACK, no version switch).
+     *
+     * Only Initials: the Handshake keys exist only once a ServerHello from the fixed SCID was processed, and by then
+     * [serverCryptoSeen] holds, so a Handshake packet from another SCID could never get here with a key.
      */
     private fun switchedServerHandshake(
         data: PacketBuffer,
         type: PacketType,
     ): Boolean {
-        if (c.state != ConnectionState.Handshaking || serverCryptoSeen) return false
-        if (type != PacketType.Initial && type != PacketType.Handshake) return false
-        if (!hv.fixedBitSet) return false
-        if (type == PacketType.Initial && hv.tokenLen != 0) return false
-        val space = if (type == PacketType.Initial) SpaceId.Initial else SpaceId.Handshake
-        if (c.spaceDiscarded[space.ordinal]) return false
+        if (c.state != ConnectionState.Handshaking || serverCryptoSeen || type != PacketType.Initial) return false
+        if (!hv.fixedBitSet || hv.tokenLen != 0 || c.spaceDiscarded[SpaceId.Initial.ordinal]) return false
         // a compatible upgrade (RFC 9368, RFC 9369 section 4.1): the switched ServerHello may come in the negotiated version, whose
         // Initial keys the client derives for this packet only (the version switch itself waits for a packet from the fixed SCID)
         var owned: io.kuicksilver.tls.PacketProtector? = null
         if (hv.version != c.version.version) {
             val profile = VersionProfile.of(hv.version) ?: return false
-            if (type != PacketType.Initial || c.clientVersionFixed || profile !in c.config.versions) return false
+            if (c.clientVersionFixed || profile !in c.config.versions) return false
             val (r, w) = c.crypto.initialProtectors(c.initialKeyCid.toByteArray(), profile.version, TlsRole.Client)
             w.close()
             owned = r
         }
         try {
-            val key = owned ?: c.readKeys[if (type == PacketType.Initial) 0 else 2] ?: return false
+            val key = owned ?: c.readKeys[0] ?: return false
             val largest =
                 c.loss
-                    .space(space)
+                    .space(SpaceId.Initial)
                     .ack.largestReceived
             val pn = PacketProtection.removeHeaderProtection(data, headerStart(), hv.pnOffset, hv.packetEnd, largest, key, mask)
             if (pn < 0) return false

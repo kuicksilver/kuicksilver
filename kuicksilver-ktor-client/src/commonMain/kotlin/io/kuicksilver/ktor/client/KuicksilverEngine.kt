@@ -705,6 +705,7 @@ internal class KuicksilverEngine(
                 if (networkSeen) {
                     if (id != lastNetwork) {
                         brokenAltSvc.onNetworkChanged()
+                        h3.noResumption.onNetworkChanged()
                         altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
                         changed = true
                     }
@@ -1021,7 +1022,7 @@ internal class KuicksilverEngine(
                                 .getCompleted()
                                 .quic.stats.smoothedRtt,
                         )
-                    } else if (outcome !is CancellationException && !isTransientRefusal(outcome)) {
+                    } else if (outcome !is CancellationException && !isTransientRefusal(outcome) && !resumptionOnly(outcome)) {
                         // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
                         brokenAltSvc.markBroken(origin, alt, classifyH3Failure(outcome) ?: FallbackReason.Other)
                         events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
@@ -1481,7 +1482,7 @@ internal class KuicksilverEngine(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (!isTransientRefusal(e)) {
+                if (!isTransientRefusal(e) && !resumptionOnly(e)) {
                     val reason = classifyH3Failure(e) ?: FallbackReason.Other
                     altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
                     events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
@@ -1706,7 +1707,9 @@ internal class KuicksilverEngine(
         val r = tcp(data, callContext, ProtocolReason.Fallback, d, dns = dns)
         // a connection the server closed with H3_NO_ERROR after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works;
         // a stall marked it already (markStalled)
-        if (marksAlternativeBroken(h3Failure) && cause !is QuicStalledException && !data.attributes.contains(H3ClosedAfterGoAwayKey)) {
+        if (marksAlternativeBroken(h3Failure) && cause !is QuicStalledException && !resumptionOnly(cause) &&
+            !data.attributes.contains(H3ClosedAfterGoAwayKey)
+        ) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
             altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
@@ -1715,6 +1718,13 @@ internal class KuicksilverEngine(
         }
         return r
     }
+
+    /**
+     * Whether [e] is a failure that only a resumed handshake meets: `ServerConnectionIdChanged`, an msquic server given a
+     * ClientHello of 3 or more datagrams (msquic#4905). The alternative is not marked broken for it: the pool's
+     * `noResumption` backoff makes the next connections full handshakes, which msquic answers.
+     */
+    private fun resumptionOnly(e: Throwable?): Boolean = classifyH3Failure(e) == FallbackReason.ServerConnectionIdChanged
 
     override fun toString(): String = "Kuicksilver"
 }

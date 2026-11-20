@@ -659,6 +659,42 @@ class ReceivePathTest {
     }
 
     /**
+     * The early end needs handshake data: a decryptable Initial from another SCID than the fixed one with nothing but ACK,
+     * PING and PADDING, before any ServerHello, is discarded (RFC 9000 section 7.2) and ends nothing. Decrypting it for the
+     * check records nothing either: no packet number, no ACK owed, no RTT sample, no acknowledgement of our packets.
+     */
+    @Test fun negative_anAckOnlyInitialFromAnotherScidBeforeTheServerHelloEndsNothing() {
+        val p = CorePair(crypto = ksl)
+        p.use { _ ->
+            p.filterToClient = { _, _ -> false }
+            for (i in 0 until 4) if (p.server == null) p.step()
+            val dcid = p.client.remoteCid
+            p.advance(20.milliseconds)
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            val initial =
+                p.client.loss
+                    .space(SpaceId.Initial)
+            val largest = initial.ack.largestReceived
+            val ackRequired = initial.ack.ackRequired
+            val srtt = p.client.rtt.smoothed
+            val inFlight = initial.sent.size
+            val dropped = p.client.datagramsDropped
+            p.advance(20.milliseconds)
+            val other = p.server!!.localCid
+            feed(p.client, ackOnlyInitial(p.client, scid = other, pn = 7, largestAcked = 1, ping = true), CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertNull(p.closedReason(p.clientEvents), "no handshake data: the connection goes on")
+            assertEquals(ConnectionState.Handshaking, p.client.state)
+            assertEquals(dropped + 1, p.client.datagramsDropped, "discarded for its SCID")
+            assertEquals(largest, initial.ack.largestReceived, "its packet number is not recorded")
+            assertEquals(ackRequired, initial.ack.ackRequired, "no ACK is owed for its PING")
+            assertEquals(srtt, p.client.rtt.smoothed, "no RTT sample from its ACK")
+            assertEquals(inFlight, initial.sent.size, "its ACK acknowledged none of our packets")
+            assertEquals(dcid, p.client.remoteCid)
+        }
+    }
+
+    /**
      * RFC 9000 section 7.3: "Each endpoint includes the value of the Source Connection ID field from the first Initial packet
      * it sent in the initial_source_connection_id transport parameter" and "An endpoint MUST treat the following as a
      * connection error of type TRANSPORT_PARAMETER_ERROR or PROTOCOL_VIOLATION: [...] a mismatch between values received from
