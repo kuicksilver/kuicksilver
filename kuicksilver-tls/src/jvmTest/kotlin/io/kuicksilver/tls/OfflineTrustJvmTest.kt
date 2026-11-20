@@ -21,6 +21,11 @@ import kotlin.test.assertTrue
  * must try them and cannot decide; the offline one accepts without looking.
  */
 class OfflineTrustJvmTest {
+    private companion object {
+        /** The caIssuers URI of [OfflineTrustCerts.LEAF]: nothing listens on port 1. */
+        const val AIA_URI = "http://127.0.0.1:1/ca.cer"
+    }
+
     private fun x509(pem: String): X509Certificate =
         CertificateFactory.getInstance("X.509").generateCertificate(
             Certificate
@@ -59,6 +64,11 @@ class OfflineTrustJvmTest {
      * `com.sun.security.enableAIAcaIssuers`, a process-wide switch: offline, the path is built from the presented
      * certificates alone and checked with a CertPathValidator, which fetches nothing. A child JVM with the switch on: the
      * online check (the control) opens the leaf's caIssuers URL, the offline one opens nothing.
+     *
+     * Newer JDK updates (17.0.19 and 25.0.2 here, not 21.0.5) also filter the caIssuers URIs through
+     * `com.sun.security.allowedAIALocations`, deny-all by default, so the switch alone no longer fetches there; the child is
+     * started with the leaf's URI allowed (older JDKs ignore the property), for the offline probe too: it must open nothing
+     * even where the process allowed the fetch.
      */
     @Test fun offlineFetchesNoIntermediateWithAiaOn() {
         fun probe(offline: Boolean): List<String> {
@@ -67,6 +77,7 @@ class OfflineTrustJvmTest {
                 ProcessBuilder(
                     javaBin,
                     "-Dcom.sun.security.enableAIAcaIssuers=true",
+                    "-Dcom.sun.security.allowedAIALocations=$AIA_URI",
                     "-cp",
                     System.getProperty("java.class.path"),
                     "io.kuicksilver.tls.OfflineAiaProbeKt",
@@ -78,7 +89,7 @@ class OfflineTrustJvmTest {
             return out
         }
         val online = probe(offline = false)
-        assertTrue(online.any { it.startsWith("fetched http://127.0.0.1:1/ca.cer") }, "control: online fetches the issuer: $online")
+        assertTrue(online.any { it == "fetched $AIA_URI" }, "control: online fetches the issuer: $online")
         val offline = probe(offline = true)
         assertTrue(offline.none { it.startsWith("fetched") }, "offline fetches nothing: $offline")
         assertTrue(offline.any { it == "done Rejected" }, "an issuer not among the anchors is still refused: $offline")
