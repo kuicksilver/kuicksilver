@@ -48,6 +48,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | a failed Ktor client call: over QUIC or TCP? `kuicksilverDiagnostics` on the exception, `connectFailed`, `ConnectFailure` | [which transport failed](#a-ktor-client-call-failed-over-which-transport) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
+| `QuicException.DontFragmentUnavailable`, "QUIC not used: the UDP socket cannot set Don't Fragment", `fallback = QuicUnavailable` | [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 
 ## Getting more information
 
@@ -374,6 +375,25 @@ datagram per call.
   Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".
 
+### QUIC is not used (`DontFragmentUnavailable`)
+
+QUIC is used only on a UDP socket that sets the Don't Fragment bit (RFC 9000 section 14). Where it cannot,
+`DatagramIo.open` and `QuicEndpoint.bind` throw `QuicException.DontFragmentUnavailable` ("QUIC not used: the UDP socket
+cannot set Don't Fragment (RFC 9000 section 14) <on any traffic>: <why>"), a Ktor server serves HTTP/1.1 and HTTP/2 only
+(`KuicksilverApplicationEngine.http3Status` says why), and the Ktor client sends the call over TCP at once
+(`fallback = QuicUnavailable`). Where only one address family lacks it, nothing is sent to that family: the connection
+ends with `TransportClosed` (NO_VIABLE_PATH) caused by the error, a server drops that family's Initials and a Ktor server
+sends no `Alt-Svc` to its clients (`http3Status` names `notServedFamily`; `QuicEndpoint.noDontFragmentFamily`).
+
+- The JVM without the `ksl` native library below JDK 19 (no `IP_DONTFRAGMENT`): load `ksl`
+  ([native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable)) or use JDK 19 or later. QUIC with
+  kuicksilver's TLS needs `ksl` anyway.
+- The system refuses both DF modes (probe and DO), for example a seccomp filter or a sandboxed network stack: allow
+  `setsockopt` of `IP_MTU_DISCOVER` / `IPV6_MTU_DISCOVER`.
+- Kotlin/Native when the accelerated socket cannot open: the portable `ktor-network` socket cannot set DF.
+- Without `ksl` on Linux and Windows, an IPv6-bound dual-stack socket has no DF for IPv4-mapped traffic: IPv4
+  destinations are refused, IPv6 works.
+
 ### A QUIC-LB configuration is refused
 
 `QuicEndpointConfig.Builder.build()` refuses a `loadBalancer` whose `1 + serverId + nonceLength` differs from
@@ -557,6 +577,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
 | `HandshakeTimeout` | QUIC got no answer within the connect timeout: UDP blocked, see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
 | `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
+| `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment, so QUIC is not used: [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | `H3NotReady` | HTTP/1.1 won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
 | `Refused` | the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other code marks the alternative broken |
 | `TlsFailure` | a TLS alert or a local verification failure in the QUIC handshake: [certificate errors](#the-handshake-fails-with-a-certificate-error), [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |

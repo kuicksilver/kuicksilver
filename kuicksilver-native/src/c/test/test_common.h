@@ -191,6 +191,7 @@ uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *);
 void ksl_udp_fail_next_gso_for_test(ksl_udp *, int err);
 void ksl_udp_fail_next_send_for_test(ksl_udp *, int err);
 int ksl_udp_df_mode_for_test(int fd);
+void ksl_udp_refuse_probe_for_test(int on); /* Linux and Android: the system refuses probe mode (DO fallback) */
 int ksl_udp_autoflowlabel_for_test(int fd); /* Linux and Apple: IPV6_AUTOFLOWLABEL of the socket, -1 when unreadable */
 int ksl_udp_autoflowlabel_asked_for_test(
     ksl_udp *); /* Linux and Apple: 1 when ksl_udp_open set IPV6_AUTOFLOWLABEL on it */

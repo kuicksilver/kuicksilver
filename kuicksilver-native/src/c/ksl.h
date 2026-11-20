@@ -35,7 +35,8 @@ extern "C" {
    later 0.3.0 additions go under 7; additive under 7: ksl_ctx_verify_chain_path (the path a re-verification built, for pins
    checked against it); ksl_chain_level and KSL_OPT_LEVEL_AFTER_PAUSE (the level on the
    path the platform built, T.5b); ksl_dns_query (the OS resolver for one record type, HTTPS records); KSL_EKEY_LB,
-   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_sender (send-only clones
+   ksl_key_lb, ksl_key_lb_dup, ksl_key_lb_derive and ksl_key_ecb16 (QUIC-LB connection IDs); ksl_udp_fd_df_probe and
+   ksl_udp_fd_df_mode (DF in probe mode on a socket ksl did not open: the JVM's portable one); ksl_udp_sender (send-only clones
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
@@ -468,7 +469,14 @@ int ksl_key_ecb16(
 #define KSL_UDP_ECN 1
 #define KSL_UDP_GSO 2
 #define KSL_UDP_GRO 4
-#define KSL_UDP_DF 8 /* IP_PMTUDISC_PROBE + IPV6_DONTFRAG, never _DO (quic-go CVE-2024-53259) */
+#define KSL_UDP_DF                                                                                                     \
+    8 /* DF on every half: IP_PMTUDISC_PROBE + IPV6_DONTFRAG where the system takes probe mode (quic-go CVE-2024-53259), else DO */
+/* clang-format off */
+#define KSL_UDP_DF_DO 64 /* granted only, never asked: a half of the socket refused probe mode and has DF in DO mode (Linux IP_PMTUDISC_DO /
+                                        IPV6_PMTUDISC_DO, Windows IP_DONTFRAGMENT / IPV6_DONTFRAG alone, Apple's IP_DONTFRAG / IPV6_DONTFRAG, which
+                                        have no modes): a forged ICMP message can lower the cached path MTU below 1200 and make the system refuse
+                                        sends (ksl_udp_emsgsize counts them; the caller fails the path). Additive in ABI 7 */
+/* clang-format on */
 #define KSL_UDP_REUSEPORT 16
 /* clang-format off */
 #define KSL_UDP_PKTINFO 32 /* a wildcard bind (0.0.0.0, ::) only: each received datagram's destination address (IP_PKTINFO, IPV6_RECVPKTINFO;
@@ -557,6 +565,28 @@ void ksl_icmp_close(int fd);
 uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
 /* datagrams ksl_udp_send lost to EMSGSIZE (larger than the path MTU the kernel knows, with DF), every platform; *last_size: the
             length of the latest one */
+/* --- A UDP socket ksl did not open (additive under ABI 7): DF on the caller's descriptor (the JVM's portable socket) --- */
+#define KSL_FD_DF_V4                                                                                                   \
+    1 /* IPv4 half (an AF_INET6 socket: its v4-mapped traffic) in probe mode: IP_MTU_DISCOVER = PROBE */
+#define KSL_FD_DF_V6 2    /* IPv6 half in probe mode: IPV6_MTU_DISCOVER = IPV6_PMTUDISC_PROBE (+ IPV6_DONTFRAG) */
+#define KSL_FD_DF_INET6 4 /* the socket is AF_INET6: it has both halves */
+#define KSL_FD_DF_V4_DO                                                                                                \
+    8 /* IPv4 half: probe refused, DF in DO mode (Linux IP_PMTUDISC_DO; Windows IP_DONTFRAGMENT alone) */
+#define KSL_FD_DF_V6_DO                                                                                                \
+    16 /* IPv6 half: probe refused, DF in DO mode (Linux IPV6_PMTUDISC_DO; Windows IPV6_DONTFRAG alone) */
+int ksl_udp_fd_df_probe(int64_t fd);
+/* DF on every datagram of fd (a POSIX descriptor; a SOCKET on Windows), as KSL_UDP_DF on ksl_udp_open's sockets: per half, probe
+            mode where the system takes it (the kernel neither fragments a datagram nor sizes it from a path MTU an ICMP message could
+            forge: quic-go CVE-2024-53259), else DO mode (never fragmented either, but a send above a cached path MTU is refused with
+            EMSGSIZE / WSAEMSGSIZE: the caller treats that as a failed path). It replaces a mode set before (the JDK's IP_DONTFRAGMENT is
+            DO). Returns the KSL_FD_DF_* bits of the result: KSL_FD_DF_INET6 for an AF_INET6 socket, and per half V4 or V4_DO, V6 or
+            V6_DO; a half with neither bit has no DF (the system refused both modes). Apple has no modes: IP_DONTFRAG (AF_INET) or
+            IPV6_DONTFRAG (AF_INET6, which covers v4-mapped traffic there), reported as DO; 0 on other platforms; KSL_ERROR when fd is
+            no IPv4 or IPv6 socket */
+int ksl_udp_fd_df_mode(int64_t fd, int family);
+/* IP_MTU_DISCOVER (family 4) or IPV6_MTU_DISCOVER (family 6) of fd (3 = PROBE everywhere; Linux 0 = DONT, 1 = WANT, 2 = DO;
+            Windows 0 = NOT_SET, 1 = DO, 2 = DONT); -1 when it cannot be read or on Apple (no PMTUDISC modes). For tests and
+            diagnostics; fd must be open */
 /* A send-only clone of a socket ksl_udp_open made (one sender thread per object: each has its own send scratch, so N threads
    send on one port through N clones; the clone of a clone is a clone of its socket). It shares the descriptor and copies the
    granted flags (GSO, ECN, DF, PKTINFO) and the local address as they stand: create clones before the socket sends, or from its

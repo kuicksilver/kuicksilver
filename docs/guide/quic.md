@@ -534,8 +534,12 @@ size; probes count in the congestion window but their loss is not a congestion s
 datagrams, or two PTOs in a row while a datagram above 1200 is unanswered (one PTO while the path has acknowledged nothing yet; during the handshake too), mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling. The portable socket sets DF where the JDK has the
-option (`IP_DONTFRAGMENT`, JDK 19 and later; RFC 9000 section 14: "MUST be set if possible") but reports no DF capability,
+dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling. The
+portable socket sets DF on all its traffic
+(RFC 9000 section 14), in probe mode where the system takes it (Linux, Android, Windows; through `ksl` on the JVM), else
+in DO mode, where a forged ICMP message can make the system refuse sends to the peer: such a refusal of a datagram of at
+most 1200 bytes closes that path, or ends the connection with NO_VIABLE_PATH (an HTTP/3 client falls back to TCP). A
+socket that cannot set DF is not used for QUIC (`QuicException.DontFragmentUnavailable`). It reports no DF capability,
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 

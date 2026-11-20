@@ -186,6 +186,9 @@ public object KslConst {
 
     /** `KSL_UDP_PKTINFO` (ABI 7): a wildcard socket reports each datagram's destination address and sends from a named source. */
     public const val UDP_PKTINFO: Int = 32
+
+    /** `KSL_UDP_DF_DO` (granted only, ABI 7): a half of the socket refused probe mode and has DF in DO mode. */
+    public const val UDP_DF_DO: Int = 64
     public const val UDP_ADDR_LEN: Int = 20
 
     /** `Ksl.dnsQuery` answer kind: a whole DNS message follows (`KSL_DNS_MESSAGE`). */

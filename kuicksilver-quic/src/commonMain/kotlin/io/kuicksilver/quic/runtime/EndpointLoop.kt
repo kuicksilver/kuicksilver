@@ -12,6 +12,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionCreated
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DfFamilyRestricted
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
 import io.kuicksilver.quic.EndpointStats
@@ -129,6 +130,7 @@ internal class EndpointLoop private constructor(
         var o: PacketBatch? = null
         try {
             c = EndpointCore(config, KslRandom.newSource(), index, tokens, lb, group?.slots)
+            c.noDfFamily = (io as? DfFamilyRestricted)?.noDfFamily
             core = c
             i = PacketBatch(16, SLOT_SIZE, allocate)
             inBatch = i
@@ -206,6 +208,9 @@ internal class EndpointLoop private constructor(
     private val closingFlag = AtomicInt(0) // set once, by compare-and-set: two concurrent close() calls must not both tear down
     internal val closing: Boolean get() = closingFlag.load() != 0
     override val localAddress: InetSocketAddress get() = io.localAddress
+
+    @ExperimentalKuicksilverApi
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = core.noDfFamily
 
     /** A datagram another loop of the group hands over: [asReceived] ones are treated as if they arrived on this socket (test hook), the rest belong to a connection here. */
     internal class Forwarded(

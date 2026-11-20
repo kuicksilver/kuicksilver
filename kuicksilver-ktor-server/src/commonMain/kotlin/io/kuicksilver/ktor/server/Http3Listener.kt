@@ -161,6 +161,23 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
     with(scope) {
         h3Endpoints += endpoint
         h3Ports += port
+        val noDf = endpoint.noDontFragmentFamily
+        if (noDf != null) {
+            h3NoDfFamily[port] = noDf
+            environment.log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")
+        }
+        h3StatusList =
+            h3StatusList +
+            Http3Status(
+                port,
+                served = true,
+                notServedFamily = noDf,
+                reason =
+                    noDf?.let {
+                        io.kuicksilver.quic.QuicException
+                            .DontFragmentUnavailable(it, "the UDP socket cannot set Don't Fragment for it")
+                    },
+            )
         val local = InetSocketAddress(tls.host, port)
         // the handlers outlive the accept loop: at the grace deadline a stop closes the endpoint, which ends accepting
         val connections = SupervisorJob(coroutineContext[Job])

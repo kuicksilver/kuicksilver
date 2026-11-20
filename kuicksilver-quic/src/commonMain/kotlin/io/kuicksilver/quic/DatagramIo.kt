@@ -39,7 +39,12 @@ public enum class IoPreference {
     /** The `ksl` socket with batching, GSO/GRO, ECN and DF where the platform has it (Linux, Android; Apple without GSO/GRO; Windows with USO/URO where granted); the portable one elsewhere. */
     Accelerated,
 
-    /** Always the portable socket: NIO on the JVM, `ktor-network` on Native. */
+    /**
+     * Always the portable socket: NIO on the JVM, `ktor-network` on Native. On the JVM it still loads `ksl` (once per
+     * process), to put the socket's DF in probe mode (RFC 9000 sections 14 and 14.2.1); without the library it uses the
+     * JDK's `IP_DONTFRAGMENT`, and where DF cannot be set at all (below JDK 19; on Kotlin/Native, whose portable socket has
+     * no DF) [DatagramIo.open] throws [QuicException.DontFragmentUnavailable].
+     */
     Portable,
 }
 
@@ -73,9 +78,22 @@ public interface DatagramIo : AutoCloseable {
      */
     public fun disableEcnMarking() {}
 
+    /**
+     * The address family this socket cannot set Don't Fragment for, so nothing of it may go there (no DF, no QUIC: RFC 9000
+     * section 14; no DF, no CONNECT-UDP tunnel: RFC 9298 section 3.1), or null when it has DF for every family it reaches: a
+     * dual-stack portable socket whose IPv4 or IPv6 half has none, an AF_INET socket (IPv6). A socket without DF at all is
+     * never opened ([open] throws [QuicException.DontFragmentUnavailable]). A custom socket overrides it where it applies.
+     */
+    @ExperimentalKuicksilverApi
+    public val noDontFragmentFamily: IpFamily? get() = null
+
     /** Holds [open], the platform's socket factory. */
     public companion object {
-        /** Binds [local] (port 0 picks a free port): the accelerated transport when [prefer] asks for it and the platform has it, the portable one otherwise. */
+        /**
+         * Binds [local] (port 0 picks a free port): the accelerated transport when [prefer] asks for it and the platform has it,
+         * the portable one otherwise. No DF, no QUIC (RFC 9000 section 14): throws [QuicException.DontFragmentUnavailable] when
+         * the socket cannot set the Don't Fragment bit on any of its traffic.
+         */
         public suspend fun open(
             local: InetSocketAddress,
             prefer: IoPreference = IoPreference.Accelerated,

@@ -6,7 +6,17 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 
-internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo = KtorDatagramIo.open(local)
+/**
+ * No DF, no QUIC (RFC 9000 section 14): the Kotlin/Native portable socket (ktor-network, [KtorDatagramIo]) gives no access to
+ * its descriptor, so DF cannot be set on it, and QUIC is not used there. The accelerated `ksl` socket, linked into every
+ * Native binary, sets DF.
+ */
+internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo =
+    throw QuicException.DontFragmentUnavailable(
+        null,
+        "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
+        permanent = false, // the accelerated socket may open next time (a refusal under load, out of descriptors)
+    )
 
 internal actual fun printWarning(line: String) {
     platform.posix.fputs(line + "\n", platform.posix.stderr)

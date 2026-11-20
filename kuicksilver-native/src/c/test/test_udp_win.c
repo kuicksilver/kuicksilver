@@ -548,10 +548,34 @@ void run_udp_win(void) {
         int mode = ksl_udp_df_mode_for_test(fd);
         printf("udp(win): PMTU probe mode %s (IP_MTU_DISCOVER reads %d)\n",
                ksl_udp_df_probe_for_test(a) ? "taken" : "refused by this Windows", mode);
+        /* KSL_UDP_DF_DO exactly when a half refused PROBE (on AF_INET6: either half) */
+        CHECK(((wcaps(a, NULL) & KSL_UDP_DF_DO) != 0) == !ksl_udp_df_probe_for_test(a),
+              "KSL_UDP_DF_DO granted exactly when probe mode is missing on a half");
         if (ksl_udp_df_probe_for_test(a))
             CHECK(mode == 3, "IP_MTU_DISCOVER taken: it reads back PROBE (3), never DO");
         else
-            CHECK(mode != 2 /* IP_PMTUDISC_DO */, "IP_MTU_DISCOVER refused: whatever the system reports, it is not DO");
+            CHECK(mode != 1 /* IP_PMTUDISC_DO (Windows: NOT_SET 0, DO 1, DONT 2, PROBE 3) */,
+                  "IP_MTU_DISCOVER refused: whatever the system reports, it is not DO");
+    }
+    /* udp_win_fd_df_probe: on a SOCKET ksl did not open, left in DO as the JDK's IP_DONTFRAGMENT sets it on Windows, probe mode
+       replaces it where the system takes the option */
+    {
+        SOCKET s4 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        CHECK(s4 != INVALID_SOCKET, "an AF_INET socket");
+        int dmode = 1; /* IP_PMTUDISC_DO */
+        int took_do = setsockopt(s4, IPPROTO_IP, 71 /* IP_MTU_DISCOVER */, (const char *)&dmode, sizeof dmode) == 0;
+        int g = ksl_udp_fd_df_probe((int64_t)s4);
+        printf("udp(win): ksl_udp_fd_df_probe granted %d (DO taken first: %d, IP_MTU_DISCOVER now %d)\n", g, took_do,
+               ksl_udp_fd_df_mode((int64_t)s4, 4));
+        CHECK(g >= 0, "a socket: not KSL_ERROR");
+        CHECK(!(g & KSL_FD_DF_INET6), "AF_INET: one half");
+        CHECK((g & KSL_FD_DF_V4) != 0 || (g & KSL_FD_DF_V4_DO) != 0,
+              "DF always: probe mode, else DO (IP_DONTFRAGMENT)");
+        if (g & KSL_FD_DF_V4)
+            CHECK(ksl_udp_fd_df_mode((int64_t)s4, 4) == 3, "probe mode read back");
+        CHECK(ksl_udp_fd_df_probe(-1) == KSL_ERROR, "no socket: KSL_ERROR");
+        CHECK(ksl_udp_df_bit_for_test((int)s4) == 1, "IP_DONTFRAGMENT set");
+        closesocket(s4);
     }
     /* udp_win_truncated_datagram_dropped: 1400 bytes into a 1000-byte slot are dropped, not truncated */
     {

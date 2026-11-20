@@ -37,6 +37,7 @@ internal class LoopObserver(
     var zeroRttRejected = 0L
     var datagramsReceived = 0L
     var datagramsSent = 0L
+    var datagramsSkippedNoDf = 0L
     var pathValidations = 0L
     var pathValidationFailures = 0L
     var listenerFailures = 0L
@@ -173,6 +174,7 @@ internal class LoopObserver(
             zeroRttRejected = zeroRttRejected,
             datagramsReceived = datagramsReceived,
             datagramsSent = datagramsSent,
+            datagramsSkippedNoDf = datagramsSkippedNoDf,
             datagramsDroppedSocket = socketDrops,
             pathValidations = pathValidations,
             pathValidationFailures = pathValidationFailures,

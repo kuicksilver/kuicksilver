@@ -387,18 +387,22 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     if (flags &
         KSL_UDP_DF) { /* DF on, and where the system has it PROBE: no path MTU cache drives the sizes (quic-go CVE-2024-53259) */
-        int probe = IP_PMTUDISC_PROBE, ok;
+        /* per half: DF (IP_DONTFRAGMENT / IPV6_DONTFRAG) must take; PROBE where the system takes it, else that half is in DO mode */
+        int probe = IP_PMTUDISC_PROBE, df, p4, p6 = 1;
         if (u->family == AF_INET) {
-            ok = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes);
-            u->df_probe = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            df = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) == 0;
+            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         } else {
-            ok = setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes);
-            setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes);
-            setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe);
-            u->df_probe = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            int df6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
+            int df4 = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
+                      0; /* the v4-mapped half */
+            df = df6 && df4;
+            p6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         }
-        if (ok == 0)
-            u->granted |= KSL_UDP_DF; /* DF alone where PROBE is refused: what msquic runs with */
+        u->df_probe = p4 && p6;
+        if (df) /* DF alone where PROBE is refused on a half: what msquic runs with, reported as DO */
+            u->granted |= KSL_UDP_DF | (u->df_probe ? 0 : KSL_UDP_DF_DO);
     }
     if (flags & KSL_UDP_GSO) {
         DWORD v = 0;
@@ -1182,6 +1186,44 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     if (last_size)
         *last_size = (uint32_t)InterlockedCompareExchange(&u->emsgsize_last, 0, 0);
     return (uint64_t)InterlockedCompareExchange64(&u->emsgsize, 0, 0);
+}
+
+/* as the KSL_UDP_DF branch of ksl_udp_open: DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the JDK's) */
+int ksl_udp_fd_df_probe(int64_t fd) {
+    SOCKET s = (SOCKET)(UINT_PTR)fd;
+    struct sockaddr_storage ss;
+    int l = (int)sizeof ss, yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
+    memset(&ss, 0, sizeof ss);
+    if (fd < 0 || (uint64_t)fd > (uint64_t)UINTPTR_MAX || getsockname(s, (struct sockaddr *)&ss, &l) != 0 ||
+        (ss.ss_family != AF_INET && ss.ss_family != AF_INET6))
+        return KSL_ERROR;
+    /* DF always: IP_DONTFRAGMENT / IPV6_DONTFRAG first, as ksl_udp_open does; then PROBE where the system takes it (some Windows 11
+       builds and older Windows refuse IP_MTU_DISCOVER: the DF bit alone then works as DO, a send above a cached path MTU refused) */
+    int df4 = setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
+              0; /* on AF_INET6: the v4-mapped half */
+    if (setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
+        granted |= KSL_FD_DF_V4;
+    else if (df4)
+        granted |= KSL_FD_DF_V4_DO;
+    if (ss.ss_family == AF_INET6) {
+        granted |= KSL_FD_DF_INET6;
+        int df6 = setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)
+            granted |= KSL_FD_DF_V6;
+        else if (df6)
+            granted |= KSL_FD_DF_V6_DO;
+    }
+    return granted;
+}
+int ksl_udp_fd_df_mode(int64_t fd, int family) {
+    DWORD v = 0;
+    int l = (int)sizeof v;
+    if (fd < 0 || (family != 4 && family != 6))
+        return -1;
+    if (getsockopt((SOCKET)(UINT_PTR)fd, family == 6 ? IPPROTO_IPV6 : IPPROTO_IP,
+                   family == 6 ? IPV6_MTU_DISCOVER : IP_MTU_DISCOVER, (char *)&v, &l) != 0)
+        return -1;
+    return (int)v;
 }
 
 #ifdef KSL_TEST

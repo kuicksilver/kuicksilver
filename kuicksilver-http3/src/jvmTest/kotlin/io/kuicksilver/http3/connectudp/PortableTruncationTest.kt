@@ -54,6 +54,8 @@ class PortableTruncationTest {
                 )
             val proxySocket = CompletableDeferred<DatagramIo>()
             val loopback = InetSocketAddress("127.0.0.1", 0)
+            // the JVM's portable socket has DF (probe mode through ksl); the Kotlin/Native portable socket cannot set DF, so it
+            // is never a QUIC or CONNECT-UDP socket there (no DF, no tunnel: KtorDatagramIoTest.negative_thePortableSocketIsRefusedWithoutDf)
             val target = DatagramIo.open(loopback, IoPreference.Portable)
             val rig =
                 ProxyRig(pair) { _ ->

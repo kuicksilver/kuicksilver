@@ -31,7 +31,9 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use: an empty incoming
+ * Portable Native transport over ktor-network's datagram socket (ADR-0006). It cannot set the Don't Fragment bit (ktor
+ * gives no access to its descriptor), so [DatagramIo.open] does not use it for QUIC (no DF, no QUIC: RFC 9000 section 14,
+ * [QuicException.DontFragmentUnavailable]); kept for its tests. Client use: an empty incoming
  * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and a server needs
  * the accelerated `DatagramIo`.
  *

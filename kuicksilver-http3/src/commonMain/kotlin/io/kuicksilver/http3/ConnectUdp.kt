@@ -312,7 +312,14 @@ public fun interface UdpProxyResolver {
  *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment and, on
  *   the wildcard bind, reports each datagram's destination, the source of a [packetTooBig][UdpProxyConfig.packetTooBig]
  *   message. A factory may bind one address instead (its Packet Too Big messages leave from it); a wildcard socket that
- *   does not report destinations (the portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource].
+ *   does not report destinations (the portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource]. No DF,
+ *   no tunnel (RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"): a factory that
+ *   throws [io.kuicksilver.quic.QuicException.DontFragmentUnavailable], or a socket whose
+ *   [noDontFragmentFamily][DatagramIo.noDontFragmentFamily] is the target's family, refuses the request with 500 and
+ *   `proxy-status: <proxyName>; error=proxy_configuration_error; details="no Don't Fragment for <family> targets on this
+ *   host"`; the other family is still served. The proxy remembers a family as without DF only for a permanent cause: a
+ *   custom factory throws [io.kuicksilver.quic.QuicException.DontFragmentUnavailable] with `permanent = false` for a
+ *   failure that may pass on a later attempt (out of descriptors, a bind refused under load), so later requests try again.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(

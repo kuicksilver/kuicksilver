@@ -50,6 +50,15 @@ public interface QuicEndpoint : AutoCloseable {
     /** The address the endpoint's socket is bound to, with the port the system picked when `bind` asked for port 0. */
     public val localAddress: InetSocketAddress
 
+    /**
+     * The address family this endpoint does not serve because its socket cannot set Don't Fragment for it (no DF, no QUIC: RFC
+     * 9000 section 14); null when it has DF for every family it can reach (an endpoint without DF at all does not exist:
+     * `bind` throws [QuicException.DontFragmentUnavailable]): a dual-stack portable socket whose IPv4 or IPv6 half has no DF, or an
+     * AF_INET socket (IPv6). Its client Initials are dropped, its sends refused ([QuicException.DontFragmentUnavailable]).
+     */
+    @ExperimentalKuicksilverApi
+    public val noDontFragmentFamily: IpFamily? get() = null
+
     /** [close] and then waits until every connection is closed and the socket released: a port can be rebound right after. */
     public suspend fun closeAndJoin()
 

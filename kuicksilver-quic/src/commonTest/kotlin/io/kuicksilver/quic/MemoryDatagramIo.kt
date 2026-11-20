@@ -101,7 +101,16 @@ internal class MemoryDatagramIo internal constructor(
     internal val deaf: Boolean,
     df: Boolean = false,
 ) : DatagramIo,
-    QueuedReceive {
+    QueuedReceive,
+    DfFamilyRestricted {
+    /** Fault injection: the next send skips its first slot for want of DF (reported by [takeDfRefusals]) and then throws. */
+    @kotlin.concurrent.Volatile
+    var refuseThenThrow: Boolean = false
+    private val dfRefused = ArrayList<InetSocketAddress>()
+    override val noDfFamily: IpFamily? get() = null
+
+    override fun takeDfRefusals(): List<InetSocketAddress> = dfRefused.toList().also { dfRefused.clear() }
+
     /** Like a socket's receive buffer: 256 unread datagrams, then drops (as the public MemoryNetwork). */
     internal val inbox = Channel<Pair<ByteArray, InetSocketAddress>>(256)
     override val capabilities: StateFlow<IoCapabilities> =
@@ -234,8 +243,24 @@ internal class MemoryDatagramIo internal constructor(
         return trySend(batch)
     }
 
+    /** Fault injection on sends only (receive goes on): the next [sendFailuresLeft] sends throw it, then it clears. */
+    @kotlin.concurrent.Volatile
+    var sendFailure: Throwable? = null
+
+    @kotlin.concurrent.Volatile
+    var sendFailuresLeft: Int = Int.MAX_VALUE
+
     override fun trySend(batch: PacketBatch): Int {
         failure?.let { throw it }
+        if (refuseThenThrow && batch.count > 0) {
+            refuseThenThrow = false
+            batch.address(0)?.let { dfRefused += it }
+            throw kotlinx.io.IOException("test: the send failed after a skipped slot")
+        }
+        sendFailure?.let {
+            if (--sendFailuresLeft <= 0) sendFailure = null
+            throw it
+        }
         for (i in 0 until batch.count) {
             net.deliver(localAddress, batch.address(i) ?: continue, batch.buffer(i).toByteArray(batch.length(i)))
             sent++

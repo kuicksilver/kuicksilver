@@ -82,6 +82,19 @@ final enum class io.kuicksilver.quic/IoPreference : kotlin/Enum<io.kuicksilver.q
     final fun values(): kotlin/Array<io.kuicksilver.quic/IoPreference> // io.kuicksilver.quic/IoPreference.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.quic/IpFamily : kotlin/Enum<io.kuicksilver.quic/IpFamily> { // io.kuicksilver.quic/IpFamily|null[0]
+    enum entry V4 // io.kuicksilver.quic/IpFamily.V4|null[0]
+    enum entry V6 // io.kuicksilver.quic/IpFamily.V6|null[0]
+
+    final val entries // io.kuicksilver.quic/IpFamily.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/IpFamily> // io.kuicksilver.quic/IpFamily.entries.<get-entries>|<get-entries>#static(){}[0]
+    final val label // io.kuicksilver.quic/IpFamily.label|{}label[0]
+        final fun <get-label>(): kotlin/String // io.kuicksilver.quic/IpFamily.label.<get-label>|<get-label>(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.quic/IpFamily // io.kuicksilver.quic/IpFamily.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.quic/IpFamily> // io.kuicksilver.quic/IpFamily.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.quic/LogLevel : kotlin/Enum<io.kuicksilver.quic/LogLevel> { // io.kuicksilver.quic/LogLevel|null[0]
     enum entry Debug // io.kuicksilver.quic/LogLevel.Debug|null[0]
     enum entry Error // io.kuicksilver.quic/LogLevel.Error|null[0]
@@ -211,6 +224,8 @@ abstract interface io.kuicksilver.quic/DatagramIo : kotlin/AutoCloseable { // io
         abstract fun <get-capabilities>(): kotlinx.coroutines.flow/StateFlow<io.kuicksilver.quic/IoCapabilities> // io.kuicksilver.quic/DatagramIo.capabilities.<get-capabilities>|<get-capabilities>(){}[0]
     abstract val localAddress // io.kuicksilver.quic/DatagramIo.localAddress|{}localAddress[0]
         abstract fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/DatagramIo.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    open val noDontFragmentFamily // io.kuicksilver.quic/DatagramIo.noDontFragmentFamily|{}noDontFragmentFamily[0]
+        open fun <get-noDontFragmentFamily>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.quic/DatagramIo.noDontFragmentFamily.<get-noDontFragmentFamily>|<get-noDontFragmentFamily>(){}[0]
 
     abstract fun trySend(io.kuicksilver.quic/PacketBatch): kotlin/Int // io.kuicksilver.quic/DatagramIo.trySend|trySend(io.kuicksilver.quic.PacketBatch){}[0]
     abstract suspend fun receive(io.kuicksilver.quic/PacketBatch): kotlin/Int // io.kuicksilver.quic/DatagramIo.receive|receive(io.kuicksilver.quic.PacketBatch){}[0]
@@ -321,6 +336,8 @@ abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // 
         abstract fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/QuicEndpoint.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
     abstract val stats // io.kuicksilver.quic/QuicEndpoint.stats|{}stats[0]
         abstract fun <get-stats>(): io.kuicksilver.quic/EndpointStats // io.kuicksilver.quic/QuicEndpoint.stats.<get-stats>|<get-stats>(){}[0]
+    open val noDontFragmentFamily // io.kuicksilver.quic/QuicEndpoint.noDontFragmentFamily|{}noDontFragmentFamily[0]
+        open fun <get-noDontFragmentFamily>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.quic/QuicEndpoint.noDontFragmentFamily.<get-noDontFragmentFamily>|<get-noDontFragmentFamily>(){}[0]
 
     abstract suspend fun accept(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.accept|accept(){}[0]
     abstract suspend fun closeAndJoin() // io.kuicksilver.quic/QuicEndpoint.closeAndJoin|closeAndJoin(){}[0]
@@ -984,6 +1001,8 @@ final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointS
         final fun <get-datagramsReceived>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsReceived.<get-datagramsReceived>|<get-datagramsReceived>(){}[0]
     final val datagramsSent // io.kuicksilver.quic/EndpointStats.datagramsSent|{}datagramsSent[0]
         final fun <get-datagramsSent>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsSent.<get-datagramsSent>|<get-datagramsSent>(){}[0]
+    final val datagramsSkippedNoDf // io.kuicksilver.quic/EndpointStats.datagramsSkippedNoDf|{}datagramsSkippedNoDf[0]
+        final fun <get-datagramsSkippedNoDf>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsSkippedNoDf.<get-datagramsSkippedNoDf>|<get-datagramsSkippedNoDf>(){}[0]
     final val handshakesCompleted // io.kuicksilver.quic/EndpointStats.handshakesCompleted|{}handshakesCompleted[0]
         final fun <get-handshakesCompleted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.handshakesCompleted.<get-handshakesCompleted>|<get-handshakesCompleted>(){}[0]
     final val handshakesFailedOther // io.kuicksilver.quic/EndpointStats.handshakesFailedOther|{}handshakesFailedOther[0]
@@ -1669,6 +1688,19 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
         final fun createCopy(): io.kuicksilver.quic/QuicException.DatagramUnsupported // io.kuicksilver.quic/QuicException.DatagramUnsupported.createCopy|createCopy(){}[0]
     }
 
+    final class DontFragmentUnavailable : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.DontFragmentUnavailable|null[0]
+        constructor <init>(io.kuicksilver.quic/IpFamily?, kotlin/String, kotlin/Boolean = ...) // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.<init>|<init>(io.kuicksilver.quic.IpFamily?;kotlin.String;kotlin.Boolean){}[0]
+
+        final val detail // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail|{}detail[0]
+            final fun <get-detail>(): kotlin/String // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.detail.<get-detail>|<get-detail>(){}[0]
+        final val family // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family|{}family[0]
+            final fun <get-family>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.family.<get-family>|<get-family>(){}[0]
+        final val permanent // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.permanent|{}permanent[0]
+            final fun <get-permanent>(): kotlin/Boolean // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.permanent.<get-permanent>|<get-permanent>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.quic/QuicException.DontFragmentUnavailable // io.kuicksilver.quic/QuicException.DontFragmentUnavailable.createCopy|createCopy(){}[0]
+    }
+
     final class EndpointClosing : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.EndpointClosing|null[0]
         constructor <init>() // io.kuicksilver.quic/QuicException.EndpointClosing.<init>|<init>(){}[0]
 
@@ -1696,7 +1728,7 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
         }
 
         final class NoViablePath : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath|null[0]
-            constructor <init>() // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.<init>|<init>(){}[0]
+            constructor <init>(kotlin/Throwable? = ...) // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.<init>|<init>(kotlin.Throwable?){}[0]
 
             final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.createCopy|createCopy(){}[0]
         }

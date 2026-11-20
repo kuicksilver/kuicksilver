@@ -43,6 +43,7 @@ import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.splitAbsoluteForm
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
@@ -116,7 +117,11 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
                     throw e
                 } catch (e: UnsupportedOperationException) {
                     environment.log.warn("HTTP/3 is not served: ${e.message}")
-                    return bindTcp(selector, l.config.host, l.config.port) to null
+                    return bindTcp(selector, l.config.host, l.config.port).also { recordH3NotServed(it, l, e) } to null
+                } catch (e: QuicException.DontFragmentUnavailable) {
+                    // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 and HTTP/2 only, as without a QUIC server
+                    environment.log.warn("HTTP/3 is not served: ${e.message}")
+                    return bindTcp(selector, l.config.host, l.config.port).also { recordH3NotServed(it, l, e) } to null
                 } catch (e: Throwable) {
                     if (!mayBeTaken(e)) throw e
                     environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
@@ -147,6 +152,12 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             throw e
         } catch (e: UnsupportedOperationException) {
             environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            recordH3NotServed(server, l, e)
+            return server to null
+        } catch (e: QuicException.DontFragmentUnavailable) {
+            // no DF, no QUIC (RFC 9000 section 14): HTTP/1.1 and HTTP/2 only, as without a QUIC server
+            environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            recordH3NotServed(server, l, e)
             return server to null
         } catch (e: Throwable) {
             if (!ephemeral || !mayBeTaken(e)) {
@@ -426,7 +437,16 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 val authorityCheck = AuthorityCheck(own, l.trustedGateway, sni)
                                 // RFC 7838 section 2.1: an alternative must serve the origin; a name whose answer lists ALPN without
                                 // h3 is refused over HTTP/3, so its connections advertise none (requests are for that name, 421 else)
-                                val altSvc = if (l.tls != null && configuration.altSvc && h3ForName) http3AltSvc(port) else NO_ALT_SVC
+                                // no Alt-Svc for a client of the family whose HTTP/3 is not served (no DF for it: RFC 9000 section 14)
+                                val familyServed = h3NoDfFamily[port]?.let { it != peerFamily(remote) } ?: true
+                                val altSvc =
+                                    if (l.tls != null && configuration.altSvc && h3ForName &&
+                                        familyServed
+                                    ) {
+                                        http3AltSvc(port)
+                                    } else {
+                                        NO_ALT_SVC
+                                    }
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(
                                         sock,
@@ -572,6 +592,27 @@ private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): () -> String? {
     if (port !in h3Ports) return NO_ALT_SVC
     val h3 = "h3=\":$port\"; ma=86400"
     return { if (advertising == Http3Advertising.On) h3 else ALT_SVC_CLEAR }
+}
+
+/** [http3Status]: HTTP/3 is not served on [server]'s port, for [reason]. */
+private fun KuicksilverApplicationEngine.recordH3NotServed(
+    server: io.ktor.network.sockets.ServerSocket,
+    l: KuicksilverApplicationEngine.Listener,
+    reason: Throwable,
+) {
+    val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
+    h3StatusList = h3StatusList + Http3Status(port, served = false, notServedFamily = null, reason = reason)
+}
+
+/**
+ * The address family of a TCP peer (an IPv4-mapped IPv6 address, as a dual-stack listener reports IPv4 peers, counts as
+ * IPv4); null when not known.
+ */
+internal fun peerFamily(remote: InetSocketAddress?): io.kuicksilver.quic.IpFamily? {
+    val b = remote?.let { peerAddressBytes(it) } ?: return null
+    if (b.size == 4) return io.kuicksilver.quic.IpFamily.V4
+    for (i in 0 until 10) if (b[i].toInt() != 0) return io.kuicksilver.quic.IpFamily.V6
+    return if (b[10].toInt() == -1 && b[11].toInt() == -1) io.kuicksilver.quic.IpFamily.V4 else io.kuicksilver.quic.IpFamily.V6
 }
 
 /** No `Alt-Svc` from the engine: plain HTTP, `altSvc = false`, or a port without HTTP/3. */
