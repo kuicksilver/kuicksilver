@@ -3,11 +3,11 @@
 
 // Repositories. Maven Central answers 404 for files it has now and then (CI runs 44630132347, 44657561143, 44674970605);
 // Gradle takes a 404 as "not there" and asks the next repository, so in CI (kuicksilver.centralMirror=true, set by
-// .github/actions/setup) Google's mirror of Central comes last, for a module the others did not find. A version range
-// lists the versions of every repository, so for one (kotlin-build-tools-impl in build-logic) the mirror is asked on
-// every resolution and must be reachable: CI's runners reach it, a machine behind a filter may not, so builds elsewhere
-// leave it out. It changes no trust: every file still has to match gradle/verification-metadata.xml (signature or
-// SHA-256). Central comes before the Gradle Plugin Portal, which answers
+// .github/actions/setup) Google's mirror of Central comes last, asked only for a module the others did not find. A
+// version range would list the versions of every repository, the mirror's on every resolution, so the build has none
+// (build-logic pins the one the Kotlin plugin asks for). Builds outside CI leave the mirror out: a machine behind a
+// filter may not reach it. It changes no trust: every file still has to match gradle/verification-metadata.xml
+// (signature or SHA-256). Central comes before the Gradle Plugin Portal, which answers
 // for Central's modules with a redirect there, one more hop that can fail; the portal is asked only for the plugins
 // only it has (exclusiveContent), Google's repository only for the Android and Google groups.
 // build-logic/settings.gradle.kts has the same lists. A missing file of a module that was found (a jar) is asked for only

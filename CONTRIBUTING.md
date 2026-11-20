@@ -52,8 +52,8 @@ PGP signature by a key trusted for that publisher's group (the keys are in `grad
 server is needed), or a SHA-256 for artifacts that are not signed or whose key no key server has. An artifact that
 matches neither fails the build, the release included. The same holds for every repository: Google's mirror of Maven
 Central, last in `settings.gradle.kts` and `build-logic/settings.gradle.kts` in CI (`kuicksilver.centralMirror=true`),
-is asked for a module the others did not have (Central answers 404 for files it has now and then) and for version
-listings, and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
+is asked only for a module the others did not have (Central answers 404 for files it has now and then; the build has no
+version range, whose listing would ask every repository) and is held to the same file. When a dependency, a plugin or a toolchain pin changes (Renovate
 pull requests too), update the file in the same pull request and review its diff:
 
 ```sh
