@@ -205,47 +205,51 @@ class ClientOrderlyCloseTest {
                     val server =
                         launch {
                             val socket = listener.accept()
-                            val socketIn = socket.openReadChannel()
-                            val socketOut = socket.openWriteChannel(autoFlush = true)
-                            val fed =
-                                io.ktor.utils.io
-                                    .ByteChannel()
-                            launch {
-                                val buf = ByteArray(16_384)
-                                while (true) {
-                                    val n = runCatching { socketIn.readAvailable(buf, 0, buf.size) }.getOrDefault(-1)
-                                    if (n < 0) break
-                                    runCatching {
-                                        fed.writeFully(buf, 0, n)
-                                        fed.flush()
+                            try {
+                                val socketIn = socket.openReadChannel()
+                                val socketOut = socket.openWriteChannel(autoFlush = true)
+                                val fed =
+                                    io.ktor.utils.io
+                                        .ByteChannel()
+                                launch {
+                                    val buf = ByteArray(16_384)
+                                    while (true) {
+                                        val n = runCatching { socketIn.readAvailable(buf, 0, buf.size) }.getOrDefault(-1)
+                                        if (n < 0) break
+                                        runCatching {
+                                            fed.writeFully(buf, 0, n)
+                                            fed.flush()
+                                        }
                                     }
+                                    fin.complete(
+                                        kotlin.time.TimeSource.Monotonic
+                                            .markNow(),
+                                    )
+                                    fed.flushAndClose()
                                 }
-                                fin.complete(
-                                    kotlin.time.TimeSource.Monotonic
-                                        .markNow(),
-                                )
-                                fed.flushAndClose()
+                                val session =
+                                    io.kuicksilver.tls.TlsConnection.server(
+                                        fed,
+                                        socketOut,
+                                        io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Server) {
+                                            identity = ClientFixtures.identity()
+                                            alpn = listOf("http/1.1")
+                                        },
+                                        coroutineContext,
+                                    )
+                                readRequest(session.input)
+                                session.output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                                session.output.flush()
+                                if (session.input.endsCleanly()) {
+                                    closeNotify.complete(
+                                        kotlin.time.TimeSource.Monotonic
+                                            .markNow(),
+                                    )
+                                }
+                                hold.await() // never answers the close_notify, never closes
+                            } finally {
+                                socket.close() // once the test is over (the leak sentinel counts an accepted socket left open)
                             }
-                            val session =
-                                io.kuicksilver.tls.TlsConnection.server(
-                                    fed,
-                                    socketOut,
-                                    io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Server) {
-                                        identity = ClientFixtures.identity()
-                                        alpn = listOf("http/1.1")
-                                    },
-                                    coroutineContext,
-                                )
-                            readRequest(session.input)
-                            session.output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-                            session.output.flush()
-                            if (session.input.endsCleanly()) {
-                                closeNotify.complete(
-                                    kotlin.time.TimeSource.Monotonic
-                                        .markNow(),
-                                )
-                            }
-                            hold.await() // never answers the close_notify, never closes
                         }
                     val port = (listener.localAddress as io.ktor.network.sockets.InetSocketAddress).port
                     // the engine stays open: its close (which cuts every orderly close after 2 s) is not what ends this one
