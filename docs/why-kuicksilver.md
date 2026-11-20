@@ -93,7 +93,7 @@ What Kuicksilver adds to an app:
 |---|---|---|
 | iOS app, Release arm64, linked bytes (OpenSSL 1.98 MB, `ksl` 0.03 MB, Kotlin of Kuicksilver 1.43 MB, plus the Kotlin runtime, stdlib, coroutines and ktor-io a Kotlin app may already have) | 5.60 MB in all; about 3.4 MB for an app that already ships Kotlin | [ios.md, Size](guide/ios.md#size), 2026-10-14, 0.2.0 code (`tools/check/ios-size.sh`) |
 | `kuicksilver-native` Android AAR, three ABIs | about 3.6 MB | [release.md](release.md#every-release), 2026-10-09 |
-| Android `libksl.so`, arm64-v8a | gate: fails above 3,000,000 bytes, warns above 2,700,000 | `tools/check/size.sh`, step "android: size gate" of `tools/ci/local-matrix.sh` |
+| Android `libksl.so`, arm64-v8a | gate: fails above 3,550,000 bytes, warns above 3,500,000 | `tools/check/size.sh`, step "android: size gate" of `tools/ci/local-matrix.sh` |
 
 URLSession is part of the OS and adds nothing to an app. Cronet loaded from Google Play Services adds no Cronet binary
 either: "the application doesn't need to pay the binary size cost of carrying Cronet"

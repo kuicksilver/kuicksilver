@@ -1042,6 +1042,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `no-ssl3`, `no-ssl3-method`), and `tools/openssl/build.sh` rewrites the read-only `crypto/buildinf.h` that 4.x makes.
   The native libraries grow by about 10 % (the macOS arm64 JNI library: 2,544,072 to 2,809,416 bytes). `Ksl.version()`
   names OpenSSL 4.1.0. Building `ksl` against a system OpenSSL (Linux, `KSL_SYSTEM_OPENSSL`) still takes 3.5 to 3.x.
+- The Android size gate (`tools/check/size.sh`) fails above 3,550,000 bytes and warns above 3,500,000 (was 3,200,000 and
+  2,900,000): OpenSSL 4.1.0 with Encrypted Client Hello grows the arm64-v8a `libksl.so` from 3,136,784 to 3,473,712 bytes
+  (armeabi-v7a 2,452,436 to 2,637,372, x86_64 3,991,440 to 4,205,360). `configure-flags.txt` turns off the three KDFs 4.x
+  adds that nothing uses (`no-ikev2kdf`, `no-snmpkdf`, `no-srtpkdf`; about 14,000 bytes per ABI).
 - The bundled OpenSSL carries two patches on the 4.1.0 tarball, as an exception to "the upstream tarball only"
   (ADR-0019): OpenSSL 4.1.0 fails Encrypted Client Hello with internal_error after a HelloRetryRequest whenever the
   client has a custom extension of its own, which every QUIC client has (its transport parameters), and ends an ECH

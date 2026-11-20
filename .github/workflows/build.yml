@@ -789,7 +789,7 @@ jobs:
     timeout-minutes: 120
     env:
       AAR: kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
-      SIZE_LIMIT: '3200000'   # +200,000 for zlib and brotli's decoder in libcrypto (RFC 8879 certificate compression, ADR-0025)
+      SIZE_LIMIT: '3550000'   # OpenSSL 4.1.0 with ECH (ADR-0019) after zlib and brotli (ADR-0025): tools/check/size.sh has the figures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }

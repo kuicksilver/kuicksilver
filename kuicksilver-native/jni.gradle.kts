@@ -46,6 +46,9 @@ val buildAndroidJni = tasks.register<AndroidJniTask>("buildAndroidJni") {
     dependsOn(listOf("opensslBuildAndroidArm64", "opensslBuildAndroidX86_64") + (if (androidArmv7) listOf("opensslBuildAndroidArm") else emptyList()))
     script.set(root.resolve("tools/build-android-so.sh")); sources.from(fileTree("src/c"), fileTree("src/jni")); abis.set(androidAbis); outDir.set(file("src/androidMain/jniLibs"))
     builderEnv.forEach { (name, value) -> inputs.property("env.$name", value) }
+    // the OpenSSL each ABI links, as for buildJniHost: a rebuilt OpenSSL (another pin, configure-flags.txt) reruns the build
+    val abiOpenssl = mapOf("arm64-v8a" to "android-arm64", "x86_64" to "android-x86_64", "armeabi-v7a" to "android-arm")
+    inputs.files(androidAbis.map { root.resolve("build/openssl/${abiOpenssl.getValue(it)}/provenance.txt") })
 }
 tasks.matching { it.name.startsWith("compileAndroid") || it.name.contains("mergeAndroid") || it.name.contains("JniLib") }.configureEach { dependsOn(buildAndroidJni) }
 

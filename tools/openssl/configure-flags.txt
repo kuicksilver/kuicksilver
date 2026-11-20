@@ -67,6 +67,11 @@ no-siv
 no-ocb
 no-cmac
 no-scrypt
+# OpenSSL 4 adds three KDFs to the default provider that nothing here uses (IKEv2, SNMP, SRTP): about 13,500 bytes of the
+# Android arm64 libksl.so
+no-ikev2kdf
+no-snmpkdf
+no-srtpkdf
 no-dsa
 no-dh
 no-ml-dsa
