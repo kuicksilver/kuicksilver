@@ -50,18 +50,20 @@ class CidGapsTest {
     }
 
     /**
-     * The peer's handshake ID is replaced while it is the only one and carries no reset token (a provisional SCID before the
-     * ServerHello), never once it has a token or a second ID exists: later Initials must not change the ID the peer issued.
+     * RFC 9000 section 7.2: "A client MUST change the Destination Connection ID it uses for sending packets in response to only
+     * the first received Initial or Retry packet." The peer's handshake ID, taken from its first Initial, is never replaced by
+     * a later one: not while it is the only one and has no reset token yet (until 0.3.0 it was, for msquic's provisional
+     * SCID), not once it has a token, not once a second ID exists.
      */
-    @Test fun negative_initialPeerCidIsReplacedOnlyWhileProvisional() {
+    @Test fun negative_initialPeerCidIsNeverReplaced() {
         val m = manager()
         m.adoptInitialPeerCid(cid(1))
         m.adoptInitialPeerCid(cid(2))
-        assertEquals(cid(2), m.activePeerCid(), "provisional: replaced")
+        assertEquals(cid(1), m.activePeerCid(), "the only ID, without a token: kept")
         assertEquals(listOf(0L), m.peerSeqsForTest())
         m.setPeerResetToken(0, ByteArray(16) { 7 })
         m.adoptInitialPeerCid(cid(3))
-        assertEquals(cid(2), m.activePeerCid(), "it has a reset token now: kept")
+        assertEquals(cid(1), m.activePeerCid(), "it has a reset token now: kept")
         val n = manager()
         n.adoptInitialPeerCid(cid(1))
         newCid(n, 1)

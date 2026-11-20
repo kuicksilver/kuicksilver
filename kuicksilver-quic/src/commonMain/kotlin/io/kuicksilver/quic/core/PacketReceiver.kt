@@ -243,8 +243,8 @@ internal class PacketReceiver(
         }
         if (!matchesLocalCid(data)) return false
         // RFC 9000 section 7.2: "Once a client has received a valid Initial packet from the server, it MUST discard any subsequent packet it
-        // receives on that connection with a different Source Connection ID": a long-header packet with another one belongs to a stranger
-        // (msquic answers a retransmitted Initial from a second connection instance) and is discarded before any key is tried
+        // receives on that connection with a different Source Connection ID": a long-header packet with another one is discarded before
+        // any key is tried (a stranger's, or the ServerHello of an msquic server that answered first from a provisional SCID)
         if (c.role == TlsRole.Client && type != PacketType.OneRtt && remoteCidSet &&
             peerScid?.contentEquals(data, hv.scidOff, hv.scidLen) == false
         ) {
@@ -409,34 +409,21 @@ internal class PacketReceiver(
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen
         reader.limit = hv.packetEnd - 16
-        var provisional = false
-        if (c.role == TlsRole.Client && type == PacketType.Initial &&
-            !remoteCidSet
-        ) {
-            // Section 7.2: the first Initial from the server fixes its SCID. One exception, for msquic: until it has the whole
-            // ClientHello its connection sends from the client's own DCID (connection.c, the IsInitial source CID) and only takes
-            // its real SCID when the listener accepts (listener.c, QuicConnGenerateNewSourceCid): an Initial with nothing but ACK,
-            // PING and PADDING whose SCID is the DCID we send to is processed (its ACK gives the RTT sample and stops resending
-            // what arrived) but does not fix the SCID. Any other Initial does, an ACK-only one included: quic-go answers half a
-            // ClientHello with an ACK-only Initial from its real SCID, and dropping it left the client on the 1 s initial PTO
-            // until quic-go's 5 s handshake idle timeout ended the attempt (interop amplificationlimit). Only the two section 7.2
-            // MUSTs are departed from: the provisional packet's number is recorded (section 12.3: a copy is a duplicate; msquic
-            // numbers all packets of the connection from one counter, so its later Initials continue above it) and acknowledged
-            // like any other (section 13.2.1: one with a PING at once; the ACK goes to the DCID, which msquic still accepts).
-            // After a Retry the DCID is the Retry SCID, and the exception stays: msquic makes the connection from the Initial
-            // that carries its Retry token (binding.c, QuicBindingCreateConnection) exactly as from a first Initial, so it sends
-            // from the Retry SCID until its listener accepts. A server that keeps its Retry SCID gets the same treatment for an
-            // ACK-only Initial; its SCID equals the DCID, so nothing changes until its next Initial fixes it
-            provisional = c.remoteCid.contentEquals(data, hv.scidOff, hv.scidLen) && onlyAcks()
-            if (!provisional) {
-                val scid =
-                    io.kuicksilver.quic.wire
-                        .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-                c.onPeerInitialCid(scid)
-                peerScid =
-                    scid
-                remoteCidSet = true
-            }
+        if (c.role == TlsRole.Client && type == PacketType.Initial && !remoteCidSet) {
+            // RFC 9000 section 7.2: "Upon first receiving an Initial or Retry packet from the server, the client uses the Source
+            // Connection ID supplied by the server as the Destination Connection ID for subsequent packets" and "MUST change the
+            // Destination Connection ID it uses for sending packets in response to only the first received Initial or Retry
+            // packet". The first Initial that decrypts fixes the server's SCID, whatever its frames (an ACK-only one included:
+            // quic-go answers half a ClientHello that way) and whatever its SCID: one equal to the DCID we send to (msquic's
+            // provisional SCID before its listener accepts, msquic#3762, #4905) fixes it like any other, and section 7.3 then
+            // holds the server to it in initial_source_connection_id. Until 0.3.0 msquic's shape was let through without fixing
+            // the SCID, against both MUSTs; quic-go, ngtcp2, quinn and picoquic never did
+            val scid =
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
+            c.onPeerInitialCid(scid)
+            peerScid = scid
+            remoteCidSet = true
         }
         c.anyPeerPacket = true
         c.timers.lastActivity = now
@@ -543,44 +530,6 @@ internal class PacketReceiver(
             c.onFirstOneRttFromClient()
         }
         return true
-    }
-
-    /**
-     * Whether the decrypted payload at [reader] holds only PADDING, PING and ACK frames; a malformed one counts as more, so the frame
-     * decoder reports it. The reader's position is kept.
-     */
-    private fun onlyAcks(): Boolean {
-        val start = reader.pos
-        try {
-            while (reader.pos < reader.limit) {
-                when (val t = reader.varint()) {
-                    0L, 1L -> {}
-
-                    2L, 3L -> {
-                        reader.varint() // largest acknowledged
-                        reader.varint() // ACK delay
-                        val ranges = reader.varint()
-                        reader.varint() // first range
-                        var i = 0L
-                        while (i < ranges) {
-                            reader.varint()
-                            reader.varint()
-                            i++
-                        }
-                        if (t == 3L) repeat(3) { reader.varint() }
-                    }
-
-                    else -> {
-                        return false
-                    }
-                }
-            }
-            return true
-        } catch (_: QuicWireException) {
-            return false
-        } finally {
-            reader.pos = start
-        }
     }
 
     private var remoteCidSet = c.role == TlsRole.Server

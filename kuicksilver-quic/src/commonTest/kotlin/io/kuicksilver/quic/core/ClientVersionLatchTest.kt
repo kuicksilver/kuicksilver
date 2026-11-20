@@ -37,17 +37,20 @@ class ClientVersionLatchTest {
     private val v2v1 = quicConfig { versions = listOf(VersionProfile.V2, VersionProfile.V1) }
 
     /**
-     * An ACK-only server Initial of [version] to [client], from the client's own DCID (so it fixes no SCID: the real server's
-     * packets still count), sealed with that version's server Initial keys, or with garbage in place of the tag ([sealed] false).
+     * An ACK-only server Initial of [version] to [client] from [scid], sealed with that version's server Initial keys, or with
+     * garbage in place of the tag ([sealed] false). A spoofed Initial that is to leave the real server's packets counting must
+     * come from the real server's SCID: the first valid server Initial fixes it (RFC 9000 section 7.2), and since 0.3.0 one
+     * from the client's own DCID does too.
      */
     private fun ackOnlyInitial(
         client: ConnectionCore,
         version: VersionProfile,
         pn: Long,
         sealed: Boolean = true,
+        scid: io.kuicksilver.quic.wire.ConnectionId = client.remoteCid,
     ): ByteArray {
         val dcid = client.localCid.toByteArray()
-        val scid = client.remoteCid.toByteArray()
+        val scid = scid.toByteArray()
         val payload = byteArrayOf(0x02, 0, 0, 0, 0) + ByteArray(30) // ACK of packet 0, PADDING
         val length = 2 + payload.size + 16
         val v = version.version
@@ -110,9 +113,9 @@ class ClientVersionLatchTest {
             }
             for (i in 0 until 4) if (held.isEmpty()) p.step()
             assertTrue(held.isNotEmpty(), "the server answered")
-            feed(p, ackOnlyInitial(p.client, VersionProfile.V2, 2))
+            feed(p, ackOnlyInitial(p.client, VersionProfile.V2, 2, scid = p.server!!.localCid))
             assertEquals(VersionProfile.V2, p.client.version, "the first server Initial of another version gives the negotiated one")
-            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 3))
+            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 3, scid = p.server!!.localCid))
             assertEquals(VersionProfile.V2, p.client.version, "a later Initial of the original version does not switch back")
             for (d in held) feed(p, d)
             assertTrue(p.client.hasHandshakeKeys, "the server's v2 ServerHello is still taken")
@@ -140,8 +143,8 @@ class ClientVersionLatchTest {
             }
             for (i in 0 until 4) if (held.isEmpty()) p.step()
             // the server acknowledged the ClientHello in v1 before it read the transport parameters: two such Initials
-            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 2))
-            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 3))
+            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 2, scid = p.server!!.localCid))
+            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 3, scid = p.server!!.localCid))
             assertEquals(VersionProfile.V1, p.client.version)
             for (d in held) feed(p, d)
             assertTrue(p.client.hasHandshakeKeys, "the v2 ServerHello that follows is taken")

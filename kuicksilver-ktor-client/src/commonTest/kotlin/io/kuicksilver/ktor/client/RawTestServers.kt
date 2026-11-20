@@ -35,6 +35,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.io.readByteArray
 import kotlin.time.Duration.Companion.seconds
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
@@ -237,6 +238,68 @@ internal class UdpRelay(
 
     /** Completed by the first datagram from the client dropped while [blocked]. */
     val dropped: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred()
+
+    /**
+     * While true, the relay answers the first client Initial the way an msquic server does before its listener accepted the
+     * connection ([msquicProvisionalInitial]): an ACK-only Initial from the client's own DCID reaches the client before the
+     * server sees the datagram; the server's own answer, from its real SCID, follows.
+     */
+    @kotlin.concurrent.Volatile var msquicProvisionalScid: Boolean = false
+
+    /** How many provisional Initials the relay sent ([msquicProvisionalScid]). */
+    @kotlin.concurrent.Volatile var provisionalInitialsSent: Int = 0
+
+    /** Datagrams of the server passed on to the client. */
+    @kotlin.concurrent.Volatile var serverDatagramsForwarded: Int = 0
+}
+
+/**
+ * The provisional answer an msquic server gives a ClientHello it has only part of (msquic#3762, #4905; docs/spec/interop.md):
+ * a QUIC v1 server Initial to the client Initial at the start of [datagram] from the client's own DCID, with an ACK of the
+ * client's packet 0 and PADDING, sealed with the server's Initial keys (RFC 9001 section 5.2); null when [datagram] does
+ * not start with a v1 client Initial.
+ */
+internal fun msquicProvisionalInitial(datagram: ByteArray): ByteArray? {
+    if (datagram.size < 7 || datagram[0].toInt() and 0xf0 != 0xc0) return null
+    val version =
+        ((datagram[1].toInt() and 0xff) shl 24) or ((datagram[2].toInt() and 0xff) shl 16) or ((datagram[3].toInt() and 0xff) shl 8) or
+            (datagram[4].toInt() and 0xff)
+    if (version != 1) return null
+    val dcidLen = datagram[5].toInt() and 0xff
+    if (datagram.size < 7 + dcidLen) return null
+    val dcid = datagram.copyOfRange(6, 6 + dcidLen)
+    val scidLen = datagram[6 + dcidLen].toInt() and 0xff
+    if (datagram.size < 7 + dcidLen + scidLen) return null
+    val clientScid = datagram.copyOfRange(7 + dcidLen, 7 + dcidLen + scidLen)
+    val payload = byteArrayOf(0x02, 0, 0, 0, 0) + ByteArray(30) // ACK of packet 0, PADDING
+    val pnLength = 2
+    val length = pnLength + payload.size + 16
+    val header =
+        byteArrayOf(0xc1.toByte(), 0, 0, 0, 1, clientScid.size.toByte()) + clientScid + byteArrayOf(dcid.size.toByte()) + dcid +
+            byteArrayOf(0, (0x40 or (length shr 8)).toByte(), length.toByte())
+    val pnOffset = header.size
+    val bytes = header + ByteArray(length) // packet number 0 in two bytes
+    payload.copyInto(bytes, pnOffset + pnLength)
+    val (read, write) =
+        io.kuicksilver.tls.KslQuicCrypto
+            .initialProtectors(dcid, 1, TlsRole.Server)
+    val buf =
+        io.kuicksilver.native.PacketBuffer
+            .allocate(bytes.size)
+    try {
+        buf.copyFrom(bytes, 0, 0, bytes.size)
+        val payloadStart = pnOffset + pnLength
+        write.seal(0, buf, 0, payloadStart, buf, payloadStart, payload.size)
+        val mask = ByteArray(5)
+        write.headerMask(buf, pnOffset + 4, mask)
+        buf[0] = ((buf[0].toInt() and 0xff) xor (mask[0].toInt() and 0x0f)).toByte()
+        for (i in 0 until pnLength) buf[pnOffset + i] = (buf[pnOffset + i].toInt() xor mask[1 + i].toInt()).toByte()
+        return ByteArray(bytes.size) { buf[it] }
+    } finally {
+        buf.close()
+        read.close()
+        write.close()
+    }
 }
 
 /**
@@ -292,9 +355,23 @@ internal suspend fun udpRelay(
                             continue
                         }
                         client = d.address
+                        var packet: kotlinx.io.Source = d.packet
+                        if (relay.msquicProvisionalScid) {
+                            val bytes = d.packet.readByteArray()
+                            if (relay.provisionalInitialsSent == 0) {
+                                msquicProvisionalInitial(bytes)?.let {
+                                    front.send(
+                                        io.ktor.network.sockets
+                                            .Datagram(kotlinx.io.Buffer().apply { write(it) }, d.address),
+                                    )
+                                    relay.provisionalInitialsSent++
+                                }
+                            }
+                            packet = kotlinx.io.Buffer().apply { write(bytes) }
+                        }
                         back.send(
                             io.ktor.network.sockets
-                                .Datagram(d.packet, to),
+                                .Datagram(packet, to),
                         )
                     }
                 }
@@ -308,6 +385,7 @@ internal suspend fun udpRelay(
                             continue
                         }
                         if (relay.serverDatagramsLeft != Int.MAX_VALUE) relay.serverDatagramsLeft--
+                        relay.serverDatagramsForwarded++
                         front.send(
                             io.ktor.network.sockets
                                 .Datagram(d.packet, c),

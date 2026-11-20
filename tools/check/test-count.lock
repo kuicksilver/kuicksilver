@@ -2147,6 +2147,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest.negative_silenceAfterTheBodyTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest.negative_stalledApplicationTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.InactivityTest.negative_stalledSenderTimesOut
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.negative_msquicProvisionalScidFallsBackToTcp
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.MsquicProvisionalScidTest.withoutTheProvisionalInitialTheRigConnectsOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.Nat64Test.addressRecordsAfterCnameAndNegativeTtl
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.Nat64Test.concurrentNeedsShareOneQuery
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.Nat64Test.discoveryFindsEveryPrefixInOrder
@@ -4248,7 +4250,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_aP
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_aRetirementInFlightIsNotQueuedTwice
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_allowMultipleIssuesUpToThePeerLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_anIdMadeCurrentIsNeverASpareAgain
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_initialPeerCidIsReplacedOnlyWhileProvisional
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_initialPeerCidIsNeverReplaced
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_lateNewConnectionIdBelowRetirePriorToIsRetired
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_lostNewConnectionIdIsResent
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_newLocalIdNeverRepeatsARetiredOneStillRouting
@@ -4787,7 +4789,6 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeSpacesTest.aHan
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeSpacesTest.aRejectionDropsTheProbeOwedForTheZeroRttFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeSpacesTest.anInitialPtoAlsoProbesZeroRttDataInFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.aDuplicateOrADiscardedSpaceLeadingTheDatagramIsNoInvalidReset
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.clientDiscardsLongHeaderWithDifferentScid
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.clientIgnoresPreferredAddress
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.closeNamesTheFrameThatTriggeredTheError
@@ -4798,16 +4799,19 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.datagra
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.greaseFixedBitOnlyWhenPeerAdvertised
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.handshakeKeysDiscardedAfterWholePacket
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.initialKeysDiscardedOnFirstHandshakePacket
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackAndPingInitialFromTheClientsOwnDcidIsAcknowledgedAndFixesTheScid
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackOnlyInitialFromAnotherScidFixesIt
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_ackOnlyInitialFromTheClientsOwnDcidFixesTheScid
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_clientDropsPacketFromUnknownServerAddress
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_coalescedInitialInSmallDatagramIsDiscarded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_duplicatePacketNumberAfterAead
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_handshakeDoneFromClient
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_initialSourceConnectionIdMustBeTheScidOfTheFirstServerInitial
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_longHeaderWithoutFixedBit
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeWithinTheHandshakeTimeout
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_reservedBitsOnADuplicateAreAProtocolViolation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_reservedBitsSet
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.negative_serverInitialWithToken
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.provisionalInitialWithPingIsAcknowledged
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.replayedPacketKeepsItsOwnEcn
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.resetCheckFollowsTheFirstPacketOfTheDatagram
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.spinBitIsRandomWhileDisabled

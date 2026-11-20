@@ -329,12 +329,13 @@ internal class ConnectionIdManager(
         }
     }
 
-    /** Sequence 0 of the peer: adopted from the first Initial; replaced while it is still the only one (an ACK-only Initial before the ServerHello may carry a provisional SCID, msquic). */
+    /**
+     * Sequence 0 of the peer: adopted from its first Initial and never replaced by a later one (RFC 9000 section 7.2: the client
+     * changes its DCID "in response to only the first received Initial or Retry packet"; until 0.3.0 it was, while it was the only
+     * one and had no reset token, for msquic's provisional SCID).
+     */
     fun adoptInitialPeerCid(cid: ConnectionId) {
-        if (peer.isEmpty() ||
-            (peer.size == 1 && peer[0].seq == 0L && peer[0].token == null)
-        ) {
-            peer.clear()
+        if (peer.isEmpty()) {
             val p = Peer(0, cid, null)
             // used from now on, as the DCID of our packets: the reset token the server's transport parameters give it counts (RFC 9000
             // section 10.3.1) whether or not a NEW_CONNECTION_ID ever comes
