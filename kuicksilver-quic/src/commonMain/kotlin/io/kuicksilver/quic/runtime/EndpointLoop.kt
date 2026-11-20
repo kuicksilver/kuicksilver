@@ -924,7 +924,7 @@ internal class EndpointLoop private constructor(
 
         /**
          * A Kotlin/Native server's socket: the accelerated one (the portable one is client-only). Without it: the
-         * refused bind itself (an `IOException`: the port in use, an address not on this host),
+         * refused bind itself (an `IOException`: the port in use, an address not on this host or that does not resolve),
          * [QuicException.DontFragmentUnavailable] when the system gave the socket no DF (a seccomp filter), else
          * UnsupportedOperationException (no ksl socket here).
          */
@@ -939,8 +939,8 @@ internal class EndpointLoop private constructor(
             if (io != null) return io
             val r = refused
             throw when {
-                r is QuicException.DontFragmentUnavailable -> {
-                    r
+                r is io.kuicksilver.quic.KslDatagramIo.Companion.Unavailable && r.noDf -> {
+                    QuicException.DontFragmentUnavailable(null, r.message ?: "no Don't Fragment", permanent = true)
                 }
 
                 r is kotlinx.io.IOException && r !is QuicException -> {

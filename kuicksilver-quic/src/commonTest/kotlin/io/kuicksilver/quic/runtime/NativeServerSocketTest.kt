@@ -104,4 +104,15 @@ class NativeServerSocketTest {
                 KslDatagramIo.socketOpener = real
             }
         }
+
+    /** Kotlin/Native: a bind address that does not resolve is the address's error, an IOException, as a port in use. */
+    @Test fun negative_aNativeServerOnAnUnresolvableAddressFailsWithTheAddressError(): Unit =
+        runBlocking {
+            if (portableServerSupported) return@runBlocking // the JVM's own bind reports it (UnresolvedAddressException)
+            KslLoader.ensureLoaded()
+            val e =
+                runCatching { QuicEndpoint.bind(InetSocketAddress("no-such-host.invalid", 0), serverConfig).closeAndJoin() }
+                    .exceptionOrNull()
+            assertTrue(e is kotlinx.io.IOException && e !is QuicException, "the address error, got $e")
+        }
 }
