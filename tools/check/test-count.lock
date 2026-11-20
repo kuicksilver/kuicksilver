@@ -1327,6 +1327,7 @@ kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.serverStrea
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unknownTestcaseExits127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.unsupportedCasesExit127
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.zerorttCaseSendsTheRemainingRequestsIn0Rtt
+kuicksilver-interop/src/nativeTest	io.kuicksilver.interop.StopSignalNativeTest.sigtermRequestsTheStopAndASecondSignalIsTheDefault
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.CleartextPolicyAndroidTest.cleartextRefusedByTheNetworkSecurityConfigurationNeverConnects
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.ClientMigrationAndroidTest.followsDefaultNetworkOnEmulator
 kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.ClientMigrationAndroidTest.withoutMigrationOnEmulator

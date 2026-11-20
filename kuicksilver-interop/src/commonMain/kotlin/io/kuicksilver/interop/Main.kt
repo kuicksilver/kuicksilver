@@ -36,7 +36,7 @@ internal object Interop {
                 // the runner stops the server container with SIGTERM: the endpoints are then closed and joined, so every qlog trace is
                 // closed and written (a DirectoryQlogSink trace buffers until then; the server qlogs were empty files), within STOP_GRACE
                 val stop = CompletableDeferred<Unit>(); val closed = CompletableDeferred<Unit>()
-                installStopSignal(stop, closed)   // before runBlocking starts any thread: Native blocks the signals for the threads to come
+                installStopSignal(stop, closed)
                 try {
                     runBlocking {
                         val plan = Testcases.server(testcase, cc)!!; val certs = env["CERTS"] ?: "/certs"
@@ -97,9 +97,10 @@ internal suspend fun serveUntilStopped(server: InteropServer, stop: Deferred<Uni
 }
 
 /**
- * Completes [stop] when the process is asked to stop (SIGTERM; SIGINT too), and keeps the process alive until [closed] completes
- * (at most [STOP_GRACE] and a second): JVM, a shutdown hook; Native, a thread that waits for the signals, blocked in every other
- * thread. Called before any other thread starts.
+ * Completes [stop] when the process is asked to stop (SIGTERM; SIGINT too). JVM: a shutdown hook, which also holds the JVM's
+ * shutdown until [closed] completes (at most [STOP_GRACE] and a second). Native: a handler written in C that only stores a flag
+ * and restores both signals' default action (a second signal ends a stop that hangs), read by a coroutine every 20 ms; the process
+ * then exits on its own, so [closed] is not waited for.
  */
 internal expect fun installStopSignal(stop: CompletableDeferred<Unit>, closed: CompletableDeferred<Unit>)
 

@@ -1,36 +1,35 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
 package io.kuicksilver.interop
 
-import kotlinx.cinterop.staticCFunction
+import io.kuicksilver.interop.stopsignal.ksl_interop_install_stop
+import io.kuicksilver.interop.stopsignal.ksl_interop_stop_requested
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import platform.posix.SIGINT
-import platform.posix.SIGTERM
-import platform.posix.signal
-import kotlin.concurrent.atomics.AtomicInt
 
-/** Set by the signal handler, which does nothing else (no allocation, no lock: whatever thread the signal interrupts). */
-private val stopRequested = AtomicInt(0)
+/** How often the stop flag is read: a stop is noticed within this, well inside STOP_GRACE. */
+private const val STOP_POLL_MS = 20L
 
-// SIGTERM and SIGINT set a flag that a coroutine polls every 20 ms; the handler is the process's, so a signal taken by any thread
-// (the runtime's own threads exist before main: blocking the signals there is not possible) reaches it. The endpoint then closes its
-// endpoints and exits on its own (serveUntilStopped, exitWith), instead of being ended by the signal with its qlog traces still in
-// their buffers; [closed] is not waited for here, the main thread exits once the close finished or STOP_GRACE passed.
+// SIGTERM and SIGINT run a handler written in C (stopsignal.def) that only stores a volatile sig_atomic_t and restores both signals'
+// default action: nothing of Kotlin runs in signal context, so the signal may land on any thread, one the runtime knows or not (the
+// runtime's own threads exist before main, so blocking the signals cannot cover them all), and a second signal ends a process whose
+// stop hangs. A coroutine reads the flag every STOP_POLL_MS and requests the stop; the endpoint then closes its endpoints and exits
+// on its own (serveUntilStopped, exitWith 0) instead of being ended by the signal with its qlog traces still in their buffers.
+// [closed] is not waited for here: the main thread exits once the close finished or STOP_GRACE passed.
 @OptIn(DelicateCoroutinesApi::class)
 @Suppress("UNUSED_PARAMETER")
 internal actual fun installStopSignal(stop: CompletableDeferred<Unit>, closed: CompletableDeferred<Unit>) {
-    stopRequested.store(0) // initialized before a handler can read it
-    val handler = staticCFunction { _: Int -> stopRequested.store(1) }
-    signal(SIGTERM, handler)
-    signal(SIGINT, handler)
+    if (ksl_interop_install_stop() != 0) {
+        Files.log("no SIGTERM/SIGINT handler: a stop ends the process at once")
+        return
+    }
     GlobalScope.launch {
-        while (stopRequested.load() == 0) delay(20)
+        while (ksl_interop_stop_requested() == 0) delay(STOP_POLL_MS)
         stop.complete(Unit)
     }
 }
