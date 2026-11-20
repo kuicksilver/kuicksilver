@@ -22,7 +22,9 @@ internal actual suspend fun openPortableDatagramIo(
         .DontFragmentUnavailable(
             null,
             "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
-            permanent = false, // the accelerated socket may open next time (a refusal under load, out of descriptors)
+            // lasting where the accelerated socket cannot work in this process or gets no DF; else it may open next time (a
+            // refusal under load, out of descriptors)
+            permanent = (acceleratedRefusal as? KslDatagramIo.Companion.Unavailable)?.permanent ?: false,
         ).also { e -> acceleratedRefusal?.let(e::addSuppressed) }
 }
 

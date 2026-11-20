@@ -1105,6 +1105,49 @@ class ConnectUdpTest {
             }
         }
 
+    /**
+     * A target socket that fails to open for one family for another reason than DF (out of descriptors, a sandbox) does
+     * not end the request: the other family's candidate is tried, and only when no candidate opened is the answer 502
+     * proxy_internal_error. Red before: 502 at the first failure, with the IPv6 candidate never tried.
+     */
+    @Test fun negative_aSocketThatFailsForOneFamilyTriesTheOtherBefore502() =
+        h3Test {
+            val v4 = byteArrayOf(192.toByte(), 0, 2, 50)
+            val v6 =
+                ByteArray(16).also {
+                    it[0] = 0x20
+                    it[1] = 0x01
+                    it[2] = 0x0d
+                    it[3] = 0xb8.toByte()
+                    it[15] = 0x50
+                }
+            var tried = ArrayList<String>()
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        resolver = UdpProxyResolver { host -> if (host == "dual.example") listOf(v4, v6) else listOf(v4) },
+                        socketFactory = { a ->
+                            tried += a.hostname
+                            if (':' in a.hostname) f(a) else throw IllegalStateException("injected: no IPv4 socket")
+                        },
+                    )
+                }
+            rig.use { r ->
+                val got = rig.echo(InetSocketAddress("2001:db8::50", 5000))
+                val t = r.pair.client.connectUdp(template, "dual.example", 5000)
+                t.send("dual".encodeToByteArray())
+                assertContentEquals("dual".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                t.close()
+                assertEquals(2, tried.size, "IPv4 failed, then IPv6: $tried")
+                tried = ArrayList()
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "v4only.example", 5000) }
+                assertEquals(502, e.status)
+                assertTrue("error=proxy_internal_error" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                assertEquals(1, tried.size, "$tried")
+            }
+        }
+
     /** An AF_INET target socket reports IPv6 as without DF (it cannot reach IPv6 at all): later IPv6 targets are unaffected. */
     @Test fun anIpv4SocketReportingIpv6DoesNotRefuseIpv6Targets() =
         h3Test {

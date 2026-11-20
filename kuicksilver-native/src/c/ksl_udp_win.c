@@ -142,6 +142,19 @@ static void set_err(ksl_udp *u, int e, const char *what) {
     memcpy(u->last_msg, m, KSL_MSG);
     err_unlock(u);
 }
+
+/* setsockopt for Don't Fragment: 1 when it took; a refusal that says nothing about the system's DF support (WSAENETDOWN: the
+   network subsystem failed; WSAENOBUFS: no buffer space) is kept in *transient, so the open fails as that failure (it may
+   pass next time) instead of reporting a socket without DF, which callers take as lasting. */
+static int df_opt(SOCKET s, int level, int opt, const BOOL *v, int *transient) {
+    if (setsockopt(s, level, opt, (const char *)v, sizeof *v) == 0)
+        return 1;
+    int e = WSAGetLastError();
+    if (e == WSAENETDOWN || e == WSAENOBUFS)
+        *transient = e;
+    return 0;
+}
+
 static void fail(uint32_t *err, uint32_t code, char *msg, size_t msglen, const char *what, int wsa) {
     if (err)
         *err = code;
@@ -388,17 +401,26 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     if (flags &
         KSL_UDP_DF) { /* DF on, and where the system has it PROBE: no path MTU cache drives the sizes (quic-go CVE-2024-53259) */
         /* per half: DF (IP_DONTFRAGMENT / IPV6_DONTFRAG) must take; PROBE where the system takes it, else that half is in DO mode */
-        int probe = IP_PMTUDISC_PROBE, df, p4, p6 = 1;
+        int probe = IP_PMTUDISC_PROBE, df, p4, p6 = 1, transient = 0;
         if (u->family == AF_INET) {
-            df = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) == 0;
+            df = df_opt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, &yes, &transient);
             p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
         } else {
-            int df6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
-            int df4 = setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
-                      0; /* the v4-mapped half */
+            int df6 = df_opt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &yes, &transient);
+            int df4 = df_opt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, &yes, &transient); /* the v4-mapped half */
             df = df6 && df4;
             p6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
             p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+        }
+        if (!df && transient) {
+            /* not a verdict on DF: the open fails as the transient error (KslException, not a refused bind), so the caller's
+               lack of DF is not permanent. Not covered by tools/c-test.sh: Winsock offers no way to make setsockopt fail so,
+               and the mingw test binary runs only on a Windows host. */
+            fail(err, transient == WSAENOBUFS ? KSL_E_NO_MEMORY : KSL_E_NOT_SUPPORTED, msg, msglen,
+                 "Don't Fragment setsockopt", transient);
+            closesocket(u->fd);
+            free(u);
+            return NULL;
         }
         u->df_probe = p4 && p6;
         if (df) /* DF alone where PROBE is refused on a half: what msquic runs with, reported as DO */
