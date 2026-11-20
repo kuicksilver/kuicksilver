@@ -874,20 +874,30 @@ class ConnectUdpTest {
             }
         }
 
-    /** Any other send failure on the target's socket still ends the tunnel (section 3.1), and is not counted as a refusal. */
+    /**
+     * Any other send failure on the target's socket still ends the tunnel (section 3.1), and is not counted as a refusal;
+     * so does a send refused for want of Don't Fragment (no DF, no tunnel), even with a text that names EMSGSIZE.
+     */
     @Test fun negative_anotherSendFailureStillClosesTheTunnel() =
         h3Test {
-            rig().use { rig ->
-                val p = rig.pair
-                rig.echo(echoAt)
-                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
-                rig.sockets.single().onSend = { throw IOException("Network is unreachable") }
-                t.send("x".encodeToByteArray())
-                val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
-                assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
-                withTimeout(5.seconds) { rig.socketsClosed.receive() }
-                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
-                assertEquals(0, rig.proxy.stats.droppedRefusedAsTooLarge)
+            val failures: List<() -> Throwable> =
+                listOf(
+                    { IOException("Network is unreachable") },
+                    { QuicException.DontFragmentUnavailable(io.kuicksilver.quic.IpFamily.V4, "Message too long") },
+                )
+            for (failure in failures) {
+                rig().use { rig ->
+                    val p = rig.pair
+                    rig.echo(echoAt)
+                    val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                    rig.sockets.single().onSend = { throw failure() }
+                    t.send("x".encodeToByteArray())
+                    val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
+                    assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
+                    withTimeout(5.seconds) { rig.socketsClosed.receive() }
+                    withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+                    assertEquals(0, rig.proxy.stats.droppedRefusedAsTooLarge)
+                }
             }
         }
 

@@ -3838,6 +3838,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ReleaserTest.nothingFailedNo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ReleaserTest.theFirstFailureWinsAndEveryStepRuns
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.localizedText
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.negative_causeLoopEnds
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.negative_noDontFragmentIsNeverARefusal
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.pathMtuRefusalAndCauses
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.refusalTexts
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.TimeMarkTest.comparesByNanos

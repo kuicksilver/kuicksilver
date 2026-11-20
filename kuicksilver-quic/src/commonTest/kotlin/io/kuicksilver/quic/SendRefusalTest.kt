@@ -32,6 +32,16 @@ class SendRefusalTest {
         assertFalse(isRefusedAsTooLarge(IOException("send failed", IOException("Broken pipe"))))
     }
 
+    /** A socket without DF for the destination is not a payload too large, whatever its causes say: it ends the tunnel. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_noDontFragmentIsNeverARefusal() {
+        val noDf = QuicException.DontFragmentUnavailable(IpFamily.V4, "Message too long")
+        assertFalse(isRefusedAsTooLarge(noDf))
+        assertFalse(isRefusedAsTooLarge(IllegalStateException("send failed", noDf)))
+        assertFalse(isRefusedAsTooLarge(IOException("EMSGSIZE", noDf)))
+    }
+
     /** The system's own text in its locale counts when known; without it, only the English texts do. */
     @Test fun localizedText() {
         assertTrue(namesEmsgsize("Nachricht zu lang", "Nachricht zu lang"))

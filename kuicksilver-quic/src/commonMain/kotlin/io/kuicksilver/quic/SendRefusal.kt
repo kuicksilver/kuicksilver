@@ -28,20 +28,24 @@ public interface EmsgsizeReports {
  *   the Windows JDK's "larger than the maximum supported by the underlying transport";
  * - on Kotlin/Native, ktor's `PosixException` with errno EMSGSIZE (or WSAEMSGSIZE on Windows) ([isPlatformEmsgsize]).
  *
+ * Never a refusal: a [QuicException.DontFragmentUnavailable] anywhere in the chain (the socket has no DF for that family,
+ * which ends the tunnel or the path), whatever the causes below it say.
+ *
  * Not recognized, so taken as a failed socket: a localized Linux text on the JVM without `ksl`, and a refusal a socket of
  * the caller's own reports some other way.
  */
 @InternalKuicksilverApi
 public fun isRefusedAsTooLarge(e: Throwable): Boolean {
-    var c: Throwable? = e
-    var n = 0
-    while (c != null && n++ < MAX_CAUSES) {
-        if (c is PathMtuRefusedException || isPlatformEmsgsize(c)) return true
-        if (c is IOException && c.message?.let { namesEmsgsize(it, systemEmsgsizeText()) } == true) return true
-        c = c.cause?.takeIf { it !== c }
+    // no Don't Fragment for the destination: not a payload too large but a socket that may not be used (no DF, no tunnel)
+    if (causes(e).any { it is QuicException.DontFragmentUnavailable }) return false
+    return causes(e).any {
+        it is PathMtuRefusedException || isPlatformEmsgsize(it) ||
+            (it is IOException && it.message?.let { m -> namesEmsgsize(m, systemEmsgsizeText()) } == true)
     }
-    return false
 }
+
+/** [e] and its causes, at most [MAX_CAUSES] (a longer chain, or a cycle, ends there). */
+private fun causes(e: Throwable): Sequence<Throwable> = generateSequence(e) { c -> c.cause?.takeIf { it !== c } }.take(MAX_CAUSES)
 
 /** Causes [isRefusedAsTooLarge] looks through at most (a longer chain, or a cycle, ends there). */
 private const val MAX_CAUSES = 8
