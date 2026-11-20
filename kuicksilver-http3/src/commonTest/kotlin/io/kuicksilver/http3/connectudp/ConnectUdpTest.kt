@@ -227,6 +227,23 @@ internal class ClosingIo(
 internal val echoAt = InetSocketAddress("192.0.2.50", 5000)
 
 /**
+ * The sockets a test's own socket factory opened, in order. Copied on write, as [ProxyRig.sockets]: the proxy may open
+ * tunnel sockets on several threads at once.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class OpenedIos<T> {
+    private val opened = kotlin.concurrent.atomics.AtomicReference<List<T>>(emptyList())
+    val list: List<T> get() = opened.load()
+
+    fun add(io: T) {
+        while (true) {
+            val now = opened.load()
+            if (opened.compareAndSet(now, now + io)) return
+        }
+    }
+}
+
+/**
  * A socket that refuses the next [refuse] payloads the way the accelerated one does: the slot is skipped and still counted as
  * sent, and [takeEmsgsize] reports its length (`ksl_udp_send`'s `count_emsgsize`).
  */
@@ -780,12 +797,15 @@ class ConnectUdpTest {
      */
     @Test fun negative_aRefusalTheAcceleratedSocketReportsIsNotCountedAsSent() =
         h3Test {
-            val reporting = ArrayList<EmsgsizeReportingIo>()
-            val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting += it } } }
+            val reporting = OpenedIos<EmsgsizeReportingIo>()
+            val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } } }
             rig.use { r ->
                 val got = rig.echo(echoAt)
                 val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
-                reporting.single().refuse.store(1)
+                reporting.list
+                    .single()
+                    .refuse
+                    .store(1)
                 t.send("too big for the path".encodeToByteArray())
                 withTimeout(5.seconds) {
                     rig.proxy.impl.changes
@@ -808,13 +828,16 @@ class ConnectUdpTest {
     @Test fun negative_refusedPayloadsDoNotKeepATunnelAlive() =
         h3Test {
             for (reported in listOf(false, true)) {
-                val reporting = ArrayList<EmsgsizeReportingIo>()
-                val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting += it } } }
+                val reporting = OpenedIos<EmsgsizeReportingIo>()
+                val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } } }
                 rig.proxy.impl.idleTimeoutForTest = 1.seconds
                 rig.use { r ->
                     val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
                     if (reported) {
-                        reporting.single().refuse.store(Int.MAX_VALUE)
+                        reporting.list
+                            .single()
+                            .refuse
+                            .store(Int.MAX_VALUE)
                     } else {
                         rig.sockets.single().onSend = { throw IOException("Message too long") }
                     }
@@ -841,13 +864,13 @@ class ConnectUdpTest {
     /** A refused payload never reached the target, so it does not count toward [UdpProxyConfig.unansweredLimit]. */
     @Test fun negative_refusedPayloadsDoNotCountTowardTheUnansweredLimit() =
         h3Test {
-            val reporting = ArrayList<EmsgsizeReportingIo>()
+            val reporting = OpenedIos<EmsgsizeReportingIo>()
             val rig =
                 rig { f ->
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.AllowAll,
                         unansweredLimit = 2,
-                        socketFactory = { a -> EmsgsizeReportingIo(f(a)).also { reporting += it } },
+                        socketFactory = { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } },
                     )
                 }
             rig.use { r ->
@@ -856,7 +879,10 @@ class ConnectUdpTest {
                         .open(echoAt)
                 val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
                 // two refusals the accelerated socket reports, then two thrown, then two that go out, then the limit
-                reporting.single().refuse.store(2)
+                reporting.list
+                    .single()
+                    .refuse
+                    .store(2)
                 val thrown = AtomicInt(0)
                 rig.sockets.single().onSend = { if (thrown.incrementAndFetch() <= 2) throw IOException("Message too long") }
                 repeat(7) { t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, it.toByte()))) }
