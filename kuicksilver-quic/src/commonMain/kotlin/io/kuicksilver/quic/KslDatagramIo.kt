@@ -385,24 +385,35 @@ internal class KslDatagramIo private constructor(
         internal const val PTB_PER_DRAIN = 16
 
         /**
-         * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
-         * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose loopback probe failed
-         * ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable socket, said once per process to
-         * [logger] at [LogLevel.Warn]; [refused] gets that refusal (a refused bind is a `kotlinx.io.IOException`). [configure]
-         * sees the bound socket's descriptor before any datagram (Android binds it to a network); if it throws, the socket is
-         * closed.
+         * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be
+         * resolved. A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose
+         * loopback probe failed ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable
+         * socket, said once per process to [logger] at [LogLevel.Warn]; [refused] gets that refusal (a refused bind is
+         * a `kotlinx.io.IOException`; a socket the system gave no Don't Fragment,
+         * [QuicException.DontFragmentUnavailable]). [portableNext]: whether the caller takes the portable socket next,
+         * as the warning says; false for a Kotlin/Native server, which has none. [configure] sees the bound socket's
+         * descriptor before any datagram (Android binds it to a network); if it throws, the socket is closed.
          */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
             logger: KuicksilverLogger = KuicksilverLogger.Stderr,
             refused: (Throwable) -> Unit = {},
+            portableNext: Boolean = true,
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             val unsupported = unsupportedReason()
             if (unsupported != null) {
                 // the loopback probe failed (a sandbox refusing every bind): the portable socket, said once like a refused bind
-                if (!reusePort) warnFallback(logger) { "accelerated UDP socket unavailable ($unsupported); using the portable socket" }
+                if (!reusePort) {
+                    warnFallback(logger) {
+                        if (portableNext) {
+                            "accelerated UDP socket unavailable ($unsupported); using the portable socket"
+                        } else {
+                            "accelerated UDP socket unavailable ($unsupported); no QUIC server without it"
+                        }
+                    }
+                }
                 return null
             }
             val ip = local.resolveAddress() ?: return null
@@ -417,13 +428,26 @@ internal class KslDatagramIo private constructor(
                 } else {
                     socketOpener(addr, flags) { e ->
                         refused(e)
-                        warnFallback(logger) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
+                        warnFallback(logger) {
+                            if (portableNext) {
+                                "accelerated UDP socket refused on $local (${e.message}); using the portable socket"
+                            } else {
+                                "accelerated UDP socket refused on $local (${e.message}); no QUIC server without it"
+                            }
+                        }
                     } ?: return null
                 }
             // no DF, no QUIC (RFC 9000 section 14): a socket the system gave no DF is not used; the portable socket decides
             if (socket.grantedFlags and KslUdpSocket.DF == 0) {
                 socket.close()
-                warnFallback(logger) { "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket" }
+                refused(QuicException.DontFragmentUnavailable(null, "the system gave the accelerated UDP socket on $local no DF"))
+                warnFallback(logger) {
+                    if (portableNext) {
+                        "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket"
+                    } else {
+                        "accelerated UDP socket on $local got no Don't Fragment; no QUIC server without it"
+                    }
+                }
                 return null
             }
             // DF in DO mode on a half (KslUdpSocket.DF_DO: probe mode refused, or Apple's DF bit) is DF too; a forged ICMP message

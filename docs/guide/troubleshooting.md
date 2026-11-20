@@ -373,8 +373,11 @@ datagram per call.
 - A QUIC server on Kotlin/Native needs the accelerated socket; without it `bind` with a `server` throws
   `UnsupportedOperationException` ("a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple,
   Windows), which is unavailable here"), not `DontFragmentUnavailable`: the portable socket, client-only there (and
-  without Don't Fragment), is not tried. The Ktor server then serves HTTP/1.1 and HTTP/2 only, logging "HTTP/3 is not
-  served on port <port>: <reason>" (`http3Status` names the exception).
+  without Don't Fragment), is not tried; the once-per-process warning then ends in "no QUIC server without it". An
+  accelerated socket the system gave no DF (a seccomp filter) fails it with `QuicException.DontFragmentUnavailable`. In
+  both cases the Ktor server serves HTTP/1.1 and HTTP/2 only, logging "HTTP/3 is not served on port <port>: <reason>"
+  (`http3Status` names the exception). A UDP port in use fails the bind with the bind's own `IOException`, as on the
+  JVM: a Ktor server on a fixed port fails its start, one on port 0 tries another TCP and UDP pair.
 
 ### QUIC is not used (`DontFragmentUnavailable`)
 

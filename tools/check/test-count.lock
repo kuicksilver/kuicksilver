@@ -5482,6 +5482,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.quicLb
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.quicLbLoopMissingTheFanOutMovesAtItsNextBatch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.quicLbStoreRetriedWithoutTrafficOnLoopZero
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.LoopGroupTest.ticketsAreSharedByTheGroupsLoops
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.NativeServerSocketTest.negative_aNativeServerWhoseSocketGotNoDfSaysSo
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.NativeServerSocketTest.negative_aServerOnAPortInUseFailsWithTheRefusedBind
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.NativeServerSocketTest.serverWithoutTheAcceleratedSocket
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.ReceiveFairnessTest.timersFireUnderContinuousDirectReceive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.runtime.ReceiveFairnessTest.timersFireUnderContinuousReceive
