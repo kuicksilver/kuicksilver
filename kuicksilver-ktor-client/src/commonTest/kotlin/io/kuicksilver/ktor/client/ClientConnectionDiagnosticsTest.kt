@@ -402,7 +402,9 @@ class ClientConnectionDiagnosticsTest {
             try {
                 coroutineScope {
                     val (listener, port) = tcpOn(selector, 0)
-                    val accepted = launch { runCatching { while (true) listener.accept() } } // kept open, silent
+                    // kept open and silent until the end, then closed (the leak sentinel counts an accepted socket left open)
+                    val sockets = AtomicReference(emptyList<io.ktor.network.sockets.Socket>())
+                    val accepted = launch { runCatching { while (true) listener.accept().also { s -> sockets.update { it + s } } } }
                     testClient(Http3DiscoveryMode.H1Only, engine = {
                         connectTimeout = 500.milliseconds
                         eventListener = heard
@@ -418,6 +420,7 @@ class ClientConnectionDiagnosticsTest {
                         assertEquals(listOf(f), heard.connectFailures.load())
                     }
                     accepted.cancel()
+                    sockets.load().forEach { it.close() }
                     listener.close()
                 }
             } finally {
