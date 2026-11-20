@@ -42,6 +42,30 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 	public static fun values ()[Lio/kuicksilver/ktor/client/AlternativeSource;
 }
 
+public final class io/kuicksilver/ktor/client/ConnectFailure {
+	public final fun getAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getConnectionId ()Ljava/lang/String;
+	public final fun getQuicProgress ()Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public final fun getStage ()Lio/kuicksilver/ktor/client/ConnectStage;
+	public final fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
+	public final fun getViaProxy ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/ConnectStage : java/lang/Enum {
+	public static final field H2DialWait Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field NameLookup Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field PoolWait Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field ProxyHandshake Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field QuicHandshake Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field TcpConnect Lio/kuicksilver/ktor/client/ConnectStage;
+	public static final field TlsHandshake Lio/kuicksilver/ktor/client/ConnectStage;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/ConnectStage;
+	public static fun values ()[Lio/kuicksilver/ktor/client/ConnectStage;
+}
+
 public final class io/kuicksilver/ktor/client/ConnectUdpProxy {
 	public fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;)V
 	public synthetic fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -49,6 +73,18 @@ public final class io/kuicksilver/ktor/client/ConnectUdpProxy {
 	public final fun getCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
 	public final fun getTemplate ()Lio/kuicksilver/http3/UdpProxyTemplate;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/ConnectionDiagnosticsKt {
+	public static final fun getKuicksilverDiagnostics (Ljava/lang/Throwable;)Lio/kuicksilver/ktor/client/ProtocolDiagnostics;
+}
+
+public abstract class io/kuicksilver/ktor/client/ConnectionSnapshot {
+	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public abstract fun getProtocol ()Lio/ktor/http/HttpProtocolVersion;
+	public abstract fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public abstract fun getReused ()Z
+	public abstract fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
 }
 
 public abstract interface class io/kuicksilver/ktor/client/Dns {
@@ -362,6 +398,7 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun callEnd (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;I)V
 	public fun callFailed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 	public fun callStart (Lio/ktor/client/request/HttpRequestData;)V
+	public fun connectFailed (Lio/ktor/client/request/HttpRequestData;Lio/kuicksilver/ktor/client/ConnectFailure;)V
 	public fun connectionAcquired (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
 	public fun connectionMigrated (Ljava/lang/String;Lio/kuicksilver/quic/MigrationEvent;)V
 	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
@@ -391,12 +428,15 @@ public final class io/kuicksilver/ktor/client/ProtocolDiagnostics {
 	public final fun getAlternative ()Ljava/lang/String;
 	public final fun getAlternativeSource ()Lio/kuicksilver/ktor/client/AlternativeSource;
 	public final fun getAttempts ()I
+	public final fun getConnectFailures ()Ljava/util/List;
+	public final fun getConnection ()Lio/kuicksilver/ktor/client/ConnectionSnapshot;
 	public final fun getFallback ()Lio/kuicksilver/ktor/client/FallbackReason;
 	public final fun getH3Failure ()Ljava/lang/Throwable;
 	public final fun getHeadStart-FghU774 ()Lkotlin/time/Duration;
 	public final fun getProtocol ()Lio/ktor/http/HttpProtocolVersion;
 	public final fun getRaced ()Z
 	public final fun getReason ()Lio/kuicksilver/ktor/client/ProtocolReason;
+	public final fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -452,6 +492,30 @@ public final class io/kuicksilver/ktor/client/ProxyTlsException : io/kuicksilver
 	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
 }
 
+public final class io/kuicksilver/ktor/client/QuicConnectionSnapshot : io/kuicksilver/ktor/client/ConnectionSnapshot {
+	public final fun getConnectionId ()Ljava/lang/String;
+	public fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getMinRtt-UwyO8pc ()J
+	public final fun getPath ()Lio/kuicksilver/quic/PathInfo;
+	public final fun getPathChanges ()I
+	public final fun getPaths ()Ljava/util/List;
+	public fun getProtocol ()Lio/ktor/http/HttpProtocolVersion;
+	public fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun getReused ()Z
+	public final fun getRttVariation-UwyO8pc ()J
+	public final fun getSmoothedRtt-UwyO8pc ()J
+	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/QuicHandshakeProgress : java/lang/Enum {
+	public static final field HandshakeStarted Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static final field NoPacketReceived Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static fun values ()[Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+}
+
 public final class io/kuicksilver/ktor/client/QuicStalledException : java/io/IOException {
 	public final fun getProbeTimeouts ()I
 	public final fun getSilence-UwyO8pc ()J
@@ -477,6 +541,26 @@ public final class io/kuicksilver/ktor/client/ResolvedProxy$Companion {
 	public static synthetic fun https$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
 	public final fun socks5 (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;Z)Lio/kuicksilver/ktor/client/ResolvedProxy;
 	public static synthetic fun socks5$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ZILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
+}
+
+public final class io/kuicksilver/ktor/client/TcpConnectionSnapshot : io/kuicksilver/ktor/client/ConnectionSnapshot {
+	public final fun getAlpn ()Ljava/lang/String;
+	public fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun getProtocol ()Lio/ktor/http/HttpProtocolVersion;
+	public fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun getReused ()Z
+	public final fun getSecure ()Z
+	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
+	public final fun getViaProxy ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/Transport : java/lang/Enum {
+	public static final field Quic Lio/kuicksilver/ktor/client/Transport;
+	public static final field Tcp Lio/kuicksilver/ktor/client/Transport;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/Transport;
+	public static fun values ()[Lio/kuicksilver/ktor/client/Transport;
 }
 
 public final class io/kuicksilver/ktor/client/WebTransportClientKt {

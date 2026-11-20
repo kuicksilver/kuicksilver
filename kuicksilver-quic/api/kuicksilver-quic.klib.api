@@ -202,6 +202,7 @@ abstract interface io.kuicksilver.quic/ConnectionListener { // io.kuicksilver.qu
     open fun onHandshakeCompleted(io.kuicksilver.quic/ConnectionInfo) // io.kuicksilver.quic/ConnectionListener.onHandshakeCompleted|onHandshakeCompleted(io.kuicksilver.quic.ConnectionInfo){}[0]
     open fun onOpened(io.kuicksilver.quic/ConnectionInfo) // io.kuicksilver.quic/ConnectionListener.onOpened|onOpened(io.kuicksilver.quic.ConnectionInfo){}[0]
     open fun onPathChanged(io.kuicksilver.quic/ConnectionInfo, io.kuicksilver.quic/PathEvent.Changed) // io.kuicksilver.quic/ConnectionListener.onPathChanged|onPathChanged(io.kuicksilver.quic.ConnectionInfo;io.kuicksilver.quic.PathEvent.Changed){}[0]
+    open fun onPathsUpdated(io.kuicksilver.quic/ConnectionInfo, kotlin.collections/List<io.kuicksilver.quic/PathInfo>) // io.kuicksilver.quic/ConnectionListener.onPathsUpdated|onPathsUpdated(io.kuicksilver.quic.ConnectionInfo;kotlin.collections.List<io.kuicksilver.quic.PathInfo>){}[0]
     open fun onZeroRtt(io.kuicksilver.quic/ConnectionInfo, io.kuicksilver.quic/ZeroRttOutcome) // io.kuicksilver.quic/ConnectionListener.onZeroRtt|onZeroRtt(io.kuicksilver.quic.ConnectionInfo;io.kuicksilver.quic.ZeroRttOutcome){}[0]
 }
 
@@ -286,6 +287,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         abstract fun <get-stats>(): io.kuicksilver.quic/ConnectionStats // io.kuicksilver.quic/QuicConnection.stats.<get-stats>|<get-stats>(){}[0]
     open val earlyDataAccepted // io.kuicksilver.quic/QuicConnection.earlyDataAccepted|{}earlyDataAccepted[0]
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/QuicConnection.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val info // io.kuicksilver.quic/QuicConnection.info|{}info[0]
+        open fun <get-info>(): io.kuicksilver.quic/ConnectionInfo? // io.kuicksilver.quic/QuicConnection.info.<get-info>|<get-info>(){}[0]
     open val isHandshakeComplete // io.kuicksilver.quic/QuicConnection.isHandshakeComplete|{}isHandshakeComplete[0]
         open fun <get-isHandshakeComplete>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.isHandshakeComplete.<get-isHandshakeComplete>|<get-isHandshakeComplete>(){}[0]
     open val keyExchangeGroup // io.kuicksilver.quic/QuicConnection.keyExchangeGroup|{}keyExchangeGroup[0]
@@ -801,6 +804,10 @@ final class io.kuicksilver.quic/ConnectionInfo { // io.kuicksilver.quic/Connecti
         final fun <get-connection>(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/ConnectionInfo.connection.<get-connection>|<get-connection>(){}[0]
     final val id // io.kuicksilver.quic/ConnectionInfo.id|{}id[0]
         final fun <get-id>(): kotlin/String // io.kuicksilver.quic/ConnectionInfo.id.<get-id>|<get-id>(){}[0]
+    final val pathChanges // io.kuicksilver.quic/ConnectionInfo.pathChanges|{}pathChanges[0]
+        final fun <get-pathChanges>(): kotlin/Int // io.kuicksilver.quic/ConnectionInfo.pathChanges.<get-pathChanges>|<get-pathChanges>(){}[0]
+    final val paths // io.kuicksilver.quic/ConnectionInfo.paths|{}paths[0]
+        final fun <get-paths>(): kotlin.collections/List<io.kuicksilver.quic/PathInfo> // io.kuicksilver.quic/ConnectionInfo.paths.<get-paths>|<get-paths>(){}[0]
     final val remoteAddress // io.kuicksilver.quic/ConnectionInfo.remoteAddress|{}remoteAddress[0]
         final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/ConnectionInfo.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
     final val role // io.kuicksilver.quic/ConnectionInfo.role|{}role[0]
@@ -1124,6 +1131,29 @@ final class io.kuicksilver.quic/PacketBatch : kotlin/AutoCloseable { // io.kuick
     final fun setLength(kotlin/Int, kotlin/Int) // io.kuicksilver.quic/PacketBatch.setLength|setLength(kotlin.Int;kotlin.Int){}[0]
     final fun setLocalAddress(kotlin/Int, io.ktor.network.sockets/InetSocketAddress?) // io.kuicksilver.quic/PacketBatch.setLocalAddress|setLocalAddress(kotlin.Int;io.ktor.network.sockets.InetSocketAddress?){}[0]
     final fun setPath(kotlin/Int, io.kuicksilver.quic/PathId) // io.kuicksilver.quic/PacketBatch.setPath|setPath(kotlin.Int;io.kuicksilver.quic.PathId){}[0]
+}
+
+final class io.kuicksilver.quic/PathInfo { // io.kuicksilver.quic/PathInfo|null[0]
+    final val active // io.kuicksilver.quic/PathInfo.active|{}active[0]
+        final fun <get-active>(): kotlin/Boolean // io.kuicksilver.quic/PathInfo.active.<get-active>|<get-active>(){}[0]
+    final val id // io.kuicksilver.quic/PathInfo.id|{}id[0]
+        final fun <get-id>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/PathInfo.id.<get-id>|<get-id>(){}[0]
+    final val localAddress // io.kuicksilver.quic/PathInfo.localAddress|{}localAddress[0]
+        final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/PathInfo.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val localConnectionId // io.kuicksilver.quic/PathInfo.localConnectionId|{}localConnectionId[0]
+        final fun <get-localConnectionId>(): kotlin/String? // io.kuicksilver.quic/PathInfo.localConnectionId.<get-localConnectionId>|<get-localConnectionId>(){}[0]
+    final val localConnectionIdSequence // io.kuicksilver.quic/PathInfo.localConnectionIdSequence|{}localConnectionIdSequence[0]
+        final fun <get-localConnectionIdSequence>(): kotlin/Long // io.kuicksilver.quic/PathInfo.localConnectionIdSequence.<get-localConnectionIdSequence>|<get-localConnectionIdSequence>(){}[0]
+    final val remoteAddress // io.kuicksilver.quic/PathInfo.remoteAddress|{}remoteAddress[0]
+        final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/PathInfo.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    final val remoteConnectionId // io.kuicksilver.quic/PathInfo.remoteConnectionId|{}remoteConnectionId[0]
+        final fun <get-remoteConnectionId>(): kotlin/String? // io.kuicksilver.quic/PathInfo.remoteConnectionId.<get-remoteConnectionId>|<get-remoteConnectionId>(){}[0]
+    final val remoteConnectionIdSequence // io.kuicksilver.quic/PathInfo.remoteConnectionIdSequence|{}remoteConnectionIdSequence[0]
+        final fun <get-remoteConnectionIdSequence>(): kotlin/Long // io.kuicksilver.quic/PathInfo.remoteConnectionIdSequence.<get-remoteConnectionIdSequence>|<get-remoteConnectionIdSequence>(){}[0]
+    final val state // io.kuicksilver.quic/PathInfo.state|{}state[0]
+        final fun <get-state>(): io.kuicksilver.quic/PathState // io.kuicksilver.quic/PathInfo.state.<get-state>|<get-state>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.quic/PathInfo.toString|toString(){}[0]
 }
 
 final class io.kuicksilver.quic/PathValidationException : kotlin/IllegalStateException { // io.kuicksilver.quic/PathValidationException|null[0]

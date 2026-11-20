@@ -52,6 +52,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
@@ -400,10 +401,10 @@ class ClientDiagnosticsTest {
         }
 
     /**
-     * A call that fails has no response, so no diagnostics: the attribute is not on the request when callFailed is heard.
-     * When both setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`.
+     * A call that fails has no response: its diagnostics are on the request while callFailed is heard (then removed) and on
+     * the exception. When both setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`.
      */
-    @Test fun diagnosticsOnFailedCallNotAttached() =
+    @Test fun diagnosticsOnFailedCallInCallFailedAndOnTheException() =
         h3Test {
             val (server, port) = testServer(module = okServer())
             val reasons = Reasons()
@@ -416,12 +417,19 @@ class ClientDiagnosticsTest {
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     val (cause, diagnostics) = assertNotNull(reasons.failed.load())
-                    assertNull(diagnostics, "a failed call carries no diagnostics")
+                    assertNotNull(diagnostics, "callFailed reads the failed call's diagnostics from the request")
+                    assertSame(diagnostics, e.kuicksilverDiagnostics)
+                    assertEquals(Transport.Tcp, diagnostics.transport)
                     // the HTTP/1.1 failure (a TLS one) carries the HTTP/3 one: the QUIC connection's TLS failure
-                    val suppressed = generateSequence(cause) { it.cause }.flatMap { it.suppressedExceptions }.toList()
+                    // besides the carrier of the diagnostics
+                    val suppressed =
+                        generateSequence(
+                            cause,
+                        ) { it.cause }.flatMap { it.suppressedExceptions }.filterNot { it is FailureDiagnostics }.toList()
                     val h3Failure = assertIs<QuicException>(suppressed.singleOrNull(), "suppressed in $cause (thrown: $e): $suppressed")
                     assertEquals(FallbackReason.TlsFailure, classifyH3Failure(h3Failure), "$h3Failure")
                     assertFalse(generateSequence(cause) { it.cause }.any { it === h3Failure }, "the thrown failure is HTTP/1.1's")
+                    assertSame(h3Failure, diagnostics.h3Failure)
                 }
             } finally {
                 server.stop(100, 500)

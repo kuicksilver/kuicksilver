@@ -216,6 +216,9 @@ internal class UdpRelay(
     /** While true every datagram is dropped, both ways: QUIC is blocked on the path. */
     @kotlin.concurrent.Volatile var blocked: Boolean = false
 
+    /** How many more datagrams of the server reach the client; the rest are dropped (a handshake that starts, then stalls). */
+    @kotlin.concurrent.Volatile var serverDatagramsLeft: Int = Int.MAX_VALUE
+
     /** Completed by the first datagram from the client dropped while [blocked]. */
     val dropped: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred()
 }
@@ -284,10 +287,11 @@ internal suspend fun udpRelay(
                     while (true) {
                         val d = back.receive()
                         val c = client
-                        if (relay.blocked || c == null) {
+                        if (relay.blocked || c == null || relay.serverDatagramsLeft <= 0) {
                             d.packet.close()
                             continue
                         }
+                        if (relay.serverDatagramsLeft != Int.MAX_VALUE) relay.serverDatagramsLeft--
                         front.send(
                             io.ktor.network.sockets
                                 .Datagram(d.packet, c),

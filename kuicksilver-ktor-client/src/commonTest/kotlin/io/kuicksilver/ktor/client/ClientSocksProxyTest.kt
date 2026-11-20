@@ -324,7 +324,18 @@ class ClientSocksProxyTest {
                             }
                         }
                     }).use { c ->
-                        assertEquals("second address", c.get("https://server.test:$port/").bodyAsText())
+                        val r = c.get("https://server.test:$port/")
+                        assertEquals("second address", r.bodyAsText())
+                        // the refusal that moved on to the next address is a failed setup of the call (connectFailed)
+                        val f =
+                            kotlin.test
+                                .assertNotNull(r.kuicksilverDiagnostics)
+                                .connectFailures
+                                .single()
+                        assertEquals(ConnectStage.ProxyHandshake, f.stage)
+                        assertEquals((listener.localAddress as InetSocketAddress).port, f.address?.port)
+                        assertTrue(f.viaProxy)
+                        assertEquals(4, (f.cause as ProxyException).replyCode)
                     }
                     assertEquals(listOf(listOf<Byte>(10, -1, -1, 1), listOf<Byte>(127, 0, 0, 1)), destinations)
                     proxy.cancel()
@@ -342,6 +353,13 @@ class ClientSocksProxyTest {
                 testClient(engine = { proxy = ProxyBuilder.socks("127.0.0.1", proxyPort) }).use { c ->
                     val e = assertFailsWith<ProxyException> { c.get("https://127.0.0.1:1/").bodyAsText() }
                     assertEquals(5, e.replyCode)
+                    assertEquals(
+                        listOf(ConnectStage.ProxyHandshake),
+                        kotlin.test
+                            .assertNotNull(e.kuicksilverDiagnostics)
+                            .connectFailures
+                            .map { it.stage },
+                    )
                 }
             }
         }

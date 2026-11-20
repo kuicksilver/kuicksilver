@@ -24,6 +24,10 @@ internal class H2Conn(
     route: String,
     createdAt: Long,
     override val remoteIp: ByteArray? = null,
+    /** The TCP socket's addresses (the proxy's through one) and whether a proxy carries it, for the call diagnostics. */
+    val localAddress: io.ktor.network.sockets.InetSocketAddress? = null,
+    val remoteAddress: io.ktor.network.sockets.InetSocketAddress? = null,
+    val viaProxy: Boolean = false,
 ) : PooledConnection(route, createdAt) {
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -301,6 +305,9 @@ internal class H2Pool(
         kotlinx.coroutines.withTimeoutOrNull(bound) { for (c in all) c.client.awaitClosed() }
         for (c in all) c.close()
     }
+
+    /** Tests: the open connections. */
+    internal fun connectionsForTest(): List<H2Conn> = lock.withLock { routes.values.flatMap { it.conns } }
 
     /** Connections (the resource probe). */
     val connectionCount: Int get() = lock.withLock { routes.values.sumOf { it.conns.size } }

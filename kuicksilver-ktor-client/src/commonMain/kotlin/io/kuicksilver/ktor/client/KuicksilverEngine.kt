@@ -341,11 +341,16 @@ internal class KuicksilverEngine(
             try {
                 AbandonableBody.guard(route(data, callContext, diagnostics), callContext)
             } catch (e: Throwable) {
-                data.attributes.remove(KuicksilverDiagnosticsKey) // no response, no diagnostics: the exception says it
-                events.emit("callFailed") { callFailed(data, e) }
-                throw e
+                // a connection's failure, which every call on the connection gets, is thrown as this call's own copy
+                val thrown = settleFailure(diagnostics, e)
+                // the listener reads the failed call's diagnostics from the request; then no response, no diagnostics on it:
+                // the exception carries them
+                events.emit("callFailed") { callFailed(data, thrown) }
+                data.attributes.remove(KuicksilverDiagnosticsKey)
+                throw thrown
             }
         diagnostics.protocol = r.version
+        diagnostics.transport = if (r.version == HttpProtocolVersion.HTTP_3_0) Transport.Quic else Transport.Tcp
         if (r.version == HttpProtocolVersion.HTTP_3_0) diagnostics.fallback = null
         events.emit("callEnd") { callEnd(data, r.version, r.statusCode.value) }
         logDiagnostics(data, diagnostics)
@@ -432,11 +437,22 @@ internal class KuicksilverEngine(
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         proxy: ResolvedProxy? = null,
         after: () -> Unit = {},
-    ): HttpResponseData =
-        h1.execute(data, callContext, preopened, dns, proxy) { protocol ->
+    ): HttpResponseData {
+        // from here a failure is TCP's; a connection of an HTTP/3 attempt before is not this call's any more
+        d.transport = Transport.Tcp
+        if (d.connectionTransport == Transport.Quic) d.connection = null
+        return h1.execute(data, callContext, preopened, dns, proxy) { protocol ->
             selected(data, protocol, reason, d)
             after()
         }
+    }
+
+    /** From here the call goes over QUIC: a failure is HTTP/3's unless a fallback follows. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun overQuic(d: ProtocolDiagnostics) {
+        d.transport = Transport.Quic
+        if (d.connectionTransport == Transport.Tcp) d.connection = null
+    }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun route(
@@ -528,6 +544,7 @@ internal class KuicksilverEngine(
             config.http3.discovery == Http3DiscoveryMode.H3Only -> {
                 d.alternative(target.host, target.port, AlternativeSource.H3Only)
                 selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Configuration, d)
+                overQuic(d)
                 try {
                     h3.execute(target, data, callContext)
                 } catch (e: H3NotSent) {
@@ -852,14 +869,23 @@ internal class KuicksilverEngine(
             engineScope.async {
                 h3.connection(t, data, dns).also { if (!confirmed) it.quic.awaitHandshake() }
             }
+        var bothFailedH3: Throwable? = null
         val result =
             try {
                 race.race<Any>({ h3Attempt.await() }, { h1.open(data, tcpDns) }, rtt, confirmed, onLoser = {
                     (it as? H1Pool.Opened)?.let { o -> h1.recycle(o) } // unused: back to the pool, or its HTTP/2 stream given back
-                })
+                }, onBothFailed = { bothFailedH3 = it })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                // both setups failed: the TCP failure is the call's, HTTP/3's is in it (suppressed) and in the diagnostics
+                d.raced(race.headStart(rtt, confirmed))
+                d.transport = Transport.Tcp
+                val h3Failure = bothFailedH3
+                if (h3Failure != null && h3Failure !is CancellationException) {
+                    d.h3Failure = h3Failure
+                    d.fallback = classifyH3Failure(h3Failure)
+                }
                 if (!setupFailures) throw e
                 settleLostQuic(h3Attempt, network, origin, alt) // both failed: QUIC's failure still marks the endpoint broken
                 throw EndpointUnreachable(e)
@@ -1391,6 +1417,7 @@ internal class KuicksilverEngine(
             },
             d,
         )
+        overQuic(d)
         return try {
             h3.execute(t, data, callContext, extraHeaders, dns, conn)
         } catch (e: H3NotSent) {
@@ -1520,6 +1547,7 @@ internal class KuicksilverEngine(
         tcpDns: RequestDns = dns, // where the fallback over TCP connects
     ): HttpResponseData =
         try {
+            overQuic(d)
             h3.execute(target, data, callContext, extraHeaders, dns, prefer, watchStall = true)
         } catch (
             e: CancellationException,

@@ -7,6 +7,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
+import io.kuicksilver.quic.ConnectionCreated
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
@@ -577,6 +578,9 @@ internal class EndpointLoop private constructor(
                         val c = core.connect(config, remote, now(), ticket)
                         c.initialToken = token
                         val rt = adopt(c)
+                        // the caller that asked for it learns its handle, by identity (ConnectionCreated)
+                        @OptIn(InternalKuicksilverApi::class)
+                        coroutineContext[ConnectionCreated]?.let { h -> runCatching { h.onCreated(rt.info) } }
                         rt.tokenStore = config.tokenStore
                         rt.tokenKey = tokenKey
                         adopted = rt

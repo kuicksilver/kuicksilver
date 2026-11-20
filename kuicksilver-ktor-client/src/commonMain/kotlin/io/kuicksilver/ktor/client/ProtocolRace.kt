@@ -67,6 +67,8 @@ internal class ProtocolRace(
         srtt: Duration?,
         quicConfirmed: Boolean,
         onLoser: (T) -> Unit = {},
+        /** When both failed, HTTP/3's failure, the one suppressed in the HTTP/1.1 failure thrown. */
+        onBothFailed: (h3Failure: Throwable) -> Unit = {},
     ): RaceResult<T> =
         coroutineScope {
             val h3Done = CompletableDeferred<Result<T>>()
@@ -114,7 +116,10 @@ internal class ProtocolRace(
                         // the HTTP/1.1 failure is the call's; HTTP/3's goes with it, so a failed call still says why
                         // HTTP/3 failed (ProtocolDiagnostics exist only for answered calls)
                         val h1Failure = h1Result.exceptionOrNull()!!
-                        h3Result.exceptionOrNull()?.let { if (it !== h1Failure) h1Failure.addSuppressed(it) }
+                        h3Result.exceptionOrNull()?.let {
+                            if (it !== h1Failure) h1Failure.addSuppressed(it)
+                            onBothFailed(it)
+                        }
                         throw h1Failure
                     }
                     select<Unit> {

@@ -341,6 +341,63 @@ class H2InteropTest {
         }
 
     /**
+     * A server with TLS 1.2 only answers this client's ClientHello (TLS 1.3 only, the default) with a `protocol_version`
+     * alert: `protocolSelected` never comes, `connectFailed` reports the TLS failure with the server's address, and the
+     * exception's diagnostics say TCP, with the connection whose handshake failed.
+     */
+    @Test fun negative_tls12OnlyServerAlertIsReportedWithItsAddress() =
+        clientTest {
+            netty("TLSv1.2").use { n ->
+                val failures = java.util.concurrent.CopyOnWriteArrayList<ConnectFailure>()
+                val selected = java.util.concurrent.CopyOnWriteArrayList<io.ktor.http.HttpProtocolVersion>()
+                val listener =
+                    object : KuicksilverEventListener() {
+                        override fun connectFailed(
+                            request: io.ktor.client.request.HttpRequestData,
+                            failure: ConnectFailure,
+                        ) {
+                            failures += failure
+                        }
+
+                        override fun protocolSelected(
+                            request: io.ktor.client.request.HttpRequestData,
+                            protocol: io.ktor.http.HttpProtocolVersion,
+                            reason: ProtocolReason,
+                        ) {
+                            selected += protocol
+                        }
+                    }
+                testClient(engine = { eventListener = listener }).use { c ->
+                    val e = kotlin.test.assertFailsWith<Throwable> { c.get("https://127.0.0.1:${n.port}/hello") }
+                    val alert = generateSequence(e) { it.cause }.filterIsInstance<io.kuicksilver.tls.TlsException.AlertReceived>().first()
+                    assertEquals("protocol_version", alert.description)
+                    assertTrue(selected.isEmpty(), "$selected")
+                    val f = failures.single()
+                    assertEquals(ConnectStage.TlsHandshake, f.stage)
+                    assertEquals(Transport.Tcp, f.transport)
+                    assertEquals(n.port, f.address?.port)
+                    assertTrue("TlsHandshake to " in f.toString(), "$f")
+                    val d = kotlin.test.assertNotNull(e.kuicksilverDiagnostics)
+                    assertEquals(Transport.Tcp, d.transport)
+                    val t = kotlin.test.assertIs<TcpConnectionSnapshot>(d.connection)
+                    kotlin.test.assertNull(t.protocol)
+                    assertEquals(n.port, t.remoteAddress?.port)
+                    assertEquals(listOf(f), d.connectFailures)
+                    // the carrier is one line in a printed stack trace: no stack of its own, no address
+                    val carrier = e.suppressedExceptions.filterIsInstance<FailureDiagnostics>().single()
+                    assertTrue(carrier.stackTrace.isEmpty())
+                    val printed = e.stackTraceToString().lines().filter { "FailureDiagnostics" in it }
+                    assertEquals(
+                        listOf(
+                            "\tSuppressed: io.kuicksilver.ktor.client.FailureDiagnostics: kuicksilver: failed over TCP; setups failed: TlsHandshake",
+                        ),
+                        printed,
+                    )
+                }
+            }
+        }
+
+    /**
      * RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of type
      * PROTOCOL_ERROR." The server asks for renegotiation (a HelloRequest) while the request is in flight: the call fails with
      * PROTOCOL_ERROR raised by this client, not with a TLS failure or a lost connection.

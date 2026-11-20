@@ -33,7 +33,7 @@ public sealed class Http3Exception(
         message: String? = null,
     ) : Http3Exception(message ?: "${Http3ErrorCode.name(h3Code)} from $initiator${streamId?.let { " on stream $it" } ?: ""}") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): Protocol = Protocol(h3Code, initiator, streamId, message)
+        override fun createCopy(): Protocol = Protocol(h3Code, initiator, streamId, message).withSuppressedOf(this)
     }
 
     /**
@@ -47,7 +47,7 @@ public sealed class Http3Exception(
         message: String? = null,
     ) : Http3Exception(message ?: Http3ErrorCode.name(code)) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): Qpack = Qpack(code, message)
+        override fun createCopy(): Qpack = Qpack(code, message).withSuppressedOf(this)
     }
 
     /**
@@ -82,7 +82,7 @@ public sealed class Http3Exception(
 
         /** A copy of this exception, for the coroutines stack-trace recovery. */
         @OptIn(ExperimentalKuicksilverApi::class)
-        override fun createCopy(): RequestNotProcessed = RequestNotProcessed(retrySafe, neverSent, message ?: "")
+        override fun createCopy(): RequestNotProcessed = RequestNotProcessed(retrySafe, neverSent, message ?: "").withSuppressedOf(this)
 
         internal companion object {
             /** This client sent GOAWAY: it issues no new requests (RFC 9114 section 5.2). */
@@ -98,7 +98,7 @@ public sealed class Http3Exception(
         message: String,
     ) : Http3Exception(message) {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): Settings = Settings(message ?: "")
+        override fun createCopy(): Settings = Settings(message ?: "").withSuppressedOf(this)
     }
 
     /**
@@ -112,7 +112,7 @@ public sealed class Http3Exception(
         public val reason: String,
     ) : Http3Exception("malformed message on stream $streamId: $reason") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): MessageError = MessageError(streamId, reason)
+        override fun createCopy(): MessageError = MessageError(streamId, reason).withSuppressedOf(this)
     }
 
     /**
@@ -132,7 +132,7 @@ public sealed class Http3Exception(
         public val limit: Long,
     ) : Http3Exception("field section on stream $streamId exceeds $limit bytes") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): FieldSectionTooLarge = FieldSectionTooLarge(streamId, limit)
+        override fun createCopy(): FieldSectionTooLarge = FieldSectionTooLarge(streamId, limit).withSuppressedOf(this)
     }
 
     /**
@@ -146,7 +146,7 @@ public sealed class Http3Exception(
         public val headers: Http3Headers,
     ) : Http3Exception("CONNECT rejected with status $status") {
         /** A copy of this exception, for the coroutines stack-trace recovery. */
-        override fun createCopy(): ConnectRejected = ConnectRejected(status, headers)
+        override fun createCopy(): ConnectRejected = ConnectRejected(status, headers).withSuppressedOf(this)
     }
 
     /** Conversion of transport errors into their HTTP/3 meaning. */
@@ -184,4 +184,13 @@ public sealed class Http3Exception(
                 }
             }
     }
+}
+
+/**
+ * [this] copy of [original] with the original's suppressed exceptions: what a layer above attached (a client engine's call
+ * diagnostics) survives the copy coroutines make to keep the receiving stack.
+ */
+internal fun <T : Throwable> T.withSuppressedOf(original: Throwable): T {
+    for (s in original.suppressedExceptions) if (s !== this) addSuppressed(s)
+    return this
 }

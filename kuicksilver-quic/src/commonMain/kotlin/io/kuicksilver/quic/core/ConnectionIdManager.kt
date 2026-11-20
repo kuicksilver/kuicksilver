@@ -715,6 +715,12 @@ internal class ConnectionIdManager(
     /** The peer ID our packets on the active path carry. */
     val currentPeer: Peer? get() = current
 
+    /** The sequence number of the peer's ID [cid] among its active ones, -1 when it is not one (diagnostics, not per packet). */
+    fun peerSeqOf(cid: ConnectionId): Long {
+        for (i in peer.indices) if (peer[i].cid === cid || peer[i].cid == cid) return peer[i].seq
+        return -1L
+    }
+
     /** Test hook: the peer has given us an ID no path uses yet (a migration can start). */
     val hasSparePeerForTest: Boolean get() = unusedPeer() != null
 

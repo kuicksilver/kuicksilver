@@ -45,6 +45,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
 | `QuicStalledException`, `fallback = QuicStalled`, `"HTTP/3 connection stalled"` | [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
+| a failed Ktor client call: over QUIC or TCP? `kuicksilverDiagnostics` on the exception, `connectFailed`, `ConnectFailure` | [which transport failed](#a-ktor-client-call-failed-over-which-transport) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
 
@@ -53,12 +54,12 @@ Search this page for the exact text or code you see; the table sends you to the 
 | Tool | How to turn it on | What it tells you |
 |---|---|---|
 | Logger | `QuicEndpointConfig.logger = KuicksilverLogger.stderr(LogLevel.Debug)`; Ktor client `engine { logger = … }`; Ktor server `logger = …` | `Debug`: each connection's lifecycle (`"<client\|server> connection <id> opened, peer <address>"`, `"connection <id> handshake complete, ALPN <alpn>"`, `"connection <id> path changed (<reason>): <old> -> <new>"`, `"connection <id> closed[ before its handshake completed]: <reason>"`); `Info`: an endpoint shutting down or closing; `Warn`: degradations such as the fallback to the portable socket; `Error`: an endpoint loop that died. Lines on standard error start with `kuicksilver: <LEVEL>` |
-| Connection listener | `QuicEndpointConfig.listener` (Ktor: `http3 { connectionListener }`, server `connectionListener`) | `onOpened`, `onHandshakeCompleted`, `onZeroRtt`, `onPathChanged` and `onClosed` with the `QuicException.ConnectionLost` reason |
+| Connection listener | `QuicEndpointConfig.listener` (Ktor: `http3 { connectionListener }`, server `connectionListener`) | `onOpened`, `onHandshakeCompleted`, `onZeroRtt`, `onPathChanged`, `onPathsUpdated` (paths and their connection IDs, `ConnectionInfo.paths`) and `onClosed` with the `QuicException.ConnectionLost` reason |
 | Endpoint counters | `QuicEndpoint.stats` / `Http3Endpoint.stats` (`EndpointStats`); Ktor server `engine.http3Stats` | refusals (`connectionsRefusedAcceptQueue`, `connectionsRefusedAdmission`, `connectionsRefusedLimits`, `connectionsRefusedShutdown`, `initialsDropped`), failed handshakes (`handshakesFailedTimeout`, `handshakesFailedTls`, `handshakesFailedOther`), 0-RTT, datagrams dropped at the socket or in a queue, path validations, internal failures (`uncaughtFailures`, `sendFailures`, `listenerFailures`) |
 | Connection counters | `QuicConnection.stats` (`ConnectionStats`) | `smoothedRtt`, `minRtt`, `cwnd`, `bytesInFlight`, `lostPackets`, `ptoCount`, `pathMtu`, `ecnState`, `datagramsDropped`, `datagramsDroppedSend`, `datagramsDroppedSocket`, `glitchTokensSpent`, `authenticationFailures`, `invalidResets` |
 | qlog | `quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(dir)) }`; Ktor client `http3 { qlog = … }`; Ktor server `qlog = …`; on Android `qlogDirectory(context)` (API 26 and up) gives a sink in the app's cache directory | one `<odcid>_<client\|server>_<random>.sqlog` file (JSON-SEQ) per connection, in a directory only this user can change, readable with qvis; `ConnectionInfo.id` and the logger's `<id>` are the same original destination connection ID |
-| Ktor client events | `engine { eventListener = object : KuicksilverEventListener() { … } }` | why a protocol was chosen (`protocolSelected` with a `ProtocolReason`), the race (`raceEnded`), `altSvcUsed`, `altSvcMarkedBroken`, `fallback`, `retry`, pool reuse |
-| Ktor client diagnostics | `response.kuicksilverDiagnostics`; the engine logger at `Info` | per response: the protocol, why not HTTP/3 (`FallbackReason`), the alternative, the race; one log line per such call |
+| Ktor client events | `engine { eventListener = object : KuicksilverEventListener() { … } }` | why a protocol was chosen (`protocolSelected` with a `ProtocolReason`), the race (`raceEnded`), `altSvcUsed`, `altSvcMarkedBroken`, `fallback`, `retry`, pool reuse, `connectFailed` (a TCP, proxy, TLS or QUIC setup that failed, with its address) |
+| Ktor client diagnostics | `response.kuicksilverDiagnostics`, `exception.kuicksilverDiagnostics`; the engine logger at `Info` | per call: the protocol and `transport`, why not HTTP/3 (`FallbackReason`), the alternative, the race, the `connection` (QUIC: path, connection IDs, RTT, moves during the call; TCP: addresses, ALPN), the failed setups; one log line per such call |
 | Ktor server events | `eventListener = object : KuicksilverServerEventListener() { … }` | connections per protocol, `tlsHandshakeFailed`, requests with their failure |
 | Key log | `tlsConfig(…) { keylog = keylogFile(path) }` (`@DelicateKuicksilverApi`) | TLS secrets for Wireshark; see [Key logging is refused](#key-logging-is-refused) |
 
@@ -624,6 +625,21 @@ not apply to the proxy), another reason that its chain is not trusted: the proxy
 without pins unless `proxyTls = { trust = ... }` says otherwise, so a proxy under a corporate CA needs that CA there.
 An alert or a closed connection usually means the proxy does not speak TLS on that port (an `http://` proxy named as
 `https://`). A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
+
+### A Ktor client call failed: over which transport?
+
+`e.kuicksilverDiagnostics` on the exception says it ([Ktor: Why did this call fail?](ktor.md#why-did-this-call-fail)):
+`transport` is `Quic` or `Tcp`, `h3Failure` is HTTP/3's failure when TCP came after it, and `connectFailures` names each
+setup that failed with its stage and address (a QUIC one also with `quicProgress`: `NoPacketReceived` is UDP blocked or
+a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
+attempt it cut short, or as `NameLookup`, `PoolWait` or `H2DialWait` when the time went to waiting before any address
+was tried (`PoolWait`: raise `maxConnectionsPerRoute`, or find the calls holding the connections): a `TlsHandshake` failure with `TlsException.AlertReceived`
+(`protocol_version`) is a server without TLS 1.3 (allow TLS 1.2 on the client with `tls = { versions =
+TlsVersions.Tls12And13 }` if you must reach it); `TcpConnect` failures for every address mean nothing listens there or a
+firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).
+It is null on a connection's failure met while reading a response body (the instance every request on the connection
+gets carries no call's diagnostics) and on a cancellation; `callFailed` has the request's own diagnostics in its
+attributes.
 
 ### `H3Only` requests time out
 

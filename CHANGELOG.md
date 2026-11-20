@@ -51,6 +51,35 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: `Http3Response.bodyReceived` (experimental) completes once the whole response arrived: its FIN and every byte
   before it are local (the request stream's "Data Recvd" state, RFC 9000 section 3.2), however little the application
   read of it yet.
+- QUIC: the connection IDs on each path (experimental, `docs/guide/quic.md`, "Observability"). `ConnectionInfo.paths`
+  lists the connection's paths, the active one first, as `PathInfo`: the path's id, local and remote address, state,
+  and our and the peer's connection IDs on it with their sequence numbers; `ConnectionInfo.pathChanges` counts the moves
+  to another path. `ConnectionListener.onPathsUpdated` hears each new list (an ID rotated, a path added, validated,
+  closed or made active, an address changed), and `QuicConnection.info` returns the connection's `ConnectionInfo`. The
+  list is there from the connection's creation (the handshake's IDs first), is rebuilt on the loop only when it changed
+  and read from any thread without a lock; a client notes which of its
+  IDs the server's packets carry with one comparison per 1-RTT packet. Connection IDs are linkable identifiers: the
+  library never logs them and `PathInfo.toString()` leaves them out.
+- Ktor client: which connection served a call (experimental, `docs/guide/ktor.md`, "Which connection served this
+  call?"). `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot` (the connection's `connectionId`, the
+  `ConnectionInfo.id` the `connectionListener` hears, the active path with its connection IDs, every path, the smoothed
+  and minimum RTT and their variation, and the path changes during the call: plain data, no handle that would keep the
+  connection in memory) or a `TcpConnectionSnapshot` (protocol, addresses, ALPN, proxy, reuse); an HTTP/3 call's is read
+  live during the call and kept as one snapshot from its end. `ProtocolDiagnostics.transport` says
+  `Quic` or `Tcp`.
+- Ktor client: which transport a failed call came from (experimental, `docs/guide/ktor.md`, "Why did this call fail?").
+  `Throwable.kuicksilverDiagnostics` returns the failed call's `ProtocolDiagnostics` (on the exception or a cause): its
+  `transport`, HTTP/3's failure when TCP came after it (`h3Failure`, now also when both setups failed), the connection the
+  failure came from, and `connectFailures`, every connection setup that failed (`ConnectFailure`: transport, stage
+  `TcpConnect`, `ProxyHandshake`, `TlsHandshake` or `QuicHandshake`, address, cause). The new
+  `KuicksilverEventListener.connectFailed` reports each one as it happens, so a TCP or TLS handshake that fails — a
+  `protocol_version` alert from a TLS 1.2-only server, say — is reported with its address although `protocolSelected`
+  never comes for it. The connect timeout is reported too, per attempt it cut short and at the step it was in, or as
+  what the time went to before an address was tried (`NameLookup`, `PoolWait`, `H2DialWait`); a QUIC failure says how
+  far the handshake got (`QuicHandshakeProgress`: no packet from the server, or started) and names its connection
+  (`connectionId`, tied to the attempt by the connection its own `connect` created, not by address); a handshake
+  that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Ktor's
+  `HttpRequestTimeoutException` carries the diagnostics like any other failure.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
@@ -991,6 +1020,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: a POST or another request that may not be repeated, on an HTTP/3 connection that stalls, now waits up to
   `stallAbandonAfter` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
   timeout (30 s) with `QuicException.ConnectionLost.Timeout` before 0.3.0.
+- Ktor client: a failed call's `ProtocolDiagnostics` stay in the request's attributes until `callFailed` returned (they
+  were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`: a
+  one-line message without URL, host, address or connection ID, and on the JVM and Android no stack of its own); code
+  that reads `suppressedExceptions` of a failed call sees it after the HTTP/3 failure. A copy coroutines make of a
+  `QuicException` or an `Http3Exception` (the stack of the receiving side) keeps the original's suppressed exceptions.
+- Ktor client: a call that fails in the engine on a connection-wide failure — the one instance every call on the
+  connection gets: a QUIC connection's end (what `onClosed` and `QuicConnection.closed` hold), the HTTP/3 session's close
+  (an `Http3Exception`, `RequestNotProcessed` for H3_REQUEST_REJECTED included), an HTTP/2 connection's
+  `Http2Exception.ConnectionClosed` (a GOAWAY with an error, a dropped connection), a shared setup's failure — now throws
+  its own copy of it (same type, fields and cause) carrying its diagnostics, and `callFailed` gets that copy, no longer
+  the shared instance; the instance itself carries no call's diagnostics.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

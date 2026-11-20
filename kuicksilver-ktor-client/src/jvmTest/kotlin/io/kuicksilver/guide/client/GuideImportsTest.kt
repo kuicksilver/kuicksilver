@@ -23,6 +23,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
@@ -30,7 +31,10 @@ import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
 import io.kuicksilver.ktor.client.ProxyCredentials
 import io.kuicksilver.ktor.client.ProxyResolver
+import io.kuicksilver.ktor.client.QuicConnectionSnapshot
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.TcpConnectionSnapshot
+import io.kuicksilver.ktor.client.Transport
 import io.kuicksilver.ktor.client.closeHttp3Connections
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.ktor.client.priority
@@ -90,11 +94,26 @@ suspend fun everyClientImport(
                             protocol: HttpProtocolVersion,
                             reason: ProtocolReason,
                         ) {}
+
+                        override fun connectFailed(
+                            request: HttpRequestData,
+                            failure: ConnectFailure,
+                        ) {
+                            println(failure.transport == Transport.Tcp)
+                        }
                     }
             }
             install(HttpTimeout) { connectTimeoutMillis = 5.seconds.inWholeMilliseconds }
             install(WebSockets) { extensions { install(PerMessageDeflate) } }
             install(createClientPlugin("ProtocolLog") { onResponse { println(it.kuicksilverDiagnostics?.fallback) } })
+            install(
+                createClientPlugin("ConnectionLog") {
+                    onResponse {
+                        val c = it.kuicksilverDiagnostics?.connection
+                        println((c as? QuicConnectionSnapshot)?.smoothedRtt ?: (c as? TcpConnectionSnapshot)?.alpn)
+                    }
+                },
+            )
         }
     println(client.get(url) { priority(urgency = 1) }.bodyAsText())
     client.prepareGet(url).execute { response ->

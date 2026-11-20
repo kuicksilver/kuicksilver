@@ -53,10 +53,10 @@ import io.kuicksilver.ktor.client.requestTimeoutMillis
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.ktor.client.toInet
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.abort
-import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.tls
@@ -102,8 +102,23 @@ internal class H1Connection(
     /** The socket's own channels under [tls] (the TCP connection's FIN in both directions); null without TLS. */
     private val tcpIn: ByteReadChannel? = null,
     private val tcpOut: ByteWriteChannel? = null,
+    /** Whether a proxy carries the connection (for the call diagnostics). */
+    val viaProxy: Boolean = false,
 ) : PooledConnection(key, createdAt) {
     override val remoteIp: ByteArray? get() = WebSocketConnecting.peerIp(socket.remoteAddress)
+
+    /** The call diagnostics of a call on this connection ([io.kuicksilver.ktor.client.TcpConnectionSnapshot]). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun snapshot(reused: Boolean): io.kuicksilver.ktor.client.TcpConnectionSnapshot =
+        io.kuicksilver.ktor.client.TcpConnectionSnapshot(
+            HttpProtocolVersion.HTTP_1_1,
+            socket.localAddress as? io.ktor.network.sockets.InetSocketAddress,
+            socket.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+            reused,
+            tls?.negotiatedAlpn,
+            viaProxy,
+            tls != null,
+        )
 
     /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
     val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
@@ -712,6 +727,12 @@ internal class H1Pool(
         var conn: H1Connection? = null
         var stream: H2Conn? = null
         var reused = false
+
+        // what the request waits for (no allocation: a reused connection needs none of it), and, once a new connection is
+        // set up, what its setup is doing: for the report of a connect timeout
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        var waitingFor: io.kuicksilver.ktor.client.ConnectStage? = null
+        var progress: TcpProgress? = null
         // the connect timeout's start: a new HTTP/2 connection's wait for the server's SETTINGS gets what is left of it
         val connectStarted =
             kotlin.time.TimeSource.Monotonic
@@ -773,7 +794,9 @@ internal class H1Pool(
                                     return@attempt
                                 }
                             }
+                            waitingFor = io.kuicksilver.ktor.client.ConnectStage.PoolWait
                             val got = acquireOrChange(key, signal, seen)
+                            waitingFor = null
                             if (got === CHANGED) continue
                             if (got is H1Connection) {
                                 conn = got
@@ -787,13 +810,25 @@ internal class H1Pool(
                             beforeDialForTest?.invoke()
                             if (offerH2 && signal != null && !h2.tryStartDial(key, seen!!)) {
                                 pool.releasePermit(key)
+                                waitingFor = io.kuicksilver.ktor.client.ConnectStage.H2DialWait
                                 signal.first { it > seen }
+                                waitingFor = null
                                 continue
                             }
                             val dialer = offerH2 && signal != null
                             val opened =
                                 try {
-                                    connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns, offerH2, connectStarted).also {
+                                    connect(
+                                        data,
+                                        data.url,
+                                        data.url.protocol.isSecure(),
+                                        proxy,
+                                        key,
+                                        dns,
+                                        offerH2,
+                                        connectStarted,
+                                        TcpProgress().also { progress = it },
+                                    ).also {
                                         pool.adopt(it)
                                     }
                                 } catch (e: Throwable) {
@@ -864,7 +899,26 @@ internal class H1Pool(
                 // a cancellation as the block returned: the connection is not handed out, so its slot comes back here
                 conn?.let { if (reused) pool.release(it) else it.close() }
                 stream?.client?.unreserve()
-                if (e is TimeoutCancellationException) throw ConnectTimeoutException(data, e)
+                if (e is TimeoutCancellationException) {
+                    val timeout = ConnectTimeoutException(data, e)
+                    val wait = waitingFor
+                    val failures =
+                        if (wait != null) {
+                            listOf(
+                                io.kuicksilver.ktor.client.ConnectFailure(
+                                    io.kuicksilver.ktor.client.Transport.Tcp,
+                                    wait,
+                                    null,
+                                    proxy != null,
+                                    timeout,
+                                ),
+                            )
+                        } else {
+                            progress?.timedOut(timeout).orEmpty() // nothing pending (a health PING, an HTTP/2 preface): no report
+                        }
+                    for (f in failures) events.connectFailed(data, f)
+                    throw timeout
+                }
             }
             throw e
         }
@@ -1047,6 +1101,22 @@ internal class H1Pool(
             }
             val h2c = obtained.h2
             val protocol = if (h2c != null) HttpProtocolVersion.HTTP_2_0 else HttpProtocolVersion.HTTP_1_1
+            // the connection in hand, for the call's diagnostics: one object per connection a call is sent on
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            diagnostics?.connection =
+                if (h2c != null) {
+                    io.kuicksilver.ktor.client.TcpConnectionSnapshot(
+                        HttpProtocolVersion.HTTP_2_0,
+                        h2c.localAddress,
+                        h2c.remoteAddress,
+                        obtained.reused,
+                        "h2",
+                        h2c.viaProxy,
+                        true,
+                    )
+                } else {
+                    obtained.connection?.snapshot(obtained.reused)
+                }
             // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             if (h2c == null && diagnostics != null && webSocketKeys == null && !h2Allowed(data, key) &&
@@ -1096,7 +1166,11 @@ internal class H1Pool(
                             e.cause,
                         )
                     }
-                    if (++h2Repeats > 2) throw e.cause
+                    if (++h2Repeats > 2) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        diagnostics?.connectionWide(h2c.client.closeCause)
+                        throw e.cause
+                    }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     diagnostics?.let { it.attempts++ }
                     attempt++
@@ -1129,6 +1203,11 @@ internal class H1Pool(
                     attempt++
                     events.emit("retry") { retry(data, attempt, e.cause) }
                     continue
+                } catch (e: Throwable) {
+                    // the connection's end (one instance for every stream of it) is never this call's to carry
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    if (e !is CancellationException) diagnostics?.connectionWide(h2c.client.closeCause)
+                    throw e
                 }
             }
             val conn = obtained.connection!!
@@ -1549,8 +1628,11 @@ internal class H1Pool(
         connectStarted: kotlin.time.TimeMark =
             kotlin.time.TimeSource.Monotonic
                 .markNow(),
+        progress: TcpProgress? = null,
     ): PooledConnection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        progress?.stage = io.kuicksilver.ktor.client.ConnectStage.NameLookup // until an address is tried
         // through socks5:// (names resolved here) each address of the origin in turn while the proxy answers "network
         // unreachable" or "host unreachable" (RFC 1928 section 6, REP 3 and 4), each on a new connection to the proxy
         val socksTargets =
@@ -1559,54 +1641,138 @@ internal class H1Pool(
             // every address of the host as its two families arrive, sorted by RFC 6724 and alternating (RFC 8305); this
             // module's connects on Kotlin/Native, not ktor-network's (Ktor issue KTOR-10017, security, under coordinated
             // disclosure)
+            val viaProxy = proxy != null
+
+            // each address that fails is reported (connectFailed) as it fails, whatever the race then does
+            @OptIn(
+                io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+                io.kuicksilver.annotations.InternalKuicksilverApi::class,
+            )
+            val raw =
+                io.kuicksilver.ktor.network.raceAddresses(
+                    host,
+                    dns.resolution(host, port),
+                    config.connectionAttemptDelay,
+                    dns.order(),
+                    connect = { a ->
+                        val inet = a.toInet()
+                        progress?.trying(inet, viaProxy)
+                        try {
+                            io.kuicksilver.ktor.network
+                                .connectTcpAddress(selector, a)
+                        } catch (e: Throwable) {
+                            connectFailed(data, io.kuicksilver.ktor.client.ConnectStage.TcpConnect, inet, viaProxy, e)
+                            throw e
+                        } finally {
+                            progress?.tried(inet)
+                        }
+                    },
+                    close = { it.close() },
+                )
+            // the step on the connected socket, for a connect timeout that strikes during it: a proxy's handshake (TLS with an
+            // https:// proxy included), else the TLS handshake with the origin
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val raw = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            progress?.connected(
+                raw.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                when {
+                    proxy != null -> io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake
+                    secure -> io.kuicksilver.ktor.client.ConnectStage.TlsHandshake
+                    else -> null
+                },
+            )
             // an https:// proxy: everything from here on (the CONNECT or the absolute-form request, the credentials, the
             // origin's own TLS) goes inside TLS with the proxy, whose name its certificate must carry; the TLS socket
-            // stands for the TCP one, so closing, aborting and the orderly close end both
-            val tcp = if (proxy?.tls == true) proxyTls(raw, proxy) else raw
+            // stands for the TCP one, so closing, aborting and the orderly close end both. Its failure is a failed proxy
+            // handshake (connectFailed)
+            val tcp =
+                if (proxy?.tls == true) {
+                    try {
+                        proxyTls(raw, proxy)
+                    } catch (e: Throwable) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        connectFailed(
+                            data,
+                            io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake,
+                            raw.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                            true,
+                            e,
+                        )
+                        throw e
+                    }
+                } else {
+                    raw
+                }
             // set once an HTTP/2 connection has started on it: the transport is the connection's to close from then on
             var h2Owned = false
             try {
                 val rawIn = tcp.openDeliveringReadChannel()
                 val rawOut = tcp.openWriteChannel(autoFlush = true)
-                when {
-                    proxy == null -> {}
+                try {
+                    when {
+                        proxy == null -> {}
 
-                    socksTarget != null -> {
-                        try {
-                            socks5Connect(rawIn, rawOut, socksTarget, url.port, proxy.credentials, "$proxy")
-                        } catch (e: io.kuicksilver.ktor.client.ProxyException) {
-                            if ((e.replyCode != 3 && e.replyCode != 4) || attempt == socksTargets.lastIndex) throw e
-                            tcp.close()
-                            continue
+                        socksTarget != null -> {
+                            try {
+                                socks5Connect(rawIn, rawOut, socksTarget, url.port, proxy.credentials, "$proxy")
+                            } catch (e: io.kuicksilver.ktor.client.ProxyException) {
+                                if ((e.replyCode != 3 && e.replyCode != 4) || attempt == socksTargets.lastIndex) throw e
+                                // the next target goes on a new connection to the proxy: this refusal is a failed setup too
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                connectFailed(
+                                    data,
+                                    io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake,
+                                    tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                                    true,
+                                    e,
+                                )
+                                tcp.close()
+                                continue
+                            }
+                        }
+
+                        // h2c through an HTTP proxy goes in a tunnel too: an absolute-form request is HTTP/1.1 (OkHttp's
+                        // Route.requiresTunnel does the same for H2_PRIOR_KNOWLEDGE)
+                        proxy.tunnels(data) || (h2Ok && !secure) -> {
+                            startTunnel(
+                                url,
+                                data.headers[HttpHeaders.UserAgent],
+                                // the request's own field wins; else the configured credentials, sent at once (no 407 round trip)
+                                data.headers[HttpHeaders.ProxyAuthorization] ?: proxy.basicAuthorization,
+                                rawOut,
+                                rawIn,
+                            )
                         }
                     }
-
-                    // h2c through an HTTP proxy goes in a tunnel too: an absolute-form request is HTTP/1.1 (OkHttp's
-                    // Route.requiresTunnel does the same for H2_PRIOR_KNOWLEDGE)
-                    proxy.tunnels(data) || (h2Ok && !secure) -> {
-                        startTunnel(
-                            url,
-                            data.headers[HttpHeaders.UserAgent],
-                            // the request's own field wins; else the configured credentials, sent at once (no 407 round trip)
-                            data.headers[HttpHeaders.ProxyAuthorization] ?: proxy.basicAuthorization,
-                            rawOut,
-                            rawIn,
-                        )
-                    }
+                } catch (e: Throwable) {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    connectFailed(
+                        data,
+                        io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake,
+                        tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                        true,
+                        e,
+                    )
+                    throw e
                 }
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                progress?.stage = if (secure) io.kuicksilver.ktor.client.ConnectStage.TlsHandshake else null
                 return if (secure) {
                     // through a proxy too: ALPN is inside the TLS session with the origin (OkHttp does the same)
                     val alpn = if (h2Ok) listOf("h2", "http/1.1") else listOf("http/1.1")
                     val tls =
-                        TlsConnection.client(
-                            rawIn,
-                            rawOut,
-                            config.tlsConfigFor(url.host, alpn),
-                            callContextOrEmpty(),
-                            sessions,
-                        )
+                        try {
+                            TlsConnection.client(
+                                rawIn,
+                                rawOut,
+                                config.tlsConfigFor(url.host, alpn),
+                                callContextOrEmpty(),
+                                sessions,
+                            )
+                        } catch (e: Throwable) {
+                            tlsFailed(data, tcp, viaProxy, e)
+                            throw e
+                        }
+                    progress?.stage = null // set up: a timeout from here on is no failure of the setup's steps
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
                         // taken before the connection starts: the catches here close TLS (the inner one) and TCP (the outer
                         // one), not a started HTTP/2 connection, which owns the transport; what follows its start ends it
@@ -1673,7 +1839,15 @@ internal class H1Pool(
                         h2Owned = true
                         try {
                             afterH2StartForTest?.invoke(client, tcp)
-                            return H2Conn(client, key, clock(), peerIp)
+                            return H2Conn(
+                                client,
+                                key,
+                                clock(),
+                                peerIp,
+                                tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
+                                tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                                viaProxy,
+                            )
                         } catch (e: Throwable) {
                             // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
                             // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the
@@ -1700,6 +1874,7 @@ internal class H1Pool(
                         orderly = { closeOrderly(tls, rawOut, tcp) },
                         tcpIn = rawIn,
                         tcpOut = rawOut,
+                        viaProxy = viaProxy,
                     )
                 } else if (h2Ok) {
                     // RFC 9113 section 3.3: h2c with prior knowledge, for an origin the application listed
@@ -1729,7 +1904,15 @@ internal class H1Pool(
                     h2Owned = true
                     try {
                         afterH2StartForTest?.invoke(client, tcp)
-                        H2Conn(client, key, clock(), peerIp)
+                        H2Conn(
+                            client,
+                            key,
+                            clock(),
+                            peerIp,
+                            tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
+                            tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
+                            viaProxy,
+                        )
                     } catch (e: Throwable) {
                         try {
                             client.abortInOrder(e)
@@ -1739,7 +1922,7 @@ internal class H1Pool(
                         throw e
                     }
                 } else {
-                    H1Connection(tcp, null, rawIn, rawOut, key, clock())
+                    H1Connection(tcp, null, rawIn, rawOut, key, clock(), viaProxy = viaProxy)
                 }
             } catch (e: Throwable) {
                 if (!h2Owned) tcp.close()
@@ -1750,6 +1933,49 @@ internal class H1Pool(
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
+
+    /** A setup step of [data]'s TCP connection failed with [e] (a cancellation is none): the listener and the diagnostics hear it. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun connectFailed(
+        data: HttpRequestData,
+        stage: io.kuicksilver.ktor.client.ConnectStage,
+        address: io.ktor.network.sockets.InetSocketAddress?,
+        viaProxy: Boolean,
+        e: Throwable,
+    ) {
+        if (e is CancellationException) return
+        events.connectFailed(
+            data,
+            io.kuicksilver.ktor.client
+                .ConnectFailure(io.kuicksilver.ktor.client.Transport.Tcp, stage, address, viaProxy, e),
+        )
+    }
+
+    /**
+     * The TLS handshake on [tcp] failed with [e]: reported with the socket's address ([connectFailed]), and the connection,
+     * which never agreed on a protocol, becomes the call's ([io.kuicksilver.ktor.client.ProtocolDiagnostics.connection]).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun tlsFailed(
+        data: HttpRequestData,
+        tcp: Socket,
+        viaProxy: Boolean,
+        e: Throwable,
+    ) {
+        if (e is CancellationException) return
+        val remote = tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress
+        data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.connection =
+            io.kuicksilver.ktor.client.TcpConnectionSnapshot(
+                null,
+                tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
+                remote,
+                false,
+                null,
+                viaProxy,
+                true,
+            )
+        connectFailed(data, io.kuicksilver.ktor.client.ConnectStage.TlsHandshake, remote, viaProxy, e)
+    }
 
     /**
      * TLS with the `https://` [proxy] over [raw] ([KuicksilverEngineConfig.proxyTlsConfigFor]): the proxy's host as SNI and
@@ -1945,3 +2171,75 @@ internal fun webSocketTransportEnd(
         !failed && atFrameBoundary && (drained || !cutByCloseWait) -> WebSocketTransportEnd.Orderly
         else -> WebSocketTransportEnd.Reset
     }
+
+/**
+ * What the TCP setup of one call is doing ([H1Pool.obtain]), so the connect timeout is reported where it struck
+ * (`connectFailed`): the addresses being connected to, then the connected socket's address and the step on it (a proxy's
+ * handshake, TLS). Written by the setup's coroutines, read once by the timeout.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class TcpProgress {
+    private val connecting = kotlin.concurrent.atomics.AtomicReference(emptyList<io.ktor.network.sockets.InetSocketAddress>())
+
+    @kotlin.concurrent.Volatile private var viaProxy = false
+
+    @kotlin.concurrent.Volatile private var address: io.ktor.network.sockets.InetSocketAddress? = null
+
+    /**
+     * What the setup is doing: a wait before any address ([io.kuicksilver.ktor.client.ConnectStage.PoolWait],
+     * `H2DialWait`, `NameLookup`), or the step on the connected socket (`ProxyHandshake`, `TlsHandshake`); null once set up.
+     */
+    @kotlin.concurrent.Volatile var stage: io.kuicksilver.ktor.client.ConnectStage? = null
+
+    fun trying(
+        a: io.ktor.network.sockets.InetSocketAddress,
+        proxy: Boolean,
+    ) {
+        viaProxy = proxy
+        while (true) {
+            val now = connecting.load()
+            if (connecting.compareAndSet(now, now + a)) return
+        }
+    }
+
+    fun tried(a: io.ktor.network.sockets.InetSocketAddress) {
+        while (true) {
+            val now = connecting.load()
+            if (connecting.compareAndSet(now, now - a)) return
+        }
+    }
+
+    fun connected(
+        a: io.ktor.network.sockets.InetSocketAddress?,
+        step: io.kuicksilver.ktor.client.ConnectStage?,
+    ) {
+        address = a
+        stage = step
+    }
+
+    /**
+     * The connect timeout ended the setup with [timeout]: one per address still being connected to, else one for the step
+     * on the connected socket (its address), else one for the name lookup before an address was tried; none once the
+     * connection is set up (what the timeout then cut, an HTTP/2 preface or a health PING, is no step of the setup).
+     */
+    fun timedOut(timeout: Throwable): List<io.kuicksilver.ktor.client.ConnectFailure> {
+        val step = stage
+        val trying = connecting.load()
+        val waiting =
+            step == io.kuicksilver.ktor.client.ConnectStage.NameLookup || step == io.kuicksilver.ktor.client.ConnectStage.PoolWait ||
+                step == io.kuicksilver.ktor.client.ConnectStage.H2DialWait
+        val reports =
+            when {
+                trying.isNotEmpty() && (step == null || waiting) -> trying.map { io.kuicksilver.ktor.client.ConnectStage.TcpConnect to it }
+
+                step != null -> listOf(step to if (waiting) null else address)
+
+                // set up (a plain connection, or after TLS: an HTTP/2 preface, SETTINGS): no step of the setup failed
+                else -> emptyList()
+            }
+        return reports.map { (st, a) ->
+            io.kuicksilver.ktor.client
+                .ConnectFailure(io.kuicksilver.ktor.client.Transport.Tcp, st, a, viaProxy, timeout)
+        }
+    }
+}

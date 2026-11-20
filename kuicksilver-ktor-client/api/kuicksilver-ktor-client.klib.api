@@ -21,6 +21,22 @@ final enum class io.kuicksilver.ktor.client/AlternativeSource : kotlin/Enum<io.k
     final fun values(): kotlin/Array<io.kuicksilver.ktor.client/AlternativeSource> // io.kuicksilver.ktor.client/AlternativeSource.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.ktor.client/ConnectStage : kotlin/Enum<io.kuicksilver.ktor.client/ConnectStage> { // io.kuicksilver.ktor.client/ConnectStage|null[0]
+    enum entry H2DialWait // io.kuicksilver.ktor.client/ConnectStage.H2DialWait|null[0]
+    enum entry NameLookup // io.kuicksilver.ktor.client/ConnectStage.NameLookup|null[0]
+    enum entry PoolWait // io.kuicksilver.ktor.client/ConnectStage.PoolWait|null[0]
+    enum entry ProxyHandshake // io.kuicksilver.ktor.client/ConnectStage.ProxyHandshake|null[0]
+    enum entry QuicHandshake // io.kuicksilver.ktor.client/ConnectStage.QuicHandshake|null[0]
+    enum entry TcpConnect // io.kuicksilver.ktor.client/ConnectStage.TcpConnect|null[0]
+    enum entry TlsHandshake // io.kuicksilver.ktor.client/ConnectStage.TlsHandshake|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/ConnectStage.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/ConnectStage> // io.kuicksilver.ktor.client/ConnectStage.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/ConnectStage // io.kuicksilver.ktor.client/ConnectStage.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/ConnectStage> // io.kuicksilver.ktor.client/ConnectStage.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.ktor.client/FallbackReason : kotlin/Enum<io.kuicksilver.ktor.client/FallbackReason> { // io.kuicksilver.ktor.client/FallbackReason|null[0]
     enum entry BrokenAlternative // io.kuicksilver.ktor.client/FallbackReason.BrokenAlternative|null[0]
     enum entry Configuration // io.kuicksilver.ktor.client/FallbackReason.Configuration|null[0]
@@ -81,6 +97,28 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
 
     final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/ProtocolReason // io.kuicksilver.ktor.client/ProtocolReason.valueOf|valueOf#static(kotlin.String){}[0]
     final fun values(): kotlin/Array<io.kuicksilver.ktor.client/ProtocolReason> // io.kuicksilver.ktor.client/ProtocolReason.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.ktor.client/QuicHandshakeProgress : kotlin/Enum<io.kuicksilver.ktor.client/QuicHandshakeProgress> { // io.kuicksilver.ktor.client/QuicHandshakeProgress|null[0]
+    enum entry HandshakeStarted // io.kuicksilver.ktor.client/QuicHandshakeProgress.HandshakeStarted|null[0]
+    enum entry NoPacketReceived // io.kuicksilver.ktor.client/QuicHandshakeProgress.NoPacketReceived|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/QuicHandshakeProgress.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/QuicHandshakeProgress> // io.kuicksilver.ktor.client/QuicHandshakeProgress.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/QuicHandshakeProgress // io.kuicksilver.ktor.client/QuicHandshakeProgress.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/QuicHandshakeProgress> // io.kuicksilver.ktor.client/QuicHandshakeProgress.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.ktor.client/Transport : kotlin/Enum<io.kuicksilver.ktor.client/Transport> { // io.kuicksilver.ktor.client/Transport|null[0]
+    enum entry Quic // io.kuicksilver.ktor.client/Transport.Quic|null[0]
+    enum entry Tcp // io.kuicksilver.ktor.client/Transport.Tcp|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/Transport.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/Transport> // io.kuicksilver.ktor.client/Transport.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/Transport.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/Transport> // io.kuicksilver.ktor.client/Transport.values|values#static(){}[0]
 }
 
 abstract fun interface io.kuicksilver.ktor.client/Dns { // io.kuicksilver.ktor.client/Dns|null[0]
@@ -167,6 +205,7 @@ abstract class io.kuicksilver.ktor.client/KuicksilverEventListener { // io.kuick
     open fun callEnd(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Int) // io.kuicksilver.ktor.client/KuicksilverEventListener.callEnd|callEnd(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Int){}[0]
     open fun callFailed(io.ktor.client.request/HttpRequestData, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.callFailed|callFailed(io.ktor.client.request.HttpRequestData;kotlin.Throwable){}[0]
     open fun callStart(io.ktor.client.request/HttpRequestData) // io.kuicksilver.ktor.client/KuicksilverEventListener.callStart|callStart(io.ktor.client.request.HttpRequestData){}[0]
+    open fun connectFailed(io.ktor.client.request/HttpRequestData, io.kuicksilver.ktor.client/ConnectFailure) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectFailed|connectFailed(io.ktor.client.request.HttpRequestData;io.kuicksilver.ktor.client.ConnectFailure){}[0]
     open fun connectionAcquired(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Boolean) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionAcquired|connectionAcquired(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Boolean){}[0]
     open fun connectionMigrated(kotlin/String, io.kuicksilver.quic/MigrationEvent<*>) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionMigrated|connectionMigrated(kotlin.String;io.kuicksilver.quic.MigrationEvent<*>){}[0]
     open fun connectionReleased(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin/Boolean) // io.kuicksilver.ktor.client/KuicksilverEventListener.connectionReleased|connectionReleased(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.Boolean){}[0]
@@ -197,6 +236,25 @@ final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.clie
     final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/AltSvcEntry.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/AltSvcEntry.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.ktor.client/ConnectFailure { // io.kuicksilver.ktor.client/ConnectFailure|null[0]
+    final val address // io.kuicksilver.ktor.client/ConnectFailure.address|{}address[0]
+        final fun <get-address>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/ConnectFailure.address.<get-address>|<get-address>(){}[0]
+    final val cause // io.kuicksilver.ktor.client/ConnectFailure.cause|{}cause[0]
+        final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.ktor.client/ConnectFailure.cause.<get-cause>|<get-cause>(){}[0]
+    final val connectionId // io.kuicksilver.ktor.client/ConnectFailure.connectionId|{}connectionId[0]
+        final fun <get-connectionId>(): kotlin/String? // io.kuicksilver.ktor.client/ConnectFailure.connectionId.<get-connectionId>|<get-connectionId>(){}[0]
+    final val quicProgress // io.kuicksilver.ktor.client/ConnectFailure.quicProgress|{}quicProgress[0]
+        final fun <get-quicProgress>(): io.kuicksilver.ktor.client/QuicHandshakeProgress? // io.kuicksilver.ktor.client/ConnectFailure.quicProgress.<get-quicProgress>|<get-quicProgress>(){}[0]
+    final val stage // io.kuicksilver.ktor.client/ConnectFailure.stage|{}stage[0]
+        final fun <get-stage>(): io.kuicksilver.ktor.client/ConnectStage // io.kuicksilver.ktor.client/ConnectFailure.stage.<get-stage>|<get-stage>(){}[0]
+    final val transport // io.kuicksilver.ktor.client/ConnectFailure.transport|{}transport[0]
+        final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/ConnectFailure.transport.<get-transport>|<get-transport>(){}[0]
+    final val viaProxy // io.kuicksilver.ktor.client/ConnectFailure.viaProxy|{}viaProxy[0]
+        final fun <get-viaProxy>(): kotlin/Boolean // io.kuicksilver.ktor.client/ConnectFailure.viaProxy.<get-viaProxy>|<get-viaProxy>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ConnectFailure.toString|toString(){}[0]
 }
 
 final class io.kuicksilver.ktor.client/ConnectUdpProxy { // io.kuicksilver.ktor.client/ConnectUdpProxy|null[0]
@@ -452,6 +510,8 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
 final class io.kuicksilver.ktor.client/ProtocolDiagnostics { // io.kuicksilver.ktor.client/ProtocolDiagnostics|null[0]
     final val alternative // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative|{}alternative[0]
         final fun <get-alternative>(): kotlin/String? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternative.<get-alternative>|<get-alternative>(){}[0]
+    final val connectFailures // io.kuicksilver.ktor.client/ProtocolDiagnostics.connectFailures|{}connectFailures[0]
+        final fun <get-connectFailures>(): kotlin.collections/List<io.kuicksilver.ktor.client/ConnectFailure> // io.kuicksilver.ktor.client/ProtocolDiagnostics.connectFailures.<get-connectFailures>|<get-connectFailures>(){}[0]
     final val headStart // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart|{}headStart[0]
         final fun <get-headStart>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/ProtocolDiagnostics.headStart.<get-headStart>|<get-headStart>(){}[0]
 
@@ -459,6 +519,8 @@ final class io.kuicksilver.ktor.client/ProtocolDiagnostics { // io.kuicksilver.k
         final fun <get-alternativeSource>(): io.kuicksilver.ktor.client/AlternativeSource? // io.kuicksilver.ktor.client/ProtocolDiagnostics.alternativeSource.<get-alternativeSource>|<get-alternativeSource>(){}[0]
     final var attempts // io.kuicksilver.ktor.client/ProtocolDiagnostics.attempts|{}attempts[0]
         final fun <get-attempts>(): kotlin/Int // io.kuicksilver.ktor.client/ProtocolDiagnostics.attempts.<get-attempts>|<get-attempts>(){}[0]
+    final var connection // io.kuicksilver.ktor.client/ProtocolDiagnostics.connection|{}connection[0]
+        final fun <get-connection>(): io.kuicksilver.ktor.client/ConnectionSnapshot? // io.kuicksilver.ktor.client/ProtocolDiagnostics.connection.<get-connection>|<get-connection>(){}[0]
     final var fallback // io.kuicksilver.ktor.client/ProtocolDiagnostics.fallback|{}fallback[0]
         final fun <get-fallback>(): io.kuicksilver.ktor.client/FallbackReason? // io.kuicksilver.ktor.client/ProtocolDiagnostics.fallback.<get-fallback>|<get-fallback>(){}[0]
     final var h3Failure // io.kuicksilver.ktor.client/ProtocolDiagnostics.h3Failure|{}h3Failure[0]
@@ -469,6 +531,8 @@ final class io.kuicksilver.ktor.client/ProtocolDiagnostics { // io.kuicksilver.k
         final fun <get-raced>(): kotlin/Boolean // io.kuicksilver.ktor.client/ProtocolDiagnostics.raced.<get-raced>|<get-raced>(){}[0]
     final var reason // io.kuicksilver.ktor.client/ProtocolDiagnostics.reason|{}reason[0]
         final fun <get-reason>(): io.kuicksilver.ktor.client/ProtocolReason // io.kuicksilver.ktor.client/ProtocolDiagnostics.reason.<get-reason>|<get-reason>(){}[0]
+    final var transport // io.kuicksilver.ktor.client/ProtocolDiagnostics.transport|{}transport[0]
+        final fun <get-transport>(): io.kuicksilver.ktor.client/Transport? // io.kuicksilver.ktor.client/ProtocolDiagnostics.transport.<get-transport>|<get-transport>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ProtocolDiagnostics.toString|toString(){}[0]
 }
@@ -495,6 +559,35 @@ final class io.kuicksilver.ktor.client/QuicStalledException : kotlinx.io/IOExcep
         final fun <get-probeTimeouts>(): kotlin/Int // io.kuicksilver.ktor.client/QuicStalledException.probeTimeouts.<get-probeTimeouts>|<get-probeTimeouts>(){}[0]
     final val silence // io.kuicksilver.ktor.client/QuicStalledException.silence|{}silence[0]
         final fun <get-silence>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicStalledException.silence.<get-silence>|<get-silence>(){}[0]
+}
+
+final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/QuicConnectionSnapshot|null[0]
+    final val connectionId // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId|{}connectionId[0]
+        final fun <get-connectionId>(): kotlin/String? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.connectionId.<get-connectionId>|<get-connectionId>(){}[0]
+    final val localAddress // io.kuicksilver.ktor.client/QuicConnectionSnapshot.localAddress|{}localAddress[0]
+        final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val minRtt // io.kuicksilver.ktor.client/QuicConnectionSnapshot.minRtt|{}minRtt[0]
+        final fun <get-minRtt>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicConnectionSnapshot.minRtt.<get-minRtt>|<get-minRtt>(){}[0]
+    final val path // io.kuicksilver.ktor.client/QuicConnectionSnapshot.path|{}path[0]
+        final fun <get-path>(): io.kuicksilver.quic/PathInfo? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.path.<get-path>|<get-path>(){}[0]
+    final val pathChanges // io.kuicksilver.ktor.client/QuicConnectionSnapshot.pathChanges|{}pathChanges[0]
+        final fun <get-pathChanges>(): kotlin/Int // io.kuicksilver.ktor.client/QuicConnectionSnapshot.pathChanges.<get-pathChanges>|<get-pathChanges>(){}[0]
+    final val paths // io.kuicksilver.ktor.client/QuicConnectionSnapshot.paths|{}paths[0]
+        final fun <get-paths>(): kotlin.collections/List<io.kuicksilver.quic/PathInfo> // io.kuicksilver.ktor.client/QuicConnectionSnapshot.paths.<get-paths>|<get-paths>(){}[0]
+    final val protocol // io.kuicksilver.ktor.client/QuicConnectionSnapshot.protocol|{}protocol[0]
+        final fun <get-protocol>(): io.ktor.http/HttpProtocolVersion // io.kuicksilver.ktor.client/QuicConnectionSnapshot.protocol.<get-protocol>|<get-protocol>(){}[0]
+    final val remoteAddress // io.kuicksilver.ktor.client/QuicConnectionSnapshot.remoteAddress|{}remoteAddress[0]
+        final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    final val reused // io.kuicksilver.ktor.client/QuicConnectionSnapshot.reused|{}reused[0]
+        final fun <get-reused>(): kotlin/Boolean // io.kuicksilver.ktor.client/QuicConnectionSnapshot.reused.<get-reused>|<get-reused>(){}[0]
+    final val rttVariation // io.kuicksilver.ktor.client/QuicConnectionSnapshot.rttVariation|{}rttVariation[0]
+        final fun <get-rttVariation>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicConnectionSnapshot.rttVariation.<get-rttVariation>|<get-rttVariation>(){}[0]
+    final val smoothedRtt // io.kuicksilver.ktor.client/QuicConnectionSnapshot.smoothedRtt|{}smoothedRtt[0]
+        final fun <get-smoothedRtt>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicConnectionSnapshot.smoothedRtt.<get-smoothedRtt>|<get-smoothedRtt>(){}[0]
+    final val transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport|{}transport[0]
+        final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/QuicConnectionSnapshot.toString|toString(){}[0]
 }
 
 final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.client/ResolvedProxy|null[0]
@@ -529,6 +622,40 @@ open class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException { 
         final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/TcpConnectionSnapshot : io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/TcpConnectionSnapshot|null[0]
+    final val alpn // io.kuicksilver.ktor.client/TcpConnectionSnapshot.alpn|{}alpn[0]
+        final fun <get-alpn>(): kotlin/String? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val localAddress // io.kuicksilver.ktor.client/TcpConnectionSnapshot.localAddress|{}localAddress[0]
+        final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val protocol // io.kuicksilver.ktor.client/TcpConnectionSnapshot.protocol|{}protocol[0]
+        final fun <get-protocol>(): io.ktor.http/HttpProtocolVersion? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.protocol.<get-protocol>|<get-protocol>(){}[0]
+    final val remoteAddress // io.kuicksilver.ktor.client/TcpConnectionSnapshot.remoteAddress|{}remoteAddress[0]
+        final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    final val reused // io.kuicksilver.ktor.client/TcpConnectionSnapshot.reused|{}reused[0]
+        final fun <get-reused>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.reused.<get-reused>|<get-reused>(){}[0]
+    final val secure // io.kuicksilver.ktor.client/TcpConnectionSnapshot.secure|{}secure[0]
+        final fun <get-secure>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.secure.<get-secure>|<get-secure>(){}[0]
+    final val transport // io.kuicksilver.ktor.client/TcpConnectionSnapshot.transport|{}transport[0]
+        final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/TcpConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
+    final val viaProxy // io.kuicksilver.ktor.client/TcpConnectionSnapshot.viaProxy|{}viaProxy[0]
+        final fun <get-viaProxy>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.viaProxy.<get-viaProxy>|<get-viaProxy>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/TcpConnectionSnapshot.toString|toString(){}[0]
+}
+
+sealed class io.kuicksilver.ktor.client/ConnectionSnapshot { // io.kuicksilver.ktor.client/ConnectionSnapshot|null[0]
+    abstract val localAddress // io.kuicksilver.ktor.client/ConnectionSnapshot.localAddress|{}localAddress[0]
+        abstract fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/ConnectionSnapshot.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    abstract val protocol // io.kuicksilver.ktor.client/ConnectionSnapshot.protocol|{}protocol[0]
+        abstract fun <get-protocol>(): io.ktor.http/HttpProtocolVersion? // io.kuicksilver.ktor.client/ConnectionSnapshot.protocol.<get-protocol>|<get-protocol>(){}[0]
+    abstract val remoteAddress // io.kuicksilver.ktor.client/ConnectionSnapshot.remoteAddress|{}remoteAddress[0]
+        abstract fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/ConnectionSnapshot.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    abstract val reused // io.kuicksilver.ktor.client/ConnectionSnapshot.reused|{}reused[0]
+        abstract fun <get-reused>(): kotlin/Boolean // io.kuicksilver.ktor.client/ConnectionSnapshot.reused.<get-reused>|<get-reused>(){}[0]
+    abstract val transport // io.kuicksilver.ktor.client/ConnectionSnapshot.transport|{}transport[0]
+        abstract fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/ConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
+}
+
 final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/HttpClientEngineFactory<io.kuicksilver.ktor.client/KuicksilverEngineConfig> { // io.kuicksilver.ktor.client/Kuicksilver|null[0]
     final fun create(kotlin/Function1<io.kuicksilver.ktor.client/KuicksilverEngineConfig, kotlin/Unit>): io.ktor.client.engine/HttpClientEngine // io.kuicksilver.ktor.client/Kuicksilver.create|create(kotlin.Function1<io.kuicksilver.ktor.client.KuicksilverEngineConfig,kotlin.Unit>){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/Kuicksilver.equals|equals(kotlin.Any?){}[0]
@@ -549,6 +676,8 @@ final val io.kuicksilver.ktor.client/KuicksilverDiagnosticsKey // io.kuicksilver
     final fun <get-KuicksilverDiagnosticsKey>(): io.ktor.util/AttributeKey<io.kuicksilver.ktor.client/ProtocolDiagnostics> // io.kuicksilver.ktor.client/KuicksilverDiagnosticsKey.<get-KuicksilverDiagnosticsKey>|<get-KuicksilverDiagnosticsKey>(){}[0]
 final val io.kuicksilver.ktor.client/kuicksilverDiagnostics // io.kuicksilver.ktor.client/kuicksilverDiagnostics|@io.ktor.client.statement.HttpResponse{}kuicksilverDiagnostics[0]
     final fun (io.ktor.client.statement/HttpResponse).<get-kuicksilverDiagnostics>(): io.kuicksilver.ktor.client/ProtocolDiagnostics? // io.kuicksilver.ktor.client/kuicksilverDiagnostics.<get-kuicksilverDiagnostics>|<get-kuicksilverDiagnostics>@io.ktor.client.statement.HttpResponse(){}[0]
+final val io.kuicksilver.ktor.client/kuicksilverDiagnostics // io.kuicksilver.ktor.client/kuicksilverDiagnostics|@kotlin.Throwable{}kuicksilverDiagnostics[0]
+    final fun (kotlin/Throwable).<get-kuicksilverDiagnostics>(): io.kuicksilver.ktor.client/ProtocolDiagnostics? // io.kuicksilver.ktor.client/kuicksilverDiagnostics.<get-kuicksilverDiagnostics>|<get-kuicksilverDiagnostics>@kotlin.Throwable(){}[0]
 final val io.kuicksilver.ktor.client/neverIndexedHeaders // io.kuicksilver.ktor.client/neverIndexedHeaders|@io.ktor.client.statement.HttpResponse{}neverIndexedHeaders[0]
     final fun (io.ktor.client.statement/HttpResponse).<get-neverIndexedHeaders>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.ktor.client/neverIndexedHeaders.<get-neverIndexedHeaders>|<get-neverIndexedHeaders>@io.ktor.client.statement.HttpResponse(){}[0]
 final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/priority|@io.ktor.client.request.HttpRequestBuilder{}priority[0]
