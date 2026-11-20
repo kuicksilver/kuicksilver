@@ -108,16 +108,16 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 
 | Steps | Count |
 |---|---|
-| default | 71 |
-| for a release, with `--with-interop --with-windows` | 76 |
-| with `--with-browser` too (Chrome WebTransport) | 77 |
+| default | 76 |
+| for a release, with `--with-interop --with-windows` | 81 |
+| with `--with-browser` too (Chrome WebTransport) | 82 |
 
 | Platform or area | What runs |
 |---|---|
-| JVM on macOS | every module's tests, the engine interop bench, the samples, the coverage report |
+| JVM on macOS | every module's tests, the engine interop bench, the samples, the coverage report; the changed modules' tests on JDK 17 and 25 |
 | JVM on Linux x64 and arm64 | every module's suite in Docker against the manylinux `libksl.so`; the system-OpenSSL mode |
 | JVM on Windows (release run) | every module's suite in the Windows 11 VM against the mingw-w64 dll |
-| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the device tests on the emulator, connection migration against a server on the host |
+| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the device tests on the emulator, connection migration against a server on the host; the changed modules' device tests on an API 24 emulator |
 | macOS and iOS | `macosArm64` tests, every module's `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled |
 | Linux (Kotlin/Native) | the `linuxX64` and `linuxArm64` test executables of every module in Docker, glibc floors, h2spec, the deployment guide's commands with `curl --http3-only` |
 | Windows (Kotlin/Native) | the `mingwX64` test executables are linked here and run in hosted CI |

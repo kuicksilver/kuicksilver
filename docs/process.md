@@ -156,9 +156,9 @@ runs once on that branch; when it is green, the integration branch goes to `main
 cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasing-from-a-maintenance-branch)).
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
-and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **74 steps**; a release needs `--with-interop --with-windows`, which makes **79** (and `--with-browser`
-adds a Chrome WebTransport run, 80). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
+and mingw), a running Android emulator, an API 24 emulator of its own and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
+default it has **77 steps**; a release needs `--with-interop --with-windows`, which makes **82** (and `--with-browser`
+adds a Chrome WebTransport run, 83). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
 race tests the branch added or changed 10 times under load ([Race tests repeated under load](#repository-checks)), and it
 refuses to start if any of them fails. What the steps cover:
 
@@ -166,10 +166,10 @@ refuses to start if any of them fails. What the steps cover:
 |---|---|
 | Lint and documentation | action and image pins, documentation references, the [repository checks](#repository-checks) (tests that cannot run, the test-count floor, sleeps in tests, name-service calls in library code, the tests behind ✅ rows, the selects that race started work, race tests that force their order, the numbers behind wall-clock bounds, the commit types of the branch) and their negative controls (with the selection of `tools/ci/race-repeat.sh` on stubs), the fuzz campaign script on stubs, the reliability report on fixtures, RFC table, links, no local path in what the documentation site is built from (`tools/check/site-paths.sh`: the guide, the main source sets whose KDoc is the API reference, the files the verification pages read, `llms.txt` and `llms-full.txt`; `pages.yml` scans the built pages only after a push; with its negative controls), guide samples (with their negative controls), configuration tables, troubleshooting messages and `llms-full.txt` against the code (with their negative controls), HPACK tables and vectors, ktlint |
 | Build integrity | dependency verification of every configuration, SPDX headers, module layers, ABI dumps, sans-IO architecture checks, shared source sets, the API reference and documentation site built with Dokka warnings as errors |
-| JVM on macOS | every module's JVM tests, the coverage report (no threshold), the engine interop bench (the Ktor client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs; [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), the samples (`realtime-telemetry`; the Compose demo's build, its iOS framework and its tests), the JNI library and its export whitelist, the Intel-Mac library |
+| JVM on macOS | every module's JVM tests, the same suites on JDK 17 and on JDK 25 with restricted native access denied (the hosted CI's `jdk-compat` job; see [old platforms](#old-platforms-jdk-17-and-25-android-api-24) for the modules they cover), the coverage report (no threshold), the engine interop bench (the Ktor client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs; [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), the samples (`realtime-telemetry`; the Compose demo's build, its iOS framework and its tests), the JNI library and its export whitelist, the Intel-Mac library |
 | JVM on Linux | every module's JVM suite against the manylinux `libksl.so`, x64 and arm64, in Docker; the system-OpenSSL build mode |
 | JVM on Windows | every module's JVM suite in the Windows 11 VM against the mingw-w64 dll (`--with-windows`) |
-| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), and the connection migration tests against a server on the host (`androidMigrationDeviceTest`, and the Compose demo's `migrationDemoDeviceTest`) |
+| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), the connection migration tests against a server on the host (`androidMigrationDeviceTest`, and the Compose demo's `migrationDemoDeviceTest`), and the device tests again on an API 24 emulator, the minimum SDK (the hosted CI's `android (24)` job) |
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
 | Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
@@ -177,7 +177,7 @@ refuses to start if any of them fails. What the steps cover:
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |
-| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/prefix/check-no-unprefixed.sh` (unprefixed OpenSSL, zlib and brotli symbols), of `tools/check/build-paths.py` (no home-directory path in an artifact), of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`); OpenSSL built without key logging; the refusals of `tools/openssl/fetch.sh` for a changed zlib or brotli tarball, a zlib signature by another key and a brotli tarball of another commit (`tools/openssl/fetch-test.sh`) |
+| Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/prefix/check-no-unprefixed.sh` (unprefixed OpenSSL, zlib and brotli symbols), of `tools/check/build-paths.py` (no home-directory path in an artifact), of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`), the module scope of its old-platform steps on fixed lists of changed paths (`tools/ci/changed-modules-test.sh`) and the retry rule of `tools/ci/android-connected-check.sh`; OpenSSL built without key logging; the refusals of `tools/openssl/fetch.sh` for a changed zlib or brotli tarball, a zlib signature by another key and a brotli tarball of another commit (`tools/openssl/fetch-test.sh`) |
 | Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared; `tools/check/native-flags-test.sh`: a builder's `CC`, `CPPFLAGS`, `CFLAGS` and `LDFLAGS` are added after the project's flags and never reach a release or the double build ([building.md](guide/building.md#your-compiler-and-flags)) |
 | Interop | the JVM and Kotlin/Native interop images against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in the QUIC Interop Runner, with the cells of [`tools/interop/required.json`](../tools/interop/required.json) required green (`--with-interop`; hours) |
 
@@ -200,6 +200,50 @@ for the Docker JVM steps. Steps that check what an earlier part of the gate
 built (the JNI library's exports, the prefixed OpenSSL archives, the Windows dll, the Linux libraries in the JVM
 interop image) build it themselves, or rebuild it when it is not from this run, so a selection never checks a
 leftover of an earlier build.
+
+### Old platforms (JDK 17 and 25, Android API 24)
+
+The libraries promise JVM 17 and Android API 24, and the hosted CI tests both (`jdk-compat`, `android (24)`). The gate
+runs the same tests in three steps, `jvm: module tests on JDK 17`, `jvm: module tests on JDK 25` and `android: device
+tests on API 24 (emulator)`, so that a failure on an old runtime shows up before the push to `main`:
+
+- The JDK steps run the JVM suites of [`tools/ci/matrix.sh`](../tools/ci/matrix.sh) as `jdk-compat` does: compiled
+  against the JDK 17 API as always, run on the JDK that `/usr/libexec/java_home -v 17` (or `-v 25`) finds, through
+  `-Pkuicksilver.test.jdk` and `-Porg.gradle.java.installations.paths`; on JDK 25 with
+  `--illegal-native-access=deny --enable-native-access=ALL-UNNAMED`. A missing JDK fails the step with the command that
+  installs one.
+- The API 24 step runs `androidConnectedCheck` of the `kuicksilver.kmp` modules, as the `android (24)` job does, with
+  its one retry of a stalled APK install ([`tools/ci/android-connected-check.sh`](../tools/ci/android-connected-check.sh)).
+  It never uses the emulator of the other device steps: [`tools/ci/avd-api24.sh`](../tools/ci/avd-api24.sh) starts the
+  AVD `ksl_api24` headless on console port 5580, unless it already runs there, points Gradle at that device alone
+  (`ANDROID_SERIAL=emulator-5580`) and shuts it down afterwards only if it started it. Before the tests it checks the
+  app heap the device gives (`dalvik.vm.heapgrowthlimit`, else `dalvik.vm.heapsize`): at least 256 MiB, what the hosted
+  CI's x86_64 API 24 image gives, where the arm64 image limits an app to 48 MiB and the HTTP/2 device tests run out of
+  memory. It boots the emulator with that limit (`-prop dalvik.vm.heapgrowthlimit`), and fails before the tests on an
+  emulator started otherwise. The AVD is created once, with the 4 GiB data partition the hosted CI gives API 24, 2 GiB
+  of RAM and a 256 MiB heap; `create` run again on an existing AVD sets the same values again:
+
+  ```sh
+  ~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "system-images;android-24;default;arm64-v8a"   # if missing
+  tools/ci/avd-api24.sh create      # the AVD ksl_api24
+  tools/ci/avd-api24.sh status      # whether it exists and whether its emulator runs
+  ```
+
+  `KSL_AVD_API24_PORT`, `KSL_AVD_API24_HEAP_LIMIT` and `KSL_AVD_API24_BOOT_TIMEOUT` change the port, the heap limit
+  and the boot timeout (the script's header). The current-API device steps, in turn, run on `emulator-5554` only
+  ([`tools/ci/device-serial.sh`](../tools/ci/device-serial.sh); `KSL_DEVICE_SERIAL` names another device, never the API 24
+  emulator's; the gate record keeps it as `android.device_serial`) and refuse to start without it, so an API 24 emulator left running never takes their tests.
+
+- All three test only the modules that changed since the branch left `origin/main`, and the modules that depend on
+  them ([`tools/ci/changed-modules.sh`](../tools/ci/changed-modules.sh)): the dependencies are read from every module's
+  `build.gradle.kts`, test scopes included. Committed, staged and unstaged changes count, and untracked files under the
+  module directories and the build's own inputs. A change outside the module directories selects every module, unless it
+  is one no build or test reads (documentation outside `docs/guide/`, `.github/`, the samples, the gate's and the
+  release's own scripts); an unknown path selects every module. With no module changed they pass without running
+  anything. `KSL_MATRIX_ALL_MODULES=1` makes them test every module (`0` or unset scopes them; any other value is
+  refused), and a release run (`--with-interop --with-windows`) always tests every module. The scope is computed once,
+  before step 1, printed (by a dry run too) and written into the gate record (`old_platforms.jvm`,
+  `old_platforms.android`, `old_platforms.why`), so a pass that tested no module says so.
 
 ### Repository checks
 

@@ -142,7 +142,9 @@ jobs:
       - name: 'lint: reliability report (fixtures)'
         run: bash tools/report/reliability-test.sh
       - name: 'check: local-matrix step selection'
-        run: bash tools/ci/local-matrix-test.sh   # --dry-run only: no Gradle, Docker, OpenSSL or emulator
+        # --dry-run only: no Gradle, Docker, OpenSSL or emulator; then the module scope of its old-platform steps and the API 24
+        # emulator script's checks against a fake adb
+        run: bash tools/ci/local-matrix-test.sh && bash tools/ci/changed-modules-test.sh && bash tools/ci/avd-api24-test.sh
       - name: 'check: android connected-test retry (fake gradlew)'
         run: bash tools/ci/android-connected-check-test.sh
       - name: 'check: Gradle retry after a dependency not found (fake gradlew)'

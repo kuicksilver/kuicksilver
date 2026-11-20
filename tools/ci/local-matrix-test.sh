@@ -20,8 +20,9 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
 }
 t onlyListAndRange          0 "25 50 51 55"                          -- --only 25,50-51,55
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 48 74 | tr '\n' ' ' | sed 's/ $//')" -- --from 48
-t onlyWithItsProducer       0 "42 43"                                -- --only 42,43
+t fromWithDependencies      0 "$(seq 50 77 | tr '\n' ' ' | sed 's/ $//')" -- --from 50
+t onlyWithItsProducer       0 "44 45"                                -- --only 44,45
+t oldPlatformSteps          0 "35 36 57"                             -- --only 35-36,57
 t negative_noValue          2 "needs a value"                        -- --only
 t negative_optionAsValue    2 "needs a value"                        -- --only --skip-android
 t negative_emptyList        2 "an empty step list"                   -- --only ""
@@ -34,16 +35,37 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,75
+t negative_pastLast         2 "past the last step"                   -- --only 3,78
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 75
+t negative_fromPastLast     2 "past the last step"                   -- --from 78
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
-t negative_missingProducer  2 "select those steps too: --only 42,45" -- --only 45
-t negative_missingMarkers   2 "select those steps too: --only 64-66" -- --only 66
-t negative_fromMissesLink   2 "select those steps too: --only 59,67-74" -- --from 67
-# the counts in docs/process.md ("**74 steps**; ... which makes **79** (... a Chrome WebTransport run, 80)") against --dry-run
+t negative_missingProducer  2 "select those steps too: --only 44,47" -- --only 47
+t negative_missingMarkers   2 "select those steps too: --only 67-69" -- --only 69
+t negative_fromMissesLink   2 "select those steps too: --only 62,70-77" -- --from 70
+KSL_MATRIX_ALL_MODULES=yes t negative_allModulesValue 2 "KSL_MATRIX_ALL_MODULES='yes'" -- --only 35
+KSL_MATRIX_ALL_MODULES=" 1" t negative_allModulesSpace 2 "KSL_MATRIX_ALL_MODULES=' 1'" -- --only 1
+# a release run tests every module on the old platforms, whatever KSL_MATRIX_ALL_MODULES says
+out=$(KSL_MATRIX_ALL_MODULES=0 bash "$script" --dry-run --with-interop --with-windows --only 35,57 2>&1)
+if grep -q '^scope of the old-platform steps: a release run' <<< "$out" && grep -q '^  JDK 17 and 25: kuicksilver-native ' <<< "$out" \
+  && grep -q '^  API 24: *kuicksilver-' <<< "$out"; then echo "ok   releaseRunTestsEveryModule"
+else echo "FAIL releaseRunTestsEveryModule:"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
+# the current-API device steps run through tools/ci/device-serial.sh, never on whatever device is attached
+for nm in "android: device tests (emulator)" "android: connection migration (emulator, host peer)" "android: compose demo migration (emulator, host server)"; do
+  if grep -F "step \"$nm\"" "$script" | grep -qF 'bash tools/ci/device-serial.sh "$dev" $G'; then echo "ok   pinnedDevice[$nm]"
+  else echo "FAIL pinnedDevice[$nm]: not run through tools/ci/device-serial.sh"; fails=$((fails + 1)); fi
+done
+KSL_DEVICE_SERIAL=emulator-5580 t negative_deviceIsApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
+KSL_DEVICE_SERIAL=emulator-5582 KSL_AVD_API24_PORT=5582 t negative_deviceIsMovedApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
+# the device of the current-API steps, an override included, is printed and written into the gate record
+out=$(KSL_DEVICE_SERIAL=emulator-5556 bash "$script" --dry-run --only 54 2>&1)
+if grep -qx 'device of the current-API device steps: emulator-5556 (gate record: android.device_serial)' <<< "$out" \
+  && grep -qF 'echo "android.device_serial=$dev"' "$script"; then echo "ok   deviceSerialOverrideRecorded"
+else echo "FAIL deviceSerialOverrideRecorded"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
+out=$(bash "$script" --dry-run --only 54 2>&1)
+if grep -q '^device of the current-API device steps: emulator-5554 ' <<< "$out"; then echo "ok   deviceSerialDefault"; else echo "FAIL deviceSerialDefault"; fails=$((fails + 1)); fi
+# the counts in docs/process.md ("**77 steps**; ... which makes **82** (... a Chrome WebTransport run, 83)") against --dry-run
 doc="$here/../../docs/process.md"
 count() { bash "$script" --dry-run "$@" 2>&1 | grep -c '^\['; }
 documented=$(tr '\n' ' ' < "$doc" | sed -n 's/.*has \*\*\([0-9]*\) steps\*\*;.*makes \*\*\([0-9]*\)\*\* (and `--with-browser` *adds a Chrome WebTransport run, \([0-9]*\)).*/\1 \2 \3/p')
