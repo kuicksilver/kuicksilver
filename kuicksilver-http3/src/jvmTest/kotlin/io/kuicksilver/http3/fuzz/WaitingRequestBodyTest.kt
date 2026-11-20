@@ -55,8 +55,11 @@ class WaitingRequestBodyTest {
     }
 
     @AfterTest fun tearDown() {
-        H3Session.dispatcherForTest = null
         net.client.closeNow(0, "")
+        // both sessions see the end and finish on the virtual-time dispatcher before the scope goes (the leak sentinel counts
+        // a session or a server request left open)
+        settle()
+        H3Session.dispatcherForTest = null
         scope.cancel()
     }
 
