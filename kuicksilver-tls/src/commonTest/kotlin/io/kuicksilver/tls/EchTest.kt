@@ -342,8 +342,13 @@ class EchTest {
      * RFC 9849 section 10.7: the platform verifier fetches nothing over the network (OCSP, CRL, AIA) for a name ECH hid. It
      * is asked offline exactly when ECH was accepted; for a rejection (the public_name, visible anyway), GREASE and no ECH
      * it may go online as before.
+     *
+     * Linux Native has no platform verifier to ask: `Platform` is OpenSSL inside `ksl` with the system store
+     * ([platformTrustViaOpenSsl]), which fetches nothing, and depends on the host's store; EchPlatformTrustLinuxTest checks
+     * it there against a store of the test CA.
      */
     @Test fun platformVerifierIsOfflineForAHiddenName() {
+        if (platformTrustViaOpenSsl) return
         val asked = ArrayList<Pair<String, Boolean>>()
         platformForTest = { chain, host, _, offline ->
             asked += host.value to offline

@@ -6535,6 +6535,7 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.CommittedCorpusReplayTest.ev
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.TlsSeedCorpusTest.corpusMatchesGenerator
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTest.clientHelloScan
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTest.zeroRttHello
+kuicksilver-tls/src/linuxTest	io.kuicksilver.tls.EchPlatformTrustLinuxTest.platformTrustAsksNoVerifierAndAuthenticatesTheRejection
 kuicksilver-tls/src/linuxTest	io.kuicksilver.tls.KeylogFileLinuxTest.negative_keylogFifoSwappedInLaterDoesNotBlock
 kuicksilver-tls/src/linuxTest	io.kuicksilver.tls.KeylogFileLinuxTest.negative_keylogFileRefusesFifo
 kuicksilver-tls/src/linuxTest	io.kuicksilver.tls.LinuxTrustStoreTest.negative_missingStoreNamesTheVariablesAndPaths
