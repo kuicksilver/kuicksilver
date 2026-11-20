@@ -224,7 +224,7 @@ tests on API 24 (emulator)`, so that a failure on an old runtime shows up before
   of RAM and a 256 MiB heap; `create` run again on an existing AVD sets the same values again:
 
   ```sh
-  ~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "system-images;android-24;default;arm64-v8a"   # if missing
+  "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager "system-images;android-24;default;arm64-v8a"   # if missing
   tools/ci/avd-api24.sh create      # the AVD ksl_api24
   tools/ci/avd-api24.sh status      # whether it exists and whether its emulator runs
   ```
