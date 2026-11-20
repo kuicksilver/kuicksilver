@@ -333,6 +333,26 @@ class NioDatagramIoTest {
             }
         }
 
+    /**
+     * A runtime that does not give the channel's descriptor (Android without the hidden accessor) is a lasting lack of DF
+     * with its own reason, not the JDK text of a JVM without `ksl`.
+     */
+    @Test fun negative_aRuntimeWithoutTheDescriptorSaysSoAndIsPermanent() =
+        runBlocking {
+            NioDatagramIo.dfForTest = { DF_NO_DESCRIPTOR to false }
+            try {
+                val e =
+                    assertFailsWith<QuicException.DontFragmentUnavailable> {
+                        DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
+                    }
+                assertTrue(e.permanent)
+                assertTrue("does not give the socket's descriptor" in e.detail, e.detail)
+                assertFalse("below 19" in e.detail || "ksl" in e.detail, e.detail)
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
+        }
+
     /** No DF on any traffic: the socket does not open, with the typed error. */
     @Test fun negative_aSocketWithoutDfDoesNotOpen() =
         runBlocking {

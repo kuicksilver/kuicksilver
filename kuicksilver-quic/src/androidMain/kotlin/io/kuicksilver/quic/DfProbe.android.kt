@@ -8,6 +8,7 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import java.io.FileDescriptor
+import java.lang.reflect.Method
 import java.net.DatagramSocket
 import java.net.Inet6Address
 import java.nio.channels.DatagramChannel
@@ -25,25 +26,37 @@ private const val FROM_DATAGRAM_SOCKET_DUPS = 29
 /**
  * Through `android.system.Os` on the channel's descriptor: the options belong to the socket. From API 29 on a duplicate
  * (`ParcelFileDescriptor.fromDatagramSocket`) that is closed again. Up to API 28 `fromDatagramSocket` wraps the channel's own
- * descriptor instead (no duplicate), so closing it would close the channel: there the descriptor is borrowed as it is
- * (`DatagramSocket.getFileDescriptor$`, which every Android release has and hides from no app up to API 28) and never
- * closed here. No `ksl` needed. Per half probe mode, else DO mode.
+ * descriptor instead (no duplicate), so closing it would close the channel: there the descriptor is borrowed as it is, through
+ * the hidden `DatagramSocket.getFileDescriptor$` (what `fromDatagramSocket` and `Network.bindSocket` themselves call), and
+ * never closed here. Below API 28 any app may call it. On API 28 it is on the light greylist: the call works, but ART logs
+ * "Accessing hidden method" and it counts as non-SDK API use, so an app with `StrictMode` `detectNonSdkApiUsage` sees a
+ * violation there, and with `penaltyDeath` the process dies on API 28 when it opens a portable socket. No `ksl` needed.
+ * Per half probe mode, else DO mode. [DF_NO_DESCRIPTOR] when the runtime does not give the descriptor.
  */
 internal actual fun dfProbe(ch: DatagramChannel): Int =
     try {
         if (Build.VERSION.SDK_INT >= FROM_DATAGRAM_SOCKET_DUPS) {
-            ParcelFileDescriptor.fromDatagramSocket(ch.socket())?.use { probe(it.fileDescriptor) } ?: -1
+            ParcelFileDescriptor.fromDatagramSocket(ch.socket())?.use { probe(it.fileDescriptor) } ?: DF_NO_DESCRIPTOR
         } else {
-            borrowedDescriptor(ch.socket())?.let(::probe) ?: -1
+            borrowedDescriptor(ch.socket())?.let(::probe) ?: DF_NO_DESCRIPTOR
         }
     } catch (_: Exception) {
         DF_PROBE_FAILED // the duplicate of the descriptor failed (out of file descriptors): not a lasting lack of DF
     }
 
+/** `DatagramSocket.getFileDescriptor$`, looked up once; null when this runtime has none. */
+private val getFileDescriptor: Method? by lazy {
+    try {
+        DatagramSocket::class.java.getMethod("getFileDescriptor\$")
+    } catch (_: Exception) {
+        null
+    }
+}
+
 /** The channel's own descriptor (API 24 to 28), not to be closed; null when this runtime does not give it. */
 private fun borrowedDescriptor(socket: DatagramSocket): FileDescriptor? =
     try {
-        (DatagramSocket::class.java.getMethod("getFileDescriptor\$").invoke(socket) as? FileDescriptor)?.takeIf { it.valid() }
+        (getFileDescriptor?.invoke(socket) as? FileDescriptor)?.takeIf { it.valid() }
     } catch (_: Exception) {
         null
     }
