@@ -2018,8 +2018,18 @@ val overTls = HttpClient(Kuicksilver) {
 `connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
 origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
 origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). The proxy is
-reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
-tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+reached directly over HTTP/3 (its template's authority, port 443 when it names none) with the proxy's TLS settings, as
+an `https://` proxy over TCP ([Proxies](#proxies)): `proxyTls`, or by default the engine's trust without an
+`ExpectedName` or pins and without the client certificate (`identity` goes to the origin only); the certificate is
+verified against the proxy's host, and a failed handshake with the proxy is a `ProxyTlsException`. Each tunnelled
+connection has its own connection to the proxy, closed with it, a full handshake each time (no session resumption, and no
+ticket of the proxy's ever shared with origins). Through several addresses of the proxy, an address whose TLS failed
+makes the request's failure a `ProxyTlsException` even when a later address only timed out (the timeout is then among
+its suppressed exceptions), as long as no address of the proxy completed its handshake: once one did, the CONNECT may
+have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxyTls` limited to TLS 1.2 cannot reach a
+CONNECT-UDP proxy; an ECH configuration that `proxyTls` gives the proxy is offered as given and not retried after a
+rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
+direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
 What it changes, for the `https` URLs its `applies` admits (all of them by default):

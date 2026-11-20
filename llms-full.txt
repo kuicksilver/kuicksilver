@@ -4620,8 +4620,18 @@ val overTls = HttpClient(Kuicksilver) {
 `connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
 origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
 origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)). The proxy is
-reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
-tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+reached directly over HTTP/3 (its template's authority, port 443 when it names none) with the proxy's TLS settings, as
+an `https://` proxy over TCP ([Proxies](#proxies)): `proxyTls`, or by default the engine's trust without an
+`ExpectedName` or pins and without the client certificate (`identity` goes to the origin only); the certificate is
+verified against the proxy's host, and a failed handshake with the proxy is a `ProxyTlsException`. Each tunnelled
+connection has its own connection to the proxy, closed with it, a full handshake each time (no session resumption, and no
+ticket of the proxy's ever shared with origins). Through several addresses of the proxy, an address whose TLS failed
+makes the request's failure a `ProxyTlsException` even when a later address only timed out (the timeout is then among
+its suppressed exceptions), as long as no address of the proxy completed its handshake: once one did, the CONNECT may
+have gone out, and a timeout of the tunnel or of the origin's handshake is a `ConnectTimeoutException`. QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxyTls` limited to TLS 1.2 cannot reach a
+CONNECT-UDP proxy; an ECH configuration that `proxyTls` gives the proxy is offered as given and not retried after a
+rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
+direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
 What it changes, for the `https` URLs its `applies` admits (all of them by default):
@@ -6475,7 +6485,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `connectUdpProxy` (*experimental*) | `ConnectUdpProxy?` | `null` | a template that passes RFC 9298 section 2 | 0.3.0 | a CONNECT-UDP proxy (MASQUE) for HTTP/3: the `https` requests its `applies` admits go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly, and neither use nor learn `Alt-Svc`; `proxy` and `proxyResolver` keep deciding for the others ([HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental)) |
 | `pacFullWebSocketUrl` (*experimental*) | `Boolean` | `false` | — | 0.3.0 | with `ProxyResolvers.System` on Apple platforms and Windows: the PAC script the system settings name (inline, or by an `https://` or local `file:///` URL; never one WPAD found or one over plain `http://`) gets a `wss://` URI whole, path and query included (RFC 6455 section 4.1); off, every script gets `wss://host[:port]/` only, as browsers give it (CVE-2016-3763, CVE-2016-5134); docs/guide/ktor.md, "Proxies" |
 | `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | 0.3.0 | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins; in clear to an `http://` or SOCKS5 proxy, only inside TLS to an `https://` one |
-| `proxyTls` (*experimental*) | `(TlsConfig.Builder.() -> Unit)?` | `null` | — | 0.3.0 | the TLS of connections to an `https://` proxy (`ResolvedProxy.https`); null: the `tls` block over `trust`, then that trust without an `ExpectedName` or `Pinned` (the origin's name and keys), no client certificate; a block starts from that trust and may set anything; SNI and the verified name are the proxy's host and ALPN `http/1.1`, whatever it sets ([Ktor: Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxies)) |
+| `proxyTls` (*experimental*) | `(TlsConfig.Builder.() -> Unit)?` | `null` | — | 0.3.0 | the TLS of connections to an `https://` proxy (`ResolvedProxy.https`) and to a `connectUdpProxy`; null: the `tls` block over `trust`, then that trust without an `ExpectedName` or `Pinned` (the origin's name and keys), no client certificate; a block starts from that trust and may set anything; SNI and the verified name are the proxy's host and ALPN `http/1.1` (`h3` to a CONNECT-UDP proxy), whatever it sets ([Ktor: Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxies)) |
 
 `pipelining` (from Ktor's `HttpClientEngineConfig`) is not used.
 
@@ -7314,15 +7324,19 @@ A request that fails with `UnsupportedOperationException` ("the proxy URL's sche
 setting the engine cannot use, such as `socks4://`; it is never bypassed. The message does not name the scheme a proxy
 URL from the environment gave: a user name before `://` reads as one.
 
-#### Requests through an `https://` proxy fail with `ProxyTlsException`
+#### Requests through an `https://` or CONNECT-UDP proxy fail with `ProxyTlsException`
 
-The TLS handshake with the proxy itself failed; nothing of the request was sent. Its `cause` says why: a
+The TLS handshake with the proxy itself failed (over TCP to an `https://` proxy, over QUIC to a `connectUdpProxy`);
+nothing of the request was sent. Its `cause` says why: a
 `TlsException.Verify` whose `reason` is `HostnameMismatch` means the proxy's certificate does not name the proxy's host
 as configured (an address where the certificate names a host, or the reverse; the origin's `ExpectedName` and pins do
 not apply to the proxy), another reason that its chain is not trusted: the proxy's trust is the engine's `trust`
 without pins unless `proxyTls = { trust = ... }` says otherwise, so a proxy under a corporate CA needs that CA there.
 An alert or a closed connection usually means the proxy does not speak TLS on that port (an `http://` proxy named as
-`https://`). A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
+`https://`); from a CONNECT-UDP proxy, `AlertReceived` with certificate_required (116) means it wants a client
+certificate, which only `proxyTls = { identity = ... }` gives (the engine's `identity` is the origin's), and
+no_application_protocol (120) that it does not offer `h3`. A `proxyTls` limited to TLS 1.2 cannot reach a CONNECT-UDP
+proxy at all: QUIC is TLS 1.3. A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
 
 #### A Ktor client call failed: over which transport?
 

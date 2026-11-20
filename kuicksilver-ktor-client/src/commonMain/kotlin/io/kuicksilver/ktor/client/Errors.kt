@@ -62,15 +62,19 @@ internal fun proxyTrustOf(trust: TrustConfig): TrustConfig =
     }
 
 /**
- * The TLS configuration of a connection to the `https://` proxy at [host] (ADR-0023). With
+ * The TLS configuration of a connection to the proxy at [host] (ADR-0023): an `https://` proxy over TCP, or a CONNECT-UDP
+ * proxy over QUIC. With
  * [KuicksilverEngineConfig.proxyTls] null: the engine's [KuicksilverEngineConfig.tls] block (versions, groups and the
  * like) over its [KuicksilverEngineConfig.trust], then the resulting trust through [proxyTrustOf], and no client
  * certificate (the origin's identity is not shown to the proxy). With a `proxyTls` block: the trust through
  * [proxyTrustOf] and no identity, then that block, which may replace both. Either way SNI and the reference identifier are
- * the proxy's host and ALPN is `http/1.1` alone, set last.
+ * the proxy's host and ALPN is [alpn] alone (`http/1.1` over TCP, `h3` to a CONNECT-UDP proxy), set last.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-internal fun KuicksilverEngineConfig.proxyTlsConfigFor(host: String): TlsConfig =
+internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
+    host: String,
+    alpn: List<String> = listOf(PROXY_ALPN),
+): TlsConfig =
     tlsConfig(TlsRole.Client) {
         val own = this@proxyTlsConfigFor.proxyTls
         if (own == null) {
@@ -83,8 +87,9 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(host: String): TlsConfig 
             identity = null
             own()
         }
-        // HTTP/1.1 to the proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023)
-        alpn = listOf(PROXY_ALPN)
+        // HTTP/1.1 to an https:// proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023), h3 to a
+        // CONNECT-UDP one
+        this.alpn = alpn
         serverName = host
     }
 

@@ -42,11 +42,25 @@ class ClientHappyEyeballsTest {
      */
     @Test fun h3RacesTheAddressesOfAName() =
         h3Test {
-            val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
-            // the first address swallows QUIC where the host has IPv6 loopback; elsewhere a connect to it fails at once. A
-            // DatagramIo binds ::1 itself: ktor-network on Native binds ::1 as the wildcard :: (KTOR-10017)
-            val silent = runCatching { DatagramIo.open(InetSocketAddress("::1", port)) }.getOrNull()
-            if (silent == null) println("h3RacesTheAddressesOfAName: no IPv6 loopback, the first address fails at once")
+            // the first address swallows QUIC where the host has IPv6 loopback (on the server's port, a fresh pair when it is
+            // taken on ::1); elsewhere a connect to it fails at once. A DatagramIo binds ::1 itself: ktor-network on Native
+            // binds ::1 as the wildcard :: (KTOR-10017)
+            val ipv6 = ipv6LoopbackAvailable()
+            if (!ipv6) println("h3RacesTheAddressesOfAName: no IPv6 loopback ([::1]:0 does not bind), the first address fails at once")
+            val serve: io.ktor.server.application.Application.() -> Unit = {
+                routing { get("/") { call.respondText("v=${call.request.local.version}") } }
+            }
+            val (server, silent, port) =
+                if (ipv6) {
+                    bindOnSamePort(
+                        { p -> testServer(port = p, module = serve).let { (s, bound) -> s to bound } },
+                        { it.stop(100, 500) },
+                        { p -> DatagramIo.open(InetSocketAddress("::1", p)).let { it to it.localAddress.port } },
+                        { it.close() },
+                    ).let { (s, d, p) -> Triple(s, d as DatagramIo?, p) }
+                } else {
+                    testServer(module = serve).let { (s, p) -> Triple(s, null as DatagramIo?, p) }
+                }
             val tried = ArrayList<String>()
             try {
                 testClient(Http3DiscoveryMode.H3Only, engine = {

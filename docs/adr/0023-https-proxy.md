@@ -85,3 +85,17 @@ or the wrong trust (CWE-295) would hand the CONNECT, the credentials and the ori
   `https://` proxy there comes from a resolver. What `ProxySelector.getDefault()` answers on the JVM and Android is a `java.net.Proxy` too, so
   `ProxyResolvers.System` there never yields an `https://` proxy.
 - HTTP/2 to the proxy can be added later behind an option without changing this API.
+- The QUIC hop to a CONNECT-UDP proxy (`connectUdpProxy`, RFC 9298) follows this decision too (amended 2026-11-20):
+  its TLS configuration is the proxy's (`proxyTlsConfigFor`), with the proxy's host as SNI and reference identifier,
+  `proxyTls` or the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxyTls` sets one,
+  and ALPN `h3` instead of `http/1.1`; a failed handshake with it is `ProxyTlsException`, and its connections leave from
+  endpoints of their own whose session cache is the proxies'. It resumes no session (a full handshake each time:
+  `Http3Endpoint.connect` takes and stores no ticket), where the TCP hop resumes from its cache; its own endpoints keep
+  the separation should it resume one day. The race over the proxy's addresses reports a `ProxyTlsException` from one
+  address before a later address's timeout or refusal, until an address of the proxy completed its handshake (from
+  then on the CONNECT may have gone out, and a timeout is the timeout). A `proxyTls` that allows TLS 1.2 only cannot reach a CONNECT-UDP
+  proxy (QUIC is TLS 1.3, RFC 9001 section 4.2). With ECH (ADR-0019), a configuration `proxyTls` gives the proxy hop is
+  offered as given, and a rejection there fails the request with the proxy's retry configurations unused (no retry of
+  RFC 9849 section 6.1.6 on the proxy hop, over TCP or QUIC). Before, never released, it took the origin's
+  configuration, client certificate included (threat model 3.29). The origin's connection inside the tunnel keeps the
+  origin's configuration.

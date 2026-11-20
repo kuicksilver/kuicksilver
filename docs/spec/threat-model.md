@@ -1010,7 +1010,8 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   sent, never a plain retry. The proxy's certificate is verified against the proxy's host as configured (RFC 9525; an IP
   literal as an IP-ID and without SNI, RFC 6066 section 3), never against an address `dns` answered and never against the
   origin's name. Its trust is `proxyTls` or, by default, the origin's without an `ExpectedName` or `Pinned` (the origin's
-  name and keys) and without the client certificate (ADR-0023). ALPN offers `http/1.1` only. A 407 fails the request with
+  name and keys) and without the client certificate (ADR-0023). ALPN offers `http/1.1` only. The QUIC connection to a
+  CONNECT-UDP proxy takes the same configuration with ALPN `h3` (3.29). A 407 fails the request with
   `ProxyException` after one CONNECT (`replyCode` 407), never a loop; the CONNECT answer keeps the 64 KiB head limit of
   3.20. The origin's TLS inside the tunnel is unchanged (its own SNI, verification, pins), and its failure is the
   origin's `TlsException`, never a `ProxyException`. The pool's route key holds the proxy's scheme. HTTP/3, `Alt-Svc`
@@ -1056,7 +1057,11 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   datagrams to a target (a volumetric attack attributed to the proxy, section 7), or of oversized and unknown-context
   datagrams and DATAGRAM capsules that the proxy would buffer; tunnels and sockets left behind by a client that goes away.
   Parsing of the template, the target and the datagram payload (CWE-20). A third host's datagrams injected into a tunnel
-  through the proxy's unconnected socket.
+  through the proxy's unconnected socket. On the client side (the Ktor engine's `connectUdpProxy`), the QUIC connection
+  to the proxy set up with the origin's TLS configuration: the origin's client certificate shown to the proxy, a third
+  party (CWE-200), the origin's `ExpectedName` accepting the origin's certificate from whoever answers at the proxy's
+  address and the origin's pins applied to the proxy (CWE-295), as 3.28 describes for the TCP hop; a session ticket of
+  the proxy hop resuming a connection to an origin of the same name, or the reverse.
 - **Mitigations:** `UdpTargetFilter.PublicOnly` by default: only globally reachable unicast (IANA special-purpose blocks,
   loopback, private, shared, link-local, multicast, broadcast and 240.0.0.0/4 refused; IPv6 only 2000::/3 less its special
   blocks; mapped, NAT64 and 6to4 addresses judged by their IPv4 address), applied to every resolved address, and the socket
@@ -1080,7 +1085,14 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   address and port are read from the socket. Authentication is the application's, before `serve`; the Ktor route goes through the pipeline, so an
   `authenticate` block or an interceptor answers first, and the engine takes CONNECT-UDP only with `connectUdp = true`.
   The Ktor client never sends a request meant for the proxy over TCP or directly when the tunnel fails, and never
-  resolves the origin's name itself (the proxy does).
+  resolves the origin's name itself (the proxy does). Its QUIC connection to the proxy has the proxy's TLS
+  configuration, the one of the TCP hop to an `https://` proxy (ADR-0023, `proxyTlsConfigFor`): the proxy's host as SNI
+  and reference identifier, `proxyTls` or by default the origin's trust without its `ExpectedName` and pins, no client
+  certificate unless `proxyTls` sets one, ALPN `h3`; a failed handshake there is a `ProxyTlsException`. It leaves from
+  endpoints of its own whose session cache is the proxies', never the origins', and resumes no session (a full
+  handshake each time). A TLS failure at one of the proxy's addresses is reported before a later address's timeout, until an address of the proxy completed its handshake (then the CONNECT may have gone out, and a timeout is a `ConnectTimeoutException`). The origin's connection inside the
+  tunnel keeps the origin's client certificate, trust and pins. Before this (never released: CONNECT-UDP is new in
+  0.3.0) the proxy hop took the origin's configuration, client certificate included.
 - **Target sockets and Don't Fragment (RFC 9298 §3.1):** no DF, no tunnel. A target socket without DF could fragment
   locally after a forged ICMP message lowered the path MTU its kernel caches, against "MUST NOT introduce fragmentation";
   so every target socket has DF (probe mode, else DO mode) for the target's family, or the request is refused with 500
@@ -1113,7 +1125,16 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   `negative_oversizedUdpPayloadAbortsTheStream`, `negative_rateLimitDropsBeyondTheBurst`,
   `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`,
   `negative_datagramFromAnotherSourceIsDiscarded` (`connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`), the
-  Jazzer targets `ConnectUdpFuzzTest.udpTemplate` and `.udpDatagrams`.
+  Jazzer targets `ConnectUdpFuzzTest.udpTemplate` and `.udpDatagrams`. The client's proxy hop:
+  `ClientConnectUdpProxyTlsTest.negative_proxyHopNeverPresentsTheOriginsClientCertificate` (the origin still gets it),
+  `.proxyTlsIdentityIsShownToTheProxy`, `.negative_originPinsApplyToTheOriginOnlyNotToTheProxyHop`,
+  `.negative_proxyTlsTrustAppliesToTheProxyHop`, `.negative_originExpectedNameDoesNotCarryToTheProxyHop`,
+  `.negative_proxyHopKeepsItsOwnEndpointsAndTickets`, `.negative_quicProxyOfferingNoCommonAlpnFails`,
+  `.negative_quicProxyClosingMidHandshakeFails`, `.negative_quicProxyRequiringAClientCertificateGetsNoneOfTheOrigins`,
+  `.negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout`,
+  `.negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure` (a
+  proxy and an origin with their own certificates, both asking for a client certificate, and raw QUIC proxies that fail
+  the handshake).
 
 ### 3.30 TLS certificate compression (RFC 8879)
 
@@ -1166,7 +1187,7 @@ PROXY protocol (§3.27):
 15. `negative_headerFromAnUntrustedSourceIsRefused`, `negative_connectionWithoutAHeaderIsClosed`, `negative_malformedHeadersAreClosed`, `negative_headerNotCompleteWithinTheTimeoutIsCut`, `negative_unknownPeerIsNotTrusted`, `negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `negative_invalidConfigurationsAreRefused`, `negative_v1WithoutCrlfWithin107BytesIsRefused`, `negative_v1LineEndsOtherThanCrlfAreRefused`, `negative_v1MalformedFieldsAreRefused`, `negative_v2BadVersionCommandOrFamilyIsRefused`, `negative_v2LocalWithAnInvalidNibbleIsRefused`, `negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `negative_v2AddressBlockShorterThanItsFamilyIsRefused`, `negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `negative_v2TlvOverrunningTheHeaderIsRefused`, `negative_v2CrcMismatchIsRefused`, `negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`, `negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`, `negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `negative_proxyProtocolKeysWithSslPortRefused`, `negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`, `negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`, `negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused` (`ServerProxyProtocolTest`, `ServerH2FloodTest`, `ProxyProtocolConfigTest`, `ProxyProtocolCodecTest` on the JVM and every Native target; `EngineMainTest` on the JVM)
 
 HTTPS proxies (§3.28):
-16. `negative_proxyCertificateFromAnUntrustedCaFails`, `negative_proxyCertificateValidForTheOriginButNotTheProxyFails`, `negative_originTlsFailureIsNotAProxyFailure`, `negative_proxyCredentialsNeverCrossThePlainSocket`, `negative_proxyAuthenticationLoopEndsAfterOneAttempt`, `negative_proxyClosingMidHandshakeFails`, `negative_h3OnlyThroughAnHttpsProxyFails`, `negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `negative_httpAndHttpsProxiesAreDifferentRoutes`, `negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization`, `negative_proxyAuthorizationNeverGoesDirectToTheOrigin`, `negative_schemelessHttpProxyOn443IsRefused`, `negative_proxyOfferingNoCommonAlpnFails`, `negative_proxyTlsBlockCannotChangeTheProxysName`, `negative_httpsProxyUrlNeverSpeaksPlainToTheProxy` (`ClientHttpsProxyTest`, `ProxyConfigNativeTest`; JVM and Native)
+16. `negative_proxyCertificateFromAnUntrustedCaFails`, `negative_proxyCertificateValidForTheOriginButNotTheProxyFails`, `negative_originTlsFailureIsNotAProxyFailure`, `negative_proxyCredentialsNeverCrossThePlainSocket`, `negative_proxyAuthenticationLoopEndsAfterOneAttempt`, `negative_proxyClosingMidHandshakeFails`, `negative_h3OnlyThroughAnHttpsProxyFails`, `negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `negative_httpAndHttpsProxiesAreDifferentRoutes`, `negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization`, `negative_proxyAuthorizationNeverGoesDirectToTheOrigin`, `negative_schemelessHttpProxyOn443IsRefused`, `negative_proxyOfferingNoCommonAlpnFails`, `negative_proxyTlsBlockCannotChangeTheProxysName`, `negative_httpsProxyUrlNeverSpeaksPlainToTheProxy` (`ClientHttpsProxyTest`, `ProxyConfigNativeTest`; JVM and Native); the QUIC hop to a CONNECT-UDP proxy (§3.29): `negative_proxyHopNeverPresentsTheOriginsClientCertificate`, `negative_originPinsApplyToTheOriginOnlyNotToTheProxyHop`, `negative_proxyTlsTrustAppliesToTheProxyHop`, `negative_originExpectedNameDoesNotCarryToTheProxyHop`, `negative_proxyHopKeepsItsOwnEndpointsAndTickets`, `negative_quicProxyOfferingNoCommonAlpnFails`, `negative_quicProxyClosingMidHandshakeFails`, `negative_quicProxyRequiringAClientCertificateGetsNoneOfTheOrigins`, `negative_aProxyTlsFailureOnOneAddressIsReportedOverTheOthersTimeout`, `negative_aTimeoutAfterTheProxyAnsweredIsNotTheLosingAddresssTlsFailure` (`ClientConnectUdpProxyTlsTest`)
 
 CONNECT-UDP (§3.29):
 17. `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`, `negative_invalidTargetValuesAndPathsAreRefused`, `negative_clientRefusesBeforeSending`, `negative_missingCapsuleProtocolFieldIsRefused`, `negative_unknownContextIdIsDroppedByTheProxy`, `negative_unknownContextIdIsDroppedByTheClient`, `negative_oversizedUdpPayloadAbortsTheStream`, `negative_payloadAboveTheLinkMtuIsDropped`, `negative_targetPayloadTooLargeForTheClientIsDropped`, `negative_datagramFromAnotherSourceIsDiscarded`, `negative_rateLimitDropsBeyondTheBurst`, `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`, `negative_clientResetFreesTheTunnel`, `negative_socketFailureClosesTheRequestStream`, `negative_dnsFailureAndTimeoutAreRefusedWithProxyStatus`, `negative_otherProtocolIsRefused` — `connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`; `negative_unknownContextSkippedWithoutBuffering`, `negative_oversizedContextZeroAbortsBeforeItsBytesArrive`, `negative_emptyOrTruncatedContextIdIsDropped` — `message.DatagramFilterParserTest`; `negative_templatesBreakingSection2AreRejected`, `negative_invalidTargetsAreRejectedByTheClient`, `negative_invalidTargetValuesAreInvalidNotMatched`, `negative_ambiguousServerTemplatesAreRejected` — `message.UdpUriTemplateTest`; `negative_defaultProxyRefusesLoopbackThroughTheRoute`, `negative_aRefusalBeforeTheRouteGoesOutAsItIs`, `negative_engineWithoutConnectUdpAnswers501`, `negative_otherRoutesTwoHundredIs501` — `ServerConnectUdpTest` (Ktor server); `negative_aRefusedTunnelNeverFallsBackToADirectConnection`, `negative_h1OnlyWithAConnectUdpProxyIsRefused` — `ClientConnectUdpProxyTest` (Ktor client)
@@ -1252,7 +1273,7 @@ weakness appears in different protocols.
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |
 | 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
 | 3.28 | HTTPS proxies: the proxy's certificate and name, credentials in clear to an `http://` proxy | CWE-295, CWE-319, CWE-522 |
-| 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing; a raw ICMP socket | CWE-918, CWE-400, CWE-770, CWE-20; CWE-250, CWE-406 |
+| 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing; a raw ICMP socket; the client's TLS to the proxy | CWE-918, CWE-400, CWE-770, CWE-20; CWE-250, CWE-406; CWE-200, CWE-295 |
 | 3.30 | certificate decompression bombs and mismatched lengths; a compressed chain without its OCSP response | CWE-409, CWE-130, CWE-299 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,

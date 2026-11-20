@@ -48,6 +48,8 @@ internal suspend fun testServer(
     port: Int = 0,
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
     log: CapturedLog? = null,
+    /** Applied to the TLS connector after its host and port (another identity, `clientAuth`...); unused when [plain]. */
+    tls: io.kuicksilver.ktor.server.KuicksilverTlsConnector.Builder.() -> Unit = {},
     module: Application.() -> Unit,
 ): Pair<TestServer, Int> {
     val configuration: KuicksilverApplicationEngine.Configuration.() -> Unit = {
@@ -60,6 +62,7 @@ internal suspend fun testServer(
             tlsConnector(ClientFixtures.identity()) {
                 this.host = host
                 this.port = port
+                tls()
             }
         }
         configure()
@@ -167,6 +170,28 @@ internal fun mayBeTaken(e: Throwable): Boolean =
         e !is io.kuicksilver.native.KslException
 
 internal const val SAME_PORT_ATTEMPTS = 20
+
+private var ipv6LoopbackProbe: Boolean? = null
+
+/**
+ * Whether this host has an IPv6 loopback a test can bind: [::1]:0 binds (a UDP socket, closed at once). Only this says a
+ * test with a socket on ::1 cannot run here; the port it needs being taken on ::1 is another matter, which
+ * [bindOnSamePort] retries with a fresh pair. Learned once.
+ */
+internal suspend fun ipv6LoopbackAvailable(): Boolean =
+    ipv6LoopbackProbe ?: run {
+        try {
+            // a DatagramIo binds ::1 itself: ktor-network on Native binds ::1 as the wildcard :: (KTOR-10017)
+            io.kuicksilver.quic.DatagramIo
+                .open(InetSocketAddress("::1", 0))
+                .close()
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false
+        }
+    }.also { ipv6LoopbackProbe = it }
 
 internal fun clientTest(block: suspend () -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 

@@ -50,8 +50,8 @@ private val nextCredentialsId = kotlin.concurrent.atomics.AtomicLong(0)
  * A proxy refused or failed the request's connection: a SOCKS5 reply other than "succeeded" ([replyCode][ProxyException.replyCode] is its REP
  * field, RFC 1928 section 6), a SOCKS5 authentication the proxy rejected ([replyCode][ProxyException.replyCode] null), a status other than 2xx in
  * answer to an HTTP CONNECT ([replyCode][ProxyException.replyCode] is the status, 407 when the proxy wants credentials; the engine does not
- * repeat the CONNECT), or, as [ProxyTlsException], a failed TLS handshake with an `https://` proxy. The message names the
- * proxy, never the credentials.
+ * repeat the CONNECT), or, as [ProxyTlsException], a failed TLS handshake with an `https://` proxy or a CONNECT-UDP proxy
+ * ([ConnectUdpProxy]). The message names the proxy, never the credentials.
  */
 @ExperimentalKuicksilverApi
 public open class ProxyException(
@@ -63,10 +63,12 @@ public open class ProxyException(
 ) : IOException(message, cause)
 
 /**
- * The TLS handshake with an `https://` proxy ([ResolvedProxy.https]) failed: its certificate did not verify against the
- * proxy's name or trust (`KuicksilverEngineConfig.proxyTls`), it refused the handshake, or it closed the connection
- * during it. [cause][Throwable.cause] is what the TLS layer reported (a `TlsException`, whose `Verify` subclass says why the certificate
- * was rejected, or an IOException for a connection that ended). Nothing of the request, credentials included, was sent.
+ * The TLS handshake with an `https://` proxy ([ResolvedProxy.https]) or with a CONNECT-UDP proxy ([ConnectUdpProxy], over
+ * QUIC) failed: its certificate did not verify against the proxy's name or trust (`KuicksilverEngineConfig.proxyTls`), it
+ * refused the handshake, or it closed the connection during it. [cause][Throwable.cause] is what the TLS layer reported: a
+ * `TlsException` (its `Verify` subclass says why the certificate was rejected, `AlertReceived` which alert the proxy
+ * sent), or, over TCP only, an IOException for a connection that ended; over QUIC it is always a `TlsException`, and a
+ * proxy that does not answer ends in the connect timeout instead. Nothing of the request, credentials included, was sent.
  * A TLS failure with the origin inside the proxy's tunnel is the origin's `TlsException`, never this one.
  * [replyCode][ProxyException.replyCode] is null.
  */
