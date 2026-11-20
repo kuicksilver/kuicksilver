@@ -1614,6 +1614,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
+  sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
+  502 comes only when none opened (also when the other family lacked DF).
 - CONNECT-UDP proxy: a payload the tunnel's socket refused as too large for the path or link (EMSGSIZE or WSAEMSGSIZE:
   an interface or route toward the target with a smaller MTU, or, on a socket in DO mode only, an ICMP Packet Too Big,
   genuine or forged, that lowered the kernel's cached path MTU) ended the whole tunnel as a failed socket (reset and

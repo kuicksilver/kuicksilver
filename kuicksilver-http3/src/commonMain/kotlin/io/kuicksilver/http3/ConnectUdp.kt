@@ -482,7 +482,10 @@ public class UdpProxy(
      * - a DNS name is resolved before the answer ("the UDP proxy MUST perform DNS resolution before replying"): a failure
      *   or no address is 502 with `proxy-status: <name>; error=dns_error`, a timeout 504 with `dns_timeout`;
      * - no address the [UdpProxyConfig.targetFilter] allows: 403 with `destination_ip_prohibited`;
-     * - the socket cannot be opened: 502 with `proxy_internal_error`;
+     * - the socket cannot be opened: the candidates of the other address family are tried first (a family whose socket
+     *   failed is skipped for the rest of the request, as one without Don't Fragment is); 502 with `proxy_internal_error`
+     *   when none opened and one failed for another reason than DF, also when the other family lacked DF (the failure,
+     *   maybe transient, is what is reported), else the no-DF refusal (500, [UdpProxyConfig]);
      * - otherwise 200 with `capsule-protocol: ?1`: the socket is open (a successful response "indicates that the UDP proxy
      *   has opened a socket to the requested target"), and nothing is sent to the target before it.
      *
