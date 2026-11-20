@@ -543,6 +543,7 @@ public final class io/kuicksilver/http3/UdpProxyStats {
 	public final fun getDroppedClientBusy ()J
 	public final fun getDroppedForeignSource ()J
 	public final fun getDroppedRateLimited ()J
+	public final fun getDroppedRefusedAsTooLarge ()J
 	public final fun getDroppedTooLargeForClient ()J
 	public final fun getDroppedTooLargeForLink ()J
 	public final fun getDroppedTooLargeFromTarget ()J

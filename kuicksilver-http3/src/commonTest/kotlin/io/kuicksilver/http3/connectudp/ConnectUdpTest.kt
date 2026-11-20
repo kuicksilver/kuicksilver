@@ -56,8 +56,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -222,6 +225,47 @@ internal class ClosingIo(
 }
 
 internal val echoAt = InetSocketAddress("192.0.2.50", 5000)
+
+/**
+ * The sockets a test's own socket factory opened, in order. Copied on write, as [ProxyRig.sockets]: the proxy may open
+ * tunnel sockets on several threads at once.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class OpenedIos<T> {
+    private val opened = kotlin.concurrent.atomics.AtomicReference<List<T>>(emptyList())
+    val list: List<T> get() = opened.load()
+
+    fun add(io: T) {
+        while (true) {
+            val now = opened.load()
+            if (opened.compareAndSet(now, now + io)) return
+        }
+    }
+}
+
+/**
+ * A socket that refuses the next [refuse] payloads the way the accelerated one does: the slot is skipped and still counted as
+ * sent, and [takeEmsgsize] reports its length (`ksl_udp_send`'s `count_emsgsize`).
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal class EmsgsizeReportingIo(
+    private val io: io.kuicksilver.quic.DatagramIo,
+) : io.kuicksilver.quic.DatagramIo by io,
+    io.kuicksilver.quic.EmsgsizeReports {
+    val refuse = AtomicInt(0)
+    private var last = 0
+
+    override suspend fun send(batch: io.kuicksilver.quic.PacketBatch): Int {
+        if (refuse.load() > 0) {
+            refuse.decrementAndFetch()
+            last = batch.length(0)
+            return batch.count
+        }
+        return io.send(batch)
+    }
+
+    override fun takeEmsgsize(): Int = last.also { last = 0 }
+}
 
 private fun allowAll(f: suspend (InetSocketAddress) -> io.kuicksilver.quic.DatagramIo) =
     UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, socketFactory = f)
@@ -708,6 +752,178 @@ class ConnectUdpTest {
                 assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
                 withTimeout(5.seconds) { rig.socketsClosed.receive() }
                 withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+            }
+        }
+
+    /**
+     * Section 5 carries "the unmodified payload", never a fragment: one the target's socket refuses as too large for the
+     * path or link (EMSGSIZE, "Message too long": the kernel knows a smaller MTU toward the target) is dropped and counted,
+     * and the tunnel stays open; the socket is still usable, so section 3.1's "no longer usable" does not apply.
+     */
+    @Test fun negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val refused = kotlin.concurrent.atomics.AtomicBoolean(false)
+                rig.sockets.single().onSend = {
+                    if (refused.compareAndSet(expectedValue = false, newValue = true)) throw IOException("Message too long")
+                }
+                t.send("too big for the path".encodeToByteArray())
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedRefusedAsTooLarge == 1L }
+                }
+                t.send("next".encodeToByteArray())
+                assertContentEquals("next".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                assertContentEquals("echo:next".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                assertEquals(1, rig.proxy.stats.droppedRefusedAsTooLarge)
+                assertEquals(1, rig.proxy.stats.toTargets)
+                assertEquals(1, rig.proxy.activeTunnels.value)
+                // an instant check is sound here: "next" was echoed through the same socket after the refusal (one coroutine
+                // handles the client's datagrams in order), and nothing else ends the tunnel before t.close() but the idle
+                // timeout, two minutes away; a refusal that had ended the tunnel would have closed the socket before "next"
+                assertTrue(rig.socketsClosed.tryReceive().isFailure, "the tunnel's socket stays open")
+                t.close()
+                withTimeout(5.seconds) { rig.socketsClosed.receive() }
+            }
+        }
+
+    /**
+     * The accelerated socket does not throw for EMSGSIZE: it skips the slot, counts it as sent and reports it
+     * ([io.kuicksilver.quic.EmsgsizeReports]). The proxy asks after each payload, so the refused one is counted as such, not
+     * as sent to the target, and the tunnel goes on.
+     */
+    @Test fun negative_aRefusalTheAcceleratedSocketReportsIsNotCountedAsSent() =
+        h3Test {
+            val reporting = OpenedIos<EmsgsizeReportingIo>()
+            val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } } }
+            rig.use { r ->
+                val got = rig.echo(echoAt)
+                val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                reporting.list
+                    .single()
+                    .refuse
+                    .store(1)
+                t.send("too big for the path".encodeToByteArray())
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedRefusedAsTooLarge == 1L }
+                }
+                assertEquals(0, rig.proxy.stats.toTargets)
+                t.send("next".encodeToByteArray())
+                assertContentEquals("next".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                assertContentEquals("echo:next".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                assertEquals(1, rig.proxy.stats.droppedRefusedAsTooLarge)
+                assertEquals(1, rig.proxy.stats.toTargets)
+                t.close()
+            }
+        }
+
+    /**
+     * A refused payload is not activity: nothing went through the socket, as with every other drop, so a tunnel that gets
+     * only refused payloads ends at the idle timeout, both for a refusal thrown and for one the accelerated socket reports.
+     */
+    @Test fun negative_refusedPayloadsDoNotKeepATunnelAlive() =
+        h3Test {
+            for (reported in listOf(false, true)) {
+                val reporting = OpenedIos<EmsgsizeReportingIo>()
+                val rig = rig { f -> allowAll { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } } }
+                rig.proxy.impl.idleTimeoutForTest = 1.seconds
+                rig.use { r ->
+                    val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                    if (reported) {
+                        reporting.list
+                            .single()
+                            .refuse
+                            .store(Int.MAX_VALUE)
+                    } else {
+                        rig.sockets.single().onSend = { throw IOException("Message too long") }
+                    }
+                    // refused payloads keep coming, one after the other, until the tunnel ends; a refusal that touched the
+                    // idle timer would keep it open for good
+                    withTimeout(10.seconds) {
+                        while (rig.proxy.activeTunnels.value > 0) {
+                            val before = rig.proxy.impl.changes.value
+                            if (runCatching { t.trySend("x".encodeToByteArray()) }.isFailure) break
+                            withTimeoutOrNull(1.seconds) {
+                                rig.proxy.impl.changes
+                                    .first { it > before }
+                            }
+                        }
+                        rig.proxy.activeTunnels.first { it == 0 }
+                    }
+                    assertTrue(rig.proxy.stats.droppedRefusedAsTooLarge > 0, "reported=$reported")
+                    assertEquals(0, rig.proxy.stats.toTargets)
+                    t.close()
+                }
+            }
+        }
+
+    /** A refused payload never reached the target, so it does not count toward [UdpProxyConfig.unansweredLimit]. */
+    @Test fun negative_refusedPayloadsDoNotCountTowardTheUnansweredLimit() =
+        h3Test {
+            val reporting = OpenedIos<EmsgsizeReportingIo>()
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        unansweredLimit = 2,
+                        socketFactory = { a -> EmsgsizeReportingIo(f(a)).also { reporting.add(it) } },
+                    )
+                }
+            rig.use { r ->
+                val silent =
+                    r.pair.quic.net
+                        .open(echoAt)
+                val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                // two refusals the accelerated socket reports, then two thrown, then two that go out, then the limit
+                reporting.list
+                    .single()
+                    .refuse
+                    .store(2)
+                val thrown = AtomicInt(0)
+                rig.sockets.single().onSend = { if (thrown.incrementAndFetch() <= 2) throw IOException("Message too long") }
+                repeat(7) { t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, it.toByte()))) }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes.first {
+                        val s = rig.proxy.stats
+                        s.droppedRefusedAsTooLarge + s.toTargets + s.droppedUnanswered == 7L
+                    }
+                }
+                assertEquals(4, rig.proxy.stats.droppedRefusedAsTooLarge)
+                assertEquals(2, rig.proxy.stats.toTargets)
+                assertEquals(1, rig.proxy.stats.droppedUnanswered)
+                silent.close()
+                t.close()
+            }
+        }
+
+    /**
+     * Any other send failure on the target's socket still ends the tunnel (section 3.1), and is not counted as a refusal;
+     * so does a send refused for want of Don't Fragment (no DF, no tunnel), even with a text that names EMSGSIZE.
+     */
+    @Test fun negative_anotherSendFailureStillClosesTheTunnel() =
+        h3Test {
+            val failures: List<() -> Throwable> =
+                listOf(
+                    { IOException("Network is unreachable") },
+                    { QuicException.DontFragmentUnavailable(io.kuicksilver.quic.IpFamily.V4, "Message too long") },
+                )
+            for (failure in failures) {
+                rig().use { rig ->
+                    val p = rig.pair
+                    rig.echo(echoAt)
+                    val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                    rig.sockets.single().onSend = { throw failure() }
+                    t.send("x".encodeToByteArray())
+                    val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
+                    assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
+                    withTimeout(5.seconds) { rig.socketsClosed.receive() }
+                    withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+                    assertEquals(0, rig.proxy.stats.droppedRefusedAsTooLarge)
+                }
             }
         }
 
@@ -1564,6 +1780,35 @@ class ConnectUdpTest {
                 assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
                 assertEquals(1, rig.proxy.stats.closedUnreachable)
                 withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+            }
+        }
+
+    /**
+     * A payload the socket refused never left, so an ICMP port unreachable quoting it is not about anything the tunnel sent
+     * (RFC 8085 section 5.2): it is ignored, and the tunnel stays.
+     */
+    @Test fun negative_anUnreachableQuotingARefusedPayloadIsIgnored() =
+        h3Test {
+            rig().use { rig ->
+                rig.proxy.impl.unreachablePoll = 20.milliseconds
+                rig.echo(echoAt)
+                val t = rig.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                val socket = rig.sockets.single()
+                val refused = kotlin.concurrent.atomics.AtomicBoolean(false)
+                socket.onSend = { if (refused.compareAndSet(expectedValue = false, newValue = true)) throw IOException("Message too long") }
+                t.send("refused payload".encodeToByteArray())
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedRefusedAsTooLarge == 1L }
+                }
+                socket.unreachable.trySend(io.kuicksilver.quic.Unreachable(echoAt, true, "refused payload".encodeToByteArray()))
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.ignoredUnreachable == 1L }
+                }
+                assertEquals(0, rig.proxy.stats.closedUnreachable)
+                assertEquals(1, rig.proxy.activeTunnels.value)
+                t.close()
             }
         }
 

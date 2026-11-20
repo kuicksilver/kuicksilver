@@ -1613,6 +1613,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- CONNECT-UDP proxy: a payload the tunnel's socket refused as too large for the path or link (EMSGSIZE or WSAEMSGSIZE:
+  an interface or route toward the target with a smaller MTU, or, on a socket in DO mode only, an ICMP Packet Too Big,
+  genuine or forged, that lowered the kernel's cached path MTU) ended the whole tunnel as a failed socket (reset and
+  STOP_SENDING `H3_CONNECT_ERROR`) on the sockets that throw for it, and on the accelerated socket, which skips such a
+  slot, was counted as sent (`toTargets`, the unanswered limit). RFC 9298 section 5 carries "the unmodified payload" and
+  such a payload cannot be forwarded whole, but the socket is still usable: the payload is now dropped and counted in the
+  new `UdpProxyStats.droppedRefusedAsTooLarge`, neither keeps the tunnel from its idle timeout nor counts toward
+  `unansweredLimit`, and the tunnel goes on forwarding the next ones. The accelerated socket reports its refusals through
+  the new internal `EmsgsizeReports`; the others' are recognized by `isRefusedAsTooLarge` (`kuicksilver-quic`, shared
+  with the portable JVM socket's own check: `PathMtuRefusedException`, the system's localized text, "Message too long",
+  the Windows JDK's text, ktor's `PosixException` with EMSGSIZE on Kotlin/Native). Any other send failure still ends the
+  tunnel (section 3.1) (`ConnectUdpTest.negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays`,
+  `.negative_aRefusalTheAcceleratedSocketReportsIsNotCountedAsSent`, `.negative_refusedPayloadsDoNotKeepATunnelAlive`,
+  `.negative_refusedPayloadsDoNotCountTowardTheUnansweredLimit`, `.negative_anotherSendFailureStillClosesTheTunnel`,
+  `SendRefusalTest`).
 - CONNECT-UDP proxy: `UdpProxyStats.packetTooBig` stayed `NotProbed` after the first tunnel opened, contrary to its
   documentation ("as probed at its first tunnel"): the raw ICMP privilege was probed only at the first payload dropped as
   too large for the client, after that drop was counted, so a reader that saw the drop could still find `NotProbed` (a

@@ -25,12 +25,14 @@ import io.kuicksilver.http3.runtime.Http3StreamImpl
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.Ecn
+import io.kuicksilver.quic.EmsgsizeReports
 import io.kuicksilver.quic.IpFamily
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PacketTooBigSender
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.UnreachableReports
 import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.isRefusedAsTooLarge
 import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.quic.specificIpOrNull
 import io.kuicksilver.quic.withUnmappedIp
@@ -126,6 +128,7 @@ internal class UdpProxyImpl(
     internal val fromTargets = AtomicLong(0)
     internal val unknownContext = AtomicLong(0)
     internal val tooLargeForLink = AtomicLong(0)
+    internal val refusedAsTooLarge = AtomicLong(0)
     internal val rateLimited = AtomicLong(0)
     internal val unanswered = AtomicLong(0)
     internal val foreignSource = AtomicLong(0)
@@ -229,6 +232,7 @@ internal class UdpProxyImpl(
             fromTargets.load(),
             unknownContext.load(),
             tooLargeForLink.load(),
+            refusedAsTooLarge.load(),
             rateLimited.load(),
             unanswered.load(),
             foreignSource.load(),
@@ -747,8 +751,29 @@ private class ProxyTunnel(
         sendBatch.setLength(0, len)
         sendBatch.setAddress(0, target)
         sendBatch.setEcn(0, Ecn.NotEct)
-        sent?.record(d, n, len)
-        if (io.io.send(sendBatch) == 1) proxy.count(proxy.toTargets)
+        // the batch holds this one payload, so a refusal is that payload's: it is dropped alone, the next HTTP datagram is a
+        // send of its own. Section 5 carries "the unmodified payload": one the path or link cannot carry whole is dropped, not
+        // fragmented, and the socket stays usable; any other failure ends the tunnel (section 3.1). A refusal is neither
+        // activity (nothing went out: the idle timer is not touched) nor a payload the target left unanswered.
+        val accepted =
+            try {
+                io.io.send(sendBatch)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!isRefusedAsTooLarge(e)) throw e
+                proxy.count(proxy.refusedAsTooLarge)
+                return
+            }
+        // the accelerated socket skips a refused slot without throwing, and counts it as sent
+        if (accepted > 0 && (io.io as? EmsgsizeReports)?.takeEmsgsize()?.let { it > 0 } == true) {
+            proxy.count(proxy.refusedAsTooLarge)
+            return
+        }
+        if (accepted == 1) {
+            sent?.record(d, n, len)
+            proxy.count(proxy.toTargets)
+        }
         answer.sent.incrementAndFetch()
         touch()
     }

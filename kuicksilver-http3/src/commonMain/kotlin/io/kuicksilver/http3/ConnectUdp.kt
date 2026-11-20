@@ -375,6 +375,10 @@ public class UdpProxyConfig(
  * @property fromTargets UDP payloads received from targets and sent on to clients.
  * @property droppedUnknownContext HTTP datagrams from clients with a Context ID other than 0, or none (RFC 9298 section 4).
  * @property droppedTooLargeForLink UDP payloads above what [UdpProxyConfig.linkMtu] carries unfragmented (section 5).
+ * @property droppedRefusedAsTooLarge UDP payloads within [UdpProxyConfig.linkMtu] that the tunnel's socket refused as too
+ *   large for the path or link (EMSGSIZE: a smaller MTU toward the target), as the accelerated socket reports them or as a
+ *   send failure says; each is dropped (section 5 carries "the unmodified payload", never a fragment of it) and the tunnel
+ *   stays open. A failure not recognized as such a refusal ends the tunnel instead (`docs/spec/rfc/9298.md`, section 3.1).
  * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packetRate] or [UdpProxyConfig.clientPacketRate].
  * @property droppedUnanswered UDP payloads beyond [UdpProxyConfig.unansweredLimit] to a target that never answered.
  * @property droppedForeignSource datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").
@@ -404,6 +408,7 @@ public class UdpProxyStats internal constructor(
     public val fromTargets: Long,
     public val droppedUnknownContext: Long,
     public val droppedTooLargeForLink: Long,
+    public val droppedRefusedAsTooLarge: Long,
     public val droppedRateLimited: Long,
     public val droppedUnanswered: Long,
     public val droppedForeignSource: Long,
@@ -420,7 +425,8 @@ public class UdpProxyStats internal constructor(
     /** The counters, for logs. */
     override fun toString(): String =
         "UdpProxyStats(opened=$tunnelsOpened, refused=$requestsRefused, toTargets=$toTargets, fromTargets=$fromTargets, " +
-            "unknownContext=$droppedUnknownContext, tooLargeForLink=$droppedTooLargeForLink, rateLimited=$droppedRateLimited, " +
+            "unknownContext=$droppedUnknownContext, tooLargeForLink=$droppedTooLargeForLink, " +
+            "refusedAsTooLarge=$droppedRefusedAsTooLarge, rateLimited=$droppedRateLimited, " +
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
             "ignoredUnreachable=$ignoredUnreachable, " +
