@@ -14,6 +14,8 @@ import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.ConnectionRuntime
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -413,14 +416,22 @@ class DatagramApiTest {
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     congest(p, c)
-                    repeat(32) { c.sendDatagram(payload(it), DatagramPolicy.Reject) }
+                    // The 32 and the 33rd go from the connection's loop thread, so the loop sends nothing in between: with
+                    // the server cut, a PTO probe still leaves (RFC 9002 section 6.2.4, beyond the congestion window) and
+                    // takes queued datagrams along, which a slow scheduler let happen before the 33rd on mingwX64 CI.
+                    // UNDISPATCHED runs the 33rd up to its first suspension here, on the loop thread.
+                    val scope = this
                     val blocked =
-                        async {
-                            c.sendDatagram(payload(32), DatagramPolicy.Reject)
-                            true
+                        withContext((c as ConnectionRuntime).loopDispatcherForTest) {
+                            repeat(32) { c.sendDatagram(payload(it), DatagramPolicy.Reject) }
+                            val thirtyThird =
+                                scope.async(start = CoroutineStart.UNDISPATCHED) {
+                                    c.sendDatagram(payload(32), DatagramPolicy.Reject)
+                                    true
+                                }
+                            assertFalse(thirtyThird.isCompleted, "the 33rd waits for room")
+                            thirtyThird
                         }
-                    kotlinx.coroutines.yield()
-                    assertFalse(blocked.isCompleted, "the 33rd waits for room")
                     p.net.uncut(p.server.localAddress)
                     assertTrue(blocked.await(), "room came as datagrams left")
                     assertEquals(
