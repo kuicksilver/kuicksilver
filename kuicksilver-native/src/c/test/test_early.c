@@ -678,6 +678,46 @@ static void test_session_from_server_without_sni_ack(void) {
     END();
 }
 
+/* RFC 9846 section 4.7.1: "Clients MUST only resume if the new SNI value is valid for the server certificate presented in the original
+   session". With an SNI other than the verify name (TlsConfig.serverName: a front or a proxy name) the handshake checked the
+   certificate against the verify name only; the SNI the session is named after was never checked against it. The session of
+   such a handshake resumes under that SNI only when the certificate also names it. */
+static ksl_session *first_session_named(ksl_ctx *cc, ksl_ctx *sc, const char *sni) {
+    ksl_ssl *c = qclient_named(cc, sni, "server.test"), *s = qserver(sc, "cfg-1");
+    track ct = {0}, st = {0};
+    pump_early(c, s, &ct, &st);
+    ksl_session *sess = ct.done && st.done ? ksl_ssl_get1_session(c) : NULL;
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    return sess;
+}
+static void test_negative_sni_the_certificate_does_not_name(void) {
+    SECTION("negative_session_not_resumed_under_an_sni_its_certificate_does_not_name");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
+    ksl_session *sess = first_session_named(cc, sc, "proxy.internal");
+    CHECK(sess != NULL, "a handshake under the SNI proxy.internal, verified for server.test");
+    ksl_ssl *c = qclient_named(cc, "proxy.internal", "server.test");
+    CHECK(sess != NULL && ksl_ssl_set_session(c, sess) == KSL_ERROR && last_code(c, NULL) == KSL_E_BAD_ARG,
+          "negative: not resumed under proxy.internal, which the certificate (server.test, *.wild.test) does not name");
+    ksl_ssl_free(c);
+    ksl_session_free(sess);
+    sess = first_session_named(cc, sc, "a.wild.test");
+    CHECK(sess != NULL, "a handshake under the SNI a.wild.test, verified for server.test");
+    c = qclient_named(cc, "a.wild.test", "server.test");
+    CHECK(sess != NULL && ksl_ssl_set_session(c, sess) == KSL_OK,
+          "control: resumed under a.wild.test, which *.wild.test names");
+    ksl_ssl *s = qserver(sc, "cfg-1");
+    track ct = {0}, st = {0};
+    pump_early(c, s, &ct, &st);
+    CHECK(ct.done && st.done && reused(c) == 1, "and the handshake resumes");
+    ksl_ssl_free(s);
+    ksl_ssl_free(c);
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    END();
+}
+
 /* ksl_nst_has_early_data, the NewSessionTicket scan behind the renewed-ticket fix: every read stays inside the message (ASan),
    malformed messages answer 0. Message: type 4, u24 body length, lifetime, age_add, nonce<1>, ticket<2>, extensions<2>. */
 int ksl_nst_has_early_data(const uint8_t *m, size_t len);
@@ -920,5 +960,6 @@ void run_early(void) {
     test_negative_renewed_ticket_without_early_data();
     test_negative_session_of_another_name();
     test_session_from_server_without_sni_ack();
+    test_negative_sni_the_certificate_does_not_name();
     test_nst_parser();
 }

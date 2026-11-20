@@ -239,6 +239,8 @@ int ksl_ech_inner_versions_ok(
 void ksl_ech_ctx_free(ksl_ctx *c);
 const char *
 ksl_verify_host(ksl_ssl *s); /* the host name a server certificate is checked against now (NULL: an IP literal) */
+/* Whether the leaf names the IP literal ip or the DNS name host (X509_CHECK_FLAG_* flags), as OpenSSL's verifier matches (ksl_verify.c) */
+int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned flags);
 int ksl_ctx_register_abort_ext(ksl_ctx *c); /* ksl_ctx.c: once, when a client context allows TLS 1.2 */
 
 /* verification (ksl_verify.c) */

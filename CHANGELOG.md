@@ -1777,7 +1777,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   early data sni"); a name that differs only in case resumes without 0-RTT for the same reason. A session's name is the
   one the client sent, also when the server did not acknowledge it (RFC 6066 section 3 leaves that to a server that used
   the name; OpenSSL's client records the name only from the acknowledgment), so sessions from such servers (ngtcp2,
-  quiche and msquic in the interop runner) resume, with 0-RTT, under their own name.
+  quiche and msquic in the interop runner) resume, with 0-RTT, under their own name. A session made under a server name
+  other than the verify name (`TlsConfig.serverName`) resumes only when its certificate also names that server name
+  (RFC 9846 section 4.7.1: "Clients MUST only resume if the new SNI value is valid for the server certificate presented in
+  the original session"); before, the server name itself was never checked against the certificate.
 
 - WebTransport flow control: a stream stopped (`stopSending`, or its input cancelled) right as it was accepted, before
   its reader had run, never gave its bytes back as session credit (draft-ietf-webtrans-http3-16 section 5.6), so a

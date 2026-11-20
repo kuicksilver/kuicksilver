@@ -29,7 +29,7 @@ static int name_only_cb(int ok, X509_STORE_CTX *x) {
     return ok || (e != X509_V_ERR_HOSTNAME_MISMATCH && e != X509_V_ERR_IP_ADDRESS_MISMATCH);
 }
 #endif
-static int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned flags) {
+int ksl_match_name(X509 *leaf, const char *host, const char *ip, unsigned flags) {
 #if OPENSSL_VERSION_NUMBER < 0x40100000L
     if (ip)
         return X509_check_ip_asc(leaf, ip, 0) == 1;
