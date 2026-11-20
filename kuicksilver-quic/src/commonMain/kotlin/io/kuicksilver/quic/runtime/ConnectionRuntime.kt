@@ -955,7 +955,7 @@ internal class ConnectionRuntime(
     /**
      * Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]) within [left] of the handshake timeout, then completes the
      * handshake; fails the connection with the store's error, or with a [TimeoutKind.Handshake] timeout when the store did not
-     * answer in time (its call is cancelled).
+     * answer in time (its call is cancelled). A store that returned as the deadline fired committed: the handshake completes.
      */
     private suspend fun commitTrustThenComplete(
         session: io.kuicksilver.tls.QuicTlsSession,
@@ -964,9 +964,13 @@ internal class ConnectionRuntime(
         var timedOut = false
         val failure =
             try {
-                if (kotlinx.coroutines.withTimeoutOrNull(left.coerceAtLeast(kotlin.time.Duration.ZERO)) { session.commitTrust() } == null) {
-                    timedOut = true
-                }
+                // completedWithin, not withTimeoutOrNull: a store that finished as the deadline fired is a commit (the key is
+                // stored), and the connection completes; withTimeoutOrNull dropped that result and failed a connection whose
+                // pin it had just written
+                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                val committed =
+                    io.kuicksilver.tls.completedWithin(left.coerceAtLeast(kotlin.time.Duration.ZERO)) { session.commitTrust() }
+                if (committed == null) timedOut = true
                 null
             } catch (t: Throwable) {
                 if (t is CancellationException) kotlinx.coroutines.currentCoroutineContext().ensureActive()

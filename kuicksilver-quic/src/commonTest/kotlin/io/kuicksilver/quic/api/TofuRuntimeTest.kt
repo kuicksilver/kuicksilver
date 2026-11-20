@@ -49,6 +49,9 @@ class TofuRuntimeTest {
         var failWith: Throwable? = null
         var hang = false
 
+        /** The store finishes only once its call was cancelled (the deadline fired), without a suspension point after. */
+        var finishAtTheDeadline = false
+
         override suspend fun get(name: String): SpkiSha256? = m[name]
 
         override suspend fun put(
@@ -57,7 +60,19 @@ class TofuRuntimeTest {
         ) {
             entered.complete(Unit)
             if (hang) kotlinx.coroutines.awaitCancellation()
-            gate.await()
+            if (finishAtTheDeadline) {
+                // suspended once first: a block that never suspends runs undispatched, and withTimeoutOrNull keeps the
+                // result of such a block whatever the timeout; the race is a block resumed by its dispatcher
+                kotlinx.coroutines.yield()
+                val job = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]!!
+                val bound = kotlin.time.TimeSource.Monotonic.markNow()
+                // a busy wait without a suspension point, so the cancellation cannot stop the store: it returns after the
+                // deadline fired
+                while (job.isActive && bound.elapsedNow() < 10.seconds) continue
+                check(!job.isActive) { "the deadline did not fire within 10 s" }
+            } else {
+                gate.await()
+            }
             failWith?.let { throw it }
             while (true) {
                 val old = pins.load()
@@ -155,6 +170,35 @@ class TofuRuntimeTest {
                 val t = assertIs<QuicException.ConnectionLost.Timeout>(e, "failed at the handshake timeout: $e")
                 assertEquals(io.kuicksilver.quic.TimeoutKind.Handshake, t.kind)
                 assertTrue(store.m.isEmpty())
+            } finally {
+                p.close()
+            }
+        }
+
+    /**
+     * The commit's deadline fires while the store is writing the key, and the store then returns: the key is stored, so the
+     * outcome is "committed": connect succeeds. A `withTimeoutOrNull` there dropped the returned result and failed the
+     * connection with a handshake timeout although its pin was written. Deterministic: the store returns only after its call
+     * was cancelled (the deadline is the 1 s handshake timeout).
+     */
+    @Test fun negative_aStoreThatFinishesAsTheDeadlineFiresCommits(): Unit =
+        runBlocking {
+            val store = GatedStore().also { it.finishAtTheDeadline = true }
+            val p = ApiPair.open(crypto = ksl)
+            try {
+                val config =
+                    QuicClientConfig
+                        .Builder(CoreFixtures.client(trust = TrustConfig.Tofu(store)))
+                        .apply { quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 1.seconds } }
+                        .build()
+                val c = withTimeout(20.seconds) { p.client.connect(p.server.localAddress, config) }
+                try {
+                    assertTrue(store.entered.isCompleted, "the store was asked")
+                    assertEquals(setOf("server.test"), store.m.keys, "the key was stored")
+                    assertTrue(c.isHandshakeComplete, "the handshake completed")
+                } finally {
+                    c.close()
+                }
             } finally {
                 p.close()
             }

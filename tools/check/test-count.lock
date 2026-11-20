@@ -4167,6 +4167,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamRetirementTest.sto
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.StreamRetirementTest.streamResetByUsGoesAtRetirementAndFinishesAtTheAcknowledgment
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aConnectionClosedAtOncePinsItsKeyAndAnotherKeyIsRefused
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aStoreThatFailsFailsTheConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aStoreThatFinishesAsTheDeadlineFiresCommits
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TofuRuntimeTest.negative_aStoreThatNeverAnswersEndsAtTheHandshakeTimeout
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.keyedByAddressWithoutServerName
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.keyedByServerName
