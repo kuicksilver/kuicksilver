@@ -668,6 +668,60 @@ class KslDatagramIoTest {
             }
         }
 
+    /**
+     * `initialUdpPayloadSize` over the accelerated socket (DF set): both sides start at the endpoint's largest datagram, 1500 bytes,
+     * Initial padding included, and keep it with PMTUD off; the 1500-byte datagram slots of `QuicEndpoint` take it whole.
+     */
+    @Test fun realUdpStartsAtTheConfiguredSizeAccelerated() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            val quic =
+                quicConfig {
+                    maxUdpPayloadSize = 1500
+                    initialUdpPayloadSize = 1500
+                    pmtud = false
+                }
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { this.quic = quic }.build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val c =
+                        client.connect(
+                            server.localAddress,
+                            QuicClientConfig.Builder(CoreFixtures.client()).apply { this.quic = quic }.build(),
+                        )
+                    val s = accepted.await()
+                    assertEquals(1500, c.stats.pathMtu, "the client started at 1500 and the handshake got through")
+                    assertEquals(1500, s.stats.pathMtu)
+                    val data = ByteArray(1 shl 20) { it.toByte() }
+                    val sink = async { s.acceptStream().input.readExactly(data.size) }
+                    val st = c.openBidi()
+                    launch {
+                        st.output.writeFully(data, 0, data.size)
+                        st.output.flushAndClose()
+                    }
+                    assertContentEquals(data, sink.await())
+                    assertEquals(1500, c.stats.pathMtu, "no black hole on loopback")
+                    c.close()
+                    s.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
     @Test fun oneClientBleachingEcnLeavesOthersCapable() =
         runBlocking {
             // client A's path bleaches ECN, so the server's validation for A fails; B, on the same accelerated server socket, still validates

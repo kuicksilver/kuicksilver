@@ -18,6 +18,7 @@ import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.ServerEarlyData
+import io.kuicksilver.quic.core.configuredStartSize
 import io.kuicksilver.quic.core.recoveryViolationForTest
 import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.core.streamEventIdForTest
@@ -64,7 +65,12 @@ import kotlin.time.Duration.Companion.seconds
  * times the server's flow-control limits and more streams, so the client's 0-RTT can break the server's real limits
  * (section 17.2.3: "A server SHOULD treat a violation of remembered limits ... as a connection error"); [HIGHER] the
  * ticket remembers a quarter of the flow-control limits and fewer streams, so the accepting server's new parameters are
- * higher, and the client must still keep to the remembered ones until the handshake completes (section 7.4.1).
+ * higher, and the client must still keep to the remembered ones until the handshake completes (section 7.4.1; with
+ * [OVERRUN] too, OVERRUN takes precedence and HIGHER changes nothing); [MTU] both
+ * sockets set DF and three bytes follow the flags, `[start][link][remembered]`: both sides' `initialUdpPayloadSize` is
+ * 1200 + 5 x `(start & 63)` (bit 6: `pmtud` off; bit 7: `maxSendUdpPayloadSize` set to the start as well), every datagram above
+ * 1200 + `link` (255: none) vanishes on its way, each direction, and the ticket remembers a `max_udp_payload_size` of
+ * 1200 + `remembered` (253 and above: the server's own). The datagram-size invariants then hold too (see the class).
  *
  * An op byte `o`: kind `o & 7`, side `(o >> 3) & 1` (0 the client, 1 the server), argument `o >> 4`:
  * - 0 APP: action `arg & 7` of that side's application — 0 open a stream (`arg & 8`: unidirectional) and write [num]
@@ -99,6 +105,7 @@ internal object ZeroRttProgram {
     const val LOWERED = 16
     const val OVERRUN = 32
     const val HIGHER = 64
+    const val MTU = 128
 
     const val MAX_OPS = 300
 
@@ -115,17 +122,21 @@ internal object ZeroRttProgram {
             LOWERED to "lowered",
             OVERRUN to "overrun",
             HIGHER to "higher",
+            MTU to "mtu",
         )
 
     /** Builds programs for the seed corpus and the seeded test. */
     class Builder(
         outcome: Int,
         flags: Int,
+        /** The three bytes [MTU] reads after the flags (`[start][link][remembered]`); zeros when null. */
+        mtu: ByteArray? = null,
     ) {
         private val out =
             ByteArrayOutputStream().also {
                 it.write(outcome)
                 it.write(flags)
+                if (flags and MTU != 0) it.write(mtu ?: ByteArray(3), 0, 3)
             }
 
         private fun op(
@@ -246,7 +257,7 @@ internal object ZeroRttProgram {
         flags: Int,
         network: Boolean = true,
     ): ByteArray {
-        val b = Builder(outcome, flags)
+        val b = Builder(outcome, flags, if (flags and MTU != 0) rnd.nextBytes(3) else null)
 
         fun appOp(side: Int) {
             val i = rnd.nextInt(8)
@@ -310,6 +321,13 @@ internal object ZeroRttCoverage {
  *   never after an acceptance;
  * - no event names a stream after its [ConnectionEvent.StreamFinished] or a stream the rejection dropped, and every
  *   stream in either side's map is one its application can reach (it opened it, or a StreamOpened event announced it).
+ * With [ZeroRttProgram.MTU] (RFC 9000 sections 7.4.1, 14; RFC 8899 section 4.3), on both sides:
+ * - no datagram is larger than the side's own `maxUdpPayloadSize`, its `maxSendUdpPayloadSize`, the peer's
+ *   `max_udp_payload_size` (the remembered one until the server's arrives) and, with `pmtud` off, its start;
+ * - the size in use is never above the largest datagram the network delivered from that side, unless it is the configured start
+ *   not yet disproved (an unconfirmed PLPMTU);
+ * - a side whose size is above the link and that sent a datagram the link dropped falls back within [MTU_FALLBACK] of virtual
+ *   time while the connection is open.
  */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 internal class ZeroRttConnectionFuzz(
@@ -355,6 +373,28 @@ internal class ZeroRttConnectionFuzz(
 
     private lateinit var pair: CorePair
     private val blocked = BooleanArray(2)
+
+    // ---- [ZeroRttProgram.MTU] ----
+    private val mtuOn = flags and ZeroRttProgram.MTU != 0
+    private var startByte = 0
+    private var link = Int.MAX_VALUE
+    private var rememberedMax = -1
+    private val start get() = 1200 + 5 * (startByte and 63)
+    private val pmtudOff get() = startByte and 64 != 0
+    private val capped get() = startByte and 128 != 0
+
+    /** The largest datagram the network delivered from each side, and since when a side sending above the link has waited to fall back. */
+    private val maxDelivered = intArrayOf(1200, 1200)
+    private val overLinkSince = arrayOf<io.kuicksilver.quic.TimeMark?>(null, null)
+    private val df =
+        io.kuicksilver.quic.IoCapabilities(
+            ecnSend = false,
+            ecnReceive = false,
+            gsoMaxSegments = 1,
+            gro = false,
+            df = true,
+            batch = 1,
+        )
     private val mode = if (outcome == ZeroRttProgram.REJECT_REQUIRED) EarlyDataState.Required else EarlyDataState.Allowed
 
     /** The streams each application can name (an index picks one); the client's own are forgotten at a rejection. */
@@ -378,8 +418,13 @@ internal class ZeroRttConnectionFuzz(
     fun run() {
         if (data.size < 2) return
         KslLoader.ensureLoaded()
+        if (mtuOn) {
+            startByte = u8()
+            u8().let { if (it != 255) link = 1200 + it }
+            u8().let { if (it < 253) rememberedMax = 1200 + it }
+        }
         val ticket = Tickets.take(small)
-        if (flags and (ZeroRttProgram.LOWERED or ZeroRttProgram.OVERRUN or ZeroRttProgram.HIGHER) != 0) inflate(ticket)
+        if (flags and (ZeroRttProgram.LOWERED or ZeroRttProgram.OVERRUN or ZeroRttProgram.HIGHER) != 0 || rememberedMax > 0) inflate(ticket)
         val serverQuic = serverQuic()
         val serverTls = if (outcome == ZeroRttProgram.REJECT_ALPN) Tickets.altServerTls else Tickets.serverTls
         val early =
@@ -396,27 +441,34 @@ internal class ZeroRttConnectionFuzz(
                 crypto = ksl,
                 clientEarly = mode,
                 serverEarly = early,
-                clientSetup = { c -> ticketUsed = c.useTicket(ticket) },
+                clientSetup = { c ->
+                    if (mtuOn) c.setPathCapabilities(io.kuicksilver.quic.PathId.Initial, df)
+                    ticketUsed = c.useTicket(ticket)
+                },
             )
         try {
             if (!ticketUsed) ticket.close()
             check(ticketUsed) { "the ticket gave no 0-RTT: the fuzzer would not test it" }
             ZeroRttCoverage.hit("runs")
             pair.client.datagramSender = datagrams[0]
-            pair.onServerCreated = { it.datagramSender = datagrams[1] }
+            pair.onServerCreated = {
+                it.datagramSender = datagrams[1]
+                if (mtuOn) it.setPathCapabilities(io.kuicksilver.quic.PathId.Initial, df)
+            }
             pair.filterToServer = { _, b ->
                 seen?.append(">")?.append(b.size)
-                toServer(b)
+                onSent(0, b.size, toServer(b))
             }
             pair.filterToClient = { _, b ->
                 seen?.append("<")?.append(b.size)
-                !blocked[1] && outcome != ZeroRttProgram.LOST
+                onSent(1, b.size, !blocked[1] && outcome != ZeroRttProgram.LOST)
             }
             fuzzOp {
                 "outcome=${ZeroRttProgram.OUTCOME_NAMES[outcome]} flags=${ZeroRttProgram.FLAG_NAMES.filterKeys {
                     flags and it != 0
                 }.values}"
             }
+            if (mtuOn) fuzzOp { "mtu start=$start pmtudOff=$pmtudOff capped=$capped link=$link remembered=$rememberedMax" }
             var ops = 0
             while (p < data.size && ops++ < ZeroRttProgram.MAX_OPS) {
                 val at = p
@@ -447,7 +499,10 @@ internal class ZeroRttConnectionFuzz(
                 TlsRole.Server,
             )
         if (lowered) tp.activeConnectionIdLimit += 5
-        if (flags and ZeroRttProgram.HIGHER != 0) {
+        if (rememberedMax > 0) tp.maxUdpPayloadSize = rememberedMax.toLong()
+        // OVERRUN takes precedence: applied after HIGHER it only restored the server's own values (a quarter times four, fewer
+        // streams plus four), and the accepting server was then not below the remembered limits at all
+        if (flags and ZeroRttProgram.HIGHER != 0 && !overrun) {
             tp.initialMaxData /= 4
             tp.initialMaxStreamDataBidiLocal /= 4
             tp.initialMaxStreamDataBidiRemote /= 4
@@ -474,7 +529,15 @@ internal class ZeroRttConnectionFuzz(
             .apply {
                 resetStreamAt = flags and ZeroRttProgram.NO_RESET_AT == 0
                 if (vn) versions = listOf(VersionProfile.V1, VersionProfile.V2)
+                mtuOptions()
             }.build()
+
+    private fun QuicConfig.Builder.mtuOptions() {
+        if (!mtuOn) return
+        initialUdpPayloadSize = start
+        if (capped) maxSendUdpPayloadSize = start
+        if (pmtudOff) pmtud = false
+    }
 
     private fun serverQuic(): QuicConfig =
         Tickets
@@ -486,6 +549,7 @@ internal class ZeroRttConnectionFuzz(
                 }
                 // one that still offered v1 would make the Version Negotiation a downgrade (RFC 9368 section 4)
                 if (vn) versions = listOf(VersionProfile.V2)
+                mtuOptions()
             }.build()
 
     private fun earlyApplication(): ByteArray? =
@@ -903,7 +967,62 @@ internal class ZeroRttConnectionFuzz(
         if (retry && retrySent) ZeroRttCoverage.hit("retry.answered")
     }
 
+    /**
+     * A datagram of [size] bytes left [side]; [kept] whether the network so far lets it through. Above the link it vanishes
+     * ([ZeroRttProgram.MTU]); the size invariants are checked on every datagram.
+     */
+    private fun onSent(
+        side: Int,
+        size: Int,
+        kept: Boolean,
+    ): Boolean {
+        if (!mtuOn) return kept
+        val c = core(side) ?: pair.client
+        val peerMax =
+            if (side ==
+                0
+            ) {
+                (c.peerTp ?: c.remembered)?.maxUdpPayloadSize ?: Long.MAX_VALUE
+            } else {
+                (c.peerTp?.maxUdpPayloadSize ?: Long.MAX_VALUE)
+            }
+        var bound = minOf(c.config.maxUdpPayloadSize.toLong(), c.config.maxSendUdpPayloadSize.toLong(), peerMax)
+        if (pmtudOff) bound = minOf(bound, maxOf(1200, start).toLong())
+        check(
+            size <= maxOf(1200L, bound),
+        ) { "${name(side)}: a datagram of $size bytes above its bound $bound (RFC 9000 sections 7.4.1, 14)" }
+        val delivered = kept && size <= link
+        if (delivered && size > maxDelivered[side]) maxDelivered[side] = size
+        if (kept && size > link && overLinkSince[side] == null && c.stats.pathMtu > link) overLinkSince[side] = pair.now
+        if (size > link && size > 1200) ZeroRttCoverage.hit("mtu.aboveLink")
+        return delivered
+    }
+
+    private fun checkMtu() {
+        if (!mtuOn) return
+        for (side in 0..1) {
+            val c = core(side) ?: continue
+            val mtu = c.stats.pathMtu
+            // an unconfirmed start may stand above what was delivered; anything else the path must have carried
+            check(mtu <= maxOf(maxDelivered[side], c.configuredStartSize())) {
+                "${name(
+                    side,
+                )}: size $mtu above the largest datagram delivered (${maxDelivered[side]}) and not its start ${c.configuredStartSize()}"
+            }
+            if (mtu <= link) {
+                if (overLinkSince[side] != null) ZeroRttCoverage.hit("mtu.fellBack")
+                overLinkSince[side] = null
+            }
+            val since = overLinkSince[side] ?: continue
+            if (isClosing(c)) continue
+            check(pair.now - since <= MTU_FALLBACK) {
+                "${name(side)}: size $mtu above the $link-byte link for ${pair.now - since} without falling back (RFC 8899 section 4.3)"
+            }
+        }
+    }
+
     private fun checkInvariants() {
+        checkMtu()
         for (side in 0..1) {
             val c = core(side) ?: continue
             if (isClosing(c)) check(closedSeen[side]) { "${name(side)} reached ${c.state} without a Closed event" }
@@ -1162,6 +1281,13 @@ internal object Tickets {
         }
     }
 }
+
+/**
+ * How long a side may keep a size above the link after the link dropped one of its datagrams ([ZeroRttProgram.MTU]): two PTOs
+ * in a row fall back (RFC 8899 section 4.3), the second about 3 s after the first datagram at the default initial RTT, longer
+ * after backoff; 30 s leaves room for a few backed-off PTOs and stays below the idle timeout.
+ */
+private val MTU_FALLBACK = 30.seconds
 
 /** Upper bounds of the per-connection collections, from the configuration: what a peer can make the core hold. */
 internal fun sizeBound(

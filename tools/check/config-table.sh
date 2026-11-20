@@ -11,6 +11,13 @@
 #   - the Since cell is a version (`0.2.0`); with git tags (`v<version>`) it must agree with the first tag whose class has
 #     the option (an option in no tag is later than the newest tag); without tags only the format is checked;
 #   - a row of a checked section that names no option of its classes is stale (inherited options: `#allow` in the spec).
+# A spec line of kind `keys` checks configuration-file keys instead (`<heading> | <source> | <key prefix> | keys`): every string
+# literal `"kuicksilver.<...>"` of the source is a key it reads and must be named in backticks somewhere in the document; the keys
+# under the prefix must each have a row in that heading's table (first cell the key in backticks, a Since version), and a row
+# there naming a key under the prefix that the source does not read is stale. A key under the prefix must also be passed to a
+# call other than listOf/setOf (a key listed but never parsed). Keys are found as whole string literals only: a literal that
+# starts like a key and goes on with a template (`"kuicksilver.quic.$name"`) or ends with a dot is refused, since a key built at
+# run time could not be checked.
 # Needs python3 (and git, for the Since check). Parses the Kotlin source with regular expressions and brace counting
 # only: a default it cannot reduce is only compared as text, an option without an inline default is only looked up.
 # Usage: tools/check/config-table.sh [root]   (exit 1 and one line per finding as `file:line: message`)
@@ -241,6 +248,44 @@ def first_tag(path, scope, name, kind):
             if found and name in found: return t[1:]
     return "unreleased"
 
+# ---------------------------------------------------------------- configuration-file keys
+DOC_TEXT = "\n".join(doc_lines)
+def check_keys(section, src, prefix):
+    global total
+    raw = open(os.path.join(root, src), encoding="utf-8").read()
+    code = strip_comments(raw)
+    keys = {}
+    for m in re.finditer(r'"(kuicksilver\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)"', code):
+        keys.setdefault(m.group(1), code.count("\n", 0, m.start()) + 1)
+    if not keys:
+        fail(src, "no `kuicksilver.*` key literal found (tools/check/config-table.spec)"); return
+    for m in re.finditer(r'"(kuicksilver\.[A-Za-z0-9_.]*(?:\$|\.(?=")))', code):
+        fail(f"{src}:{code.count(chr(10), 0, m.start()) + 1}", f"`{m.group(1)}...` builds a key at run time: write each key whole, so it can be checked")
+    parsed = set()
+    for m in re.finditer(r'\b(\w+)\(\s*"(kuicksilver\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)"', code):
+        if m.group(1) not in ("listOf", "setOf", "arrayOf", "mutableListOf", "mutableSetOf"): parsed.add(m.group(2))
+    for key, line in sorted(keys.items()):
+        total += 1
+        if "`" + key + "`" not in DOC_TEXT:
+            fail(f"{src}:{line}", f"key `{key}` is read but {doc_rel} never names it")
+    under = {k for k in keys if k.startswith(prefix + ".")}
+    rows = {}
+    for no, c, hdr in sections.get(section, []):
+        mm = re.fullmatch(r"`(kuicksilver\.[\w.]+)`", c[0].strip())
+        if not mm: continue
+        rows[mm.group(1)] = (no, c, hdr)
+        if mm.group(1).startswith(prefix + ".") and mm.group(1) not in keys:
+            fail(f"{doc_rel}:{no}", f"row `{mm.group(1)}` of `{section}` is no key {src} reads (stale?)")
+    for key in sorted(under):
+        if key not in parsed:
+            fail(f"{src}:{keys[key]}", f"key `{key}` is listed but never passed to a call that reads it")
+        if key not in rows:
+            fail(f"{src}:{keys[key]}", f"key `{key}` has no row in section `{section}` of {doc_rel}"); continue
+        no, c, hdr = rows[key]
+        scol = column(hdr, "since")
+        if scol is None or len(c) <= scol or not VERSION.match(cell_text(c[scol])):
+            fail(f"{doc_rel}:{no}", f"`{key}`: no Since version")
+
 # ---------------------------------------------------------------- run
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 total = 0
@@ -257,6 +302,8 @@ for spec_no, spec in enumerate(open(spec_path, encoding="utf-8").read().split("\
     section, src, scope, kind = parts
     if section not in sections:
         fail(doc_rel, f"no section `{section}` (tools/check/config-table.spec:{spec_no})"); continue
+    if kind == "keys":
+        check_keys(section, src, scope); continue
     opts = options(src, scope, kind)
     seen.setdefault(section, set()).update(opts)
     for name, (line, typ, default) in opts.items():

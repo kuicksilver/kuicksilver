@@ -63,6 +63,28 @@ class ZeroRttConnectionSeededTest {
         }
     }
 
+    /**
+     * [ZeroRttProgram.MTU]: random starts, send caps, PMTUD on or off, links and remembered `max_udp_payload_size` values under every
+     * outcome, with and without faults; the size invariants of [ZeroRttConnectionFuzz] hold, and without faults the answer is the
+     * configured one even when the start does not pass the link (the fallback lets the handshake through).
+     */
+    @Test fun everyOutcomeWithConfiguredDatagramSizes() {
+        val before = ZeroRttCoverage.snapshot()
+        for (outcome in 0 until ZeroRttProgram.OUTCOMES) {
+            for (flags in listOf(ZeroRttProgram.MTU, ZeroRttProgram.MTU or SMALL, ZeroRttProgram.MTU or RETRY)) {
+                for (s in 0 until seeds) {
+                    val seed = 90_000L + 1000L * outcome + 10L * (flags and 0x7f) + s
+                    run(seed, outcome, flags, faults = false)
+                    run(seed + 500_000, outcome, flags, faults = true)
+                }
+            }
+        }
+        val after = ZeroRttCoverage.snapshot()
+        for (key in listOf("mtu.aboveLink", "mtu.fellBack")) {
+            assertTrue((after[key] ?: 0L) > (before[key] ?: 0L), "the seeds reach $key")
+        }
+    }
+
     @Test fun everyOutcomeBeforeAndAfterRetryAndVersionNegotiation() {
         val before = ZeroRttCoverage.snapshot()
         val variants = listOf(0, RETRY, VERSION_NEGOTIATION, SMALL, SMALL or RETRY, NO_RESET_AT)

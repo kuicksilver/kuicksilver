@@ -1,5 +1,6 @@
 # quic.zeroRttConnection: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
 # written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-quic/src/jvmTest/resources/io/kuicksilver/quic/fuzz/ZeroRttFuzzTestInputs/zeroRttConnection/crash-overrun-after-higher	6b08432a8b808ed4	8de7b5a70ebcfeda
 kuicksilver-quic/src/jvmTest/resources/io/kuicksilver/quic/fuzz/ZeroRttFuzzTestInputs/zeroRttConnection/crash-server-closes-during-accepted-0rtt	5d2f0367070aaeae	4a94dd8216bc586f
 kuicksilver-quic/src/jvmTest/resources/io/kuicksilver/quic/fuzz/ZeroRttFuzzTestInputs/zeroRttConnection/seed-answer-cut	f0ee82480e4f4ddd	e4a0e3152d56d0a8
 kuicksilver-quic/src/jvmTest/resources/io/kuicksilver/quic/fuzz/ZeroRttFuzzTestInputs/zeroRttConnection/seed-calls-0-0	f18ff6c27bf3e411	d1672a25557068ca

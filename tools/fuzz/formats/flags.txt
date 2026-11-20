@@ -32,6 +32,7 @@ ZeroRttProgram flags 8 NO_RESET_AT noResetAt
 ZeroRttProgram flags 16 LOWERED lowered
 ZeroRttProgram flags 32 OVERRUN overrun
 ZeroRttProgram flags 64 HIGHER higher
+ZeroRttProgram flags 128 MTU mtu
 ZeroRttProgram outcome 0 ACCEPT accept
 ZeroRttProgram outcome 1 REJECT_APPLICATION rejectApplication
 ZeroRttProgram outcome 2 REJECT_LIMITS rejectLimits

@@ -10,6 +10,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsIdentity
@@ -293,6 +294,133 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=0") }
         assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicAcceptQueue=many") }
         assertFailsWith<IllegalArgumentException> { limits("-P:kuicksilver.quicMaxConnectionsPerIp=-1") }
+    }
+
+    /** `kuicksilver.quic.*`: the QUIC transport of the HTTP/3 listeners, each key the `QuicConfig` option of its name. */
+    @Test
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun quicTransportKeys() {
+        fun quic(vararg extra: String): KuicksilverApplicationEngine.Configuration =
+            EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
+        val none = quic()
+        assertEquals(QuicConfig.Default, none.quic, "no key: the default, unassigned")
+        assertTrue(!none.quicAssigned, "so quicMaxIdleTimeout still applies")
+        val cfg =
+            quic(
+                "-P:kuicksilver.quic.initialUdpPayloadSize=1350",
+                "-P:kuicksilver.quic.maxSendUdpPayloadSize=1380",
+                "-P:kuicksilver.quic.maxUdpPayloadSize=1400",
+                "-P:kuicksilver.quic.pmtud=false",
+                "-P:kuicksilver.quic.maxIdleTimeout=1m",
+                "-P:kuicksilver.quic.handshakeTimeout=5s",
+                "-P:kuicksilver.quic.keepAlive=15s",
+                "-P:kuicksilver.quic.maxBidiStreams=500",
+                "-P:kuicksilver.quic.maxUniStreams=16",
+                "-P:kuicksilver.quic.allowMigration=false",
+            )
+        val c = cfg.quic
+        assertEquals(1350, c.initialUdpPayloadSize)
+        assertEquals(1380, c.maxSendUdpPayloadSize)
+        assertEquals(1400, c.maxUdpPayloadSize)
+        assertEquals(false, c.pmtud)
+        assertEquals(60.seconds, c.maxIdleTimeout)
+        assertEquals(5.seconds, c.handshakeTimeout)
+        assertEquals(15.seconds, c.keepAlive)
+        assertEquals(500L, c.maxBidiStreams)
+        assertEquals(16L, c.maxUniStreams)
+        assertEquals(false, c.allowMigration)
+        assertEquals(1350, cfg.http3Quic().initialUdpPayloadSize, "what the HTTP/3 listeners get")
+        // the other options keep their defaults
+        assertEquals(QuicConfig.Default.initialStreamWindow, c.initialStreamWindow)
+        assertEquals(QuicConfig.Default.versions, c.versions)
+        val off = quic("-P:kuicksilver.quic.maxIdleTimeout=0", "-P:kuicksilver.quic.keepAlive=0").quic
+        assertEquals(Duration.ZERO, off.maxIdleTimeout, "0: no idle timeout of our own")
+        assertNull(off.keepAlive, "0: no keep-alive")
+        assertEquals(1452, quic("-P:kuicksilver.quic.initialUdpPayloadSize=1452").quic.initialUdpPayloadSize)
+    }
+
+    @Test
+    fun negative_quicTransportKeysRefuseBadValuesByName() {
+        fun refused(vararg extra: String): String =
+            assertFailsWith<IllegalArgumentException>(extra.joinToString()) {
+                EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+            }.message!!
+        // RFC 9000 section 14: below 1200 is no QUIC datagram size
+        assertEquals(
+            "kuicksilver.quic: initialUdpPayloadSize must be 1200..65527",
+            refused("-P:kuicksilver.quic.initialUdpPayloadSize=1199"),
+        )
+        assertEquals(
+            "kuicksilver.quic: maxSendUdpPayloadSize must be 1200..65527",
+            refused("-P:kuicksilver.quic.maxSendUdpPayloadSize=1000"),
+        )
+        assertEquals(
+            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 70000",
+            refused("-P:kuicksilver.quic.maxUdpPayloadSize=70000"),
+        )
+        // what QuicConfig takes but the HTTP/3 listener's endpoint would refuse only at bind, once the server starts
+        assertEquals(
+            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 1501",
+            refused("-P:kuicksilver.quic.maxUdpPayloadSize=1501"),
+        )
+        assertEquals("kuicksilver.quic: maxUdpPayloadSize must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=1199"))
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        assertEquals(
+            1500,
+            EngineMain
+                .createServer(arrayOf("-host=127.0.0.1", "-port=0", "-P:kuicksilver.quic.maxUdpPayloadSize=1500"))
+                .engine.configuration.quic.maxUdpPayloadSize,
+        )
+        assertEquals(
+            "kuicksilver.quic.initialUdpPayloadSize: \"1350b\" is not a whole number",
+            refused("-P:kuicksilver.quic.initialUdpPayloadSize=1350b"),
+        )
+        assertEquals("kuicksilver.quic.pmtud: \"maybe\" is not true or false", refused("-P:kuicksilver.quic.pmtud=maybe"))
+        assertEquals("kuicksilver.quic.allowMigration: \"yes\" is not true or false", refused("-P:kuicksilver.quic.allowMigration=yes"))
+        assertEquals(
+            "kuicksilver.quic.maxIdleTimeout: \"soon\" is not a duration (30s, 1m)",
+            refused("-P:kuicksilver.quic.maxIdleTimeout=soon"),
+        )
+        assertTrue(refused("-P:kuicksilver.quic.handshakeTimeout=0").startsWith("kuicksilver.quic: handshakeTimeout must be positive"))
+        assertTrue(refused("-P:kuicksilver.quic.maxIdleTimeout=-1s").startsWith("kuicksilver.quic: maxIdleTimeout"))
+        assertEquals(
+            "kuicksilver.quic: keepAlive must be at most 3/4 of maxIdleTimeout",
+            refused("-P:kuicksilver.quic.maxIdleTimeout=10s", "-P:kuicksilver.quic.keepAlive=9s"),
+        )
+        assertEquals("kuicksilver.quic: stream limits must be at most 2^60", refused("-P:kuicksilver.quic.maxBidiStreams=-1"))
+        assertEquals("kuicksilver.quic.maxUniStreams: \"many\" is not a whole number", refused("-P:kuicksilver.quic.maxUniStreams=many"))
+        // a misspelt key does not leave the default in place silently
+        val typo = refused("-P:kuicksilver.quic.initialPacketSize=1350")
+        assertTrue(
+            typo.startsWith("kuicksilver.quic.initialPacketSize is not a QUIC key; the keys are kuicksilver.quic.initialUdpPayloadSize"),
+            typo,
+        )
+    }
+
+    /**
+     * The `kuicksilver.quic` block of docs/guide/quic.md ("Tunnels and NAT paths (WireGuard)"), loaded as it stands with `-config`, so
+     * a key the guide shows and the engine does not read (or reads otherwise) fails here.
+     */
+    @Test
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun guideQuicTransportBlockLoads() {
+        val guide =
+            generateSequence(File("").absoluteFile) { it.parentFile }
+                .map { File(it, "docs/guide/quic.md") }
+                .first { it.exists() }
+                .readText()
+        val block = guide.substringAfter("### Tunnels and NAT paths (WireGuard)").substringAfter("```hocon\n").substringBefore("```")
+        assertTrue(block.contains("kuicksilver {") && block.contains("quic {"), block)
+        val file = File(dir, "quic.conf").apply { writeText("ktor.deployment.port = 0\nktor.deployment.host = \"127.0.0.1\"\n$block") }
+        val c =
+            EngineMain
+                .createServer(arrayOf("-config=${file.path}"))
+                .engine.configuration.quic
+        assertEquals(1350, c.initialUdpPayloadSize)
+        assertEquals(1372, c.maxSendUdpPayloadSize)
+        assertEquals(true, c.pmtud)
+        assertEquals(60.seconds, c.maxIdleTimeout)
+        assertEquals(15.seconds, c.keepAlive)
     }
 
     @Test fun reloadIntervalKeyParsed() {

@@ -163,6 +163,12 @@ internal class SentPacket {
     var pn: Long = 0
     var timeSent: TimeMark = TimeMark(0)
     var size: Int = 0
+
+    /** The size of the UDP datagram it travelled in, with the packets coalesced with it: what DPLPMTUD's black-hole detection judges. */
+    var datagramSize: Int = 0
+
+    /** The connection-wide sequence number of that datagram: one order over all packet number spaces, shared by coalesced packets. */
+    var datagramSeq: Long = 0
     var ackEliciting: Boolean = false
     var inFlight: Boolean = false
 
@@ -209,6 +215,8 @@ internal class SentPacket {
         pn = 0
         timeSent = TimeMark(0)
         size = 0
+        datagramSize = 0
+        datagramSeq = 0
         ackEliciting = false
         inFlight = false
         zeroRtt = false

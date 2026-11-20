@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ZeroRttConnectionFuzz.kt b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ZeroRttConnectionFuzz.kt
+index bfd72ec1e..ec3915a82 100644
+--- a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ZeroRttConnectionFuzz.kt
++++ b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ZeroRttConnectionFuzz.kt
+@@ -502,7 +502,7 @@ internal class ZeroRttConnectionFuzz(
+         if (rememberedMax > 0) tp.maxUdpPayloadSize = rememberedMax.toLong()
+         // OVERRUN takes precedence: applied after HIGHER it only restored the server's own values (a quarter times four, fewer
+         // streams plus four), and the accepting server was then not below the remembered limits at all
+-        if (flags and ZeroRttProgram.HIGHER != 0 && !overrun) {
++        if (flags and ZeroRttProgram.HIGHER != 0) {
+             tp.initialMaxData /= 4
+             tp.initialMaxStreamDataBidiLocal /= 4
+             tp.initialMaxStreamDataBidiRemote /= 4

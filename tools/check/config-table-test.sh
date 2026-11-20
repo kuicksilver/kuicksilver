@@ -2,7 +2,9 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/check/config-table.sh: a fixture tree whose table is right passes, and each of a missing row,
-# a wrong default (number, Duration, Boolean, null, expression), a missing Since column and a malformed Since fails.
+# a wrong default (number, Duration, Boolean, null, expression), a missing Since column and a malformed Since fails; for a
+# `keys` line, a key the document never names, a key under the prefix without a row or never read, a stale key row, a row
+# without Since and a key built at run time fail.
 # Usage: tools/check/config-table-test.sh   (exit 1 when a control behaves wrongly)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -74,6 +76,49 @@ expect fail stale-row "$stale" 'row `gone`.*matches no option'
 echo '#allow Opts | gone' >> "$tmp/tools/check/config-table.spec"
 expect pass allowed-row "$stale"
 sed -i.bak '/^#allow/d' "$tmp/tools/check/config-table.spec"; rm "$tmp/tools/check/config-table.spec.bak"
+# configuration-file keys (`keys` spec lines): every key literal named in the document, every key under the prefix in the table
+cat > "$tmp/mod/src/commonMain/Main.kt" <<'K'
+object Main {
+    fun load(c: Config) {
+        c.propertyOrNull("kuicksilver.http3")
+        // "kuicksilver.commented" is no key: comments are skipped
+        c.propertyOrNull("kuicksilver.quic.pmtud")
+        val keys = listOf("kuicksilver.quic.maxIdleTimeout")
+        read("kuicksilver.quic.maxIdleTimeout")
+    }
+}
+K
+echo 'Keys | mod/src/commonMain/Main.kt | kuicksilver.quic | keys' >> "$tmp/tools/check/config-table.spec"
+keys="$good
+\`kuicksilver.http3\` turns HTTP/3 on.
+
+### Keys
+
+| Key | Value | Since |
+|---|---|---|
+| \`kuicksilver.quic.pmtud\` | x | 0.3.0 |
+| \`kuicksilver.quic.maxIdleTimeout\` | x | 0.3.0 |
+"
+expect pass keys-good "$keys"
+expect fail key-not-named "${keys/\`kuicksilver.http3\` turns/HTTP/3 turns}" 'key `kuicksilver.http3` is read but'
+expect fail key-without-row "$(grep -v 'maxIdleTimeout' <<<"$keys")" 'key `kuicksilver.quic.maxIdleTimeout` has no row'
+expect fail key-stale-row "$keys| \`kuicksilver.quic.gone\` | x | 0.3.0 |
+" 'row `kuicksilver.quic.gone`.*stale'
+expect fail key-no-since "${keys/| x | 0.3.0 |
+| \`kuicksilver.quic.maxIdleTimeout\`/| x | soon |
+| \`kuicksilver.quic.maxIdleTimeout\`}" '`kuicksilver.quic.pmtud`: no Since version'
+# a key listed but never read, and a key built at run time
+cp "$tmp/mod/src/commonMain/Main.kt" "$tmp/Main.kt.orig"
+sed -i.bak '/read("kuicksilver.quic.maxIdleTimeout")/d' "$tmp/mod/src/commonMain/Main.kt"
+expect fail key-never-read "$keys" 'key `kuicksilver.quic.maxIdleTimeout` is listed but never passed'
+cp "$tmp/Main.kt.orig" "$tmp/mod/src/commonMain/Main.kt"
+sed -i.bak 's/c.propertyOrNull("kuicksilver.http3")/c.propertyOrNull("kuicksilver.http3"); c.propertyOrNull("kuicksilver.quic.$name")/' "$tmp/mod/src/commonMain/Main.kt"
+expect fail key-template "$keys" 'builds a key at run time'
+cp "$tmp/Main.kt.orig" "$tmp/mod/src/commonMain/Main.kt"
+sed -i.bak 's/c.propertyOrNull("kuicksilver.http3")/c.propertyOrNull("kuicksilver.http3"); c.propertyOrNull("kuicksilver.quic." + name)/' "$tmp/mod/src/commonMain/Main.kt"
+expect fail key-concatenated "$keys" 'builds a key at run time'
+cp "$tmp/Main.kt.orig" "$tmp/mod/src/commonMain/Main.kt"; rm -f "$tmp/mod/src/commonMain/Main.kt.bak" "$tmp/Main.kt.orig"
+sed -i.bak '/| keys$/d' "$tmp/tools/check/config-table.spec"; rm "$tmp/tools/check/config-table.spec.bak"
 # Since against git tags: a fixture repository whose tag v0.1.0 has `limit` in Cfg and `extra` only in another class
 g="$tmp/repo"; mkdir -p "$g/tools/check" "$g/mod/src/commonMain"; cp "$tmp/tools/check/config-table.spec" "$g/tools/check/"
 cat > "$g/mod/src/commonMain/Cfg.kt" <<'K'

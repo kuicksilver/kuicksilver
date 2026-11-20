@@ -13,6 +13,7 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.PacketProtection
 import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
+import io.kuicksilver.quic.recovery.SentPacket
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.ControlKind
 import io.kuicksilver.quic.stream.SendRange
@@ -67,10 +68,33 @@ internal class PacketBuilder(
      */
     private var pmtuProbe = false
 
+    /** The packets of the datagram being built, which [stampDatagram] gives the datagram's size once it is complete. */
+    private val inDatagram = ArrayList<SentPacket>(4)
+
+    /**
+     * The datagram of [n] bytes is complete: each of its packets records that size. Black-hole detection judges what the path
+     * carried (RFC 8899 section 4.3), the datagram: coalesced packets of 1200 bytes or less fill a datagram above the base.
+     */
+    private fun stampDatagram(n: Int) {
+        for (i in inDatagram.indices) {
+            val p = inDatagram[i]
+            p.datagramSize = n
+            // what a Packet Too Big about this path may claim was too large is the datagram, not its largest packet
+            c.paths.byId(io.kuicksilver.quic.PathId(p.pathId))?.let { if (n > it.largestSent) it.largestSent = n }
+        }
+        inDatagram.clear()
+        datagramSeq++
+    }
+
+    /** The sequence number of the datagram being built ([SentPacket.datagramSeq]). */
+    private var datagramSeq = 0L
+
     fun poll(
         out: PacketBatch,
         now: TimeMark,
     ): Int {
+        if (inDatagram.isNotEmpty()) datagramSeq++ // a datagram an earlier poll gave up on: its packets keep their own number
+        inDatagram.clear()
         var count = 0
         var bytes = 0
         pacerWakeup = TimeMark.NEVER
@@ -117,6 +141,7 @@ internal class PacketBuilder(
                     continue
                 }
                 out.setLength(count, n)
+                stampDatagram(n)
                 out.setAddress(count, target.remote)
                 out.setPath(count, target.socket)
                 out.setLocalAddress(count, from)
@@ -166,6 +191,7 @@ internal class PacketBuilder(
                     continue
                 }
                 out.setLength(count, n)
+                stampDatagram(n)
                 out.setAddress(count, target.remote)
                 out.setPath(count, target.socket)
                 out.setLocalAddress(count, target.local)
@@ -212,6 +238,7 @@ internal class PacketBuilder(
                         0
                     ) {
                         out.setLength(count, n)
+                        stampDatagram(n)
                         out.setAddress(count, c.path.remote)
                         out.setPath(count, c.path.socket)
                         out.setLocalAddress(count, c.path.local)
@@ -242,6 +269,7 @@ internal class PacketBuilder(
             if (pnExhausted) return exhausted(count)
             if (n == 0) break
             out.setLength(count, n)
+            stampDatagram(n)
             out.setAddress(count, c.path.remote)
             out.setPath(count, c.path.socket)
             out.setLocalAddress(count, c.path.local)
@@ -327,6 +355,7 @@ internal class PacketBuilder(
                 if (pnExhausted) return count - first
                 if (pos == 0) break
                 out.setLength(count, pos)
+                stampDatagram(pos)
                 out.setAddress(count, k.remote)
                 out.setPath(count, k.socket)
                 out.setLocalAddress(count, k.local)
@@ -1050,6 +1079,8 @@ internal class PacketBuilder(
         p.pn = pn
         p.timeSent = now
         p.size = end - start
+        p.datagramSize = p.size // until the datagram is complete ([stampDatagram])
+        p.datagramSeq = datagramSeq
         p.ackEliciting = ackEliciting
         p.inFlight = ackEliciting || padded // a PMTU probe too: "PMTU probes consume congestion window" (RFC 9000 section 14.4)
         p.pathId = target.id.value
@@ -1065,6 +1096,7 @@ internal class PacketBuilder(
             null
         ) {
             c.loss.onPacketSent(space, p, now)
+            inDatagram += p
             if (p.size > target.largestSent) target.largestSent = p.size // what a Packet Too Big about this path may claim was too large
             // where the server's handshake flight went decides which address a client Handshake packet validates (RFC 9000 section 8.1)
             if (space != SpaceId.Application && frames.cryptoCount > 0 && c.role == TlsRole.Server) c.onHandshakeFlightSent(target)

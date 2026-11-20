@@ -14,6 +14,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: a configurable datagram size for tunnels such as WireGuard and NAT paths (experimental; `docs/guide/quic.md`,
+  "Tunnels and NAT paths"): `QuicConfig.initialUdpPayloadSize` (1200 by default; less is refused, RFC 9000 section 14) is the
+  size a connection's first path starts with on a socket that sets DF, Initial padding included, and
+  `QuicConfig.maxSendUdpPayloadSize` (no cap by default) the largest datagram sent, DPLPMTUD probes included (RFC 8899
+  section 4.4). The start is lowered to both limits, `maxUdpPayloadSize` and the peer's `max_udp_payload_size`; black-hole
+  detection watches it from the first datagram, judging datagram sizes (coalesced packets included), so a size the path does
+  not carry falls back to 1200 at the first PTO while nothing was acknowledged (two PTOs afterwards), during the handshake
+  too, and comes back if the large datagram is acknowledged after all. A 0-RTT flight keeps to the remembered
+  `max_udp_payload_size` (RFC 9000 section 7.4.1). DPLPMTUD searches on from the
+  start; with `pmtud = false` the start is the ceiling (before, `pmtud = false` meant 1200; it still does by default). A
+  path to a new IP address starts at 1200.
+- Ktor server engine: `EngineMain` reads the QUIC transport of the HTTP/3 listeners from `kuicksilver.quic.*`:
+  `initialUdpPayloadSize`, `maxSendUdpPayloadSize`, `maxUdpPayloadSize`, `pmtud`, `maxIdleTimeout`, `handshakeTimeout`,
+  `keepAlive`, `maxBidiStreams`, `maxUniStreams` and `allowMigration` (`docs/guide/configuration.md`, "QUIC transport
+  keys"). An unknown key under `kuicksilver.quic`, a value that does not parse and one out of range fail the start with an
+  error naming the key.
+
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.

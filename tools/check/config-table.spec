@@ -19,6 +19,7 @@ Ktor server engine | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilve
 TLS connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverTlsConnector.kt | KuicksilverTlsConnector.Builder | var
 Plain connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverPlainConnector.kt | KuicksilverPlainConnector.Builder | var
 PROXY protocol | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyProtocol.kt | ProxyProtocolConfig.Builder | var
+QUIC transport keys | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/EngineMain.kt | kuicksilver.quic | keys
 # Rows of options the classes inherit or take as plain constructor parameters:
 #allow SessionTicketConfig | keys
 #allow Ktor client engine | proxy

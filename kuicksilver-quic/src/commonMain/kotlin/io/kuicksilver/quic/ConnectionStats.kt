@@ -18,7 +18,8 @@ import kotlin.time.Duration
  * @property bytesInFlight Bytes sent on the active path and not yet acknowledged or declared lost.
  * @property lostPackets Packets declared lost (RFC 9002 section 6.1).
  * @property ptoCount Probe timeouts in a row without an acknowledgement (RFC 9002 section 6.2); 0 once an ACK arrives.
- * @property pathMtu Largest UDP payload in bytes the active path carries now: 1200 until PMTUD finds more (RFC 8899).
+ * @property pathMtu Largest UDP payload in bytes the active path carries now: 1200 (or [QuicConfig.initialUdpPayloadSize]) until PMTUD
+ *   finds more (RFC 8899).
  * @property currentPath The path the connection sends on now.
  * @property datagramsDropped DATAGRAM payloads evicted from the full receive queue (RFC 9221), plus received UDP datagrams the
  *   connection discarded before processing (from an unknown server address, a late Initial, a full undecryptable-packet buffer).

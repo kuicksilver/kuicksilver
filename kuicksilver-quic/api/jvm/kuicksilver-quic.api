@@ -825,6 +825,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getInitialConnectionWindow ()J
 	public final fun getInitialRtt-UwyO8pc ()J
 	public final fun getInitialStreamWindow ()J
+	public final fun getInitialUdpPayloadSize ()I
 	public final fun getInitialVersion ()Lio/kuicksilver/quic/VersionProfile;
 	public final fun getKeepAlive-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxAckDelay-UwyO8pc ()J
@@ -833,6 +834,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getMaxDatagramFrameSize ()J
 	public final fun getMaxIdleTimeout-UwyO8pc ()J
 	public final fun getMaxSendBuffer ()J
+	public final fun getMaxSendUdpPayloadSize ()I
 	public final fun getMaxStreamWindow ()J
 	public final fun getMaxUdpPayloadSize ()I
 	public final fun getMaxUniStreams ()J
@@ -864,6 +866,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun getInitialConnectionWindow ()J
 	public final fun getInitialRtt-UwyO8pc ()J
 	public final fun getInitialStreamWindow ()J
+	public final fun getInitialUdpPayloadSize ()I
 	public final fun getInitialVersion ()Lio/kuicksilver/quic/VersionProfile;
 	public final fun getKeepAlive-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxAckDelay-UwyO8pc ()J
@@ -872,6 +875,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun getMaxDatagramFrameSize ()J
 	public final fun getMaxIdleTimeout-UwyO8pc ()J
 	public final fun getMaxSendBuffer ()J
+	public final fun getMaxSendUdpPayloadSize ()I
 	public final fun getMaxStreamWindow ()J
 	public final fun getMaxUdpPayloadSize ()I
 	public final fun getMaxUniStreams ()J
@@ -897,6 +901,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun setInitialConnectionWindow (J)V
 	public final fun setInitialRtt-LRDsOJo (J)V
 	public final fun setInitialStreamWindow (J)V
+	public final fun setInitialUdpPayloadSize (I)V
 	public final fun setInitialVersion (Lio/kuicksilver/quic/VersionProfile;)V
 	public final fun setKeepAlive-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setMaxAckDelay-LRDsOJo (J)V
@@ -905,6 +910,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun setMaxDatagramFrameSize (J)V
 	public final fun setMaxIdleTimeout-LRDsOJo (J)V
 	public final fun setMaxSendBuffer (J)V
+	public final fun setMaxSendUdpPayloadSize (I)V
 	public final fun setMaxStreamWindow (J)V
 	public final fun setMaxUdpPayloadSize (I)V
 	public final fun setMaxUniStreams (J)V

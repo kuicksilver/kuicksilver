@@ -151,7 +151,10 @@ public sealed interface ConnectionEvent {
         public val reason: QuicException.ConnectionLost,
     ) : ConnectionEvent
 
-    /** DPLPMTUD changed the datagram size of [path][ConnectionEvent.MtuUpdated.path] to [mtu][ConnectionEvent.MtuUpdated.mtu] bytes of UDP payload (RFC 8899); after a black hole it drops back to 1200. */
+    /**
+     * DPLPMTUD changed the datagram size of [path][ConnectionEvent.MtuUpdated.path] to [mtu][ConnectionEvent.MtuUpdated.mtu] bytes of UDP payload (RFC 8899); after
+     * a black hole it drops back to 1200. Also raised once at the start when the first path starts at [QuicConfig.initialUdpPayloadSize].
+     */
     public class MtuUpdated internal constructor(
         /** The path whose datagram size changed. */
         public val path: PathId,

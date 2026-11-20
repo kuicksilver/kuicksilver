@@ -246,7 +246,7 @@ internal class ConnectionLossListener(
                 ) {
                     m.onProbeAcked(p.size, p.pn, core.now)
                     if (m.current != path.mtu) core.setMtu(path, m.current)
-                } else if (m.onPacketAcked(p.size, p.pn)) {
+                } else if (m.onPacketAcked(p.datagramSize, p.datagramSeq)) {
                     core.setMtu(path, m.current) // a black-hole verdict the late ACK disproved
                 }
             }
@@ -326,7 +326,13 @@ internal class ConnectionLossListener(
         }
         core.paths.byId(PathId(p.pathId))?.let { path ->
             path.pmtud?.let { m ->
-                if (p.frames.flags and SentFrames.PMTU_PROBE == 0) m.onPacketLost(p.size, p.pn) else m.onProbeDeclaredLost(p.pn, core.now)
+                if (p.frames.flags and SentFrames.PMTU_PROBE ==
+                    0
+                ) {
+                    m.onPacketLost(p.datagramSize, p.datagramSeq)
+                } else {
+                    m.onProbeDeclaredLost(p.pn, core.now)
+                }
             }
         } // RFC 8899: a lost probe is not congestion, and fails at the later of the loss verdict and 1 s after it was sent
         // (processed in Pmtud.onTimeout); the black-hole verdict waits for the end of the ACK (checkPmtuBlackHoles)

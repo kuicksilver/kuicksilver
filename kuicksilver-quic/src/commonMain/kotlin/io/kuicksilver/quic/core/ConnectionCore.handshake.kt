@@ -549,12 +549,8 @@ internal class ConnectionHandshakeSink(
         core.peerGreaseQuicBit = tp.greaseQuicBit
         core.peerIdleMs = tp.maxIdleTimeoutMs
         core.cids.setPeerLimit(tp.activeConnectionIdLimit)
-        // RFC 9000 section 14.3: never probe above the peer's max_udp_payload_size
-        for (i in 0 until core.paths.all.size) {
-            core.paths.all[i]
-                .pmtud
-                ?.limitUpperBound(core.pmtudUpperBound())
-        }
+        // RFC 9000 section 14.3: never probe above the peer's max_udp_payload_size, nor send above it from a configured start
+        core.applyPeerMaxUdpPayloadSize()
     }
 
     /**

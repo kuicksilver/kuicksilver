@@ -233,7 +233,16 @@ class FuzzTraceTest {
     @Test fun everyMeaningOfAZeroRttProgramByteIsInItsTrace() {
         val run = { b: ByteArray -> traced { obs -> ZeroRttConnectionFuzz(b, observe = obs).run() } }
         assertTheTraceStatesEveryMeaning("ZeroRttProgram operation byte", (0..255).map { run(zeroRtt(0, 0, it)) })
-        assertTheTraceStatesEveryMeaning("ZeroRttProgram flags", (0..255).map { run(zeroRtt(0, it, 0x07)) })
+        // every flag bit means something since MTU (128): the inputs that share a trace are the MTU ones whose remembered byte
+        // (253 and above: the server's own value) differs
+        val mtu =
+            (253..255).map { r ->
+                run(
+                    byteArrayOf(0, ZeroRttProgram.MTU.toByte(), 0, 0xff.toByte(), r.toByte()) +
+                        zeroRtt(0, 0, 0x07).copyOfRange(2, zeroRtt(0, 0, 0x07).size),
+                )
+            }
+        assertTheTraceStatesEveryMeaning("ZeroRttProgram flags", (0..255).map { run(zeroRtt(0, it, 0x07)) } + mtu)
         assertTheTraceStatesEveryMeaning("ZeroRttProgram outcome", (0..255).map { run(zeroRtt(it, 0, 0x07)) })
     }
 
@@ -368,7 +377,7 @@ class FuzzTraceTest {
 
     @Test fun negative_aGapFails() {
         val rows = manifest.filterNot { it.program == "ZeroRttProgram" && it.constant == "SMALL" }
-        assertFinds("ZeroRttProgram flags: the values are [1, 2, 8, 16, 32, 64], not [1, 2, 4, 8, 16, 32]", rows, "ZeroRttProgram")
+        assertFinds("ZeroRttProgram flags: the values are [1, 2, 8, 16, 32, 64, 128], not [1, 2, 4, 8, 16, 32, 64]", rows, "ZeroRttProgram")
     }
 
     @Test fun negative_aFlagWithoutARowFails() =
