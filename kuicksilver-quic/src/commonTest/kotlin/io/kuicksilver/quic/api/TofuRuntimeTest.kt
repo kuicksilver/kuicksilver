@@ -65,7 +65,9 @@ class TofuRuntimeTest {
                 // result of such a block whatever the timeout; the race is a block resumed by its dispatcher
                 kotlinx.coroutines.yield()
                 val job = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]!!
-                val bound = kotlin.time.TimeSource.Monotonic.markNow()
+                val bound =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
                 // a busy wait without a suspension point, so the cancellation cannot stop the store: it returns after the
                 // deadline fired
                 while (job.isActive && bound.elapsedNow() < 10.seconds) continue
