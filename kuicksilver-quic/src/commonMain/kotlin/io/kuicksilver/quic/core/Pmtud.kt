@@ -304,7 +304,7 @@ internal class Pmtud(
         probeDeadline = now + maxOf(probeTimer, pto * 3)
     }
 
-    /** The probe sent as packet [pn] of [size] bytes was acknowledged at [now]; one sent before the last PTB drop changes nothing. */
+    /** The probe sent as packet [pn] of [ackedSize] bytes was acknowledged at [now]; one sent before the last PTB drop changes nothing. */
     fun onProbeAcked(
         ackedSize: Int,
         pn: Long,

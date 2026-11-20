@@ -435,8 +435,8 @@ internal class UdpProxyImpl(
 
     /**
      * The address families this proxy's target sockets have no Don't Fragment for, as learned from the sockets it opened
-     * (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's [noDontFragmentFamily]): a host's DF
-     * support does not change while it runs, so later requests skip those candidates without opening a socket.
+     * (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's [DatagramIo.noDontFragmentFamily]): a
+     * host's DF support does not change while it runs, so later requests skip those candidates without opening a socket.
      */
     @kotlin.concurrent.Volatile
     private var noDfFamilies: Set<IpFamily> = emptySet()

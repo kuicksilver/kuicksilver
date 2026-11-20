@@ -52,7 +52,7 @@ public expect sealed class TlsException(
     /**
      * The server rejected Encrypted Client Hello (RFC 9849 section 6.1.6): the outer handshake was authenticated for the
      * configuration's `public_name` and the client ended it with `ech_required` (121; over QUIC the transport error 0x179),
-     * so nothing of the connection was used. [retryConfigs] are the configurations the server sent: retry once, on a new
+     * so nothing of the connection was used. [retryConfigs][TlsException.EchRejected.retryConfigs] are the configurations the server sent: retry once, on a new
      * connection, with them; null when it sent none (it does not support ECH any more, "securely disabled").
      */
     @ExperimentalKuicksilverApi

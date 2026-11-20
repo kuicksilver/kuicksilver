@@ -25,7 +25,7 @@ internal actual val platformTrustViaOpenSsl: Boolean = false
 
 /**
  * JVM: the default `X509TrustManager` (honours `javax.net.ssl.trustStore`); it never checks the host name, `ksl` does.
- * [offline] (a name an accepted Encrypted Client Hello hid, RFC 9849 section 10.7): the same anchors, checked by this
+ * `offline` (a name an accepted Encrypted Client Hello hid, RFC 9849 section 10.7): the same anchors, checked by this
  * connection's own path validation over the presented certificates, which makes no network request ([JvmTrust.offline]).
  */
 internal actual object PlatformVerifier {

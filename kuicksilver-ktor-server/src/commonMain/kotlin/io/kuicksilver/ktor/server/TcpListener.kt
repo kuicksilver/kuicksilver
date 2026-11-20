@@ -594,7 +594,7 @@ private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): () -> String? {
     return { if (advertising == Http3Advertising.On) h3 else ALT_SVC_CLEAR }
 }
 
-/** [http3Status]: HTTP/3 is not served on [server]'s port, for [reason]. */
+/** [KuicksilverApplicationEngine.http3Status]: HTTP/3 is not served on [server]'s port, for [reason]. */
 private fun KuicksilverApplicationEngine.recordH3NotServed(
     server: io.ktor.network.sockets.ServerSocket,
     l: KuicksilverApplicationEngine.Listener,

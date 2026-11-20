@@ -953,9 +953,10 @@ internal class ConnectionRuntime(
     }
 
     /**
-     * Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]) within [left] of the handshake timeout, then completes the
-     * handshake; fails the connection with the store's error, or with a [TimeoutKind.Handshake] timeout when the store did not
-     * answer in time (its call is cancelled). A store that returned as the deadline fired committed: the handshake completes.
+     * Stores a Tofu first contact's key ([io.kuicksilver.tls.QuicTlsSession.commitTrust]) within [left] of the handshake
+     * timeout, then completes the handshake; fails the connection with the store's error, or with a
+     * [io.kuicksilver.quic.TimeoutKind.Handshake] timeout when the store did not answer in time (its call is cancelled). A
+     * store that returned as the deadline fired committed: the handshake completes.
      */
     private suspend fun commitTrustThenComplete(
         session: io.kuicksilver.tls.QuicTlsSession,

@@ -98,7 +98,7 @@ public class QuicConfig private constructor(
      */
     public val connectionIdLength: Int,
     /**
-     * Advertised `max_udp_payload_size` (RFC 9000 section 18.2), also a ceiling of the datagrams we send ([initialUdpPayloadSize] and
+     * Advertised `max_udp_payload_size` (RFC 9000 section 18.2), also a ceiling of the datagrams we send ([initialUdpPayloadSize][QuicConfig.initialUdpPayloadSize] and
      * DPLPMTUD stay at or below it). The coroutine runtime ([QuicEndpoint]) handles datagrams of up to 1500 bytes and refuses a larger
      * value at `bind`/`connect`; the sans-IO core takes up to 65527 with batches sized for it.
      */
@@ -107,19 +107,19 @@ public class QuicConfig private constructor(
      * The UDP payload size, in bytes, a connection's first path starts with, Initial padding included (RFC 9000 section 14: "Datagrams
      * containing Initial packets MAY exceed 1200 bytes if the sender believes that the network path and peer both support the size
      * that it chooses"). 1200..65527, 1200 by default; it takes effect only on a socket that sets DF, and is lowered to
-     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and the peer's `max_udp_payload_size` (the one a 0-RTT ticket remembers until the
+     * [maxSendUdpPayloadSize][QuicConfig.maxSendUdpPayloadSize], [maxUdpPayloadSize][QuicConfig.maxUdpPayloadSize] and the peer's `max_udp_payload_size` (the one a 0-RTT ticket remembers until the
      * peer's arrive). The size is not trusted: DPLPMTUD's black-hole detection watches it from the first datagram (a PTO while
      * nothing was acknowledged, two in a row afterwards, with a datagram above 1200 unanswered, during the handshake too; or three
-     * lost large datagrams) and drops the path to 1200 when it does not get through. With [pmtud] off it is
+     * lost large datagrams) and drops the path to 1200 when it does not get through. With [pmtud][QuicConfig.pmtud] off it is
      * also the most the path ever sends. A new path to another IP address starts at 1200 (its MTU is unknown).
      */
     @property:ExperimentalKuicksilverApi
     public val initialUdpPayloadSize: Int,
     /**
      * The largest UDP payload, in bytes, this endpoint sends (RFC 8899 section 4.4: "The MAX_PLPMTU MAY be reduced by an application
-     * that sets a maximum to the size of datagrams it will send"), 1200..65527: a cap on [initialUdpPayloadSize] and on DPLPMTUD,
-     * below [maxUdpPayloadSize] when only the sending side should be limited (a tunnel). 65527 by default: no cap beyond
-     * [maxUdpPayloadSize] and the peer's `max_udp_payload_size`.
+     * that sets a maximum to the size of datagrams it will send"), 1200..65527: a cap on [initialUdpPayloadSize][QuicConfig.initialUdpPayloadSize] and on DPLPMTUD,
+     * below [maxUdpPayloadSize][QuicConfig.maxUdpPayloadSize] when only the sending side should be limited (a tunnel). 65527 by default: no cap beyond
+     * [maxUdpPayloadSize][QuicConfig.maxUdpPayloadSize] and the peer's `max_udp_payload_size`.
      */
     @property:ExperimentalKuicksilverApi
     public val maxSendUdpPayloadSize: Int,
@@ -156,8 +156,8 @@ public class QuicConfig private constructor(
     /** Server: accept a move to a loopback or link-local address when the connection did not start on one (off by default: such a "client" is a reflection target). */
     public val allowMigrationToLoopback: Boolean,
     /**
-     * Search for a larger path MTU with DPLPMTUD (RFC 8899) on sockets that set DF, from [initialUdpPayloadSize] up to
-     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and the peer's limit. Off, no path sends more than [initialUdpPayloadSize] (1200 by
+     * Search for a larger path MTU with DPLPMTUD (RFC 8899) on sockets that set DF, from [initialUdpPayloadSize][QuicConfig.initialUdpPayloadSize] up to
+     * [maxSendUdpPayloadSize][QuicConfig.maxSendUdpPayloadSize], [maxUdpPayloadSize][QuicConfig.maxUdpPayloadSize] and the peer's limit. Off, no path sends more than [initialUdpPayloadSize][QuicConfig.initialUdpPayloadSize] (1200 by
      * default); above 1200 its black-hole detection still runs, and probes go from 1200 up to that size, never above it: after a
      * fall back, and on a new path to another IP address, which starts at 1200.
      */
