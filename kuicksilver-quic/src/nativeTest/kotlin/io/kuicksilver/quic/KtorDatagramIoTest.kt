@@ -59,6 +59,27 @@ class KtorDatagramIoTest {
         }
 
     /**
+     * A bind address that does not resolve is an address error (an `IOException` naming it), as the portable socket's own
+     * resolution fails elsewhere, not a lack of DF. The resolver is replaced: what a name resolves to depends on the
+     * host's DNS (a fake-IP resolver answers every name). Red before: DontFragmentUnavailable, refused never called.
+     */
+    @Test fun negative_anUnresolvableBindAddressIsAnAddressErrorNotALackOfDf() =
+        runBlocking {
+            val real = KslDatagramIo.addressResolver
+            KslDatagramIo.addressResolver = { null }
+            try {
+                val seen = ArrayList<Throwable>()
+                assertNull(KslDatagramIo.open(InetSocketAddress("unresolvable.test", 0), refused = { seen += it }))
+                assertTrue(seen.singleOrNull() is IOException, "refused gets the address error: $seen")
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("unresolvable.test", 0)).close() }
+                assertTrue(e !is QuicException.DontFragmentUnavailable, "an address error, not no DF: $e")
+                assertTrue("unresolvable.test" in (e.message ?: ""), "${e.message}")
+            } finally {
+                KslDatagramIo.addressResolver = real
+            }
+        }
+
+    /**
      * Any other refusal of the accelerated socket (a `KslException`: limits, a sandbox) reaches the caller through
      * `refused` and ends in a lack of DF that is not lasting (the socket may open next time), with the refusal attached as
      * suppressed; a refused bind (an `IOException`) is thrown as it is.
