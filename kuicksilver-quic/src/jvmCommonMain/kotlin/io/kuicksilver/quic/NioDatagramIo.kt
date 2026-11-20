@@ -554,7 +554,12 @@ internal class NioDatagramIo private constructor(
                 ch.configureBlocking(false)
                 selector = Selector.open()
             } catch (e: Throwable) {
-                ch.close()
+                // a failure of the close itself must not hide why the open failed
+                try {
+                    ch.close()
+                } catch (c: Throwable) {
+                    e.addSuppressed(c)
+                }
                 throw e
             }
             ch.register(selector, SelectionKey.OP_READ)

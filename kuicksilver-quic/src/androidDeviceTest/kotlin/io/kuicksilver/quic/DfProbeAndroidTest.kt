@@ -7,6 +7,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.ktor.network.sockets.InetSocketAddress
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.net.InetAddress
+import java.nio.ByteBuffer
+import java.nio.channels.DatagramChannel
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -27,6 +30,26 @@ class DfProbeAndroidTest {
             assertTrue(probeComplete(bits))
         } finally {
             io.close()
+        }
+    }
+
+    /**
+     * The probe only borrows the channel's descriptor: the channel still binds, sends and receives after it. Up to API 28
+     * `ParcelFileDescriptor.fromDatagramSocket` wraps the channel's own descriptor instead of a duplicate (the duplicate came
+     * with API 29), so closing that wrapper closed the channel ("Bad file descriptor" on API 24). Red before on API 24.
+     */
+    @Test fun theProbeLeavesTheChannelOpen() {
+        val ch = DatagramChannel.open()
+        try {
+            val bits = dfProbe(ch)
+            ch.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+            ch.send(ByteBuffer.wrap(byteArrayOf(7)), ch.localAddress)
+            val got = ByteBuffer.allocate(4)
+            ch.receive(got)
+            assertEquals(1, got.position(), "a datagram to itself after the probe (bits $bits)")
+            assertTrue(ch.isOpen)
+        } finally {
+            ch.close()
         }
     }
 }
