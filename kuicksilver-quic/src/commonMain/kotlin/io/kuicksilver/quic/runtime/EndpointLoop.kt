@@ -881,18 +881,16 @@ internal class EndpointLoop private constructor(
             beforeStartForTest: () -> Unit = {},
         ): QuicEndpoint {
             config.server?.let { checkPayloadSize(it.quic) }
+            // a Native server needs the accelerated transport (the portable Native io is client-only, ADR-0006): without it
+            // the bind fails with UnsupportedOperationException, the portable socket never opened (it would fail first with
+            // DontFragmentUnavailable, for want of DF, and name the wrong cause); a caller-supplied io is trusted
             val io =
                 config.io?.invoke(local)
-                    ?: io.kuicksilver.quic.openDatagramIo(local, io.kuicksilver.quic.IoPreference.Accelerated, config.logger)
-            // a Native server needs the accelerated transport (the portable Native io is client-only, ADR-0006); a caller-supplied io is trusted
-            if (config.server != null && config.io == null && !portableServerSupported &&
-                io !is io.kuicksilver.quic.KslDatagramIo
-            ) {
-                io.close()
-                throw UnsupportedOperationException(
-                    "a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple, Windows), which is unavailable here",
-                )
-            }
+                    ?: if (config.server != null && !portableServerSupported) {
+                        acceleratedForServer(local, config)
+                    } else {
+                        io.kuicksilver.quic.openDatagramIo(local, io.kuicksilver.quic.IoPreference.Accelerated, config.logger)
+                    }
             val preferred =
                 try {
                     openPreferred(config, io.localAddress) { at ->
@@ -922,6 +920,17 @@ internal class EndpointLoop private constructor(
             }
             return loop
         }
+
+        /** A Kotlin/Native server's socket: the accelerated one, or UnsupportedOperationException (the portable one is client-only). */
+        private fun acceleratedForServer(
+            local: InetSocketAddress,
+            config: QuicEndpointConfig,
+        ): DatagramIo =
+            io.kuicksilver.quic.KslDatagramIo
+                .open(local, logger = config.logger)
+                ?: throw UnsupportedOperationException(
+                    "a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple, Windows), which is unavailable here",
+                )
 
         /** The server's preferred-address sockets ([io.kuicksilver.quic.QuicServerConfig.preferredAddress]), opened with [open]; all or none. */
         internal suspend fun openPreferred(

@@ -372,8 +372,9 @@ datagram per call.
   reaching `Capable`.
 - A QUIC server on Kotlin/Native needs the accelerated socket; without it `bind` with a `server` throws
   `UnsupportedOperationException` ("a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple,
-  Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
-  <port>: <reason>".
+  Windows), which is unavailable here"), not `DontFragmentUnavailable`: the portable socket, client-only there (and
+  without Don't Fragment), is not tried. The Ktor server then serves HTTP/1.1 and HTTP/2 only, logging "HTTP/3 is not
+  served on port <port>: <reason>" (`http3Status` names the exception).
 
 ### QUIC is not used (`DontFragmentUnavailable`)
 
