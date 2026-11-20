@@ -146,17 +146,21 @@ internal class UdpProxyImpl(
     /** Tests replace the sender of a tunnel (a privileged one cannot be had on every host, and tests send to no one). */
     internal var senderForTest: (() -> PtbSink)? = null
 
+    /** One probe at a time: tunnels set up together wait for the first one's probe instead of each running their own. */
+    private val probeLock = Mutex()
+
     /**
      * Whether tunnels send Packet Too Big; probes once (opening and closing a raw socket) the first time it is asked, which
-     * is the first tunnel's setup.
+     * is the first tunnel's setup. Single-flight: a caller that comes while the probe runs waits for it and takes its result.
      */
-    internal fun packetTooBigAvailable(): Boolean {
+    internal suspend fun packetTooBigAvailable(): Boolean {
         if (packetTooBig.load() == PacketTooBigStatus.NotProbed) {
-            val p = (probeForTest ?: PacketTooBigSender::probe)()
-            packetTooBig.compareAndSet(
-                PacketTooBigStatus.NotProbed,
-                if (p.available) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable,
-            )
+            probeLock.withLock {
+                if (packetTooBig.load() == PacketTooBigStatus.NotProbed) {
+                    val p = (probeForTest ?: PacketTooBigSender::probe)()
+                    packetTooBig.store(if (p.available) PacketTooBigStatus.Available else PacketTooBigStatus.Unavailable)
+                }
+            }
         }
         return packetTooBig.load() == PacketTooBigStatus.Available
     }

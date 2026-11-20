@@ -32,6 +32,7 @@ import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.runtime.awaitCondition
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -67,6 +68,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
+import kotlin.time.TimeSource
 
 internal val proxySettings = http3Settings { enableConnectProtocol = true }
 
@@ -809,8 +811,7 @@ class ConnectUdpTest {
             var closed = 0
             rig.proxy.impl.clock = TestTimeSource()
             rig.proxy.impl.probeForTest = {
-                io.kuicksilver.quic.PacketTooBigSender
-                    .Probe(true, "test")
+                PacketTooBigSender.Probe(true, "test")
             }
             rig.proxy.impl.senderForTest = {
                 object : PtbSink {
@@ -1231,6 +1232,40 @@ class ConnectUdpTest {
                     second.close()
                     t.close()
                 }
+            }
+        }
+
+    /**
+     * Two tunnels set up at the same moment probe once: the second waits for the first's probe and takes its result,
+     * instead of finding NotProbed and opening a raw socket of its own. The first probe is held (on another thread) until
+     * the second caller ran as far as it can without it: undispatched, it either probed at once or suspended.
+     */
+    @Test fun concurrentFirstTunnelsProbeOnce() =
+        h3Test {
+            val rig = rig()
+            val probes = AtomicInt(0)
+            val release = kotlin.concurrent.atomics.AtomicBoolean(false)
+            rig.proxy.impl.probeForTest = {
+                if (probes.incrementAndFetch() == 1) {
+                    val until = TimeSource.Monotonic.markNow() + 10.seconds
+                    while (!release.load() && until.hasNotPassedNow()) {
+                        // held until the second caller ran
+                    }
+                }
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.use {
+                val first = async(Dispatchers.Default) { rig.proxy.impl.packetTooBigAvailable() }
+                awaitCondition("the first probe") { probes.load() == 1 }
+                val second = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { rig.proxy.impl.packetTooBigAvailable() }
+                assertEquals(1, probes.load(), "the second caller probed while the first probe ran")
+                assertFalse(second.isCompleted, "the second caller waits for the first probe")
+                release.store(true)
+                assertTrue(withTimeout(10.seconds) { first.await() })
+                assertTrue(withTimeout(10.seconds) { second.await() })
+                assertEquals(1, probes.load())
+                assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
             }
         }
 
