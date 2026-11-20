@@ -36,6 +36,22 @@ class KtorDatagramIoTest {
             assertEquals(null, e.family)
         }
 
+    /**
+     * A port in use is a refused bind, as on the JVM, not a lack of DF: the accelerated socket's bind failure is what the
+     * caller sees (an `IOException`), so the Ktor server's ephemeral TCP + UDP pair tries another port instead of serving
+     * HTTP/1.1 alone. Red before: DontFragmentUnavailable from the portable socket the refusal fell back to.
+     */
+    @Test fun negative_aTakenPortIsARefusedBindNotALackOfDf() =
+        runBlocking {
+            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("127.0.0.1", held.localAddress.port)).close() }
+                assertTrue(e !is QuicException.DontFragmentUnavailable, "a refused bind, not no DF: $e")
+            } finally {
+                held.close()
+            }
+        }
+
     @Test fun loopbackClientSendReceive() =
         runBlocking {
             val a = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))

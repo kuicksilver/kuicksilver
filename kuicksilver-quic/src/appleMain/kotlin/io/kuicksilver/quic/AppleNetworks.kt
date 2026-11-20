@@ -168,15 +168,16 @@ public suspend fun DatagramIo.Companion.open(
 ): DatagramIo =
     withContext(Dispatchers.IO) {
         // the socket's own family: a wildcard address opens a dual-stack IPv6 socket, where only IPV6_BOUND_IF applies (to both families)
+        var refused: Throwable? = null
         val accelerated =
             if (prefer ==
                 IoPreference.Accelerated
             ) {
-                KslDatagramIo.open(local) { fd -> bindToInterface(fd, interfaceIndex, isIpv6Socket(fd)) }
+                KslDatagramIo.open(local, refused = { refused = it }) { fd -> bindToInterface(fd, interfaceIndex, isIpv6Socket(fd)) }
             } else {
                 null
             }
-        accelerated ?: openPortableDatagramIo(local)
+        accelerated ?: openPortableDatagramIo(local, refused)
     }
 
 /** True for an AF_INET6 socket (`getsockname`). */

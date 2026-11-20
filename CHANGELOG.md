@@ -3047,7 +3047,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - No Don't Fragment, no QUIC (RFC 9000 section 14). A UDP socket that cannot set DF on any of its traffic is not used:
   `DatagramIo.open` and `QuicEndpoint.bind` throw the new `QuicException.DontFragmentUnavailable` (its `family`, the new
   `IpFamily`, null for the whole socket: the JVM without `ksl` below JDK 19, Android or a system refusing both DF modes, the
-  Kotlin/Native portable `ktor-network` socket, which used to send without DF; an accelerated socket without DF is not
+  Kotlin/Native portable `ktor-network` socket, which used to send without DF, while a port in use there is still the
+  accelerated socket's refused bind, an `IOException`; an accelerated socket without DF is not
   used either, while one whose system refuses probe mode now gets DO mode, `KslUdpSocket.DF_DO`). On a socket with no DF
   for one address family (a dual-stack socket's IPv4 or IPv6 half, IPv6 on an AF_INET socket), datagrams to that family
   are not sent: that path closes, or on the active path the connection ends with a CONNECTION_CLOSE of NO_VIABLE_PATH
