@@ -1300,6 +1300,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtDeadlineRaceTe
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.loopbackServersAreReachedFromLoopback
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.negative_lookalikesAreNotLoopback
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.otherServersAreReachedFromTheWildcardOfTheirFamily
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.aStoppedServerWritesItsQlogTraces
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientClosesEveryQlogTraceBeforeItReturns
@@ -1315,6 +1316,7 @@ kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.keylogWritt
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.keyupdateTestcaseInitiatesUpdate
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.lostConnectionIsFoundInTheCauseChain
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.multiconnectUsesOneConnectionPerRequest
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.negative_aStuckCloseDoesNotHoldTheStop
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.onlyResumptionAndZeroRttPlansEnableEarlyData
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.resumptionCaseResumesTheFirstConnectionsTicket
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.retryCaseServerSendsRetry

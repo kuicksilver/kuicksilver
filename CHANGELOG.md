@@ -1041,7 +1041,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
   full-size probe; a sender searches as before, and a begun search runs to its end.
 - QUIC Interop Runner endpoint: the client waits for its endpoint's close before it exits, so its qlog traces, which are
-  buffered until a connection is released, are complete (they were often empty files).
+  buffered until a connection is released, are complete (they were often empty files). The server, which the runner stops
+  with SIGTERM, closes and joins its endpoints first (at most 3 s; a JVM shutdown hook, a signal handler on Native), so its
+  traces are complete too.
 - The bundled OpenSSL moves from 3.5.9 (the 3.5 LTS branch) to **4.1.0**, and to the 4.2 LTS branch once it is released
   (ADR-0019): Encrypted Client Hello needs OpenSSL 4. The pin keeps its form (version, tarball SHA-256 and signing key,
   verified before every build); `configure-flags.txt` drops the four options 4.0 removed (`no-engine`, `no-atexit`,

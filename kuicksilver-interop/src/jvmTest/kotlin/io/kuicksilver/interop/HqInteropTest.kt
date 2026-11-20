@@ -18,6 +18,7 @@ import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -29,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class HqInteropTest {
@@ -222,6 +224,29 @@ class HqInteropTest {
             assertTrue(H3InteropClient.download(listOf("https://127.0.0.1:${srv.port}/q3.bin"), downloads.path, Testcases.client("http3")!!, InteropTrust.config(emptyMap()), null, sink))
             assertEquals(1, sink.opened.get()); assertEquals(1, sink.closed.get(), "the trace is closed (its file complete) when the client returns")
         }
+    }
+    // the runner stops the server container with SIGTERM (installStopSignal): the server then closes and joins its endpoints, so the
+    // qlog traces of its connections are closed and written; before, the process ended with them open and the files were empty
+    @Test fun aStoppedServerWritesItsQlogTraces() = runBlocking {
+        val root = www("s.bin" to ByteArray(2_000) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        val qlogDir = Files.createTempDirectory("qlog").toFile()
+        val srv = HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1, qlog = io.kuicksilver.quic.qlog.DirectoryQlogSink(qlogDir.path))
+        val stop = CompletableDeferred<Unit>()
+        val serving = async { serveUntilStopped(srv, stop) }
+        assertTrue(HqInteropClient.download(listOf("https://127.0.0.1:${srv.port}/s.bin"), downloads.path, Testcases.client("transfer")!!, InteropTrust.config(emptyMap()), null, null))
+        stop.complete(Unit)
+        assertTrue(serving.await(), "the endpoints closed within the grace period")
+        val traces = qlogDir.listFiles()!!.filter { it.name.contains("_server_") }
+        assertEquals(1, traces.size, "one server trace: ${qlogDir.list()!!.toList()}")
+        assertTrue(traces.single().length() > 0, "the server's trace was written")
+    }
+    @Test fun negative_aStuckCloseDoesNotHoldTheStop() = runBlocking {
+        var closed = false
+        val stuck = object : InteropServer { override suspend fun closeAndJoin() { kotlinx.coroutines.awaitCancellation() }; override fun close() { closed = true } }
+        val t0 = System.nanoTime()
+        assertTrue(!serveUntilStopped(stuck, CompletableDeferred(Unit), grace = 200.milliseconds), "a close that never ends is abandoned")
+        assertTrue(System.nanoTime() - t0 < 2_000_000_000L, "within the grace period")
+        assertTrue(closed, "the endpoints are still closed, without waiting")
     }
     @Test fun http3IsASupportedTestcase() { assertTrue("http3" in Testcases.supported); assertTrue(Testcases.client("http3")!!.http3); assertTrue(Testcases.server("http3")!!.http3); assertTrue(!Testcases.client("transfer")!!.http3) }
 

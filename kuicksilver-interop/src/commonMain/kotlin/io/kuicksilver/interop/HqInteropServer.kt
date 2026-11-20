@@ -41,7 +41,7 @@ import kotlin.time.Duration.Companion.seconds
  * `earlyData` (the `resumption` and `zerortt` cases) it issues session tickets and accepts 0-RTT: a GET only reads a file,
  * so a request that arrived early is answered at once (0.5-RTT), replay or not.
  */
-internal class HqInteropServer private constructor(private val endpoints: List<QuicEndpoint>, private val www: String) : AutoCloseable {
+internal class HqInteropServer private constructor(private val endpoints: List<QuicEndpoint>, private val www: String) : InteropServer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val accepted = AtomicInt(0)
     private val early = AtomicInt(0)
@@ -82,6 +82,7 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
         st.output.flushAndClose()
     }
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
+    override suspend fun closeAndJoin() { scope.cancel(); for (ep in endpoints) ep.closeAndJoin() }
 
     companion object {
         suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }, earlyData: Boolean = false): HqInteropServer {

@@ -52,7 +52,7 @@ import kotlin.time.Duration.Companion.seconds
  * `www` (`content-length` set), 404 otherwise; IPv4 and, when the host has it, IPv6 on the same port like [HqInteropServer].
  */
 @OptIn(ExperimentalAtomicApi::class)
-internal class H3InteropServer private constructor(private val endpoints: List<Http3Endpoint>, private val www: String) : AutoCloseable {
+internal class H3InteropServer private constructor(private val endpoints: List<Http3Endpoint>, private val www: String) : InteropServer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val accepted = AtomicInt(0)
     val port: Int get() = endpoints[0].localAddress.port
@@ -76,6 +76,7 @@ internal class H3InteropServer private constructor(private val endpoints: List<H
         w.output.writeFully(bytes, 0, bytes.size); w.finish()
     }
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
+    override suspend fun closeAndJoin() { scope.cancel(); for (ep in endpoints) ep.closeAndJoin() }
 
     companion object {
         suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }): H3InteropServer {

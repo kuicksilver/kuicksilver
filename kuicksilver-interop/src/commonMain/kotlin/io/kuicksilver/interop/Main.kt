@@ -9,8 +9,14 @@ import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.TlsIdentity
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** The QUIC Interop Runner endpoint: ROLE, TESTCASE, REQUESTS, SSLKEYLOGFILE, QLOGDIR (and our KSL_CC) from the environment; exit 0 / 1 (a failed transfer or a lost connection) / 127 (unsupported). */
 internal object Interop {
@@ -26,13 +32,22 @@ internal object Interop {
         if (env["KSL_CC"] != null) Files.log("congestion controller ${env["KSL_CC"]}")
         KslLoader.ensureLoaded()
         return when (role) {
-            "server" -> runBlocking {
-                val plan = Testcases.server(testcase, cc)!!; val certs = env["CERTS"] ?: "/certs"
-                val identity = TlsIdentity.fromPem(Files.readText("$certs/cert.pem"), Files.readText("$certs/priv.key").toCharArray())
-                val www = env["WWW"] ?: "/www"; val qlog = env["QLOGDIR"]?.let { DirectoryQlogSink(it) }
-                if (plan.http3) H3InteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog, congestionController = plan.congestionController).use { awaitCancellation() }
-                else HqInteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog, congestionController = plan.congestionController, earlyData = plan.earlyData).use { awaitCancellation() }
-                @Suppress("UNREACHABLE_CODE") 0
+            "server" -> {
+                // the runner stops the server container with SIGTERM: the endpoints are then closed and joined, so every qlog trace is
+                // closed and written (a DirectoryQlogSink trace buffers until then; the server qlogs were empty files), within STOP_GRACE
+                val stop = CompletableDeferred<Unit>(); val closed = CompletableDeferred<Unit>()
+                installStopSignal(stop, closed)   // before runBlocking starts any thread: Native blocks the signals for the threads to come
+                try {
+                    runBlocking {
+                        val plan = Testcases.server(testcase, cc)!!; val certs = env["CERTS"] ?: "/certs"
+                        val identity = TlsIdentity.fromPem(Files.readText("$certs/cert.pem"), Files.readText("$certs/priv.key").toCharArray())
+                        val www = env["WWW"] ?: "/www"; val qlog = env["QLOGDIR"]?.let { DirectoryQlogSink(it) }
+                        val server = if (plan.http3) H3InteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog, congestionController = plan.congestionController)
+                            else HqInteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog, congestionController = plan.congestionController, earlyData = plan.earlyData)
+                        serveUntilStopped(server, stop)
+                    }
+                } finally { closed.complete(Unit) }
+                0
             }
             "client" -> runBlocking {
                 val plan = Testcases.client(testcase, cc)!!
@@ -58,5 +73,34 @@ internal object Interop {
     internal fun connectionLost(e: Throwable): QuicException.ConnectionLost? =
         generateSequence(e) { it.cause.takeUnless { c -> c === it } }.take(16).filterIsInstance<QuicException.ConnectionLost>().firstOrNull()
 }
+
+/** A running interop server: [closeAndJoin] closes its endpoints and waits until their connections and qlog traces are released. */
+internal interface InteropServer : AutoCloseable {
+    suspend fun closeAndJoin()
+}
+
+/** How long a stopped server may take to close its endpoints: the runner's compose stop sends SIGKILL 10 s after SIGTERM. */
+internal val STOP_GRACE = 3.seconds
+
+/**
+ * Serves until [stop] completes, then closes [server] and joins its endpoints within [grace], so the qlog traces of its connections
+ * are closed and written; a close that does not finish in time is abandoned (logged) and false is returned, so a stuck close never
+ * holds the container's stop.
+ */
+internal suspend fun serveUntilStopped(server: InteropServer, stop: Deferred<Unit>, grace: Duration = STOP_GRACE): Boolean {
+    var joined = false
+    try { stop.await() } finally {
+        joined = withContext(NonCancellable) { withTimeoutOrNull(grace) { server.closeAndJoin(); true } } ?: false
+        if (!joined) { Files.log("the endpoints did not close within $grace"); server.close() }
+    }
+    return joined
+}
+
+/**
+ * Completes [stop] when the process is asked to stop (SIGTERM; SIGINT too), and keeps the process alive until [closed] completes
+ * (at most [STOP_GRACE] and a second): JVM, a shutdown hook; Native, a thread that waits for the signals, blocked in every other
+ * thread. Called before any other thread starts.
+ */
+internal expect fun installStopSignal(stop: CompletableDeferred<Unit>, closed: CompletableDeferred<Unit>)
 
 fun main() { exitWith(Interop.run(Interop.environment())) }
