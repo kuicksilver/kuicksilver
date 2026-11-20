@@ -135,15 +135,19 @@ internal fun ConnectionCore.acceptPacketTooBig(
  * A new DPLPMTUD search for a path now at [start] bytes. Probes already sent, by a search it replaces, are not its own: their late
  * acknowledgments concern the old address or the old capabilities and must not raise the new search's size.
  */
-internal fun ConnectionCore.newPmtud(start: Int): Pmtud {
+internal fun ConnectionCore.newPmtud(
+    start: Int,
+    waitForData: Boolean = state != io.kuicksilver.quic.ConnectionState.Confirmed,
+): Pmtud {
     val upper = pmtudUpperBound()
     return Pmtud(
         upperBound = upper,
         start = minOf(start, upper),
         sentAfterPn = loss.space(SpaceId.Application).nextPn - 1,
         // a search made before the handshake was confirmed (the connection's first) begins with its first application data after
-        // that (RFC 8899 section 4.3, Pmtud.waitsForData); one replacing a search later begins at once
-        waitForData = state != io.kuicksilver.quic.ConnectionState.Confirmed,
+        // that (RFC 8899 section 4.3, Pmtud.waitsForData); one replacing a search for new capabilities begins at once, one for a
+        // new address keeps the old one's wait (resetForNewIp: a download-only client that moved does not start probing)
+        waitForData = waitForData,
     )
 }
 
@@ -369,7 +373,7 @@ private fun ConnectionCore.resetForNewIp(
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
     setMtu(p, 1200)
-    if (p.pmtud != null) p.pmtud = newPmtud(1200)
+    p.pmtud?.let { old -> p.pmtud = newPmtud(1200, waitForData = old.awaitingData) }
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
     // about the new one (a bleaching middlebox there, or none)
     p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }

@@ -373,13 +373,16 @@ class DatagramApiTest {
                 withTimeout(60.seconds) {
                     // review focus 4: the path MTU shrinks under a queue of large datagrams; they can no longer be sent and are dropped instead of blocking the queue
                     val (c, s) = p.connect()
-                    // a connection's first search begins with its first application data after confirmation (RFC 8899 section 4.3)
-                    assertEquals(DatagramSendResult.Sent, c.trySendDatagram(byteArrayOf(0)))
-                    assertContentEquals(byteArrayOf(0), s.datagrams.first().data)
+                    // a connection's first search begins with its first application data after the handshake was confirmed (RFC 8899
+                    // section 4.3, Pmtud.waitsForData): data written before the client saw HANDSHAKE_DONE does not count, so the client
+                    // keeps writing a little on a stream of its own until the size rose (a datagram would be read below instead of [1, 2, 3])
+                    val warm = c.openBidi()
                     withTimeoutOrNull(20.seconds) {
                         while (c.maxDatagramSize.value <
                             1380
                         ) {
+                            warm.output.writeFully(ByteArray(8))
+                            warm.output.flush()
                             delay(20)
                         }
                     }

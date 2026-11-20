@@ -152,6 +152,9 @@ internal class Pmtud(
         dataSent = true
     }
 
+    /** No application data went out on this path since confirmation: a search that replaces this one waits as well ([newPmtud]). */
+    val awaitingData: Boolean get() = !dataSent
+
     /** No probe is due yet: the search waits for application data sent after confirmation ([dataSent]). */
     val waitsForData: Boolean get() = !dataSent && ptbFrom == 0
 
