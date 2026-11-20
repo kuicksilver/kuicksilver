@@ -1353,7 +1353,7 @@ internal class H3Pool(
                     setupMadeForTest?.invoke()
                 }
                 val c = made ?: throw SetupTimedOut()
-                e.connectedTo = attempts.load().firstOrNull { it.first === c }?.second
+                e.connectedTo = addressOfWinner(c, attempts.load())
                 e.idleSince.store(clock())
                 // RFC 9114 section 3.3: a setup of the same origin to the same address that finished meanwhile (both ran
                 // past each other's wait) keeps that one; this connection is closed before any request used it. The check
