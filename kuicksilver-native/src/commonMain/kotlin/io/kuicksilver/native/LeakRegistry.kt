@@ -49,6 +49,15 @@ public object LeakRegistry {
     }
 
     /**
+     * Stops tracking objects opened from now on (those tracked already stay until closed), until the next [enable]: for a
+     * measurement that must see the library as production runs it, without the completion handlers an owner registers to
+     * [close] its id (the memory benchmark's per-connection inventory).
+     */
+    public fun disable() {
+        on = false
+    }
+
+    /**
      * An owner of [kind] was made: the id to [close] it with, 0 when tracking is off. Never throws; any thread.
      */
     public fun open(kind: String): Long = if (!on) 0L else register(kind)

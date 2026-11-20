@@ -181,17 +181,18 @@ internal class ConnectionRuntime(
     internal var openedReported = false
 
     /**
-     * What [pathInfos] was built from, per path (at most eight slots, the core keeps four): the path id, its state, whether it
-     * was active, its peer address (by identity: the core replaces the object when the address changes), the sequence of our
-     * ID seen on it and the peer ID it sends with (by identity). Compared at every drain without allocating; a difference
-     * rebuilds the list. Loop dispatcher only.
+     * What [pathInfos] was built from, per path (four slots, as many paths as the core keeps; more paths than slots rebuild the
+     * list at every drain, which stays correct): the path id, its state, whether it was active, its peer address (by identity:
+     * the core replaces the object when the address changes), the sequence of our ID seen on it and the peer ID it sends with
+     * (by identity). Compared at every drain without allocating; a difference rebuilds the list. Loop dispatcher only. Four,
+     * not eight: the six arrays are held by every connection for its life (IdleFootprintTest).
      */
-    private val shownIds = IntArray(8)
-    private val shownStates = arrayOfNulls<PathState>(8)
-    private val shownActive = BooleanArray(8)
-    private val shownRemotes = arrayOfNulls<InetSocketAddress>(8)
-    private val shownLocalSeqs = LongArray(8)
-    private val shownRemoteCids = arrayOfNulls<io.kuicksilver.quic.wire.ConnectionId>(8)
+    private val shownIds = IntArray(SHOWN_PATHS)
+    private val shownStates = arrayOfNulls<PathState>(SHOWN_PATHS)
+    private val shownActive = BooleanArray(SHOWN_PATHS)
+    private val shownRemotes = arrayOfNulls<InetSocketAddress>(SHOWN_PATHS)
+    private val shownLocalSeqs = LongArray(SHOWN_PATHS)
+    private val shownRemoteCids = arrayOfNulls<io.kuicksilver.quic.wire.ConnectionId>(SHOWN_PATHS)
     private var shown = -1 // -1: nothing published yet
 
     /** Publishes [pathInfos] anew when anything [shownIds] and its siblings record changed. Loop dispatcher only. */
@@ -1345,5 +1346,8 @@ internal class ConnectionRuntime(
 
         /** [datagramLimit] while the peer takes no DATAGRAM frames. */
         const val NO_DATAGRAMS = Int.MIN_VALUE
+
+        /** The paths [refreshPathInfos] compares without rebuilding: the core's limit (`Paths.maxPaths`). */
+        const val SHOWN_PATHS = 4
     }
 }

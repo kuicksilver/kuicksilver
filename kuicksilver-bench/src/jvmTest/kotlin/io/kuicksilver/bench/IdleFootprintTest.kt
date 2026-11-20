@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.bench
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.native.LeakRegistry
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -11,13 +13,27 @@ import kotlin.test.assertTrue
  * connection reaches that another connection does not share): ceilings, so per-connection buffers made up front do not creep
  * back (P.5).
  */
+@OptIn(InternalKuicksilverApi::class)
 class IdleFootprintTest {
     private fun inventory(section: String, label: String): Long {
         val lines = ArrayList<String>()
-        runBlocking { MemoryBench.run(connections = 4, transferMiB = 1, only = setOf(section), out = { lines += it }) }
-        val line = lines.first { it.startsWith("$label inventory:") }
-        println(line)
-        return line.substringAfter("inventory: ").substringBefore(" B").toLong()
+        // as production runs: the leak sentinel off, whose tracking adds a completion handler per stream, session and
+        // connection (a few hundred bytes per HTTP/3 connection that production never holds)
+        val tracked = LeakRegistry.enabled
+        LeakRegistry.disable()
+        try {
+            runBlocking { MemoryBench.run(connections = 4, transferMiB = 1, only = setOf(section), out = { lines += it }) }
+        } finally {
+            // as the sentinel's extension turned it on (KUICKSILVER_LEAK_SITES)
+            val sites = System.getenv("KUICKSILVER_LEAK_SITES").let { it != null && it != "0" && it != "false" }
+            if (tracked) LeakRegistry.enable(sites)
+        }
+        val at = lines.indexOfFirst { it.startsWith("$label inventory:") }
+        check(at >= 0) { "no $label inventory in the benchmark's output" }
+        // the header and its rows (indented): what a failure's "see its inventory above" points at
+        println(lines[at])
+        lines.drop(at + 1).takeWhile { it.startsWith("  ") }.forEach(::println)
+        return lines[at].substringAfter("inventory: ").substringBefore(" B").toLong()
     }
 
     /** An HTTP/3 connection that carried one request: its seven streams (control, QPACK, the request) and the datagram reader. */
@@ -33,6 +49,9 @@ class IdleFootprintTest {
     }
 
     private companion object {
+        // 84.1-84.4 K measured (2026-11-20, JVM 21, 8 runs; one 85.1 K, the reset-tracking maps of a stream reset in flight;
+        // 84.5-85.3 K while the leak sentinel's completion handler per stream, session and connection was counted, which
+        // production never holds: the inventory runs with the registry off now).
         // 83.5-84.4 K measured (2026-11-19, JVM 21; 84.7-85.4 K, 86.8 K on the macOS runner, while each request's STOP_SENDING
         // watch, started for the reset budget, waited for its stream's end and held the request until then; it ends with the
         // complete response now). 83.4 K measured (2026-11-16, JVM 21; 89.4 K while a critical stream's reader kept its
@@ -45,12 +64,19 @@ class IdleFootprintTest {
         // arrived while the loop waited (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K
         // with 4 KiB reassembly windows, 292 K with per-stream staging arrays
         const val HTTP3_CEILING = 85_000L
+        // 36 064 measured (2026-11-20, JVM 21, every run): +144 B over 35 920 on main, the state of four 0.3.0 features, each a
+        // field or two per connection: DPLPMTUD's datagram size and sequence per sent packet (RFC 8899 section 4.3, black-hole
+        // detection by datagram; 4 pooled and acknowledged packets, +64) and the builder's packets of the datagram in flight
+        // (+48: an array, 24 B less than the ArrayList it was); the client CID credited to each path (+16, path diagnostics);
+        // the reassembly allocation budget (RangeBudget.bytes and maxBytes, +32, picoquic #2333 class); ECH's session state
+        // (+8) and the core's flags (+8: the client's fixed version, the flight before ech_required, the initial datagram size
+        // applied); less 32 B of empty crypto windows now shared. 36 088 before the array.
         // 35 912 measured (2026-11-16, JVM 21; 36 552 with the reset and credit-hold sets, the socket capability map and two
         // address arrays per peer connection ID made up front, now by their first entry). 35 776 measured (2026-11-15, JVM 21;
         // 35 864 with the 0-RTT hold's queue and set made up front, now by the first hold). 35 552 measured (2026-11-11, JVM
         // 21): the 0.3.0 RFC 9000/9002 state a connection keeps from the start (its own IDs for removal by key, per-path ECN
         // and persistent-congestion marks, the 0-RTT packet range); 35 104 before (2026-11-06), 36 160 with the DATAGRAM ring
         // made up front
-        const val CORE_CEILING = 36_000L
+        const val CORE_CEILING = 36_200L
     }
 }
