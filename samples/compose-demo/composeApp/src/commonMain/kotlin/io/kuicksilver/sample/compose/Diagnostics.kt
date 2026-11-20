@@ -44,6 +44,7 @@ fun fallbackHint(reason: FallbackReason): String =
         FallbackReason.WebSocket -> "expected for the first WebSocket to an origin"
         FallbackReason.HandshakeTimeout -> "no QUIC answer: UDP to the port blocked (firewall, VPN, network), or the server is down"
         FallbackReason.UdpUnreachable -> "the network reported the UDP port unreachable"
+        FallbackReason.QuicUnavailable -> "this device's UDP socket cannot set Don't Fragment, so QUIC is not used here"
         FallbackReason.H3NotReady -> "nothing: HTTP/1.1 was ready first, a later request may use HTTP/3"
         FallbackReason.Refused -> "the server refused QUIC (draining, full, or no common version)"
         FallbackReason.TlsFailure -> "the certificate or the h3 ALPN of the UDP side"
@@ -52,6 +53,7 @@ fun fallbackHint(reason: FallbackReason): String =
         FallbackReason.GoAway -> "the server is shutting down"
         FallbackReason.StreamFailed -> "one request stream failed; the HTTP/3 failure below"
         FallbackReason.Other -> "the HTTP/3 failure below"
+        FallbackReason.QuicStalled -> "the HTTP/3 connection stopped carrying packets: a network that cuts UDP flows (firewall, NAT, VPN)"
         FallbackReason.H2Refused -> "the server's HTTP/2 configuration (it answered HTTP_1_1_REQUIRED)"
     }
 

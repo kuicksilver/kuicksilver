@@ -359,6 +359,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [WebSocket] | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
  * | [HandshakeTimeout] | no QUIC answer within the handshake or connect timeout | UDP to the port blocked (firewall, VPN), server down |
  * | [UdpUnreachable] | the network reported the UDP port unreachable | not reported yet: such calls show [HandshakeTimeout] |
+ * | [QuicUnavailable] | this host's UDP socket cannot set Don't Fragment for the address family, so QUIC is not used | the JVM without the `ksl` native library below JDK 19; docs/guide/troubleshooting.md |
  * | [H3NotReady] | HTTP/1.1 was ready first; HTTP/3 had not answered yet | nothing: a later call may use HTTP/3 |
  * | [Refused] | the server closed the QUIC connection (CONNECTION_REFUSED...) or offers no common QUIC version | CONNECTION_REFUSED: nothing, the server is draining, stopping or full and the next call tries HTTP/3 again; otherwise the server's QUIC listener |
  * | [TlsFailure] | the QUIC handshake failed in TLS (a certificate, no `h3` ALPN) | the certificate and ALPN of the UDP side |
