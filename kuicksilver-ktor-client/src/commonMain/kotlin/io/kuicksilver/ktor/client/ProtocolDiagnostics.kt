@@ -220,7 +220,8 @@ public class ProtocolDiagnostics internal constructor() {
     /**
      * How many attempts the engine made for the response: the first, plus one per repeat by the engine (a request the
      * server did not process — GOAWAY, H3_REQUEST_REJECTED — or that this client's own `closeHttp3Connections()` stopped
-     * before it went out, each repeated on a new connection; a stale pooled HTTP/1.1 connection; a 417 to
+     * before it went out, each repeated on a new connection; a 0-RTT request on a connection whose Encrypted Client Hello
+     * the server rejected, sent again on the retry connection; a stale pooled HTTP/1.1 connection; a 417 to
      * `Expect: 100-continue`), plus one for the fallback to HTTP/1.1 when HTTP/3 had tried the request (not when the HTTP/3
      * connection could not be set up or its handshake failed: then HTTP/1.1 is the first attempt). Repeats inside the
      * HTTP/3 layer on the same connection — a 0-RTT request sent again after its early data was rejected, or after a

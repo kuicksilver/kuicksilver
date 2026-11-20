@@ -1440,14 +1440,17 @@ internal class H3Pool(
         // each step reported as the direct race reports its attempts (connectFailed as it fails, the connect timeout with
         // the step it cut short), at the proxy's address and with viaProxy: the QUIC handshake with each of the proxy's
         // addresses, the CONNECT-UDP request on the connection that won, the origin's handshake through the tunnel
-        var proxyAddress: InetSocketAddress? = null
+        // every connection the race made, with the proxy address it went to: two attempts can both connect before the race
+        // picks one (the loser is closed), so the address is the winner's by identity, never whichever finished last
+        val reached = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, InetSocketAddress>>())
         val raced = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
         // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
         val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
-            raceQuic(p.host, p.port, dns, failures, { _, a ->
-                proxyAddress = InetSocketAddress(a.hostText, a.port)
+            raceQuic(p.host, p.port, dns, failures, { c, a ->
+                val at = InetSocketAddress(a.hostText, a.port)
+                reached.update { it + (c to at) }
             }, chooseFailure = ::proxyRaceFailure) { destination ->
                 val (ep, remote) = endpointFor(destination, proxyHop)
                 val step = QuicAttemptProgress(destination, viaProxy = true).also { a -> raced.update { it + a } }
@@ -1472,7 +1475,7 @@ internal class H3Pool(
         var inner: Http3Endpoint? = null
         try {
             val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
-            val at = proxyAddress
+            val at = addressOfWinner(outer, reached.load())
             val tunnel =
                 proxyStep(
                     QuicAttemptProgress(at, viaProxy = true, stage = io.kuicksilver.ktor.client.ConnectStage.ProxyHandshake),
@@ -1999,7 +2002,8 @@ internal class H3Pool(
         // stall detection (`http3 { stallDetection }`): where TCP is the way out, never for a WebSocket
         watchStall: Boolean = false,
     ): HttpResponseData {
-        var attempts = 0
+        var attempts = 0 // repeats of a request the server did not process (at most 2)
+        var repeats = 0 // every repeat on a new connection, for the retry event's number and the diagnostics' attempts
         var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -2168,7 +2172,11 @@ internal class H3Pool(
                     val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
                     route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
                     lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
-                    events.emit("retry") { retry(data, attempts + 2, e) }
+                    // a repeat on a new connection, counted as the RequestNotProcessed one below is
+                    repeats++
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                    events.emit("retry") { retry(data, repeats + 1, e) }
                     continue
                 }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
@@ -2187,9 +2195,10 @@ internal class H3Pool(
                     )
                 }
                 if (++attempts > 2) throw H3NotSent(e)
+                repeats++
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
-                events.emit("retry") { retry(data, attempts + 1, e) }
+                events.emit("retry") { retry(data, repeats + 1, e) }
             }
         }
     }
@@ -2697,6 +2706,15 @@ internal class QuicAttemptProgress(
             info.load()?.id,
         )
 }
+
+/**
+ * The address [winner] went to, from what every attempt of a race [reached] (a connection and its address, in the order they
+ * connected): by identity, so an attempt that connected after the winner (and was closed) does not lend it its address.
+ */
+internal fun <C : Any, A> addressOfWinner(
+    winner: C,
+    reached: List<Pair<C, A>>,
+): A? = reached.firstOrNull { it.first === winner }?.second
 
 /**
  * Whether a request on a 0-RTT connection whose ECH the server rejected goes once more (the server ignored its early data,

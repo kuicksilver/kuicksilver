@@ -396,6 +396,20 @@ class ClientEchTest {
             // own retry would hide this path). The server issues tickets that allow 0-RTT, or there would be no early data.
             val requestHasConnection = CompletableDeferred<Unit>()
             val gateArmed = AtomicInt(0)
+            val retries = kotlin.concurrent.atomics.AtomicReference(emptyList<Int>())
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun retry(
+                        request: io.ktor.client.request.HttpRequestData,
+                        attempt: Int,
+                        cause: Throwable,
+                    ) {
+                        while (true) {
+                            val now = retries.load()
+                            if (retries.compareAndSet(now, now + attempt)) break
+                        }
+                    }
+                }
             val (server, port) =
                 echServer(keys, names, hits, earlyData = true, onHello = { name ->
                     if (name == EchTestKeys.PUBLIC_NAME && gateArmed.compareAndSet(1, 0)) {
@@ -406,6 +420,7 @@ class ClientEchTest {
                 client(Http3DiscoveryMode.H3Only, more = {
                     http3 { earlyData = true }
                     ech { configLists = mapOf("server.test" to listA) }
+                    eventListener = listener
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
@@ -416,10 +431,16 @@ class ClientEchTest {
                     keys.rotate(listOf(keyB))
                     gateArmed.store(1)
                     engine.h3.afterAcquireForTest = { requestHasConnection.complete(Unit) }
-                    val retries = engine.h3.echEarlyRetriesForTest.load()
-                    assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
+                    val earlyRetries = engine.h3.echEarlyRetriesForTest.load()
+                    retries.store(emptyList())
+                    val r = c.get("https://server.test:$port/")
+                    assertEquals("ok", r.bodyAsText())
                     assertTrue(requestHasConnection.isCompleted)
-                    assertEquals(retries + 1, engine.h3.echEarlyRetriesForTest.load(), "the early request went again on the retry")
+                    assertEquals(earlyRetries + 1, engine.h3.echEarlyRetriesForTest.load(), "the early request went again on the retry")
+                    // a repeat on a new connection, as for a request the server did not process: the retry event and the
+                    // diagnostics count it alike
+                    assertEquals(listOf(2), retries.load(), "the retry event's attempt number")
+                    assertEquals(2, r.kuicksilverDiagnostics?.attempts, "${r.kuicksilverDiagnostics}")
                 }
                 assertEquals(listOf<String?>("server.test", EchTestKeys.PUBLIC_NAME, "server.test"), names.all())
                 assertEquals(2, hits.load(), "the early request was processed once, on the retry")

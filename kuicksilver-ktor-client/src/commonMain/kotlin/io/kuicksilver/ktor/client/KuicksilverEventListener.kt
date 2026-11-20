@@ -126,7 +126,8 @@ public abstract class KuicksilverEventListener {
 
     /**
      * [request] is sent again, attempt number [attempt] (2 and up), because of [cause]: a GOAWAY or REFUSED_STREAM (the
-     * server did not process it), HTTP_1_1_REQUIRED over HTTP/2, a stale pooled connection, or a 417 to its
+     * server did not process it), a 0-RTT request whose connection's Encrypted Client Hello the server rejected (it ignored
+     * the early data), HTTP_1_1_REQUIRED over HTTP/2, a stale pooled connection, or a 417 to its
      * `Expect: 100-continue` (sent again without it).
      */
     public open fun retry(

@@ -20,6 +20,7 @@ import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.UdpProxyConfig
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.http3.UdpTargetFilter
+import io.kuicksilver.ktor.client.h3.addressOfWinner
 import io.kuicksilver.ktor.server.KuicksilverTlsConnector
 import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
@@ -586,6 +587,36 @@ class ClientConnectUdpProxyTlsTest {
                 assertEquals(proxyPort, f.address?.port, "$f")
                 assertIs<ProxyTlsException>(f.cause, "$f")
                 assertTrue(f.connectionId != null, "the proxy connection is named: $f")
+            }
+        }
+
+    /**
+     * Two of the proxy's addresses can both connect before the race picks one: the steps after the race are reported at the
+     * winner's address, found by its connection, whichever attempt connected last (the loser, closed by the race).
+     */
+    @Test fun negative_aLosingAttemptThatConnectedLastDoesNotLendItsAddress() {
+        val winner = Any()
+        val loser = Any()
+        val won = InetSocketAddress("127.0.0.1", 4433)
+        val lost = InetSocketAddress("::1", 4433)
+        assertEquals(won, addressOfWinner(winner, listOf(winner to won, loser to lost)))
+        assertEquals(won, addressOfWinner(winner, listOf(loser to lost, winner to won)))
+        assertNull(addressOfWinner(winner, listOf(loser to lost)))
+    }
+
+    /** A call that fails through a CONNECT-UDP proxy went over QUIC: its diagnostics say `Transport.Quic`, as a direct one's do. */
+    @Test fun negative_aFailedProxiedCallSaysItsTransportIsQuic() =
+        h3Test {
+            withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    dns = ProxyName
+                    proxyTls = { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) }
+                    connectUdpProxy = udpProxy(proxyPort)
+                }).use { c ->
+                    val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
+                    val d = e.kuicksilverDiagnostics
+                    assertEquals(Transport.Quic, d?.transport, "$d")
+                }
             }
         }
 

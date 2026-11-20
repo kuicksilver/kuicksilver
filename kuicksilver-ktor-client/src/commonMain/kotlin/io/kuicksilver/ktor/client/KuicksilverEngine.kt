@@ -533,6 +533,8 @@ internal class KuicksilverEngine(
                 throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed, and connectUdpProxy never uses TCP")
             }
             selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Proxy, d)
+            // the call's transport, as on the direct HTTP/3 path: a failed proxied call says Quic too
+            overQuic(d)
             return try {
                 h3.execute(H3Target(url.host, url.host, url.port, udpProxy = udp), data, callContext)
             } catch (e: H3NotSent) {

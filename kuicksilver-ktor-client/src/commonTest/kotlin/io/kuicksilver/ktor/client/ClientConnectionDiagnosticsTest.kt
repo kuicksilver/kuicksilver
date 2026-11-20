@@ -46,6 +46,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -419,7 +420,7 @@ class ClientConnectionDiagnosticsTest {
                         assertNull(f.quicProgress)
                         assertEquals(listOf(f), heard.connectFailures.load())
                     }
-                    accepted.cancel()
+                    accepted.cancelAndJoin()
                     sockets.load().forEach { it.close() }
                     listener.close()
                 }
