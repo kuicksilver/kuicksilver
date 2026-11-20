@@ -78,6 +78,8 @@ internal class FrameDispatcher(
         len: Int,
     ) {
         c.cryptoStreams.onData(r.level, offset, data, off, len, c.handshake.done)
+        // RFC 9369 section 4.1: the server sends CRYPTO only in the negotiated version, so a client's Initial CRYPTO fixes it
+        if (r.level == 0 && c.role == TlsRole.Client) c.clientVersionFixed = true
         c.cryptoStreams.deliver(r.level) { bytes, n ->
             if (r.level == 0 && c.role == TlsRole.Server) checkClientHello(bytes, n)
             if (r.level == 3) checkPostHandshakeMessages(bytes, n)

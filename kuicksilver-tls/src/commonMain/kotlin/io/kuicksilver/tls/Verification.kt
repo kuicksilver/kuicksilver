@@ -5,6 +5,7 @@
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import kotlinx.coroutines.Dispatchers
@@ -176,6 +177,32 @@ internal class Verification(
         return pinCheck(validated)
     }
 
+    /**
+     * The key a `Tofu` first contact is to remember, held until the handshake completed ([commitTrust]): the store is never
+     * written for a peer that has not proved it holds the key (CertificateVerify) and the handshake (Finished).
+     */
+    // set by verify() on the thread that runs the verifier (a QUIC connection: off its loop) and read and cleared by commitTrust()
+    // on another, after the handshake's completion was seen on the loop: volatile, so the hand-over does not rest on the
+    // dispatchers' ordering alone. One verification and one commit per handshake, never concurrent.
+    @kotlin.concurrent.Volatile
+    private var pendingTofu: PendingTofu? = null
+
+    /** A `Tofu` first contact waits for [commitTrust]. */
+    val trustPending: Boolean get() = pendingTofu != null
+
+    private class PendingTofu(
+        val store: TofuStore,
+        val name: String,
+        val pin: SpkiSha256,
+    )
+
+    /** The handshake completed: stores what [verify] decided to remember (a `Tofu` first contact), once. */
+    suspend fun commitTrust() {
+        val p = pendingTofu ?: return
+        pendingTofu = null
+        p.store.put(p.name, p.pin)
+    }
+
     /** Pin check against a chain the verifier (or `ksl`) built; also used after an AnchoredCa handshake. */
     fun pinCheck(validated: List<Certificate>): VerifyResult {
         val pinned = trust as? TrustConfig.Pinned ?: return VerifyResult.Accepted(validated)
@@ -190,16 +217,26 @@ internal class Verification(
         }
     }
 
+    @OptIn(ExperimentalKuicksilverApi::class)
     private suspend fun tofu(
         store: TofuStore,
         presented: List<Certificate>,
         reference: HostName,
     ): VerifyResult {
+        // the name first (the shared matcher in ksl checks it again after this verdict): a certificate that does not name the
+        // host is no first contact with it, and its key is never stored for it (curl #23475 class: Tofu validates no chain, and
+        // used to remember the key of a server presenting another name's certificate, refused by the name check afterwards, so
+        // that the host's own key failed with PinMismatch from then on)
+        if (!presented[0].matchesHost(reference)) {
+            return VerifyResult.Rejected(
+                VerifyReason.HostnameMismatch(reference.value, runCatching { presented[0].dnsNames }.getOrDefault(emptyList())),
+            )
+        }
         val leaf = presented[0].spkiSha256
         val known = store.get(reference.value)
         return when {
             known == null -> {
-                store.put(reference.value, leaf)
+                pendingTofu = PendingTofu(store, reference.value, leaf) // stored once the handshake completed (commitTrust)
                 VerifyResult.Accepted(presented)
             }
 

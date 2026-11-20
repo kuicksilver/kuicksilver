@@ -1031,6 +1031,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Http2Exception.ConnectionClosed` (a GOAWAY with an error, a dropped connection), a shared setup's failure — now throws
   its own copy of it (same type, fields and cause) carrying its diagnostics, and `callFailed` gets that copy, no longer
   the shared instance; the instance itself carries no call's diagnostics.
+- QUIC: `ConnectionStats.memoryCeiling` counts the allocation of the stream reassembly buffers as its receive part,
+  `3 x maxConnectionWindow` plus 1 KiB for each stream the peer may open (`maxBidiStreams + maxUniStreams`), where it
+  counted `maxConnectionWindow`, the unread bytes alone; the allocation is now bounded by that (see Security). With the
+  defaults the value grows by about 30 MiB. Streams the application opens add up to 1 KiB each, which the value leaves out.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.
@@ -2812,6 +2816,42 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- QUIC, receive memory (RFC 9000 section 21.7; the class of picoquic #2333, a receive bound that stops holding once the
+  peer moved the window): the flow-control windows and the reassembly range limits were fixed ceilings, but a stream's
+  reassembly buffer kept its allocation after the application read it: up to 1 MiB once drained, and its whole size,
+  up to the 6 MiB stream window, when a gap was left and nothing more was readable, a stream nobody reads again. Flow
+  control bounds what is unread at any one time, not what stays allocated, so a peer that pushed one stream window
+  through each of its `max_streams` streams (one byte at the end of the window, then the rest) left the connection
+  holding the sum of its stream windows: 50 MiB with the defaults against a 15 MiB connection window, and up to
+  `max_streams` x 6 MiB with windows the auto-tuning grew. The bytes the reassembly buffers hold allocated are now
+  counted per connection; above `maxConnectionWindow` a read leaves its stream's buffer no larger than twice what it
+  still holds (twice, so that a stream read a little behind its window does not shrink and regrow on every read) and
+  lets a drained one go, and a finished stream gives its buffer back. The allocation stays within the connection window
+  plus twice what the streams hold unread (`stream.ReassemblyRetainedCapacityTest`); below that bound
+  nothing changes. The fuzz invariant of every stream manager checks the count and the bound.
+- TLS, `TrustConfig.Tofu` (the class of curl #23475, host verification where peer verification is off): Tofu validates
+  no chain and the shared matcher refused a certificate for another name, but the key was stored for the host before
+  that check: a server presenting another name's certificate on first contact (a default virtual host, or someone on
+  the path) left its key pinned for the host, and the host's own key failed with `PinMismatch` from then on. The name
+  is now checked before the store is touched (`VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse`). The
+  store was also written when the chain was verified, before the server's CertificateVerify and Finished: a first contact
+  that failed after its certificate still pinned the presented key. It is now written only once the handshake completed,
+  over TCP and QUIC (`TofuCommitTest`), and before the connection is handed to the application: a connection closed at
+  once still leaves its pin, a store that fails fails the connection over QUIC as over TCP, and one that does not answer
+  is cancelled at the handshake timeout, which fails the connection (`api.TofuRuntimeTest`).
+  A QUIC session reports what it holds through the new experimental `QuicTlsSession.trustCommitPending` and
+  `commitTrust`, which the connection runtime calls; a transport that drives the session itself must call it after
+  `HandshakeDone`, or a `Tofu` first contact is accepted and never remembered.
+- QUIC client, compatible version negotiation (RFC 9369 section 4.1, RFC 9368): until it had Handshake keys the client
+  switched its Initial keys to the version of every server Initial of another configured version, before the packet was
+  authenticated, so one that did not decrypt left the switch in place (RFC 9000 section 12.2: such a packet is discarded),
+  and a later Initial of the original version (from anyone who saw the client's first Initial) switched it back. A packet
+  of another version now switches the keys only if it decrypts under them, and the version is fixed by the first such
+  packet ("the first long header Version field that differs from the original version") or by a CRYPTO frame from the
+  server; server Initials of any other version are dropped from then on (`core.ClientVersionLatchTest`). A Handshake
+  packet of another version that comes before the server's first Initial switches nothing and waits for the Handshake
+  keys, as before. One forged ACK-only Initial of another configured version from someone who saw the client's first
+  Initial now fixes that version, as RFC 9369 section 4.1 reads (threat model 3.9).
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

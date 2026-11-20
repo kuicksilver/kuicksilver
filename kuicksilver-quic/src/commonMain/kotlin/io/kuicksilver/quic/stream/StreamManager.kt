@@ -73,7 +73,7 @@ internal class StreamManager(
 
     private val streams = HashMap<Long, Entry>()
     private val scheduler = StreamScheduler()
-    private val budget = RangeBudget(config.limits.reassemblyRangesPerConnection)
+    private val budget = RangeBudget(config.limits.reassemblyRangesPerConnection, config.maxConnectionWindow)
     private val control = ArrayDeque<ControlFrame>()
     private val controlPool = ArrayList<ControlFrame>() // frames come back through releaseControlFrame: no allocation per MAX_DATA
 
@@ -328,6 +328,9 @@ internal class StreamManager(
 
     internal val connWindowForTest: Long get() = connFlow.window
 
+    /** Test hook: the reassembly buffer bytes allocated across the receiving halves of every stream. */
+    internal fun receiveCapacityForTest(): Long = streams.values.sumOf { (it.recv?.capacityForTest ?: 0).toLong() }
+
     /** Sets the floor of the connection's receive window ([RecvFlowController.setFloor]); a MAX_DATA goes out when it grew. */
     fun setConnectionWindowFloor(bytes: Long) {
         if (connFlow.setFloor(bytes)) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
@@ -366,6 +369,16 @@ internal class StreamManager(
         if (connSend.used > connSend.maxLimit) return "connection sent ${connSend.used} beyond the peer's ${connSend.maxLimit}"
         // each stream may hold one range beyond the gap limit: the readable one at its read offset
         if (budget.used < 0 || budget.used > budget.max + streams.size) return "reassembly ranges ${budget.used} outside 0..${budget.max}"
+        // the allocation of the reassembly buffers: counted exactly, and within the budget plus twice what each stream still holds
+        var allocated = 0L
+        var allowed = budget.maxBytes
+        for (e in streams.values) {
+            val r = e.recv ?: continue
+            allocated += r.capacityForTest
+            allowed += 2L * maxOf(r.bufferedSpanForTest, Reassembler.MIN_WINDOW).toLong()
+        }
+        if (allocated != budget.bytes) return "reassembly buffers hold $allocated bytes, counted ${budget.bytes}"
+        if (allocated > allowed) return "reassembly buffers hold $allocated bytes, above $allowed"
         if (sendBufferedBytes < 0) return "negative send buffer $sendBufferedBytes"
         for ((id, e) in streams) {
             e.recv?.let { r ->
@@ -1095,6 +1108,7 @@ internal class StreamManager(
             // a peer stream that ended with our unacknowledged reset counts as closed at the acknowledgment
             // ([onResetAcked]): a peer that leaves our resets unacknowledged cannot have more of them than it may open
             if (resetsUnacked?.contains(id) != true) countClosed(e)
+            e.recv?.discardBuffered() // nothing is left to read: its kept buffer leaves the idle budget
             streams.remove(id)
             sendLimit.remove(id)
             e.send?.let { scheduler.remove(it) }

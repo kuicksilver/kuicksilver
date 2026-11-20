@@ -280,6 +280,24 @@ public interface QuicTlsSession : AutoCloseable {
     public suspend fun verifyPeer(chain: List<Certificate>): VerifyResult
 
     /**
+     * Whether [commitTrust] has something to store: the handshake completed ([TlsEvent.HandshakeDone]) after [verifyPeer] took a
+     * `TrustConfig.Tofu` first contact. False otherwise, and always for a session without such trust.
+     */
+    @ExperimentalKuicksilverApi
+    public val trustCommitPending: Boolean get() = false
+
+    /**
+     * Commits what [verifyPeer] decided to remember, once the handshake completed ([TlsEvent.HandshakeDone]): the key of a
+     * `TrustConfig.Tofu` first contact is stored only then, after the peer proved it holds the key (CertificateVerify) and the
+     * handshake (Finished). Does nothing before completion, after a failure, or when there is nothing to remember; throws what the
+     * store throws. Kuicksilver's connection runtime calls it before the connection is handed to the application, and fails the
+     * connection with the store's error. **A transport that drives the session itself must call it** after
+     * [TlsEvent.HandshakeDone] while [trustCommitPending]: without it a `Tofu` first contact is accepted and never remembered.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun commitTrust() {}
+
+    /**
      * Server, for a [DriveResult.WantSni]: asks [TlsConfig.sniSelector] about [clientHello] and builds the configuration of
      * the identity it chose. Safe to call off the connection loop: it reads the configuration only, never the handshake.
      * Never throws for the selector's sake: an exception from it, or an override that does not suit QUIC, becomes a

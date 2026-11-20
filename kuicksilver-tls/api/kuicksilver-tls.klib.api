@@ -222,6 +222,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
         open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     open val peerCertificateCompression // io.kuicksilver.tls/QuicTlsSession.peerCertificateCompression|{}peerCertificateCompression[0]
         open fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.tls/QuicTlsSession.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
+    open val trustCommitPending // io.kuicksilver.tls/QuicTlsSession.trustCommitPending|{}trustCommitPending[0]
+        open fun <get-trustCommitPending>(): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.trustCommitPending.<get-trustCommitPending>|<get-trustCommitPending>(){}[0]
 
     abstract fun drive(): io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/QuicTlsSession.drive|drive(){}[0]
     abstract fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/QuicTlsSession.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
@@ -235,6 +237,7 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     open fun pendingCryptoBytes(io.kuicksilver.tls/EncryptionLevel): kotlin/Int // io.kuicksilver.tls/QuicTlsSession.pendingCryptoBytes|pendingCryptoBytes(io.kuicksilver.tls.EncryptionLevel){}[0]
     open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
     open fun resumeSni(io.kuicksilver.tls/SniSelection) // io.kuicksilver.tls/QuicTlsSession.resumeSni|resumeSni(io.kuicksilver.tls.SniSelection){}[0]
+    open suspend fun commitTrust() // io.kuicksilver.tls/QuicTlsSession.commitTrust|commitTrust(){}[0]
     open suspend fun selectSni(io.kuicksilver.tls/ClientHelloInfo): io.kuicksilver.tls/SniSelection // io.kuicksilver.tls/QuicTlsSession.selectSni|selectSni(io.kuicksilver.tls.ClientHelloInfo){}[0]
 }
 

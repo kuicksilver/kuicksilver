@@ -310,6 +310,7 @@ public final class io/kuicksilver/tls/QuicSessionTicket : java/lang/AutoCloseabl
 }
 
 public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/AutoCloseable {
+	public fun commitTrust (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun drive ()Lio/kuicksilver/tls/DriveResult;
 	public fun enableEarlyData ([BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
@@ -319,6 +320,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public fun getPeerCertificateCompression ()Lio/kuicksilver/tls/CertificateCompression;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
+	public fun getTrustCommitPending ()Z
 	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
 	public fun pendingCryptoBytes (Lio/kuicksilver/tls/EncryptionLevel;)I
 	public abstract fun provide (Lio/kuicksilver/tls/EncryptionLevel;[BII)V
@@ -333,11 +335,13 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 }
 
 public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
+	public static fun commitTrust (Lio/kuicksilver/tls/QuicTlsSession;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
 	public static fun getKeyExchangeGroup (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/String;
 	public static fun getLocalCertificates (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/util/List;
 	public static fun getPeerCertificateCompression (Lio/kuicksilver/tls/QuicTlsSession;)Lio/kuicksilver/tls/CertificateCompression;
+	public static fun getTrustCommitPending (Lio/kuicksilver/tls/QuicTlsSession;)Z
 	public static fun pendingCryptoBytes (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;)I
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z

@@ -864,6 +864,53 @@ static void test_sni_pause(void) {
     END();
 }
 
+static void test_no_early_data_over_tcp(void) {
+    SECTION("tcp_never_accepts_or_offers_early_data");
+    /* openssl/openssl#33836: a TLS 1.3 server that accepted early data keeps reading under the early-data record layer with
+       plaintext alerts allowed (statem_srvr.c, set_plain_alerts after its Finished), so an on-path attacker can inject an
+       unauthenticated alert for the whole early-data stage. ksl uses 0-RTT on QUIC only (no TLS records there): a TCP session
+       takes the context's max_early_data, which ksl never sets (0), and nothing calls SSL_read_early_data, so OpenSSL's
+       final_early_data rejects every early_data offer and the window never opens. This holds the first condition, also on a
+       context with KSL_OPT_EARLY_DATA on (the QUIC knob) and through an SNI override, and checks that the server's tickets offer
+       no early data either. */
+    uint8_t keys[80];
+    for (int i = 0; i < 80; i++)
+        keys[i] = (uint8_t)(i * 7 + 3);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"), *paused = server_ctx("server"),
+            *ov = server_ctx("server");
+    CHECK(ksl_ctx_set_option(sc, KSL_OPT_EARLY_DATA, 1) == KSL_OK &&
+              ksl_ctx_set_option(paused, KSL_OPT_EARLY_DATA, 1) == KSL_OK &&
+              ksl_ctx_set_option(ov, KSL_OPT_EARLY_DATA, 1) == KSL_OK,
+          "early data on in the server contexts (the QUIC option)");
+    ksl_ctx_set_option(paused, KSL_OPT_SNI_PAUSE, 1);
+    ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+    ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(SSL_get_max_early_data(s->ssl) == 0, "a TCP server session accepts no early data");
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    uint8_t buf[16];
+    size_t n;
+    ksl_tcp_read(c, buf, sizeof buf, &n); /* consume the NewSessionTicket */
+    SSL_SESSION *sess = SSL_get_session(c->ssl);
+    CHECK(sess && SSL_SESSION_get_max_early_data(sess) == 0, "its ticket offers the client no early data");
+    CHECK(SSL_get_early_data_status(s->ssl) != SSL_EARLY_DATA_ACCEPTED, "no early data accepted");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    /* an SNI override copies its settings onto the session (ksl_ctx_apply_to_ssl): the TCP branch keeps 0 as well */
+    sni_arg a = {ov, 0, 0, {0}};
+    c = tcp_client(cc, "server.test");
+    s = ksl_ssl_new(paused, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK && a.saw_sni, "handshake through an SNI override");
+    CHECK(SSL_get_max_early_data(s->ssl) == 0, "a TCP session under an override with early data on accepts none");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    ksl_ctx_free(paused);
+    ksl_ctx_free(ov);
+    END();
+}
+
 static void test_sni_override_alpn(void) {
     SECTION("tcp_sni_override_leaves_base_ctx_alpn");
     /* the override's ALPN list must not be written into the frozen base context other connections share */
@@ -2962,6 +3009,7 @@ void run_tcp(void) {
     test_client_verification_still_refuses();
     test_client_alert_after_server_hello_is_encrypted();
     test_resumption();
+    test_no_early_data_over_tcp();
     test_resumption_bounded();
     test_ticket_lifetime_clamped();
     test_sni_pause();

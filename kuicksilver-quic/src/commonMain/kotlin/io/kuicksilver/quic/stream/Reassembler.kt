@@ -12,11 +12,19 @@ import io.kuicksilver.native.PacketBuffer
  */
 internal object ReassemblyFull : RuntimeException("too many reassembly ranges")
 
-/** Connection-wide count of reassembly ranges (4096 per connection). */
+/**
+ * Connection-wide count of reassembly ranges (4096 per connection), and of the bytes the reassembly buffers hold allocated,
+ * read or not ([bytes]). Flow control bounds the bytes that are unread at any one time, not what stays allocated once they were
+ * read (picoquic #2333 class): above [maxBytes] (the connection window) a read leaves its stream's buffer no larger than twice
+ * what is still buffered in it, and a drained one is let go. The allocation is then at most [maxBytes] plus, per stream, twice
+ * the span it still buffers or twice [Reassembler.MIN_WINDOW], whichever is more (a buffer grows by doubling).
+ */
 internal class RangeBudget(
     val max: Int,
+    val maxBytes: Long = Long.MAX_VALUE,
 ) {
     var used: Int = 0
+    var bytes: Long = 0
 }
 
 /**
@@ -126,6 +134,29 @@ internal class Reassembler(
         count++
     }
 
+    /** Replaces the buffer, keeping the connection's allocated-bytes count ([RangeBudget.bytes]) exact. */
+    private fun setWindow(w: ByteArray) {
+        budget.bytes += w.size.toLong() - window.size
+        window = w
+    }
+
+    /**
+     * Over the connection's allocation budget: shrinks the buffer to twice what it still holds (gaps included), as one copy, and
+     * only when it is larger than that. Twice, not exactly: a stream read a little behind its window would otherwise shrink on
+     * every read and double on the next frame, copying its whole backlog each time; with the factor a shrink or a growth needs
+     * the held bytes to halve or double first, so the copies stay linear in the bytes delivered.
+     */
+    private fun shrinkToFit() {
+        val buffered = bufferedBytes
+        val target = 2 * maxOf(buffered, MIN_WINDOW)
+        if (window.size <= target) return
+        val w = ByteArray(target)
+        window.copyInto(w, 0, head, head + buffered)
+        bytesMovedForTest += buffered
+        head = 0
+        setWindow(w)
+    }
+
     private fun ensureCapacity(end: Long) {
         val need = (end - base).toInt()
         if (head + need <= window.size) return
@@ -142,7 +173,7 @@ internal class Reassembler(
         window.copyInto(grown, 0, head, head + buffered)
         bytesMovedForTest +=
             buffered
-        window = grown
+        setWindow(grown)
         head = 0
     }
 
@@ -172,21 +203,26 @@ internal class Reassembler(
         }
         if (count == 0) {
             head = 0
-            if (window.size > SHRINK_ABOVE) window = ByteArray(0)
-        } // drained: a large window is not kept for the life of the stream
+            // drained: a large window is not kept for the life of the stream, nor any window while the connection's buffers are over
+            // their budget (each stream the peer filled once would otherwise keep its window: max_streams x the stream window)
+            if (window.size > SHRINK_ABOVE || budget.bytes > budget.maxBytes) setWindow(EMPTY)
+        } else if (budget.bytes > budget.maxBytes) {
+            shrinkToFit() // a stream left with a gap and nothing readable is never read again: its large window goes now
+        }
         return n
     }
 
-    /** Drops everything (stream reset). */
+    /** Drops everything (stream reset, or a stream that is done): its ranges and its allocation leave the connection's counts. */
     fun clear() {
         budget.used -= count
         count = 0
         head = 0
-        window = ByteArray(0)
+        setWindow(EMPTY)
     }
 
-    private companion object {
+    internal companion object {
         const val SHRINK_ABOVE = 1 shl 20
         const val MIN_WINDOW = 512
+        private val EMPTY = ByteArray(0)
     }
 }
