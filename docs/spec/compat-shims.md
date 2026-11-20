@@ -315,7 +315,7 @@ the data.
   only the first received Initial or Retry packet") and, in effect, from §7.3. The client is now strict, as quic-go,
   ngtcp2, quinn and picoquic are: such a handshake fails (msquic#3762, #4905) and the Ktor client goes over TCP
   ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is), [interop](interop.md)) —
-  `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeWithinTheHandshakeTimeout`.
+  `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently`.
 - **`Proxy-Connection: Keep-Alive` on CONNECT** (0.3.0). The CONNECT that opens a tunnel through an HTTP proxy carried the
   field for HTTP/1.0 proxies, as OkHttp 5.3.2 does (`RealRoutePlanner`, "For HTTP/1.0 proxies like Squid"), against RFC
   9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests". No peer

@@ -33,7 +33,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | What you see | Entry |
 |---|---|
 | `"Handshake timeout after 10s"`, `ConnectionLost.Timeout` with `TimeoutKind.Handshake`, `fallback = HandshakeTimeout` | [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
-| HTTP/3 to an msquic server (IIS, Kestrel on Windows) works on the first connection and falls back to TCP on resumed ones | [msquic servers](#msquic-servers-and-a-large-clienthello) |
+| `ConnectionLost.ServerConnectionIdChanged`, `fallback = ServerConnectionIdChanged`; HTTP/3 to an msquic server (IIS, Kestrel on Windows) works on the first connection and falls back to TCP on resumed ones | [msquic servers](#msquic-servers-and-a-large-clienthello) |
 | `TransportClosed(code = 0x02)`, `CONNECTION_REFUSED`, `fallback = Refused` | [CONNECTION_REFUSED](#connect-fails-at-once-with-transportclosedcode--0x02) and [refusals and limits](#connections-are-refused-or-dropped) |
 | `TlsException.Verify`, `VerifyReason.UnknownIssuer`, TLS alert 48 (`TransportClosed(code = 0x0130)`), alerts 42, 45 | [certificate errors](#the-handshake-fails-with-a-certificate-error) |
 | `no_application_protocol`, TLS alert 120 (`TransportClosed(code = 0x0178)`), `the server chose ALPN`, `ALPN h3 required` | [ALPN mismatch](#the-handshake-fails-with-an-alpn-mismatch) |
@@ -118,7 +118,6 @@ its own `handshakeTimeout` ended (the Ktor server sets it through `quic`).
 | Many clients behind one source address (a source NAT, `kube-proxy` with `externalTrafficPolicy: Cluster`, a UDP proxy) hit the stateless answer limit, 8 per second per address | `statelessRateLimited` grows while Retry packets or refusals are due; only some clients fail | keep the client addresses (`externalTrafficPolicy: Local`); the Ktor server engine does not let you change that limit ([Deploying: Kubernetes](deployment.md#kubernetes)) |
 | A tunnel or link on the path drops 1200-byte UDP datagrams (every client Initial datagram is at least 1200 bytes, RFC 9000 section 14.1) | small UDP gets through, `tcpdump` on the client shows Initials going out and nothing back, or the server sees none | fix the tunnel's MTU: QUIC cannot run below 1200 bytes; after the handshake a smaller path is [black-hole detection](#transfers-stall-over-a-vpn-or-tunnel-mtu-black-hole)'s case |
 | The server's UDP port is closed and the network answers with ICMP unreachable | `tcpdump` on the client shows the ICMP answer | the server's listener ([The server serves HTTP/1.1 but no HTTP/3](#the-server-serves-http11-but-no-http3)); Kuicksilver does not report ICMP yet, so the client waits for its timeout (`fallback = UdpUnreachable` is reserved for it) |
-| The server is msquic (IIS, .NET Kestrel on Windows) and the ClientHello takes 3 or more datagrams, mostly a resumption with ML-KEM and ECH GREASE | it happens on resumed connections to that server only; the qlog shows the server's Initials from a second SCID dropped | nothing to fix on the client: QUIC fails per RFC 9000 section 7.3 (msquic#4905) and the Ktor client goes over TCP ([msquic servers](#msquic-servers-and-a-large-clienthello)) |
 
 With `ConnectionLost.VersionNegotiation` instead ("version negotiation failed: server offers [<versions>], we support
 [<versions>]") the server speaks none of `QuicConfig.versions`; add `VersionProfile.V2` or `V1` as the server expects.
@@ -132,17 +131,31 @@ GREASE): QUIC fails per RFC 9000 section 7.3 (msquic#4905); requests go over TCP
 Connection ID, the client's own Destination Connection ID; then it sends the ServerHello from a new one and names that one
 in `initial_source_connection_id` (msquic#3762, #4905). RFC 9000 section 7.2 makes the client keep the first server SCID
 and discard every later packet with another, and section 7.3 holds the server's transport parameter to that first SCID, so
-the handshake cannot complete; it ends by the handshake timeout (`QuicException.ConnectionLost.Timeout`, `TimeoutKind.Handshake`).
-quic-go, ngtcp2, quinn, picoquic, neqo and OpenSSL's client fail the same way; until 0.3.0 Kuicksilver let it through.
+the handshake cannot complete. The client does not wait for its handshake timeout: the first switched packet that decrypts
+and carries handshake data ends the attempt at once, silently, with `QuicException.ConnectionLost.ServerConnectionIdChanged`
+(about two round trips after the first Initial). quic-go, ngtcp2, quinn, picoquic, neqo and OpenSSL's client fail such a
+handshake too (by their timeouts); until 0.3.0 Kuicksilver let it through.
 
 **When.** A first connection's ClientHello (X25519MLKEM768) fits 2 datagrams, and msquic answers it whole. A resumed
 connection's ClientHello adds the pre-shared key and a GREASE ECH extension sized like a real offer (RFC 9849 section
 6.2.1), about 2.4 KB, which takes 3; a lost ClientHello datagram does it too.
 
-**What you see.** With the Ktor client in `Auto` or `Preferred` the call is served over HTTP/1.1 or HTTP/2:
-`kuicksilverDiagnostics.fallback` is `HandshakeTimeout` (or `H3NotReady` when TCP won the race first) and `h3Failure` the
-handshake timeout; after that the alternative is marked broken on that network. In `H3Only` mode the call fails. The raw
-QUIC API fails `connect` with the handshake timeout. Interop: [msquic's provisional SCID](../spec/interop.md#msquics-provisional-scid-the-cells-expected-red-2026-11-21).
+**What you see** with the Ktor client (`Auto`, `Preferred` or `quicHints`):
+
+- The default race. HTTP/3 starts first and TCP after a head start of 1.5 × the smoothed RTT, clamped to 100 ms..2 s. The
+  call is served over HTTP/1.1 or HTTP/2 with little extra wait: the QUIC attempt ends about two round trips in, so either
+  it failed first (`fallback = ServerConnectionIdChanged`, `h3Failure` the exception, TCP starts then) or TCP won the race
+  (`fallback = H3NotReady`, `h3Failure = null`) and the losing QUIC setup failed right after. Either way the alternative is
+  marked broken on that network (5 minutes, doubling up to 2 days), so the next calls go straight to TCP
+  (`fallback = BrokenAlternative`).
+- With `http3 { earlyData = true }` (opt-in) against an msquic server that allows 0-RTT, the resumed connection is handed
+  out at once and wins the race, and the GET goes early. The switched ServerHello ends it about two round trips in, and the
+  request is served without waiting for a timeout: over TCP (`fallback = ServerConnectionIdChanged`), or over HTTP/3 again
+  when the engine's next setup, a full handshake without the spent ticket (2 datagrams, which msquic answers whole), wins.
+  Without the early end it waited for min(handshakeTimeout, connectTimeout), 10 s by default.
+- `H3Only` fails the call with `ServerConnectionIdChanged` once the attempt ends; the raw QUIC API fails `connect` with it.
+
+Interop: [msquic's provisional SCID](../spec/interop.md#msquics-provisional-scid-the-cells-expected-red-2026-11-21).
 
 ### `connect` fails at once with `TransportClosed(code = 0x02)`
 
@@ -611,6 +624,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `Other` | any other HTTP/3 failure; `h3Failure` has the exception |
 | `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request (a network that cuts UDP flows): the connection was closed, the alternative marked broken, and the request went over TCP: [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `H2Refused` | the server answered HTTP/2 with `HTTP_1_1_REQUIRED`: [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
+| `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake (an msquic server given a ClientHello of 3 or more datagrams): the call went over TCP at once and the alternative is marked broken: [msquic servers](#msquic-servers-and-a-large-clienthello) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
 alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).

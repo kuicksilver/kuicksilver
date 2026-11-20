@@ -184,6 +184,7 @@ internal class PacketReceiver(
             }
             lastOutcome = OUTCOME_NONE
             val ok = processPacket(data, from)
+            if (c.state == ConnectionState.Closed) return // ended by this packet (a switched server SCID): nothing more to read
             if (first == FIRST_NONE) {
                 // a duplicate (or a packet from the address the connection left) was decrypted: the check may be skipped
                 first =
@@ -249,6 +250,16 @@ internal class PacketReceiver(
             peerScid?.contentEquals(data, hv.scidOff, hv.scidLen) == false
         ) {
             c.datagramsDropped++
+            // the handshake cannot complete once the server's handshake data comes from another SCID before any came from the fixed
+            // one (msquic's provisional SCID, msquic#4905): end it now, not by the handshake timeout. Only a packet that decrypts and
+            // carries CRYPTO counts, and nothing is sent: the packet stays discarded (section 7.2) and a CONNECTION_CLOSE would go to
+            // an ID nobody authenticated. A stranger's flight after the real ServerHello (serverCryptoSeen) is only discarded
+            if (switchedServerHandshake(data, type)) {
+                c.silentClose(
+                    io.kuicksilver.quic.QuicException.ConnectionLost
+                        .ServerConnectionIdChanged(),
+                )
+            }
             return false
         }
         space =
@@ -409,6 +420,11 @@ internal class PacketReceiver(
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen
         reader.limit = hv.packetEnd - 16
+        if (c.role == TlsRole.Client && !serverCryptoSeen && (type == PacketType.Initial || type == PacketType.Handshake) &&
+            framesHaveCrypto()
+        ) {
+            serverCryptoSeen = true
+        }
         if (c.role == TlsRole.Client && type == PacketType.Initial && !remoteCidSet) {
             // RFC 9000 section 7.2: "Upon first receiving an Initial or Retry packet from the server, the client uses the Source
             // Connection ID supplied by the server as the Destination Connection ID for subsequent packets" and "MUST change the
@@ -532,6 +548,101 @@ internal class PacketReceiver(
         return true
     }
 
+    /**
+     * Client: whether the server's handshake data in an Initial or Handshake packet (a CRYPTO frame) arrived from the fixed SCID
+     * (the connection then completes or fails with that server; a stranger's flight after it is only discarded).
+     */
+    private var serverCryptoSeen = false
+
+    /**
+     * Client, for a long-header packet discarded for its SCID (RFC 9000 section 7.2): whether the handshake is still running,
+     * nothing with CRYPTO came from the fixed SCID yet, and this packet decrypts with the keys of its level and carries a CRYPTO
+     * frame. It is unprotected in place to find out; it is discarded either way, and decrypting it records nothing.
+     */
+    private fun switchedServerHandshake(
+        data: PacketBuffer,
+        type: PacketType,
+    ): Boolean {
+        if (c.state != ConnectionState.Handshaking || serverCryptoSeen) return false
+        if (type != PacketType.Initial && type != PacketType.Handshake) return false
+        if (!hv.fixedBitSet) return false
+        if (type == PacketType.Initial && hv.tokenLen != 0) return false
+        val space = if (type == PacketType.Initial) SpaceId.Initial else SpaceId.Handshake
+        if (c.spaceDiscarded[space.ordinal]) return false
+        // a compatible upgrade (RFC 9368, RFC 9369 section 4.1): the switched ServerHello may come in the negotiated version, whose
+        // Initial keys the client derives for this packet only (the version switch itself waits for a packet from the fixed SCID)
+        var owned: io.kuicksilver.tls.PacketProtector? = null
+        if (hv.version != c.version.version) {
+            val profile = VersionProfile.of(hv.version) ?: return false
+            if (type != PacketType.Initial || c.clientVersionFixed || profile !in c.config.versions) return false
+            val (r, w) = c.crypto.initialProtectors(c.initialKeyCid.toByteArray(), profile.version, TlsRole.Client)
+            w.close()
+            owned = r
+        }
+        try {
+            val key = owned ?: c.readKeys[if (type == PacketType.Initial) 0 else 2] ?: return false
+            val largest =
+                c.loss
+                    .space(space)
+                    .ack.largestReceived
+            val pn = PacketProtection.removeHeaderProtection(data, headerStart(), hv.pnOffset, hv.packetEnd, largest, key, mask)
+            if (pn < 0) return false
+            if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, key)) {
+                c.onAuthenticationFailure(key.aead)
+                return false
+            }
+            reader.buf = data
+            reader.pos = hv.pnOffset + (data[headerStart()].toInt() and 0x03) + 1
+            reader.limit = hv.packetEnd - 16
+            return framesHaveCrypto()
+        } finally {
+            owned?.close()
+        }
+    }
+
+    /**
+     * Whether the decrypted payload at [reader] has a CRYPTO frame before anything but PADDING, PING and ACK frames (the frames
+     * a server's Initial or Handshake packet carries before its handshake data); a malformed payload has none. The reader's
+     * position is kept.
+     */
+    private fun framesHaveCrypto(): Boolean {
+        val start = reader.pos
+        try {
+            while (reader.pos < reader.limit) {
+                when (val t = reader.varint()) {
+                    0L, 1L -> {}
+
+                    2L, 3L -> {
+                        reader.varint() // largest acknowledged
+                        reader.varint() // ACK delay
+                        val ranges = reader.varint()
+                        reader.varint() // first range
+                        var i = 0L
+                        while (i < ranges) {
+                            reader.varint()
+                            reader.varint()
+                            i++
+                        }
+                        if (t == 3L) repeat(3) { reader.varint() }
+                    }
+
+                    6L -> {
+                        return true
+                    }
+
+                    else -> {
+                        return false
+                    }
+                }
+            }
+            return false
+        } catch (_: QuicWireException) {
+            return false
+        } finally {
+            reader.pos = start
+        }
+    }
+
     private var remoteCidSet = c.role == TlsRole.Server
 
     /** The server's Source Connection ID taken from its first Initial (client only); later long-header packets must carry it. */
@@ -622,6 +733,7 @@ internal class PacketReceiver(
         buffered.clear()
         remoteCidSet = c.role == TlsRole.Server
         peerScid = null
+        serverCryptoSeen = false
     }
 
     /** Whether the packet being decoded is a 0-RTT one (its STREAM frames mark their streams as received early). */

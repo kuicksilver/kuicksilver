@@ -18,8 +18,9 @@ ServerHello and every later packet and names in `initial_source_connection_id`. 
 packet numbers run on across the switch, 190 → 191 → 192 in the saved pcap), not two connection instances as this page
 said before. §7.3 says "Each endpoint includes the value of the Source Connection ID field from the first Initial packet it
 sent in the initial_source_connection_id transport parameter"; §7.2 makes a client that took the first Initial "discard any
-subsequent packet it receives on that connection with a different Source Connection ID". So the handshake cannot finish,
-and our client ends it by the handshake timeout. msquic knows: microsoft/msquic#3762 (open since 2023-07, "We cannot
+subsequent packet it receives on that connection with a different Source Connection ID". So the handshake cannot finish;
+our client ends it as soon as the switched ServerHello arrives (`ServerConnectionIdChanged`, sending nothing), quic-go and
+the others by their timeouts. msquic knows: microsoft/msquic#3762 (open since 2023-07, "We cannot
 generate a new CID until the listener has accepted the connection") and #4905 (open: OpenSSL's client with an ML-KEM
 ClientHello of three datagrams hangs the same way; neqo's #5557 was closed as its duplicate).
 
@@ -37,10 +38,12 @@ expected red because of msquic, out of `required.json`:
   extra handshakes the runner counted ("Got: 70", "Got: 73", "Got: 2" of 50, 50 and 1 in the int37 run) were exactly the
   provisional SCIDs, 20, 23 and 1 of them, each from an ACK-only Initial; those connections now fail instead.
 - `msquic->kuicksilver:transferloss`, `msquic->kuicksilver:transfercorruption`, now and then: whenever the scenario drops
-  or corrupts a ClientHello datagram (the `transfercorruption` red of the 0.2.0 matrix below was this).
+  or corrupts a ClientHello datagram (the `transfercorruption` red of the 0.2.0 matrix below was this). The scenarios hit
+  2 % of the datagrams toward the server (bursts of up to 3), and the first ClientHello takes 2, so roughly 4 to 6 runs in
+  100 per cell.
 
-Pinned by `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeWithinTheHandshakeTimeout` and, through the
-Ktor client (the call goes over TCP with `FallbackReason.HandshakeTimeout`), `MsquicProvisionalScidTest`. What applications
+Pinned by `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently` and, through the
+Ktor client (the call goes over TCP with `FallbackReason.ServerConnectionIdChanged`), `MsquicProvisionalScidTest`. What applications
 see: [troubleshooting](../guide/troubleshooting.md#msquic-servers-and-a-large-clienthello).
 
 ## Interop matrix (0.2.0, QUIC Interop Runner 740c05a, 2026-10-13)

@@ -1733,6 +1733,12 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
             final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath // io.kuicksilver.quic/QuicException.ConnectionLost.NoViablePath.createCopy|createCopy(){}[0]
         }
 
+        final class ServerConnectionIdChanged : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.ServerConnectionIdChanged|null[0]
+            constructor <init>() // io.kuicksilver.quic/QuicException.ConnectionLost.ServerConnectionIdChanged.<init>|<init>(){}[0]
+
+            final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.ServerConnectionIdChanged // io.kuicksilver.quic/QuicException.ConnectionLost.ServerConnectionIdChanged.createCopy|createCopy(){}[0]
+        }
+
         final class StatelessReset : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.StatelessReset|null[0]
             constructor <init>() // io.kuicksilver.quic/QuicException.ConnectionLost.StatelessReset.<init>|<init>(){}[0]
 

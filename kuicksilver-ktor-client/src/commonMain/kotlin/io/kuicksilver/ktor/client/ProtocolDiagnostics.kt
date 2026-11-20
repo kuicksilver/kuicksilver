@@ -369,6 +369,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
  * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
+ * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams) | nothing on the client: the server's QUIC stack (msquic#4905); calls go over TCP |
  *
  * New values may be added in later versions (docs/stability.md).
  */
@@ -461,6 +462,14 @@ public enum class FallbackReason {
      * each new refusal). The reason HTTP/3 was not used is in the log line as `h3Fallback=`.
      */
     H2Refused,
+
+    /**
+     * The QUIC handshake failed because the server sent its handshake data from another Source Connection ID than its first
+     * Initial ([io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged]; RFC 9000 sections 7.2 and 7.3):
+     * an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams (msquic#4905). The call went
+     * over TCP at once and the alternative is marked broken. Since 0.3.0.
+     */
+    ServerConnectionIdChanged,
 }
 
 /** Where the HTTP/3 endpoint of a call came from ([ProtocolDiagnostics.alternativeSource]). */
@@ -546,6 +555,10 @@ private fun classifyH3FailureByType(e: Throwable?): FallbackReason? =
 
         is QuicException.ConnectionLost.VersionNegotiation -> {
             FallbackReason.Refused
+        }
+
+        is QuicException.ConnectionLost.ServerConnectionIdChanged -> {
+            FallbackReason.ServerConnectionIdChanged
         }
 
         is QuicException.ConnectionLost.ZeroRttRejected, is QuicException.StreamError.EarlyDataRejected -> {

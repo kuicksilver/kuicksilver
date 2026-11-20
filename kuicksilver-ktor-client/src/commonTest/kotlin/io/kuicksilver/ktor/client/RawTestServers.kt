@@ -242,29 +242,71 @@ internal class UdpRelay(
     /**
      * While true, the relay answers the first client Initial the way an msquic server does before its listener accepted the
      * connection ([msquicProvisionalInitial]): an ACK-only Initial from the client's own DCID reaches the client before the
-     * server sees the datagram; the server's own answer, from its real SCID, follows.
+     * server sees the datagram; the server's own answer, from its real SCID, follows. Only the first connection gets it,
+     * unless [provisionalForEveryConnection].
      */
     @kotlin.concurrent.Volatile var msquicProvisionalScid: Boolean = false
 
+    /** With [msquicProvisionalScid]: every new connection (a client Initial to a DCID not seen yet) gets a provisional Initial. */
+    @kotlin.concurrent.Volatile var provisionalForEveryConnection: Boolean = false
+
     /** How many provisional Initials the relay sent ([msquicProvisionalScid]). */
     @kotlin.concurrent.Volatile var provisionalInitialsSent: Int = 0
+
+    /** The DCIDs of client Initials seen, and the SCIDs of the server's long headers: a new connection's DCID is in neither. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val knownCids = kotlin.concurrent.atomics.AtomicReference(emptySet<String>())
+
+    /** Adds [cid] to the known IDs; true when it was not known yet. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    fun addKnownCid(cid: String): Boolean {
+        while (true) {
+            val now = knownCids.load()
+            if (cid in now) return false
+            if (knownCids.compareAndSet(now, now + cid)) return true
+        }
+    }
 
     /** Datagrams of the server passed on to the client. */
     @kotlin.concurrent.Volatile var serverDatagramsForwarded: Int = 0
 }
 
+/** The DCID (or with [scid] the SCID) of the long-header packet at the start of [d], in hex; null for a short header. */
+private fun longHeaderCid(
+    d: ByteArray,
+    scid: Boolean,
+): String? {
+    if (d.size < 7 || d[0].toInt() and 0x80 == 0) return null
+    val dcidLen = d[5].toInt() and 0xff
+    if (d.size < 7 + dcidLen) return null
+    val off = if (scid) 7 + dcidLen else 6
+    val len = if (scid) d[6 + dcidLen].toInt() and 0xff else dcidLen
+    if (d.size < off + len) return null
+    return d.copyOfRange(off, off + len).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+}
+
+/** The QUIC v2 version number (RFC 9369 section 3.1). */
+private const val QUIC_V2 = 0x6b3343cf
+
 /**
  * The provisional answer an msquic server gives a ClientHello it has only part of (msquic#3762, #4905; docs/spec/interop.md):
- * a QUIC v1 server Initial to the client Initial at the start of [datagram] from the client's own DCID, with an ACK of the
- * client's packet 0 and PADDING, sealed with the server's Initial keys (RFC 9001 section 5.2); null when [datagram] does
- * not start with a v1 client Initial.
+ * a server Initial of the same QUIC version (v1 or v2) to the client Initial at the start of [datagram] from the client's
+ * own DCID, with an ACK of the client's packet 0 and PADDING, sealed with the server's Initial keys (RFC 9001 section 5.2);
+ * null when [datagram] does not start with a v1 or v2 client Initial.
  */
 internal fun msquicProvisionalInitial(datagram: ByteArray): ByteArray? {
-    if (datagram.size < 7 || datagram[0].toInt() and 0xf0 != 0xc0) return null
+    if (datagram.size < 7) return null
     val version =
         ((datagram[1].toInt() and 0xff) shl 24) or ((datagram[2].toInt() and 0xff) shl 16) or ((datagram[3].toInt() and 0xff) shl 8) or
             (datagram[4].toInt() and 0xff)
-    if (version != 1) return null
+    // the Initial's long-header type bits: 0b00 in QUIC v1, 0b01 in v2 (RFC 9369 section 3.2)
+    val initialBits =
+        when (version) {
+            1 -> 0xc0
+            QUIC_V2 -> 0xd0
+            else -> return null
+        }
+    if (datagram[0].toInt() and 0xf0 != initialBits) return null
     val dcidLen = datagram[5].toInt() and 0xff
     if (datagram.size < 7 + dcidLen) return null
     val dcid = datagram.copyOfRange(6, 6 + dcidLen)
@@ -275,14 +317,21 @@ internal fun msquicProvisionalInitial(datagram: ByteArray): ByteArray? {
     val pnLength = 2
     val length = pnLength + payload.size + 16
     val header =
-        byteArrayOf(0xc1.toByte(), 0, 0, 0, 1, clientScid.size.toByte()) + clientScid + byteArrayOf(dcid.size.toByte()) + dcid +
+        byteArrayOf(
+            (initialBits or 0x01).toByte(),
+            (version ushr 24).toByte(),
+            (version ushr 16).toByte(),
+            (version ushr 8).toByte(),
+            version.toByte(),
+            clientScid.size.toByte(),
+        ) + clientScid + byteArrayOf(dcid.size.toByte()) + dcid +
             byteArrayOf(0, (0x40 or (length shr 8)).toByte(), length.toByte())
     val pnOffset = header.size
     val bytes = header + ByteArray(length) // packet number 0 in two bytes
     payload.copyInto(bytes, pnOffset + pnLength)
     val (read, write) =
         io.kuicksilver.tls.KslQuicCrypto
-            .initialProtectors(dcid, 1, TlsRole.Server)
+            .initialProtectors(dcid, version, TlsRole.Server)
     val buf =
         io.kuicksilver.native.PacketBuffer
             .allocate(bytes.size)
@@ -358,7 +407,9 @@ internal suspend fun udpRelay(
                         var packet: kotlinx.io.Source = d.packet
                         if (relay.msquicProvisionalScid) {
                             val bytes = d.packet.readByteArray()
-                            if (relay.provisionalInitialsSent == 0) {
+                            val dcid = longHeaderCid(bytes, scid = false)
+                            val fresh = dcid != null && relay.addKnownCid(dcid)
+                            if (fresh && (relay.provisionalForEveryConnection || relay.provisionalInitialsSent == 0)) {
                                 msquicProvisionalInitial(bytes)?.let {
                                     front.send(
                                         io.ktor.network.sockets
@@ -386,6 +437,10 @@ internal suspend fun udpRelay(
                         }
                         if (relay.serverDatagramsLeft != Int.MAX_VALUE) relay.serverDatagramsLeft--
                         relay.serverDatagramsForwarded++
+                        if (relay.msquicProvisionalScid) {
+                            val scid = longHeaderCid(d.packet.peek().readByteArray(), scid = true)
+                            if (scid != null) relay.addKnownCid(scid)
+                        }
                         front.send(
                             io.ktor.network.sockets
                                 .Datagram(d.packet, c),

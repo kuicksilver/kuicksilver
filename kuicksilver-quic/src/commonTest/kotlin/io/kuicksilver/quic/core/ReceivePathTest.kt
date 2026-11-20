@@ -607,10 +607,12 @@ class ReceivePathTest {
      * The msquic server shape (msquic#3762, #4905; docs/spec/interop.md): before it has the whole ClientHello its connection
      * acknowledges from the client's own DCID, then takes a new SCID for the ServerHello and every later packet, and its
      * initial_source_connection_id carries the new one. A strict client (RFC 9000 sections 7.2 and 7.3, as quic-go, ngtcp2,
-     * quinn and picoquic) fixes the first SCID and discards everything after it, so the handshake cannot complete; it ends
-     * by the handshake timeout, not by hanging, with nothing of the ServerHello taken.
+     * quinn and picoquic) fixes the first SCID and discards everything after it, so the handshake cannot complete. It does
+     * not wait for the handshake timeout: the first decryptable packet with CRYPTO from another SCID, while nothing with
+     * CRYPTO came from the fixed one, ends the connection at once with ServerConnectionIdChanged, and silently (nothing is
+     * sent to an SCID nobody authenticated). A copy that does not decrypt changes nothing.
      */
-    @Test fun negative_msquicProvisionalScidFailsTheHandshakeWithinTheHandshakeTimeout() {
+    @Test fun negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently() {
         val p = CorePair(crypto = ksl)
         p.use { _ ->
             // the real server's whole answer is held back while the provisional Initial goes first
@@ -629,19 +631,29 @@ class ReceivePathTest {
                 server.buildLocalTp().initialSourceConnectionId,
                 "its initial_source_connection_id is the new SCID, not the one of its first Initial (msquic)",
             )
-            val start = p.now
             val dropped = p.client.datagramsDropped
             feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
             assertEquals(dropped, p.client.datagramsDropped, "the provisional Initial is processed")
-            for (d in held) feed(p.client, d, CoreFixtures.serverAddr, p.now)
-            assertTrue(p.client.datagramsDropped > dropped, "the ServerHello's datagrams are discarded for their SCID")
+            // a forged copy that does not decrypt is only discarded
+            val corrupt = held[0].copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 0x5a).toByte() }
+            feed(p.client, corrupt, CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertNull(p.closedReason(p.clientEvents), "an undecryptable packet ends nothing")
+            assertTrue(p.client.datagramsDropped > dropped)
+            val start = p.now
+            feed(p.client, held[0], CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertIs<QuicException.ConnectionLost.ServerConnectionIdChanged>(p.closedReason(p.clientEvents), "${p.clientEvents}")
+            assertEquals(start, p.now, "at once, not by a timer")
             assertFalse(p.client.hasHandshakeKeys, "nothing of the ServerHello was taken")
-            p.filterToClient = { _, _ -> true }
-            assertTrue(p.runUntil(15.seconds) { p.closedReason(p.clientEvents) != null }, "the attempt ends")
-            val reason = assertIs<QuicException.ConnectionLost.Timeout>(p.closedReason(p.clientEvents))
-            assertEquals(io.kuicksilver.quic.TimeoutKind.Handshake, reason.kind)
-            assertTrue(p.now - start <= QuicConfig.Default.handshakeTimeout + 1.seconds, "within the handshake timeout: ${p.now - start}")
-            assertFalse(p.client.hasHandshakeKeys)
+            assertEquals(ConnectionState.Closed, p.client.state)
+            val batch = PacketBatch(8)
+            try {
+                assertEquals(0, p.client.poll(batch, p.now), "no CONNECTION_CLOSE or anything else leaves")
+            } finally {
+                batch.close()
+            }
+            for (d in held.drop(1)) feed(p.client, d, CoreFixtures.serverAddr, p.now)
             assertNull(p.clientEvents.firstOrNull { it is ConnectionEvent.HandshakeCompleted })
         }
     }

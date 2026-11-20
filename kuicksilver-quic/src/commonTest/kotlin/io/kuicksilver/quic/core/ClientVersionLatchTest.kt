@@ -123,6 +123,34 @@ class ClientVersionLatchTest {
         }
     }
 
+    /**
+     * msquic's provisional SCID under a compatible upgrade (RFC 9368): the ACK-only Initial from the client's own DCID comes
+     * in the original version and fixes the server's SCID (RFC 9000 section 7.2), the ServerHello from another SCID in the
+     * negotiated one. It is still recognised (decrypted with that version's Initial keys for the check only) and ends the
+     * connection at once, silently, without switching the version.
+     */
+    @Test fun negative_aSwitchedServerHelloInTheUpgradedVersionEndsTheHandshakeAtOnce() {
+        val p = CorePair(clientQuic = v1v2, serverQuic = v2v1, crypto = ksl)
+        p.use { _ ->
+            val held = ArrayList<ByteArray>()
+            p.filterToClient = { _, b ->
+                held += b
+                false
+            }
+            for (i in 0 until 4) if (held.isEmpty()) p.step()
+            assertTrue(held.isNotEmpty(), "the server answered")
+            feed(p, ackOnlyInitial(p.client, VersionProfile.V1, 0)) // from the client's own DCID
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, p.client.state)
+            feed(p, held[0])
+            p.drainEvents(p.client, p.clientEvents)
+            kotlin.test.assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged>(
+                p.closedReason(p.clientEvents),
+                "${p.clientEvents}",
+            )
+            assertEquals(VersionProfile.V1, p.client.version, "the switched packet switched no version")
+        }
+    }
+
     private fun recordVersions(into: MutableList<Int>): (Int, ByteArray) -> Boolean =
         { _, b ->
             if (b[0].toInt() and 0x80 != 0) {

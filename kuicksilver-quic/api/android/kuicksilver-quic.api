@@ -1169,6 +1169,12 @@ public final class io/kuicksilver/quic/QuicException$ConnectionLost$NoViablePath
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 }
 
+public final class io/kuicksilver/quic/QuicException$ConnectionLost$ServerConnectionIdChanged : io/kuicksilver/quic/QuicException$ConnectionLost {
+	public fun <init> ()V
+	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$ServerConnectionIdChanged;
+	public synthetic fun createCopy ()Ljava/lang/Throwable;
+}
+
 public final class io/kuicksilver/quic/QuicException$ConnectionLost$StatelessReset : io/kuicksilver/quic/QuicException$ConnectionLost {
 	public fun <init> ()V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$StatelessReset;
