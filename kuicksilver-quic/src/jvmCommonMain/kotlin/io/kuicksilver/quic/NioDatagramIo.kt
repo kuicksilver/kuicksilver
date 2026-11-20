@@ -178,6 +178,10 @@ internal class NioDatagramIo private constructor(
                 if (!channel.isOpen) throw java.io.IOException("datagram channel closed")
                 if (interrupted.getAndSet(false)) return@runInterruptible 0
                 selector.select()
+                // a cancelled receive: runInterruptible interrupted this thread, which makes select return at once without
+                // throwing; with the flag still set every later select returns at once too, so the loop spun forever and the
+                // cancellation never ended the call. The interrupt ends it here (runInterruptible makes it the cancellation)
+                if (Thread.interrupted()) throw InterruptedException("receive cancelled")
                 selector.selectedKeys().clear()
                 val n = drain(into)
                 if (n > 0) return@runInterruptible n

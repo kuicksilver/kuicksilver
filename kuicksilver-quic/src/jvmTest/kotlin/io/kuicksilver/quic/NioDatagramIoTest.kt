@@ -6,6 +6,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
@@ -16,6 +18,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -62,6 +65,28 @@ class NioDatagramIoTest {
             } finally {
                 a.close()
                 b.close()
+            }
+        }
+
+    /**
+     * A receive waiting in the selector ends when its call is cancelled. runInterruptible interrupts the thread, which makes
+     * select return at once without throwing; the loop then selected again with the flag still set, spinning forever, and
+     * the cancelled call never ended (a CONNECT-UDP tunnel on the portable socket kept its socket open after its proxy's
+     * scope was cancelled, which the leak sentinel reported).
+     */
+    @Test fun negative_aCancelledReceiveEnds() =
+        runBlocking {
+            val a = one()
+            val into = PacketBatch(1, 2048)
+            try {
+                val waiting = launch(kotlinx.coroutines.Dispatchers.Default) { a.receive(into) }
+                // nothing is sent: after this the receive waits in the selector
+                kotlin.test.assertNull(kotlinx.coroutines.withTimeoutOrNull(300.milliseconds) { waiting.join() }, "a receive returned")
+                withTimeout(5.seconds) { waiting.cancelAndJoin() }
+                assertTrue(waiting.isCancelled)
+            } finally {
+                into.close()
+                a.close()
             }
         }
 
