@@ -340,13 +340,14 @@ internal class UdpProxyImpl(
         var address: ByteArray? = null
         var io: OnceClosed? = null
         val lacking = LinkedHashSet<IpFamily>() // the families found without DF for this request, for the refusal's details
+        val failed = HashSet<IpFamily>() // the families whose socket failed to open for another reason in this request
         for (a in allowed.sortedBy { if (familyOf(it) in noDfFamilies) 1 else 0 }) {
             val family = familyOf(a)
             if (family in noDfFamilies) {
                 lacking += family
                 continue
             }
-            if (family in lacking) continue // already found without DF in this request (not cached: maybe transient)
+            if (family in lacking || family in failed) continue // already tried in this request (not cached: maybe transient)
             val opened =
                 try {
                     OnceClosed(config.socketFactory(InetSocketAddress(if (family == IpFamily.V4) "0.0.0.0" else "::", 0)))
@@ -359,7 +360,9 @@ internal class UdpProxyImpl(
                     lacking += family
                     continue
                 } catch (_: Throwable) {
-                    return refuse(request, answered, 502, "proxy_internal_error")
+                    // the other family's socket may still open: 502 only when no candidate did
+                    failed += family
+                    continue
                 }
             // only the family the socket was opened for counts: an AF_INET socket reports IPv6 as without DF because it
             // cannot reach IPv6 at all, which says nothing about an IPv6 socket
@@ -374,6 +377,7 @@ internal class UdpProxyImpl(
             break
         }
         if (address == null || io == null) {
+            if (failed.isNotEmpty()) return refuse(request, answered, 502, "proxy_internal_error")
             return refuseNoDf(request, answered, lacking.joinToString(" or ") { it.label })
         }
         val v4 = address.size == 4
@@ -434,9 +438,10 @@ internal class UdpProxyImpl(
     }
 
     /**
-     * The address families this proxy's target sockets have no Don't Fragment for, as learned from the sockets it opened
-     * (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's [noDontFragmentFamily]): a host's DF
-     * support does not change while it runs, so later requests skip those candidates without opening a socket.
+     * The address families this proxy's target sockets have no Don't Fragment for, as learned from the sockets it
+     * opened (a factory that threw [QuicException.DontFragmentUnavailable], or a socket's
+     * [DatagramIo.noDontFragmentFamily]): a host's DF support does not change while it runs, so later requests skip
+     * those candidates without opening a socket.
      */
     @kotlin.concurrent.Volatile
     private var noDfFamilies: Set<IpFamily> = emptySet()

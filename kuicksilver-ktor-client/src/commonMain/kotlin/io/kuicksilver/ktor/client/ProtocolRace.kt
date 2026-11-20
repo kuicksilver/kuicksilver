@@ -69,6 +69,33 @@ internal class ProtocolRace(
         onLoser: (T) -> Unit = {},
         /** When both failed, HTTP/3's failure, the one suppressed in the HTTP/1.1 failure thrown. */
         onBothFailed: (h3Failure: Throwable) -> Unit = {},
+    ): RaceResult<T> {
+        // the HTTP/1.1 winner, until the caller has it: the scope still waits for the cancelled HTTP/3 setup after the
+        // block returned, and a cancellation then would drop it with its connection (handed to onLoser below instead)
+        var h1Winner: T? = null
+        var h1Won = false
+        try {
+            return runRace(h3, h1, srtt, quicConfirmed, onLoser, onBothFailed) {
+                h1Won = true
+                h1Winner = it
+            }
+        } catch (e: CancellationException) {
+            @Suppress("UNCHECKED_CAST")
+            if (h1Won) onLoser(h1Winner as T)
+            throw e
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun <T> runRace(
+        h3: suspend () -> T,
+        h1: suspend () -> T,
+        srtt: Duration?,
+        quicConfirmed: Boolean,
+        onLoser: (T) -> Unit,
+        onBothFailed: (h3Failure: Throwable) -> Unit,
+        onH1Won: (T) -> Unit,
     ): RaceResult<T> =
         coroutineScope {
             val h3Done = CompletableDeferred<Result<T>>()
@@ -109,6 +136,7 @@ internal class ProtocolRace(
                     if (h3Result?.isSuccess == true) return@coroutineScope RaceResult(h3Result.getOrThrow(), Protocol.H3, null)
                     if (h1Result?.isSuccess == true) {
                         h1Won = true
+                        onH1Won(h1Result.getOrThrow())
                         h3Job.cancel()
                         return@coroutineScope RaceResult(h1Result.getOrThrow(), Protocol.H1, h3Result?.exceptionOrNull())
                     }

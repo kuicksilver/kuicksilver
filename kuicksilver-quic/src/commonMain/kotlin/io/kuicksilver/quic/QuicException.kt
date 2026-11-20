@@ -149,8 +149,9 @@ public sealed class QuicException(
         }
 
         /**
-         * The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2); [cause], when set,
-         * says why the path could not carry QUIC (a custom `DatagramIo` may report one).
+         * The active path failed validation and no other validated path remains (RFC 9000 section 9.3.2);
+         * [cause][QuicException.ConnectionLost.NoViablePath.cause], when set, says why the path could not carry QUIC (a
+         * custom `DatagramIo` may report one).
          */
         public class NoViablePath(
             cause: Throwable? = null,

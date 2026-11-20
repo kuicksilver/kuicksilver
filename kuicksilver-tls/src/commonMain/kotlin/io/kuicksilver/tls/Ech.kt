@@ -38,10 +38,13 @@ public class EchConfigList private constructor(
     /** The usable ECHConfigs as an ECHConfigList, what a client offers. */
     internal val offered: ByteArray get() = usable
 
+    /** Whether [other] is an [EchConfigList] of the same bytes as given. */
     override fun equals(other: Any?): Boolean = other is EchConfigList && wire.contentEquals(other.wire)
 
+    /** A hash of the bytes as given, consistent with [equals]. */
     override fun hashCode(): Int = wire.contentHashCode()
 
+    /** The list's size and whether a configuration is usable, never its bytes. */
     override fun toString(): String = "EchConfigList(${wire.size} bytes${if (isUsable) "" else ", none usable"})"
 
     /** Parsers. */
@@ -107,8 +110,9 @@ public enum class EchStatus {
 /**
  * One Encrypted Client Hello key of a server: the PEM `openssl ech -public_name <name>` writes, a PKCS#8 `PRIVATE KEY`
  * block followed by the `ECHCONFIG` block of its ECHConfigList (publish that block's base64 in the HTTPS record's `ech`
- * parameter). [inRetryConfigs]: whether a server that rejects ECH sends this key's configuration in `retry_configs` (RFC
- * 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt clients that still hold it.
+ * parameter). [inRetryConfigs][EchKey.inRetryConfigs]: whether a server that rejects ECH sends this key's configuration
+ * in `retry_configs` (RFC 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt
+ * clients that still hold it.
  *
  * Prefer the `ByteArray` and `CharArray` constructors: the array given is zeroed at once, the key keeps its own copy only
  * until an [EchServerKeys] (or its [EchServerKeys.rotate]) has read it into native memory, then zeroes that copy too, so
@@ -120,15 +124,16 @@ public enum class EchStatus {
 public class EchKey private constructor(
     private val text: String?,
     bytes: ByteArray?,
+    /** Whether a server that rejects ECH sends this key's configuration in `retry_configs` (RFC 9849 section 7.1). */
     public val inRetryConfigs: Boolean,
 ) {
     /** The PEM as text, which stays in memory as long as this key (prefer the `ByteArray` or `CharArray` constructor). */
     public constructor(pem: String, inRetryConfigs: Boolean = true) : this(pem, null, inRetryConfigs)
 
-    /** The PEM as bytes (ASCII); [pem] is zeroed before this returns. */
+    /** The PEM as bytes (ASCII); `pem` is zeroed before this returns. */
     public constructor(pem: ByteArray, inRetryConfigs: Boolean = true) : this(null, pem.copyOf().also { pem.fill(0) }, inRetryConfigs)
 
-    /** The PEM as characters (ASCII; no `String` of it is made); [pem] is zeroed before this returns. */
+    /** The PEM as characters (ASCII; no `String` of it is made); `pem` is zeroed before this returns. */
     public constructor(pem: CharArray, inRetryConfigs: Boolean = true) :
         this(null, ByteArray(pem.size) { pem[it].code.toByte() }.also { pem.fill('\u0000') }, inRetryConfigs)
 
@@ -153,6 +158,7 @@ public class EchKey private constructor(
         if (text != null || !bytes.compareAndSet(null, pem)) pem.fill(0)
     }
 
+    /** [inRetryConfigs][EchKey.inRetryConfigs] only, never the key. */
     override fun toString(): String = "EchKey(inRetryConfigs=$inRetryConfigs)"
 }
 
@@ -203,7 +209,7 @@ public class EchServerKeys(
     }
 
     /**
-     * Frees the current set, now unless [applyTo] is giving it to a context at this moment (then right after); contexts
+     * Frees the current set, now unless `applyTo` is giving it to a context at this moment (then right after); contexts
      * already built keep theirs. Afterwards a context can no longer be made from a configuration that holds these keys
      * ([TlsException.Config]), and [rotate] throws. Calling it again does nothing.
      */
@@ -369,17 +375,13 @@ internal fun echAlpnPadTarget(alpn: List<String>): Int =
 private const val LONGEST_PROFILE_ALPN_EXTENSION = 18
 
 /** The ECH outcome of [ssl]. */
-
-/** The ECH outcome of [ssl]. */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun echStatusOf(ssl: Long): EchStatus = EchStatus.of(Ksl.sslGet(ssl, KslConst.GET_ECH_STATUS).firstOrNull()?.toInt() ?: 0)
 
 /**
- * What a server certificate is checked against on [ssl] now, read where the handshake pauses for it: [name] is [reference],
- * or after an ECH rejection the configuration's `public_name` (RFC 9849 section 6.1.7), which the paused path (platform
- * verifiers, a custom verifier, pins) must check. [hidden]: ECH was accepted (the ServerHello decided it), so [name] is
- * one ECH hid (section 10.7); [publicName]: ECH was offered and not accepted, a rejection, so [name] is the `public_name`.
- * Both come from the session's ECH outcome, never from comparing names: an origin may be named like the `public_name`.
+ * The name a server certificate is checked against ([verifyNameOf]): [name], with [hidden] when ECH was accepted (the
+ * ServerHello decided it), so [name] is one ECH hid (RFC 9849 section 10.7), and [publicName] when ECH was offered and
+ * not accepted, a rejection, so [name] is the configuration's `public_name` (section 6.1.7).
  */
 internal class EchVerifyName(
     val name: HostName,
@@ -387,6 +389,12 @@ internal class EchVerifyName(
     val publicName: Boolean,
 )
 
+/**
+ * What a server certificate is checked against on [ssl] now, read where the handshake pauses for it: [reference], or
+ * after an ECH rejection the configuration's `public_name` (RFC 9849 section 6.1.7), which the paused path (platform
+ * verifiers, a custom verifier, pins) must check. Whether ECH was accepted or rejected comes from the session's ECH
+ * outcome, never from comparing names: an origin may be named like the `public_name`.
+ */
 internal fun verifyNameOf(
     ssl: Long,
     reference: HostName,

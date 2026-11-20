@@ -11,11 +11,14 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"; cls="${1:-linux-x86_64}"
 . "$root/tools/ci/matrix.sh"
 abi=$(sed -n 's/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p' "$root/kuicksilver-native/src/c/ksl.h")
 case "$cls" in linux-x86_64) plat=linux/amd64; img=kuicksilver-openssl-linux-x64; so=libksl_${abi}_linux_x86_64.so; march=x86_64 ;; linux-aarch_64) plat=linux/arm64; img=kuicksilver-openssl-linux-arm64; so=libksl_${abi}_linux_aarch_64.so; march=aarch64 ;; *) echo "unknown $cls" >&2; exit 2 ;; esac
+# an emulated container gets a longer slow-teardown bound for the leak sentinel (sentinel-slow.sh); a host run is native
+# shellcheck source=tools/ci/sentinel-slow.sh
+. "$root/tools/ci/sentinel-slow.sh"; sentinel_slow_for "$plat"
 # 1) the shared library, with the glibc floor of manylinux2014
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086
-docker run --rm $uflag -e HOME=/tmp -e KUICKSILVER_LEAK_STRICT --platform "$plat" -v "$root:/w" -w /w -e CC=/opt/rh/devtoolset-10/root/usr/bin/gcc -e JAVA_HOME=/usr/lib/jvm/java "$img" bash -c \
+docker run --rm $uflag -e HOME=/tmp -e KUICKSILVER_LEAK_STRICT -e KUICKSILVER_LEAK_SITES -e KUICKSILVER_LEAK_WAIT_MS -e KUICKSILVER_LEAK_SLOW_MS --platform "$plat" -v "$root:/w" -w /w -e CC=/opt/rh/devtoolset-10/root/usr/bin/gcc -e JAVA_HOME=/usr/lib/jvm/java "$img" bash -c \
   "[ -d /usr/lib/jvm/java/include ] || yum -q -y install java-11-openjdk-devel >/dev/null 2>&1 || true; bash tools/build-jni.sh $cls kuicksilver-native/build/jni"   # same resources dir as the host build: the jar resource + manifest cover both classifiers
 bash tools/check/exports.sh "$root/kuicksilver-native/build/jni/$cls/$so" linux
 bash tools/check/glibc-floor.sh "$root/kuicksilver-native/build/jni/$cls/$so" 2.17
@@ -42,7 +45,7 @@ else
   dist=""; for d in "$HOME/.gradle/wrapper/dists/gradle-$gv-bin/"*/"gradle-$gv"; do [ -x "$d/bin/gradle" ] && { dist="$d"; break; }; done
   [ -n "$gv" ] && [ -x "$dist/bin/gradle" ] || { echo "no unpacked Gradle $gv under ~/.gradle/wrapper/dists: run ./gradlew --version on the host first" >&2; exit 2; }
   [ -d "$HOME/.gradle/caches/modules-2" ] || { echo "no ~/.gradle/caches/modules-2 to mount as the read-only dependency cache" >&2; exit 2; }
-  docker run --rm -e KUICKSILVER_LEAK_STRICT --platform "$plat" -v "$root:/w" -w /w \
+  docker run --rm -e KUICKSILVER_LEAK_STRICT -e KUICKSILVER_LEAK_SITES -e KUICKSILVER_LEAK_WAIT_MS -e KUICKSILVER_LEAK_SLOW_MS --platform "$plat" -v "$root:/w" -w /w \
     -v "$HOME/.gradle/caches/modules-2:/ro-dep-cache/modules-2:ro" -e GRADLE_RO_DEP_CACHE=/ro-dep-cache \
     -e GRADLE_USER_HOME=/tmp/gh -v "$root/tools/ci/gradle-init.d:/tmp/gh/init.d:ro" -v "$dist:/opt/gradle:ro" \
     -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \

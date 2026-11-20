@@ -98,8 +98,21 @@ internal class ConnectionRuntime(
 
     internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
-    /** The `done` of retired streams whose StreamFinished waits for our reset's acknowledgment (their wrappers are gone). */
-    internal val awaitingResetAck = HashMap<Long, kotlinx.coroutines.CompletableDeferred<Unit>>()
+    /**
+     * The `done` of retired streams whose StreamFinished waits for our reset's acknowledgment (their wrappers are gone).
+     * Made by its first entry and let go once empty: a connection that reset a stream once keeps no table for its life.
+     */
+    private var resetAckWaits: HashMap<Long, kotlinx.coroutines.CompletableDeferred<Unit>>? = null
+
+    /** [resetAckWaits] as it is now (internal for the resource probes). */
+    internal val awaitingResetAck: Map<Long, kotlinx.coroutines.CompletableDeferred<Unit>> get() = resetAckWaits.orEmpty()
+
+    /** Completes and forgets the wait for [id]'s reset acknowledgment, if there is one; drops the table once empty. */
+    private fun endResetAckWait(id: Long) {
+        val m = resetAckWaits ?: return
+        m.remove(id)?.complete(Unit)
+        if (m.isEmpty()) resetAckWaits = null
+    }
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
@@ -181,17 +194,19 @@ internal class ConnectionRuntime(
     internal var openedReported = false
 
     /**
-     * What [pathInfos] was built from, per path (at most eight slots, the core keeps four): the path id, its state, whether it
-     * was active, its peer address (by identity: the core replaces the object when the address changes), the sequence of our
-     * ID seen on it and the peer ID it sends with (by identity). Compared at every drain without allocating; a difference
-     * rebuilds the list. Loop dispatcher only.
+     * What [pathInfos] was built from, per path (four slots, as many paths as the core keeps; more paths than slots
+     * rebuild the list at every drain, which stays correct): the path id, its state, whether it was active, its peer
+     * address (by identity: the core replaces the object when the address changes), the sequence of our ID seen on it
+     * and the peer ID it sends with (by identity). Compared at every drain without allocating; a difference rebuilds
+     * the list. Loop dispatcher only. Four, not eight: the six arrays are held by every connection for its life
+     * (IdleFootprintTest).
      */
-    private val shownIds = IntArray(8)
-    private val shownStates = arrayOfNulls<PathState>(8)
-    private val shownActive = BooleanArray(8)
-    private val shownRemotes = arrayOfNulls<InetSocketAddress>(8)
-    private val shownLocalSeqs = LongArray(8)
-    private val shownRemoteCids = arrayOfNulls<io.kuicksilver.quic.wire.ConnectionId>(8)
+    private val shownIds = IntArray(SHOWN_PATHS)
+    private val shownStates = arrayOfNulls<PathState>(SHOWN_PATHS)
+    private val shownActive = BooleanArray(SHOWN_PATHS)
+    private val shownRemotes = arrayOfNulls<InetSocketAddress>(SHOWN_PATHS)
+    private val shownLocalSeqs = LongArray(SHOWN_PATHS)
+    private val shownRemoteCids = arrayOfNulls<io.kuicksilver.quic.wire.ConnectionId>(SHOWN_PATHS)
     private var shown = -1 // -1: nothing published yet
 
     /** Publishes [pathInfos] anew when anything [shownIds] and its siblings record changed. Loop dispatcher only. */
@@ -839,9 +854,7 @@ internal class ConnectionRuntime(
                         .filter {
                             io.kuicksilver.quic.stream.StreamIds
                                 .isLocal(it, core.role)
-                        }.forEach {
-                            awaitingResetAck.remove(it)?.complete(Unit)
-                        }
+                        }.forEach { endResetAckWait(it) }
                     earlyAccepted = false
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
@@ -890,7 +903,7 @@ internal class ConnectionRuntime(
                     wrapper(e.id)?.let {
                         streams.remove(e.id)
                         it.finished()
-                    } ?: awaitingResetAck.remove(e.id)?.complete(Unit)
+                    } ?: endResetAckWait(e.id)
                 }
 
                 // both halves done and consumed: the wrapper and its ticker go
@@ -925,7 +938,8 @@ internal class ConnectionRuntime(
                 val s = wrapper(id) ?: continue
                 streams.remove(id)
                 s.retired()
-                awaitingResetAck[id] = s.done
+                (resetAckWaits ?: HashMap<Long, kotlinx.coroutines.CompletableDeferred<Unit>>().also { resetAckWaits = it })[id] =
+                    s.done
             }
         }
         if (core.receivedTokens != null) {
@@ -953,9 +967,10 @@ internal class ConnectionRuntime(
     }
 
     /**
-     * Stores a Tofu first contact's key ([QuicTlsSession.commitTrust]) within [left] of the handshake timeout, then completes the
-     * handshake; fails the connection with the store's error, or with a [TimeoutKind.Handshake] timeout when the store did not
-     * answer in time (its call is cancelled). A store that returned as the deadline fired committed: the handshake completes.
+     * Stores a Tofu first contact's key ([io.kuicksilver.tls.QuicTlsSession.commitTrust]) within [left] of the
+     * handshake timeout, then completes the handshake; fails the connection with the store's error, or with a
+     * [io.kuicksilver.quic.TimeoutKind.Handshake] timeout when the store did not answer in time (its call is
+     * cancelled). A store that returned as the deadline fired committed: the handshake completes.
      */
     private suspend fun commitTrustThenComplete(
         session: io.kuicksilver.tls.QuicTlsSession,
@@ -1108,7 +1123,7 @@ internal class ConnectionRuntime(
             accepted.close(reason)
             for (s in streams.values) s.connectionLost(reason)
             for (d in awaitingResetAck.values) d.complete(Unit)
-            awaitingResetAck.clear()
+            resetAckWaits = null
             if (core.state == ConnectionState.Closed) releasePaths()
             datagramDrainer.load()?.cancel()
             sendQueue.close()
@@ -1137,7 +1152,7 @@ internal class ConnectionRuntime(
     /** [s] names a stream a rejected 0-RTT dropped: it fails with EarlyDataRejected and leaves the map, if it is still there. Loop only. */
     internal fun dropRejected(s: StreamRuntime) {
         if (streams[s.id] === s) streams.remove(s.id)
-        awaitingResetAck.remove(s.id)?.complete(Unit)
+        endResetAckWait(s.id)
         s.earlyDataRejected()
     }
 
@@ -1344,5 +1359,8 @@ internal class ConnectionRuntime(
 
         /** [datagramLimit] while the peer takes no DATAGRAM frames. */
         const val NO_DATAGRAMS = Int.MIN_VALUE
+
+        /** The paths [refreshPathInfos] compares without rebuilding: the core's limit (`Paths.maxPaths`). */
+        const val SHOWN_PATHS = 4
     }
 }

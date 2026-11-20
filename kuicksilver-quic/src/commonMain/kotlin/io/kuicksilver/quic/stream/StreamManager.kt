@@ -286,6 +286,7 @@ internal class StreamManager(
         resetsUnacked?.removeAll { StreamIds.isLocal(it, role) }
         finishedAwaitingResetAck?.removeAll { StreamIds.isLocal(it, role) }
         retiredAwaitingAck?.removeAll { StreamIds.isLocal(it, role) }
+        dropEmptyResetSets()
         writeRefused.removeAll { !streams.containsKey(it.id) }
         for (i in control.indices.reversed()) {
             val c = control[i]
@@ -1381,8 +1382,15 @@ internal class StreamManager(
      */
     fun takeRetiredAwaitingAck(): List<Long>? {
         val r = retiredAwaitingAck
-        if (r.isNullOrEmpty()) return null
-        return r.toList().also { r.clear() }
+        retiredAwaitingAck = null
+        return if (r.isNullOrEmpty()) null else r
+    }
+
+    /** The three sets above once they are empty: let go, so a connection that reset a stream once keeps none of them. */
+    private fun dropEmptyResetSets() {
+        if (resetsUnacked?.isEmpty() == true) resetsUnacked = null
+        if (finishedAwaitingResetAck?.isEmpty() == true) finishedAwaitingResetAck = null
+        if (retiredAwaitingAck?.isEmpty() == true) retiredAwaitingAck = null
     }
 
     /**
@@ -1394,6 +1402,9 @@ internal class StreamManager(
 
     /** (streams with an unacknowledged reset, retired ones among them waiting to be reported finished), a probe. */
     internal fun resetAcksPendingForTest(): IntArray = intArrayOf(resetsUnacked?.size ?: 0, finishedAwaitingResetAck?.size ?: 0)
+
+    /** How many of the three reset-tracking sets are allocated now, a probe. */
+    internal fun resetSetsHeldForTest(): Int = listOfNotNull(resetsUnacked, finishedAwaitingResetAck, retiredAwaitingAck).size
 
     /**
      * The one place StreamFinished is raised, from retirement ([maybeClose]) and from a reset's acknowledgment
@@ -1416,7 +1427,9 @@ internal class StreamManager(
     /** Our RESET_STREAM or RESET_STREAM_AT of [id] was acknowledged: a stream retired meanwhile counts as closed and is reported. */
     private fun onResetAcked(id: Long) {
         if (resetsUnacked?.remove(id) != true) return
-        if (finishedAwaitingResetAck?.remove(id) != true) return
+        val retired = finishedAwaitingResetAck?.remove(id) == true
+        dropEmptyResetSets()
+        if (!retired) return
         countClosedRetired(id)
         reportFinished(id)
     }

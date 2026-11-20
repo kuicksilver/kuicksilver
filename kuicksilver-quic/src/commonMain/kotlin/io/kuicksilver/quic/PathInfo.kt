@@ -24,11 +24,12 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * @property localConnectionId Our connection ID the peer's packets on this path carry, in hex (empty for a zero-length
  *   ID): the latest one seen there; on the path the connection started on, before any 1-RTT packet, the handshake's. Null
  *   when the peer has not sent on this path yet.
- * @property localConnectionIdSequence The sequence number of [localConnectionId] (RFC 9000 section 5.1.1), -1 when null.
+ * @property localConnectionIdSequence The sequence number of [localConnectionId][PathInfo.localConnectionId] (RFC 9000
+ *   section 5.1.1), -1 when null.
  * @property remoteConnectionId The peer's connection ID our packets on this path carry, in hex (empty for a zero-length
  *   ID); null while the path has none (a new path that has not sent yet).
- * @property remoteConnectionIdSequence The sequence number of [remoteConnectionId]; -1 when null, and for the handshake ID a
- *   client sends to before the server's first Initial gave its own.
+ * @property remoteConnectionIdSequence The sequence number of [remoteConnectionId][PathInfo.remoteConnectionId]; -1
+ *   when null, and for the handshake ID a client sends to before the server's first Initial gave its own.
  */
 @ExperimentalKuicksilverApi
 public class PathInfo internal constructor(

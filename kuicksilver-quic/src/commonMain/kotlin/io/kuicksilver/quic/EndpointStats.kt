@@ -163,8 +163,9 @@ public class EndpointStats internal constructor(
     public val datagramsDispatchDropped: Long = 0,
     /**
      * Datagrams not sent because the socket cannot set Don't Fragment for their destination's address family (no DF, no
-     * QUIC: RFC 9000 section 14; [QuicEndpoint.noDontFragmentFamily]); not counted in [datagramsSent]. Their path closes, or
-     * their connection ends, at once, so their packets leave loss and congestion state with it.
+     * QUIC: RFC 9000 section 14; [QuicEndpoint.noDontFragmentFamily]); not counted in
+     * [datagramsSent][EndpointStats.datagramsSent]. Their path closes, or their connection ends, at once, so their
+     * packets leave loss and congestion state with it.
      */
     @property:ExperimentalKuicksilverApi
     public val datagramsSkippedNoDf: Long = 0,

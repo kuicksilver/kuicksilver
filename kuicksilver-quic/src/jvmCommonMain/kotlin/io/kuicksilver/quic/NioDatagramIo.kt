@@ -390,6 +390,7 @@ internal class NioDatagramIo private constructor(
         ): String =
             when {
                 bits == DF_PROBE_FAILED -> "the DF probe itself failed (for example out of file descriptors); a later socket may get DF"
+                bits == DF_NO_DESCRIPTOR -> "this Android runtime does not give the socket's descriptor, so DF cannot be set on it"
                 bits > 0 -> "the system refused both DF modes (probe and DO) on that half (bits $bits)"
                 bits == 0 -> "the system offers no DF option to set"
                 jdkOption -> "the JDK's IP_DONTFRAGMENT did not take and the ksl native library is not available"
@@ -554,7 +555,12 @@ internal class NioDatagramIo private constructor(
                 ch.configureBlocking(false)
                 selector = Selector.open()
             } catch (e: Throwable) {
-                ch.close()
+                // a failure of the close itself must not hide why the open failed
+                try {
+                    ch.close()
+                } catch (c: Throwable) {
+                    e.addSuppressed(c)
+                }
                 throw e
             }
             ch.register(selector, SelectionKey.OP_READ)

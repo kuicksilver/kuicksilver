@@ -68,21 +68,31 @@ internal class PacketBuilder(
      */
     private var pmtuProbe = false
 
-    /** The packets of the datagram being built, which [stampDatagram] gives the datagram's size once it is complete. */
-    private val inDatagram = ArrayList<SentPacket>(4)
+    /**
+     * The packets of the datagram being built (the first [inDatagramCount]), which [stampDatagram] gives the datagram's
+     * size once it is complete. An array, not an `ArrayList`: one object less per connection (IdleFootprintTest); one
+     * packet per number space fits, more grow it.
+     */
+    private var inDatagram = arrayOfNulls<SentPacket>(4)
+    private var inDatagramCount = 0
+
+    private fun clearInDatagram() {
+        inDatagram.fill(null, 0, inDatagramCount)
+        inDatagramCount = 0
+    }
 
     /**
      * The datagram of [n] bytes is complete: each of its packets records that size. Black-hole detection judges what the path
      * carried (RFC 8899 section 4.3), the datagram: coalesced packets of 1200 bytes or less fill a datagram above the base.
      */
     private fun stampDatagram(n: Int) {
-        for (i in inDatagram.indices) {
-            val p = inDatagram[i]
+        for (i in 0 until inDatagramCount) {
+            val p = inDatagram[i]!!
             p.datagramSize = n
             // what a Packet Too Big about this path may claim was too large is the datagram, not its largest packet
             c.paths.byId(io.kuicksilver.quic.PathId(p.pathId))?.let { if (n > it.largestSent) it.largestSent = n }
         }
-        inDatagram.clear()
+        clearInDatagram()
         datagramSeq++
     }
 
@@ -93,8 +103,8 @@ internal class PacketBuilder(
         out: PacketBatch,
         now: TimeMark,
     ): Int {
-        if (inDatagram.isNotEmpty()) datagramSeq++ // a datagram an earlier poll gave up on: its packets keep their own number
-        inDatagram.clear()
+        if (inDatagramCount > 0) datagramSeq++ // a datagram an earlier poll gave up on: its packets keep their own number
+        clearInDatagram()
         var count = 0
         var bytes = 0
         pacerWakeup = TimeMark.NEVER
@@ -1113,7 +1123,8 @@ internal class PacketBuilder(
             null
         ) {
             c.loss.onPacketSent(space, p, now)
-            inDatagram += p
+            if (inDatagramCount == inDatagram.size) inDatagram = inDatagram.copyOf(inDatagram.size * 2)
+            inDatagram[inDatagramCount++] = p
             if (p.size > target.largestSent) target.largestSent = p.size // what a Packet Too Big about this path may claim was too large
             // where the server's handshake flight went decides which address a client Handshake packet validates (RFC 9000 section 8.1)
             if (space != SpaceId.Application && frames.cryptoCount > 0 && c.role == TlsRole.Server) c.onHandshakeFlightSent(target)

@@ -385,25 +385,45 @@ internal class KslDatagramIo private constructor(
         internal const val PTB_PER_DRAIN = 16
 
         /**
-         * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
-         * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose loopback probe failed
-         * ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable socket, said once per process to
-         * [logger] at [LogLevel.Warn]. [configure] sees the bound socket's descriptor before any datagram (Android binds it
-         * to a network); if it throws, the socket is closed.
+         * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be
+         * resolved. A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose
+         * loopback probe failed ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable
+         * socket, said once per process to [logger] at [LogLevel.Warn]; [refused] gets that refusal: a refused bind is a
+         * `kotlinx.io.IOException`, another failure of `ksl` a `KslException`, a process whose loopback probe failed or a
+         * socket the system gave no DF an [Unavailable] that is [Unavailable.permanent] (neither changes for the process;
+         * [Unavailable.noDf] tells the second). [portableNext]: whether the caller takes the portable socket next, as the
+         * warning says; false for a Kotlin/Native server, which has none. [configure] sees the bound socket's descriptor
+         * before any datagram (Android binds it to a network); if it throws, the socket is closed.
          */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
             logger: KuicksilverLogger = KuicksilverLogger.Stderr,
+            refused: (Throwable) -> Unit = {},
+            portableNext: Boolean = true,
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             val unsupported = unsupportedReason()
             if (unsupported != null) {
                 // the loopback probe failed (a sandbox refusing every bind): the portable socket, said once like a refused bind
-                if (!reusePort) warnFallback(logger) { "accelerated UDP socket unavailable ($unsupported); using the portable socket" }
+                if (!reusePort) {
+                    warnFallback(logger) {
+                        if (portableNext) {
+                            "accelerated UDP socket unavailable ($unsupported); using the portable socket"
+                        } else {
+                            "accelerated UDP socket unavailable ($unsupported); no QUIC server without it"
+                        }
+                    }
+                }
+                refused(Unavailable("the accelerated UDP socket is unavailable in this process ($unsupported)", permanent = true))
                 return null
             }
-            val ip = local.resolveAddress() ?: return null
+            val ip =
+                addressResolver(local) ?: run {
+                    // the address itself fails, as it would for the portable socket: an address error, not a refusal of ksl
+                    refused(kotlinx.io.IOException("the bind address $local does not resolve to an IP address"))
+                    return null
+                }
             val flags =
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or KslUdpSocket.PKTINFO or
                     (if (reusePort) KslUdpSocket.REUSEPORT else 0)
@@ -414,13 +434,27 @@ internal class KslDatagramIo private constructor(
                     KslUdpSocket.open(addr, flags)
                 } else {
                     socketOpener(addr, flags) { e ->
-                        warnFallback(logger) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
+                        refused(e)
+                        warnFallback(logger) {
+                            if (portableNext) {
+                                "accelerated UDP socket refused on $local (${e.message}); using the portable socket"
+                            } else {
+                                "accelerated UDP socket refused on $local (${e.message}); no QUIC server without it"
+                            }
+                        }
                     } ?: return null
                 }
             // no DF, no QUIC (RFC 9000 section 14): a socket the system gave no DF is not used; the portable socket decides
             if (socket.grantedFlags and KslUdpSocket.DF == 0) {
                 socket.close()
-                warnFallback(logger) { "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket" }
+                warnFallback(logger) {
+                    if (portableNext) {
+                        "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket"
+                    } else {
+                        "accelerated UDP socket on $local got no Don't Fragment; no QUIC server without it"
+                    }
+                }
+                refused(Unavailable("the system granted the accelerated UDP socket no Don't Fragment", permanent = true, noDf = true))
                 return null
             }
             // DF in DO mode on a half (KslUdpSocket.DF_DO: probe mode refused, or Apple's DF bit) is DF too; a forged ICMP message
@@ -433,6 +467,17 @@ internal class KslDatagramIo private constructor(
             }
             return KslDatagramIo(socket)
         }
+
+        /**
+         * Why [open] answered null without a failure of its own: [permanent] when it stays so for the process (the loopback
+         * probe failed, the system grants the socket no DF), so a socket the caller cannot use instead is lastingly without DF.
+         */
+        internal class Unavailable(
+            message: String,
+            val permanent: Boolean,
+            /** The socket opened but the system granted it no Don't Fragment (a seccomp filter): no QUIC on it. */
+            val noDf: Boolean = false,
+        ) : Exception(message)
 
         @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
         private val fallbackWarned = kotlin.concurrent.atomics.AtomicBoolean(false)
@@ -454,6 +499,9 @@ internal class KslDatagramIo private constructor(
 
         /** Why the accelerated socket cannot work in this process ([KslUdpSocket.unsupportedReason]); a test replaces it. */
         internal var unsupportedReason: () -> String? = { KslUdpSocket.unsupportedReason }
+
+        /** The bind address's IP bytes, null when it does not resolve; a test replaces it (no DNS answer is certain). */
+        internal var addressResolver: (InetSocketAddress) -> ByteArray? = { it.resolveAddress() }
 
         /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */
         internal var socketOpener: (

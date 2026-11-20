@@ -261,13 +261,14 @@ public class KuicksilverTlsConnector private constructor(
         }
 
         /**
-         * The Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and QUIC handshakes alike; default null, which ignores
-         * a client's ECH (it is told nothing, and goes on with its outer ClientHello). Publish the keys' ECHConfigList in the
-         * `ech` parameter of the HTTPS record of every name this connector serves (RFC 9848). [EchServerKeys.rotate] replaces
-         * the keys while the server runs: handshakes that start afterwards use the new set, on TCP and QUIC alike. A client whose
-         * ECH is not decrypted (an old key, GREASE) gets the keys' retry configurations and must authenticate this connector's
-         * certificate for the configurations' `public_name` (RFC 9849 section 6.1.7): [identity] (or what [sniSelector] answers
-         * for that name, which it is asked for then) must be valid for it.
+         * The Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and QUIC handshakes alike; default null, which
+         * ignores a client's ECH (it is told nothing, and goes on with its outer ClientHello). Publish the keys'
+         * ECHConfigList in the `ech` parameter of the HTTPS record of every name this connector serves (RFC 9848).
+         * [EchServerKeys.rotate] replaces the keys while the server runs: handshakes that start afterwards use the new
+         * set, on TCP and QUIC alike. A client whose ECH is not decrypted (an old key, GREASE) gets the keys' retry
+         * configurations and must authenticate this connector's certificate for the configurations' `public_name` (RFC
+         * 9849 section 6.1.7): [identity][KuicksilverTlsConnector.Builder.identity] (or what [sniSelector] answers for
+         * that name, which it is asked for then) must be valid for it.
          */
         @ExperimentalKuicksilverApi
         public var echKeys: EchServerKeys? = null

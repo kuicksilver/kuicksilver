@@ -4,7 +4,9 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.KslException
 import io.kuicksilver.native.toByteArray
+import io.kuicksilver.tls.KslUdpSocket
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +22,11 @@ import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -35,6 +41,116 @@ class KtorDatagramIoTest {
                 }
             assertEquals(null, e.family)
         }
+
+    /**
+     * A port in use is a refused bind, as on the JVM, not a lack of DF: the accelerated socket's bind failure is what the
+     * caller sees (an `IOException`), so the Ktor server's ephemeral TCP + UDP pair tries another port instead of serving
+     * HTTP/1.1 alone. Red before: DontFragmentUnavailable from the portable socket the refusal fell back to.
+     */
+    @Test fun negative_aTakenPortIsARefusedBindNotALackOfDf() =
+        runBlocking {
+            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("127.0.0.1", held.localAddress.port)).close() }
+                assertTrue(e !is QuicException.DontFragmentUnavailable, "a refused bind, not no DF: $e")
+            } finally {
+                held.close()
+            }
+        }
+
+    /**
+     * A bind address that does not resolve is an address error (an `IOException` naming it), as the portable socket's own
+     * resolution fails elsewhere, not a lack of DF. The resolver is replaced: what a name resolves to depends on the
+     * host's DNS (a fake-IP resolver answers every name). Red before: DontFragmentUnavailable, refused never called.
+     */
+    @Test fun negative_anUnresolvableBindAddressIsAnAddressErrorNotALackOfDf() =
+        runBlocking {
+            val real = KslDatagramIo.addressResolver
+            KslDatagramIo.addressResolver = { null }
+            try {
+                val seen = ArrayList<Throwable>()
+                assertNull(KslDatagramIo.open(InetSocketAddress("unresolvable.test", 0), refused = { seen += it }))
+                assertTrue(seen.singleOrNull() is IOException, "refused gets the address error: $seen")
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("unresolvable.test", 0)).close() }
+                assertTrue(e !is QuicException.DontFragmentUnavailable, "an address error, not no DF: $e")
+                assertTrue("unresolvable.test" in (e.message ?: ""), "${e.message}")
+            } finally {
+                KslDatagramIo.addressResolver = real
+            }
+        }
+
+    /**
+     * Any other refusal of the accelerated socket (a `KslException`: limits, a sandbox) reaches the caller through
+     * `refused` and ends in a lack of DF that is not lasting (the socket may open next time), with the refusal attached as
+     * suppressed; a refused bind (an `IOException`) is thrown as it is.
+     */
+    @Test fun negative_aRefusalOtherThanABindIsATransientLackOfDfThatKeepsItsReason() =
+        runBlocking {
+            val ksl = KslException.Internal(0xff shl 16, 0, "injected: no socket")
+            val bind = IOException("injected: UDP bind refused")
+            for (injected in listOf<Throwable>(ksl, bind)) {
+                val seen = ArrayList<Throwable>()
+                val e =
+                    withOpener({ _, _, failed ->
+                        failed(injected)
+                        null
+                    }) {
+                        assertNull(KslDatagramIo.open(InetSocketAddress("127.0.0.1", 0), refused = { seen += it }))
+                        assertEquals(listOf(injected), seen, "refused gets the refusal")
+                        assertFails { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).close() }
+                    }
+                if (injected === bind) {
+                    assertSame(bind, e)
+                } else {
+                    assertTrue(e is QuicException.DontFragmentUnavailable, "$e")
+                    assertFalse(e.permanent)
+                    assertTrue(e.suppressedExceptions.any { it === ksl }, "the reason kept: ${e.suppressedExceptions}")
+                }
+            }
+        }
+
+    /** A process whose loopback probe failed: the lack of DF lasts for the process (a CONNECT-UDP proxy may remember it). */
+    @Test fun negative_anUnsupportedAcceleratedSocketIsALastingLackOfDf() =
+        runBlocking {
+            val real = KslDatagramIo.unsupportedReason
+            KslDatagramIo.unsupportedReason = { "injected: probe refused" }
+            try {
+                val e =
+                    assertFailsWith<QuicException.DontFragmentUnavailable> {
+                        DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).close()
+                    }
+                assertTrue(e.permanent)
+                assertTrue(e.suppressedExceptions.any { "injected: probe refused" in (it.message ?: "") }, "${e.suppressedExceptions}")
+            } finally {
+                KslDatagramIo.unsupportedReason = real
+            }
+        }
+
+    /** An accelerated socket the system gave no DF: refused, and the lack lasts (the system refuses DF there). */
+    @Test fun negative_anAcceleratedSocketGrantedNoDfIsALastingLackOfDf() =
+        runBlocking {
+            val e =
+                withOpener({ a, f, failed -> KslUdpSocket.openOrNull(a, f and KslUdpSocket.DF.inv(), failed) }) {
+                    assertFailsWith<QuicException.DontFragmentUnavailable> {
+                        DatagramIo.open(InetSocketAddress("127.0.0.1", 0)).close()
+                    }
+                }
+            assertTrue(e.permanent)
+            assertTrue(e.suppressedExceptions.any { "no Don't Fragment" in (it.message ?: "") }, "${e.suppressedExceptions}")
+        }
+
+    private inline fun <T> withOpener(
+        noinline opener: (ByteArray, Int, (Throwable) -> Unit) -> KslUdpSocket?,
+        block: () -> T,
+    ): T {
+        val real = KslDatagramIo.socketOpener
+        KslDatagramIo.socketOpener = opener
+        try {
+            return block()
+        } finally {
+            KslDatagramIo.socketOpener = real
+        }
+    }
 
     @Test fun loopbackClientSendReceive() =
         runBlocking {

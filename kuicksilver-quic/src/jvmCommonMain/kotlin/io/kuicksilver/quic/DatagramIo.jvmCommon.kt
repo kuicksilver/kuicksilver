@@ -4,6 +4,10 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 
-internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo = NioDatagramIo.open(local)
+/** The JVM's portable socket binds on its own: a port in use fails its bind, so [acceleratedRefusal] is not needed. */
+internal actual suspend fun openPortableDatagramIo(
+    local: InetSocketAddress,
+    acceleratedRefusal: Throwable?,
+): DatagramIo = NioDatagramIo.open(local)
 
 internal actual fun printWarning(line: String) = System.err.println(line)

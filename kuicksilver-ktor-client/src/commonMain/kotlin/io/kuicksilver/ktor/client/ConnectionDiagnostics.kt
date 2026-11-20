@@ -49,9 +49,10 @@ public sealed class ConnectionSnapshot {
  * taken and kept, so a call read after its body finished shows the connection as it was then. A call that failed on the
  * connection keeps the one taken at the failure.
  *
- * Plain data only: it names the connection ([connectionId]) but holds no handle to it, so neither a response nor a failed
- * call's exception that carries the diagnostics keeps the connection (its buffers, its endpoint) in memory. For the live
- * connection, join [connectionId] with what `http3 { connectionListener }` hears.
+ * Plain data only: it names the connection ([connectionId][QuicConnectionSnapshot.connectionId]) but holds no handle to
+ * it, so neither a response nor a failed call's exception that carries the diagnostics keeps the connection (its
+ * buffers, its endpoint) in memory. For the live connection, join [connectionId][QuicConnectionSnapshot.connectionId]
+ * with what `http3 { connectionListener }` hears.
  *
  * @property connectionId The connection's [ConnectionInfo.id] (the original destination connection ID in hex, stable for
  *   its life, the name of its qlog trace): what `http3 { connectionListener }` and [ConnectFailure.connectionId] call it.
@@ -88,10 +89,11 @@ public class QuicConnectionSnapshot internal constructor(
 
 /**
  * The TCP connection of a call (HTTP/1.1 or HTTP/2): taken once the connection was in hand, or when its TLS handshake
- * failed (then [protocol] is null and [ProtocolDiagnostics.connectFailures] says how).
+ * failed (then [protocol][TcpConnectionSnapshot.protocol] is null and [ProtocolDiagnostics.connectFailures] says how).
  *
  * @property alpn The protocol the server chose in ALPN (`h2`, `http/1.1`), null without TLS or ALPN.
- * @property viaProxy Whether the connection goes through a proxy; [remoteAddress] is then the proxy's.
+ * @property viaProxy Whether the connection goes through a proxy; [remoteAddress][TcpConnectionSnapshot.remoteAddress]
+ *   is then the proxy's.
  * @property secure Whether the connection carries TLS (to the origin, inside a tunnel through a proxy).
  */
 @ExperimentalKuicksilverApi
@@ -154,11 +156,12 @@ public enum class QuicHandshakeProgress {
 }
 
 /**
- * One connection setup that failed for a call ([KuicksilverEventListener.connectFailed], [ProtocolDiagnostics.connectFailures]),
- * whether or not the call then succeeded another way (another address, the other transport). An attempt the engine
- * cancelled because another one won (the address race, the HTTP/3 and TCP race) is no failure and is not reported. The
- * connect timeout ending a setup is one: reported with the call's `ConnectTimeoutException` as [cause], once per attempt
- * still running then, at its step; or once, without an [address], at what the time went to before any address was tried
+ * One connection setup that failed for a call ([KuicksilverEventListener.connectFailed],
+ * [ProtocolDiagnostics.connectFailures]), whether or not the call then succeeded another way (another address, the
+ * other transport). An attempt the engine cancelled because another one won (the address race, the HTTP/3 and TCP race)
+ * is no failure and is not reported. The connect timeout ending a setup is one: reported with the call's
+ * `ConnectTimeoutException` as [cause][ConnectFailure.cause], once per attempt still running then, at its step; or
+ * once, without an [address][ConnectFailure.address], at what the time went to before any address was tried
  * ([ConnectStage.NameLookup], [ConnectStage.PoolWait], [ConnectStage.H2DialWait]).
  *
  * @property transport [Transport.Tcp] or [Transport.Quic].

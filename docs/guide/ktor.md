@@ -2524,6 +2524,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `WebSocket` | a WebSocket without an HTTP/3 connection that allows Extended CONNECT | expected for the first WebSocket |
 | `HandshakeTimeout` | no QUIC answer within the handshake or connect timeout | UDP to the port: a firewall, a VPN, a cloud security group open for TCP only |
 | `UdpUnreachable` | ICMP unreachable for the UDP port | not reported yet: such calls show `HandshakeTimeout` |
+| `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment (`QuicException.DontFragmentUnavailable`), so QUIC is not used and the call goes over TCP at once | the JVM without the `ksl` native library below JDK 19, or Kotlin/Native (iOS, macOS, Linux) when the accelerated `ksl` socket cannot open: its portable socket has no DF ([QUIC is not used without Don't Fragment](troubleshooting.md#quic-is-not-used-dontfragmentunavailable)) |
 | `H3NotReady` | HTTP/1.1 was ready before HTTP/3 answered (HTTP/3 had not failed) | nothing; the QUIC setup goes on and serves later calls |
 | `Refused` | the server closed the QUIC connection without a TLS alert (`CONNECTION_REFUSED`), or no common QUIC version | `CONNECTION_REFUSED`: nothing, the server is draining, stopping or full, and the next call tries HTTP/3 again (the alternative is not marked broken); otherwise the server's QUIC listener and its limits |
 | `TlsFailure` | a TLS alert in the QUIC handshake, or a local certificate failure | the UDP side's certificate and its `h3` ALPN |
