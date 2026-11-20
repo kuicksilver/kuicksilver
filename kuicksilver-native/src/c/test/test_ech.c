@@ -309,7 +309,7 @@ static void srv_msg_cb(int write_p, int version, int content_type, const void *b
             srv_flight[at + 1] = 0;
             if (b[0] == SSL3_MT_CERTIFICATE) /* TLS 1.3: context<0..255>, then certificate_list<0..2^24-1> */
                 srv_flight[at] =
-                    len >= 8 && 4 + 1 + b[4] + 3 <= len && (b[5 + b[4]] | b[6 + b[4]] | b[7 + b[4]]) == 0 ? 'E' : 'C';
+                    len >= 8 && 4u + 1 + b[4] + 3 <= len && (b[5 + b[4]] | b[6 + b[4]] | b[7 + b[4]]) == 0 ? 'E' : 'C';
             else if (b[0] == SSL3_MT_CERTIFICATE_VERIFY)
                 srv_flight[at] = 'V';
             else if (b[0] == SSL3_MT_COMPRESSED_CERTIFICATE) /* RFC 8879: never empty (an empty list goes plain) */
