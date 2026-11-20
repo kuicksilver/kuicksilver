@@ -183,7 +183,8 @@ The Ktor engines (`io.kuicksilver.ktor.client`, `io.kuicksilver.ktor.server`). T
 `h2` in ALPN (`h2`: `H2Pool`, one multiplexed connection per route holding one slot of the TCP pool, and `H2Exchange`
 over the `kuicksilver-http2` runtime) and HTTP/3 over `Http3Endpoint` (`h3`: `H3Pool`), with
 `Http3DiscoveryMode` (`Auto` learns `Alt-Svc`, `Preferred`, `H3Only`, `H1Only`), a connection race (`ProtocolRace`), a
-broken-alternative memory (`BrokenAltSvc`) and fallback rules that never replay a consumed body. The server serves
+broken-alternative memory (`BrokenAltSvc`), stall detection on HTTP/3 connections (`H3StallMonitor`) and fallback
+rules that never replay a consumed body. The server serves
 HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (`KuicksilverApplicationEngine` starts and stops the
 listeners, `TcpListener.kt` (`TcpServer`, started by `startTcp`) holds the TCP/TLS accept loop, `Http3Listener.kt` the HTTP/3 one; `H3Call` maps requests into Ktor's model, `WebSocketOverH3`
 implements RFC 9220), advertises `Alt-Svc`, and stops gracefully with GOAWAY. Neither engine sees `kuicksilver-quic`

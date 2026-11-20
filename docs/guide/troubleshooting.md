@@ -43,6 +43,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
 | a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
+| `QuicStalledException`, `fallback = QuicStalled`, `"HTTP/3 connection stalled"` | [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
@@ -563,6 +564,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `GoAway` | the server did not process the request (GOAWAY, `H3_REQUEST_REJECTED`) on any attempt |
 | `StreamFailed` | one request stream failed (reset, malformed response) and the idempotent request was repeated over HTTP/1.1 |
 | `Other` | any other HTTP/3 failure; `h3Failure` has the exception |
+| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request (a network that cuts UDP flows): the connection was closed, the alternative marked broken, and the request went over TCP: [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `H2Refused` | the server answered HTTP/2 with `HTTP_1_1_REQUIRED`: [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
@@ -576,6 +578,24 @@ When HTTP/3 causes trouble on some networks or after a release and you need it o
 back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)). Clients in
 `H3Only` mode fail instead of using TCP. Before that, `response.kuicksilverDiagnostics` and a qlog trace
 ([Getting more information](#getting-more-information)) usually tell what goes wrong.
+
+### Calls fail with `QuicStalledException`, or fall back with `QuicStalled`
+
+The HTTP/3 connection under the call stopped carrying packets in both directions: its probe timeouts went unanswered and
+nothing came back from the server for `stallMinSilence` (2 s), or a 0-RTT request got no answer at all ([Ktor: Stalled
+HTTP/3 connections](ktor.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
+drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine drained the
+connection and marked the alternative broken (5 minutes, doubling at each new stall on this network). An idempotent
+request without a response yet went over TCP at once (`fallback = QuicStalled`); a POST, a streamed body, or a response
+body under way waited `stallAbandonAfter` (10 s) for the path to come back and then failed with `QuicStalledException`,
+which the application may retry (the next call goes over TCP).
+
+- One stall now and then is the detection working. Many on one network: QUIC does not work there; the broken mark
+  already keeps the calls on TCP, and `networkId` makes a new network start afresh.
+- On a path with very long RTTs or long loss bursts, raise `stallMinSilence` or `stallProbeTimeouts`; for outages
+  longer than 10 s that should not fail a POST (a slow handover), raise `stallAbandonAfter`.
+- A qlog trace (`http3 { qlog }`) shows the probe timeouts (`pto_count`) and the silence.
+- `http3 { stallDetection = false }` waits for the QUIC idle timeout instead, as before 0.3.0.
 
 ### Requests go through a proxy, or not, unexpectedly
 

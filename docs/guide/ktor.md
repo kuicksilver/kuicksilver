@@ -1684,6 +1684,62 @@ falls back to HTTP/1.1 when it may (idempotent, before its response), and the al
 with an error code after GOAWAY, or with H3_NO_ERROR but without a GOAWAY first, still marks it. So during a rolling restart the calls that meet a stopping instance fall back once each,
 and the next calls use HTTP/3 again, instead of minutes to days of HTTP/1.1 for the whole origin.
 
+### Stalled HTTP/3 connections
+
+Some networks cut UDP flows: no answer to the first QUIC packet at all, or a handshake that completes and a flow that
+stops carrying packets in both directions a moment later. On its own a QUIC connection notices only at its idle timeout
+(RFC 9000 section 10.1; 30 s by default), so a request on it would wait that long before it fell back to TCP. The engine
+watches the HTTP/3 connections it chose over TCP (`Auto`, `Preferred`, `quicHints`; `http3 { stallDetection }`, on by
+default) while a request runs on one: from before its wait for the handshake until its whole response arrived (the
+server's FIN; from then on the exchange needs the network no more) or the call ended. The signal is the transport's,
+never the response's:
+
+- after the handshake, a connection is stalled when `stallProbeTimeouts` probe timeouts in a row (3; RFC 9002
+  section 6.2: a PTO fires only while ack-eliciting data goes unacknowledged, and doubles each time, so 3 of them take
+  about 7 PTOs and grow with the RTT) went unanswered and no packet at all came back from the server for
+  `stallMinSilence` (2 s) since the first of them;
+- before it (a request on a 0-RTT connection, `earlyData`, on a network where QUIC worked before), when nothing at all
+  came back from the server — not even an Initial — since the request started, for at least `stallMinSilence` and two
+  probe timeouts (they start from the 333 ms initial RTT and double, about 3 s: a slow path's handshake answers within
+  them), instead of the connect timeout (10 s). Elsewhere the race already bounds that wait: on a network where QUIC was
+  never seen working TCP starts 10 ms after QUIC ([Racing and fallback](#racing-and-fallback)), and a QUIC setup that
+  loses keeps going in the background until its handshake timeout.
+
+A slow server acknowledges the request while it thinks, and an idle long-lived response (a long poll, server-sent events
+between two events) has nothing in flight: neither shows a probe timeout, so neither is a stall. Such a quiet watched
+connection sends a PING now and then (RFC 9000 section 10.1.2: after half of `stallMinSilence` without a packet, then at
+twice the previous gap, up to 15 s or half the idle timeout in force, the smaller of both sides', whichever is shorter),
+so that a path cut while nothing is in flight shows as well: a live server acknowledges it, a dead path turns it into
+probe timeouts. Between two PINGs the watch sleeps. The PINGs also keep the connection open past the idle timeout while
+a request waits for its response, as RFC 9114 section 5.1 expects of a client ("HTTP clients are expected to request
+that the transport keep connections open while there are responses outstanding"). Each PING wakes the radio of a
+mobile device: a client that holds long-lived responses open on a mobile network for minutes (a long poll, server-sent
+events) may prefer `stallDetection = false` for them, or for the whole client.
+
+On a stall the engine drains the connection: it takes no new request, the alternative is marked broken for its origin
+(RFC 7838 section 2.4: 5 minutes, doubling; the backoff of a stall carries over the handshakes that work in between,
+since such a network lets handshakes through, and walks one level back down for each later connection that carried a
+whole exchange and that the client closed in order without it ever stalling; one that stalls after its first exchanges,
+or dies by an idle timeout, never lowers it), and then, per request:
+
+- a request that may be repeated — an idempotent method (RFC 9110 section 9.2.2: GET, HEAD, OPTIONS, PUT, DELETE,
+  TRACE), a body that can be sent again (bytes, a writer, none), and no response yet — goes over TCP at once
+  (`fallback = QuicStalled`, the `fallback` event with a `QuicStalledException`, one `altSvcMarkedBroken` per stalled connection);
+  a request that waited for the handshake, or was handed the connection as it stalled, was never sent and goes over
+  TCP whatever its method;
+- any other (a POST, a streamed body) and a response body under way wait on: a short outage (a handover between radio
+  networks, Wi-Fi roaming) that ends — any packet from the server — lets them finish over HTTP/3. When the path stays
+  silent for `stallAbandonAfter` (10 s) after the stall, or the QUIC idle timeout comes first, they fail with
+  `QuicStalledException` (its `silence` and `probeTimeouts` say what was seen) and the connection is closed. A
+  response that began is never repeated. A drained connection that came back closes once nothing runs on it any more,
+  a WebSocket or WebTransport session that shared it included.
+
+The engine does not honour an `Idempotency-Key` header (draft-ietf-httpapi-idempotency-key-header, not an RFC yet): a
+POST that carries one is still not repeated; the application may send it again itself.
+
+`stallDetection = false` waits for the QUIC idle timeout as before 0.3.0. `H3Only` (no TCP to go to), WebSockets and
+WebTransport sessions are not watched.
+
 ### Turning HTTP/3 off remotely
 
 `http3 { http3Allowed = { ... } }` (experimental) is a kill switch an application can flip from its remote
@@ -2348,6 +2404,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
 | `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
 | `Other` | any other HTTP/3 failure | `h3Failure` |
+| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request ([stall detection](#stalled-http3-connections)); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows (a firewall, NAT or VPN); `http3 { stallDetection }` |
 | `H2Refused` | the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this call or lately (the route offers only `http/1.1` for 5 minutes, doubling up to 2 days), so the call went over HTTP/1.1; why HTTP/3 was not used is in the log line as `h3Fallback=` | the server's HTTP/2 support for that route ([HTTP/2 on the client](#http2-on-the-client)) |
 
 The engine's `logger` gets one line per call that HTTP/3 could have served but did not (a lost race, a fallback, a

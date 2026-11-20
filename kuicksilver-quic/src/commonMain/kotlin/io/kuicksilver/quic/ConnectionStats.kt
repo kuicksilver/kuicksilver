@@ -86,4 +86,11 @@ public class ConnectionStats internal constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedSocket: Long,
+    /**
+     * The idle timeout in force (RFC 9000 section 10.1): the smaller of ours and the peer's `max_idle_timeout` (whichever
+     * is set, the peer's once its transport parameters arrived), never below 3 x PTO; [Duration.INFINITE] when neither
+     * side has one. Something to send at least every half of it keeps the connection open (as `QuicConfig.keepAlive`).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val idleTimeout: Duration = Duration.INFINITE,
 )

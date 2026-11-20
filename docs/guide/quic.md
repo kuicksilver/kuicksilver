@@ -1206,6 +1206,14 @@ returns, and `connect`/`accept` throw `EndpointClosing` from then on. `pathEvent
 collecting it before `migrate` or `probe`. `stats` can be read from any thread; it is a snapshot whose fields are read
 without a lock.
 
+A quiet connection shows nothing of a path that stopped carrying packets: with nothing in flight no probe timeout fires
+(RFC 9002 section 6.2) until the idle timeout ends it. `ping()` (experimental) sends one PING to test the path (RFC 9000
+section 10.1.2): a live peer acknowledges it, and on a dead path it leads to probe timeouts that `stats.ptoCount` counts.
+It answers false before the handshake completed (the handshake's own probes test the path then) and once the connection
+is closing. `stats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides' once the peer's
+transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](ktor.md#stalled-http3-connections));
+`QuicConfig.keepAlive` sends PINGs on a timer instead.
+
 ## Observability
 
 Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, `QuicEndpoint.stats` with

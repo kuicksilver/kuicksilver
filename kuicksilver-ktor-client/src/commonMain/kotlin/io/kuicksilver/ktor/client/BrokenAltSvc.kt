@@ -65,11 +65,49 @@ internal class BrokenAltSvc(
         alt: String,
     ): FallbackReason? = marks[key(origin, alt)]?.takeIf(::live)?.reason
 
+    /**
+     * A completed handshake through [alt]: its mark goes, except one for a stall ([FallbackReason.QuicStalled]), which
+     * stays (expired, it no longer applies) so that its backoff level carries over: a network that cuts UDP flows lets
+     * handshakes through and stalls the requests after them, and each such stall must double the backoff (5 minutes, then
+     * 10, ...) instead of starting again at 5. A network change forgets it with the rest.
+     */
     fun markWorking(
         origin: String,
         alt: String,
     ) {
+        if (marks[key(origin, alt)]?.reason == FallbackReason.QuicStalled) return
         marks.remove(key(origin, alt))
+    }
+
+    /**
+     * A connection through [alt] carried a whole exchange and ended without ever stalling: an expired stall mark ([markWorking] keeps
+     * them) goes one backoff level down, and the mark at level 0 goes, so a network that stopped cutting UDP flows walks
+     * back to the 5-minute backoff and then to none. A live mark is left alone (nothing goes there while it lives).
+     */
+    fun decayStall(
+        origin: String,
+        alt: String,
+    ) {
+        val k = key(origin, alt)
+        val m = marks[k] ?: return
+        if (m.reason != FallbackReason.QuicStalled || live(m)) return
+        if (m.level == 0) marks.remove(k) else marks[k] = Mark(m.until, m.untilWall, m.level - 1, m.reason)
+    }
+
+    /** The backoff level of [alt]'s mark, live or expired, or -1 without one (tests). */
+    internal fun levelForTest(
+        origin: String,
+        alt: String,
+    ): Int = marks[key(origin, alt)]?.level ?: -1
+
+    /** Ends [alt]'s mark now and keeps its level, as the passing of its backoff would (tests). */
+    internal fun expireForTest(
+        origin: String,
+        alt: String,
+    ) {
+        val k = key(origin, alt)
+        val m = marks[k] ?: return
+        marks[k] = Mark(clock() - 1, wallClock() - 1, m.level, m.reason)
     }
 
     fun onNetworkChanged() {

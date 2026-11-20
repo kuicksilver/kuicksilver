@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -76,6 +77,7 @@ class ClientEarlyDataTest {
         connectTimeout: kotlin.time.Duration,
         networkId: () -> String?,
         onBlocked: () -> Unit = {},
+        engine: KuicksilverEngineConfig.() -> Unit = {},
         phase2: suspend (String, io.ktor.client.HttpClient, KuicksilverEngine) -> Unit,
     ) = kotlinx.coroutines.coroutineScope {
         val ep = h3Origin(earlyData = true)
@@ -89,6 +91,7 @@ class ClientEarlyDataTest {
                         earlyData = true
                         this.networkId = networkId
                     }
+                    engine()
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
@@ -120,6 +123,82 @@ class ClientEarlyDataTest {
                 assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                 assertEquals("h1", r.bodyAsText())
                 assertTrue(t0.elapsedNow() < 15.seconds, "fell back after ${t0.elapsedNow()}")
+            }
+        }
+
+    /**
+     * Point 1 of the stall field report: QUIC worked on this network, so the 0-RTT connection wins the race at once and the
+     * GET goes early, into a path that now drops UDP from the start. With the default 10 s connect timeout the call used to
+     * wait for it; stall detection sees that nothing at all came back for `stallMinSilence` after a probe timeout and
+     * the call goes over TCP within seconds (`FallbackReason.QuicStalled`).
+     */
+    @Test fun udpBlockedWith0RttStallsOverToTcpInSeconds() =
+        h3Test {
+            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stallMinSilence = 1.seconds } }) { url, c, _ ->
+                val t0 = TimeSource.Monotonic.markNow()
+                val r = c.get(url)
+                val took = t0.elapsedNow()
+                assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                assertEquals("h1", r.bodyAsText())
+                assertTrue(took < 7.seconds, "fell back after $took")
+                assertEquals(FallbackReason.QuicStalled, r.kuicksilverDiagnostics?.fallback)
+            }
+        }
+
+    /**
+     * Review finding 3: the stall rule before the handshake scales with the RTT. A 0-RTT GET on a path whose replies take
+     * 1.5 s: the first PTO (from the 333 ms initial RTT) fires before any reply, but the rule waits for two of them, and
+     * the reply comes first. The request stays on HTTP/3.
+     */
+    @Test fun aSlowHandshakeOnA0RttConnectionIsNoStall() =
+        h3Test {
+            val (server, port) =
+                testServer(configure = { quicEarlyData = true }) {
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            val ios = FaultyIos()
+            try {
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    http3 {
+                        earlyData = true
+                        hardDelay = kotlin.time.Duration.INFINITE
+                        stallMinSilence = 1.seconds
+                        endpoint =
+                            io.kuicksilver.quic.QuicEndpointConfig
+                                .Builder()
+                                .apply { io = { local -> ios.open(local) } }
+                                .build()
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // the ticket arrived meanwhile
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    ios.delayReceived(1500.milliseconds)
+                    val r = c.get(url)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
+                    assertEquals("ok", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Attack: a POST waits for the handshake on the 0-RTT connection and is never sent; the stall found during that wait
+     * leaves it provably unsent (RFC 8470 section 4), so it goes over TCP too, within seconds, though it is not idempotent.
+     */
+    @Test fun postWaitingForAStalledHandshakeFallsBackInSeconds() =
+        h3Test {
+            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stallMinSilence = 1.seconds } }) { url, c, _ ->
+                val t0 = TimeSource.Monotonic.markNow()
+                val r = c.post(url) { setBody("x") }
+                val took = t0.elapsedNow()
+                assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                assertEquals("h1", r.bodyAsText())
+                assertTrue(took < 7.seconds, "fell back after $took")
+                assertEquals(FallbackReason.QuicStalled, r.kuicksilverDiagnostics?.fallback)
             }
         }
 

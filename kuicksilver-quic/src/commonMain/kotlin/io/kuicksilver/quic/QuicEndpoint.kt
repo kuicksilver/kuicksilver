@@ -301,7 +301,21 @@ public val QuicStream.receivedAll: Boolean
 @InternalKuicksilverApi
 public suspend fun QuicStream.awaitReceivedAllForTest() {
     val s = this as? io.kuicksilver.quic.runtime.StreamRuntime ?: error("not a runtime stream: ${this::class}")
-    s.awaitReceivedAllForTest()
+    s.awaitReceivedAll()
+}
+
+/**
+ * Suspends until [receivedAll] is true for [this] stream (RFC 9000 section 3.2, "Data Recvd"), without polling. A stream
+ * that never gets there (the peer reset it, the connection ended first) never returns: the caller bounds or cancels the
+ * wait. On a stream of another implementation it returns once [StreamTransportHooks.receivedAllHook] is true when called,
+ * and otherwise never.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.awaitReceivedAll() {
+    val s = this as? io.kuicksilver.quic.runtime.StreamRuntime
+    if (s != null) return s.awaitReceivedAll()
+    if (receivedAll) return
+    kotlinx.coroutines.awaitCancellation()
 }
 
 /**

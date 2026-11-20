@@ -282,14 +282,14 @@ internal class StreamRuntime(
         }
     }
 
-    /** Made only by a test that waits ([awaitReceivedAllForTest]), once for all its waiters: nothing otherwise. */
+    /** Made only by a caller that waits ([awaitReceivedAll]), once for all its waiters: nothing otherwise. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private val receivedAllWaiter =
         kotlin.concurrent.atomics.AtomicReference<kotlinx.coroutines.CompletableDeferred<Unit>?>(null)
 
-    /** Suspends until [receivedAll] is true (a test hook). */
+    /** Suspends until [receivedAll] is true; never returns for a stream that never gets there (cancel the wait). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    internal suspend fun awaitReceivedAllForTest() {
+    internal suspend fun awaitReceivedAll() {
         // one deferred for every waiter: two that race publish the first one made, so the loop's completion reaches both
         val made = kotlinx.coroutines.CompletableDeferred<Unit>()
         val first = receivedAllWaiter.compareAndSet(null, made)

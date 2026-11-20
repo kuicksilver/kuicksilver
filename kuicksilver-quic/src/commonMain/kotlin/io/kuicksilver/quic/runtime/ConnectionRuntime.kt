@@ -1028,6 +1028,14 @@ internal class ConnectionRuntime(
     @Volatile private var group: String? = null // read on the loop when the handshake completes, as the certificates
     override val keyExchangeGroup: String? get() = group
 
+    @ExperimentalKuicksilverApi
+    override suspend fun ping(): Boolean =
+        withContext(loop.dispatcher) {
+            if (finished || !core.requestPing()) return@withContext false
+            loop.flush(core)
+            true
+        }
+
     override suspend fun exportKeyingMaterial(
         label: String,
         context: ByteArray?,
