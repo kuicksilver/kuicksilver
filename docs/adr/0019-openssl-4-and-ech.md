@@ -102,7 +102,7 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      inner ALPN extension is padded up to it before the 32-octet rounding, a GREASE payload sized alike, section 6.1.3;
      4.1.0 padded the server name only and had no API for anything else; upstream proposal drafted under #33844);
   10. `openssl-4.1.0-armcap-sve2-without-sve.patch` (not ECH: libcrypto's constructor `OPENSSL_cpuid_setup` executed
-     the SVE instruction `cntb` whenever the kernel reported SVE2, and kernels without Linux commit 064737920bdb report
+     the SVE instruction `cntb` whenever the kernel reported SVE2, and kernels without linux@064737920bdb report
      SVE2 without SVE on a CPU with SME but no SVE, such as an Android emulator on Apple M4, where `libksl` died with
      SIGILL while it loaded). Upstream code: the `crypto/armcap.c` change of OpenSSL commit openssl/openssl@cb5f5d00e4
      (pull request #33481), merged to master and to openssl-4.1 (658a1c947b) on 2026-11-04; dropped with 4.1.1.

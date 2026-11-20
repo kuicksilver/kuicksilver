@@ -52,4 +52,4 @@ patch_9_sha256 = "981c4db4cf8bf36cdda9d55501983278e3c1816c7ea1bc2662099a8144923a
 # well as SVE2; a kernel that reports SVE2 alone (an Android emulator on Apple M4: SME, no SVE) made it die with SIGILL while
 # loading. Upstream code (commit openssl/openssl@cb5f5d00e4, on the openssl-4.1 branch as 658a1c947b); dropped with 4.1.1.
 patch_10 = "tools/openssl/patches/openssl-4.1.0-armcap-sve2-without-sve.patch"
-patch_10_sha256 = "7a6d3b8f68c6f195b62054892d4cd1f0d7e775bb22ffbabe5df5d7f3a95acff0"
+patch_10_sha256 = "544fe772aa31496dda0d459d10982ff859f94c3fd384763dab7978535d5ae2dc"
