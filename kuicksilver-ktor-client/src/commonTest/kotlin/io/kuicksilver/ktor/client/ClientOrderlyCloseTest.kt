@@ -361,13 +361,13 @@ class ClientOrderlyCloseTest {
     @Test fun negative_anAbandonedResponseDoesNotHoldTheOrderlyClose() = clientTest { abandonAfter64KiB(192 * 1024, cut = false) }
 
     /**
-     * An abandoned response whose rest is far beyond the session's drop bound (16 MiB, as an abandoned download or a
+     * An abandoned response whose rest is far beyond the session's drop bound (64 MiB, as an abandoned download or a
      * request timeout mid-body leaves it) is cut: the session drops its bound and stops reading, and the connection closes
      * under the rest, so the server's writes fail. Before, the session read and dropped all of it for as long as the
      * close's wait lasted (1 s; 30 s here), so the server wrote the whole response (engine interop's
      * requestTimeoutMidBody against Netty: 1 GiB within the second).
      */
-    @Test fun negative_anAbandonedLargeResponseIsCutPastTheDropBound() = clientTest { abandonAfter64KiB(16 shl 20, cut = true) }
+    @Test fun negative_anAbandonedLargeResponseIsCutPastTheDropBound() = clientTest { abandonAfter64KiB(64 shl 20, cut = true) }
 
     /**
      * A response the client refuses after its head while the server goes on sending (128 KiB after it, within the drop
@@ -379,10 +379,10 @@ class ClientOrderlyCloseTest {
     @Test fun negative_aRefusedResponseDoesNotHoldTheOrderlyClose() = clientTest { refuse(128 * 1024, cut = false) }
 
     /**
-     * A refused response with 16 MiB after its head, far beyond the drop bound, neither holds the close to its bound nor
+     * A refused response with 64 MiB after its head, far beyond the drop bound, neither holds the close to its bound nor
      * is read to its end: the session drops its bound and the connection closes under the rest.
      */
-    @Test fun negative_aRefusedLargeResponseIsCutPastTheDropBound() = clientTest { refuse(16 shl 20, cut = true) }
+    @Test fun negative_aRefusedLargeResponseIsCutPastTheDropBound() = clientTest { refuse(64 shl 20, cut = true) }
 
     /**
      * What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and last-stream-ids, in order, and whether
@@ -556,7 +556,7 @@ class ClientOrderlyCloseTest {
      * An HTTP/2 connection the client ends after a connection error (DATA on stream 0, RFC 9113 section 6.1) while the
      * server goes on sending more than every buffer on the way holds: the client's orderly close (GOAWAY, then
      * close_notify, its bound stretched to 30 s) reads and drops what still comes, up to the session's drop bound, and then
-     * closes under the rest (16 MiB, far beyond it), so the server's writes fail rather than run to the end. Before, the
+     * closes under the rest (64 MiB, far beyond it), so the server's writes fail rather than run to the end. Before, the
      * read loop had stopped with the closed connection, nothing read the session's input, and the close waited for the
      * server's close_notify behind it until the bound.
      */
@@ -580,7 +580,7 @@ class ClientOrderlyCloseTest {
                         }
                         output.writeFully(frame(0, 0, 0, "x".encodeToByteArray())) // a connection error: the client closes
                         val data = frame(0, 0, 1, ByteArray(16 * 1024))
-                        repeat(1024) { output.writeFully(data) } // 16 MiB the client will not read
+                        repeat(4096) { output.writeFully(data) } // 64 MiB the client will not read
                         output.flushAndClose() // then the server's close_notify
                     }.isSuccess,
                 )
@@ -594,7 +594,7 @@ class ClientOrderlyCloseTest {
                     assertTrue(t < 10.seconds, "the HTTP/2 orderly close took $t behind DATA nobody reads")
                     assertFalse(
                         withTimeout(20.seconds) { sent.await() },
-                        "the server wrote all of the 16 MiB nobody reads: the client downloaded it while it closed",
+                        "the server wrote all of the 64 MiB nobody reads: the client downloaded it while it closed",
                     )
                 }
             }

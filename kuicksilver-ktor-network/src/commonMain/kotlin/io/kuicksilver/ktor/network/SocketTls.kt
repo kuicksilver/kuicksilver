@@ -274,7 +274,10 @@ public class TlsSocket private constructor(
      * waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.
      * The application reads nothing after the close: what the peer still sends is read and dropped from then on, so the
      * wait for its `close_notify` lasts while the peer sends, not while nobody reads (RFC 9846 section 6.1 lets either side
-     * close its read side without waiting; reading on avoids resetting the connection under the peer's unread input). To
+     * close its read side without waiting; reading on avoids resetting the connection under the peer's unread input). On a
+     * client the drop stops past 256 KiB (`TlsConnection.INPUT_DROP_LIMIT`) and the close comes under the rest: a response
+     * nobody reads is cut, not downloaded until the bound. On a server it goes on until the client's `close_notify`, its FIN
+     * or the close's end, which whoever accepted the socket bounds: a reset could erase the last response. To
      * keep reading after the request, close only the write channel ([openWriteChannel]'s `flushAndClose`): `close_notify`
      * is sent and the read channel delivers the rest until the peer's.
      */
@@ -294,9 +297,9 @@ public class TlsSocket private constructor(
             try {
                 // the application reads no more: its relay ends, and the session's input is cancelled, so that what is still
                 // coming is read and dropped (TlsConnection.cancelInput) and the peer's close_notify is not held behind it
-                // (and the peer's writes behind that) until the bound (past 256 KiB dropped the session stops reading, and
-                // the close comes under the rest); a relay attached as the close began fails on the cancelled input, so
-                // nothing reads it alongside the drop
+                // (and the peer's writes behind that) until the bound (a client's session stops reading past 256 KiB
+                // dropped, and the close comes under the rest); a relay attached as the close began fails on the cancelled
+                // input, so nothing reads it alongside the drop
                 attachedReader?.job?.let {
                     it.cancel()
                     it.join()

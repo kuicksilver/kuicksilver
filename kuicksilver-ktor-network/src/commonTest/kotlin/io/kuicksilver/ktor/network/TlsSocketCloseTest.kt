@@ -15,6 +15,8 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -23,7 +25,10 @@ import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -151,6 +156,111 @@ class TlsSocketCloseTest {
                     out.flushAndClose() // the write side only
                     assertEquals("answer to question", sock.openReadChannel().readBuffer().readString())
                     served.await()
+                    sock.close()
+                    withTimeoutOrNull(10.seconds) { sock.rawSocket.socketContext.join() }
+                    withTimeoutOrNull(10.seconds) { accepted.socketContext.join() }
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * A client that closes while a response far beyond its drop bound (64 MiB, `TlsConnection.INPUT_DROP_LIMIT` is 256 KiB)
+     * is still coming does not read it to its end: past the bound the session stops reading and the close comes under the
+     * rest, so the server's write fails instead of running to the end. Before the bound, the client read and dropped the
+     * whole response for as long as its close waited.
+     */
+    @Test fun negative_aClientCloseCutsAResponseFarBeyondItsDropBound(): Unit =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                withTimeout(60.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = async { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(clientConfig()) }
+                    val accepted = server.accept().tlsServer(serverConfig())
+                    val sock = client.await()
+                    sock.closeTimeout = 50.seconds // far beyond the assertions: only the bound ends the drop early
+                    val input = sock.openReadChannel()
+                    val response =
+                        async {
+                            val written =
+                                runCatching {
+                                    val out = accepted.openWriteChannel(autoFlush = true)
+                                    val piece = ByteArray(64 * 1024)
+                                    repeat(1024) { out.writeFully(piece) } // 64 MiB
+                                    out.flushAndClose()
+                                }.isSuccess
+                            accepted.close()
+                            written
+                        }
+                    while (input.availableForRead == 0) yield() // the response is under way; the application stops reading
+                    sock.close()
+                    assertNotNull(
+                        withTimeoutOrNull(20.seconds) { sock.rawSocket.socketContext.join() },
+                        "the close still waits behind the response the application never read",
+                    )
+                    assertFalse(withTimeout(30.seconds) { response.await() }, "the server wrote all 64 MiB: the client read it out")
+                    withTimeoutOrNull(10.seconds) { accepted.socketContext.join() }
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * A server's close has no drop bound: a client still uploading what the server will never read (8 MiB, far beyond the
+     * client's bound) while it reads the last response slowly gets that response whole and its clean end. Cutting the
+     * server's reading there would close under the client's upload, and the kernel's reset would discard what of the
+     * response had not reached the client (RFC 9112 section 9.6 stages a server's close for that reason); whoever accepted
+     * the socket bounds its close.
+     */
+    @Test fun aServerCloseStillDeliversTheLastResponseToASlowUploadingClient(): Unit =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            try {
+                withTimeout(60.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = async { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(clientConfig()) }
+                    val accepted = server.accept().tlsServer(serverConfig())
+                    val sock = client.await()
+                    val size = 4 shl 20
+                    val upload =
+                        launch(Dispatchers.IO) {
+                            runCatching {
+                                val out = sock.openWriteChannel(autoFlush = true)
+                                val piece = ByteArray(64 * 1024)
+                                repeat(128) { out.writeFully(piece) } // 8 MiB the server never reads
+                            }
+                        }
+                    launch(Dispatchers.IO) {
+                        runCatching {
+                            val out = accepted.openWriteChannel(autoFlush = true)
+                            val piece = ByteArray(64 * 1024)
+                            repeat(size / piece.size) { out.writeFully(piece) }
+                            out.flushAndClose() // its close_notify
+                        }
+                        accepted.close() // the whole socket: what the client still uploads is dropped
+                    }
+                    val input = sock.openReadChannel()
+                    val buf = ByteArray(64 * 1024)
+                    var got = 0L
+                    val end =
+                        runCatching {
+                            while (true) {
+                                val n = input.readAvailable(buf, 0, buf.size)
+                                if (n < 0) break
+                                got += n
+                                delay(2.milliseconds) // a slow reader
+                            }
+                        }
+                    assertTrue(end.isSuccess, "the response ended with ${end.exceptionOrNull()} after $got bytes, not cleanly")
+                    assertEquals(size.toLong(), got, "the client got the whole last response")
+                    upload.cancel()
                     sock.close()
                     withTimeoutOrNull(10.seconds) { sock.rawSocket.socketContext.join() }
                     withTimeoutOrNull(10.seconds) { accepted.socketContext.join() }
