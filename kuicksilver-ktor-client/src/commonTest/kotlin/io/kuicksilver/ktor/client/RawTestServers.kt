@@ -260,6 +260,9 @@ internal class UdpRelay(
      */
     @kotlin.concurrent.Volatile var onlyLargeClientHellos: Boolean = false
 
+    /** While set and not complete, the server's datagrams wait in the relay (the client sees only what the relay forges). */
+    @kotlin.concurrent.Volatile var holdServerDatagrams: kotlinx.coroutines.Deferred<Unit>? = null
+
     /** How many provisional Initials the relay sent ([msquicProvisionalScid]). */
     @kotlin.concurrent.Volatile var provisionalInitialsSent: Int = 0
 
@@ -558,6 +561,7 @@ internal suspend fun udpRelay(
                             d.packet.close()
                             continue
                         }
+                        relay.holdServerDatagrams?.await()
                         if (relay.serverDatagramsLeft != Int.MAX_VALUE) relay.serverDatagramsLeft--
                         relay.serverDatagramsForwarded++
                         if (relay.msquicProvisionalScid) {

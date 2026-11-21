@@ -1596,23 +1596,31 @@ internal class H3Pool(
 
     /**
      * A resumable connection to [host] whose handshake ends with `ServerConnectionIdChanged` (an msquic server answering a
-     * resumption ClientHello of 3 datagrams from a provisional SCID, msquic#4905): [host]'s tickets of [tls] are dropped and
-     * its next connections use a full handshake for the [noResumption] backoff. Watched in the pool's scope, as
-     * [reportEarlyHandshake]; nothing for a connection whose handshake is done.
+     * resumption ClientHello of 3 datagrams from a provisional SCID, msquic#4905): its next connections use a full handshake
+     * for the [noResumption] backoff and its tickets are dropped. The mark is set in a completion handler of the connection's
+     * `closed`, which runs inside the connection's end before its handshake fails and its streams end: no request, retry or
+     * setup can learn of the failure, and resume again through `connectEarly` (whose full handshake would store a ticket),
+     * before the host is marked. The tickets go right after, in the pool's scope ([onServerCidChange]: the mark again changes
+     * nothing). Nothing for a connection whose handshake is done.
      */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun noteServerCidChange(
         c: Http3Connection,
         host: String,
-        tls: io.kuicksilver.tls.TlsConfig,
     ) {
         if (c.quic.isHandshakeComplete) return
-        (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
-            val failure = runCatching { c.quic.awaitHandshake() }.exceptionOrNull() ?: return@launch
-            if (io.kuicksilver.ktor.client
-                    .resumedServerCidChange(failure)
+        val closed = c.quic.closed
+        closed.invokeOnCompletion { cause ->
+            if (cause != null) return@invokeOnCompletion
+            if (!io.kuicksilver.ktor.client
+                    .resumedServerCidChange(closed.getCompleted())
             ) {
-                onServerCidChange(host, tls)
+                return@invokeOnCompletion
+            }
+            noResumption.mark(host) // synchronous, on the connection's end: a plain CAS
+            (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
+                dropGateForTest?.await()
+                onServerCidChange(host)
             }
         }
     }
@@ -1620,18 +1628,51 @@ internal class H3Pool(
     /**
      * [host]'s resumed handshake met a server SCID change: no resumption there for the backoff, and every QUIC ticket of its
      * server name goes, without checking their chains (`SessionCache.dropQuic`: a verifier that throws or rejects would stop
-     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). The backoff and the session cache are this
-     * pool's own: another engine keeps its own tickets and marks the host on its own failure.
+     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). Called on the failure path of the call that
+     * saw it ([onResumedServerCidChange]) before its retry or fallback starts, and after the mark [noteServerCidChange] set as
+     * the connection ended, so a retry makes a plain full handshake (no ticket stored). Several may run for one failure: a
+     * mark while the host's backoff lives changes nothing ([ResumptionBackoff.mark]).
      */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private suspend fun onServerCidChange(
-        host: String,
-        tls: io.kuicksilver.tls.TlsConfig,
-    ) {
+    private suspend fun onServerCidChange(host: String) {
         noResumption.mark(host)
-        runCatching { tickets.dropQuic(tls.serverName ?: host) }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        runCatching { tickets.dropQuic(host) }
         noResumptionMarkedForTest?.invoke(host)
     }
+
+    /**
+     * The failure path of a call: when [failure] (or [connectionEnd], the connection's own end) is `ServerConnectionIdChanged`
+     * on a resumed handshake, [host] is marked at once ([onServerCidChange]), before the call goes again or falls back.
+     */
+    internal suspend fun onResumedServerCidChange(
+        host: String,
+        failure: Throwable?,
+        connectionEnd: Throwable? = null,
+    ) {
+        if (io.kuicksilver.ktor.client
+                .resumedServerCidChange(failure) ||
+            io.kuicksilver.ktor.client
+                .resumedServerCidChange(connectionEnd)
+        ) {
+            onServerCidChange(host)
+        }
+    }
+
+    /**
+     * Forgets [host]'s resumption backoff (every host's when null: a new network) and drops the QUIC tickets of the hosts that
+     * had one: a ticket stored during a backoff (a connection set up before its mark) must not outlive it unsettled.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal suspend fun clearResumptionBackoff(host: String?) {
+        val hosts = if (host == null) noResumption.onNetworkChanged() else listOfNotNull(host.takeIf { noResumption.clear(it) })
+        settleLock.withLock { for (h in hosts) runCatching { tickets.dropQuic(h) } }
+    }
+
+    /** Held while the end of a backoff is settled and its tickets dropped: a resumable connect waits for the drop. */
+    private val settleLock = Mutex()
+
+    /** Test hook: the asynchronous part of [noteServerCidChange] (the ticket drop) waits for it; the mark does not. */
+    internal var dropGateForTest: kotlinx.coroutines.Deferred<Unit>? = null
 
     /** Test hook: runs once [noteServerCidChange] marked a host and dropped its tickets. */
     internal var noResumptionMarkedForTest: ((String) -> Unit)? = null
@@ -1685,9 +1726,13 @@ internal class H3Pool(
             // (its fallback, or a retry) then offers the retry configurations
             // the first resumable connection after a resumption backoff: the tickets stored during it go first
             // (ResumptionBackoff.settleExpired)
-            if (noResumption.settleExpired(t.originHost)) {
-                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                runCatching { tickets.dropQuic(tls.serverName ?: t.originHost) }
+            // (ResumptionBackoff.settleExpired), under settleLock: a concurrent connect waits for the drop instead of taking a
+            // stale ticket meanwhile
+            settleLock.withLock {
+                if (noResumption.settleExpired(t.originHost)) {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    runCatching { tickets.dropQuic(t.originHost) }
+                }
             }
             try {
                 ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
@@ -1696,12 +1741,12 @@ internal class H3Pool(
                 if (io.kuicksilver.ktor.client
                         .resumedServerCidChange(e)
                 ) {
-                    onServerCidChange(t.originHost, tls)
+                    onServerCidChange(t.originHost)
                 }
                 throw e
             }.also { c ->
                 noteLateEchRejection(c, route, offer)
-                noteServerCidChange(c, t.originHost, tls)
+                noteServerCidChange(c, t.originHost)
             }
         } else {
             ep.connect(remote, tls, quic, config.http3.settings)
@@ -2214,6 +2259,18 @@ internal class H3Pool(
             } catch (e: Throwable) {
                 watch?.end()
                 entry.release(clock())
+                // a resumed handshake that met a server SCID change: the host's backoff starts now, before the retry below or
+                // the caller's fallback, so a retry makes a plain full handshake
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                if (e !is CancellationException) {
+                    onResumedServerCidChange(
+                        t.originHost,
+                        e,
+                        conn.quic.closed
+                            .takeIf { it.isCompleted }
+                            ?.getCompleted(),
+                    )
+                }
                 // the connection the call failed on (a fallback over TCP replaces it)
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 if (diagnostics != null && e !is CancellationException) {

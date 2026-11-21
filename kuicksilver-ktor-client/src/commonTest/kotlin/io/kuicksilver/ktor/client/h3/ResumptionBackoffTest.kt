@@ -44,7 +44,9 @@ class ResumptionBackoffTest {
     @Test fun negative_aNetworkChangeForgetsTheBackoff() {
         val b = backoff()
         b.mark("a")
+        pass(ResumptionBackoff.BASE_MILLIS)
         b.mark("a")
+        assertEquals(1, b.levelForTest("a"))
         b.onNetworkChanged()
         assertFalse(b.avoids("a"))
         assertEquals(-1, b.levelForTest("a"), "the level starts again")
@@ -62,17 +64,41 @@ class ResumptionBackoffTest {
         assertFalse(c.avoids("a"))
     }
 
-    /** At most MAX_HOSTS hosts are kept: a new one evicts the least recently marked; a mark again makes a host the newest. */
+    /** At most MAX_HOSTS hosts are kept: a new one evicts the least recently marked. */
     @Test fun negative_theHostListIsBounded() {
         val b = backoff()
         for (i in 0 until ResumptionBackoff.MAX_HOSTS) b.mark("h$i")
-        b.mark("h0") // the oldest, marked again: now the newest
         b.mark("new")
-        assertTrue(b.avoids("h0") && b.avoids("new"))
-        assertFalse(b.avoids("h1"), "the least recently marked went")
-        assertEquals(-1, b.levelForTest("h1"))
-        assertEquals(1, b.levelForTest("h0"))
-        assertTrue(b.avoids("h${ResumptionBackoff.MAX_HOSTS - 1}"))
+        assertTrue(b.avoids("new"))
+        assertFalse(b.avoids("h0"), "the least recently marked went")
+        assertEquals(-1, b.levelForTest("h0"))
+        assertTrue(b.avoids("h1") && b.avoids("h${ResumptionBackoff.MAX_HOSTS - 1}"))
+    }
+
+    /**
+     * A mark while the host's backoff lives is the same failure seen again (the call's failure path and the handshake watcher
+     * both report it; nothing resumes during a backoff): it changes neither the level nor the end.
+     */
+    @Test fun negative_aMarkWhileTheBackoffLivesChangesNothing() {
+        val b = backoff()
+        b.mark("a")
+        pass(ResumptionBackoff.BASE_MILLIS - 10)
+        b.mark("a")
+        assertEquals(0, b.levelForTest("a"), "not doubled")
+        pass(10)
+        assertFalse(b.avoids("a"), "the first mark's end stands")
+        b.mark("a")
+        assertEquals(1, b.levelForTest("a"), "a new failure after the end doubles")
+    }
+
+    @Test fun theForgettingCallsNameTheHostsThatHadAMark() {
+        val b = backoff()
+        b.mark("a")
+        b.mark("b")
+        assertEquals(true, b.clear("a"))
+        assertEquals(false, b.clear("a"))
+        assertEquals(listOf("b"), b.onNetworkChanged())
+        assertEquals(emptyList(), b.onNetworkChanged())
     }
 
     @Test fun clearForgetsOneHost() {

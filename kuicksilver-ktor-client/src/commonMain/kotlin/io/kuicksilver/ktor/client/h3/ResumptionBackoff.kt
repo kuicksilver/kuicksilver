@@ -44,11 +44,16 @@ internal class ResumptionBackoff(
         }
     }
 
-    /** [host]'s resumed handshake failed so: no resumption for the next backoff period, one level longer than the last. */
+    /**
+     * [host]'s resumed handshake failed so: no resumption for the next backoff period, one level longer than the last. A mark
+     * while the host's backoff lives changes nothing: no connection resumes then, so it is the same failure seen again (the
+     * call's failure path and the handshake watcher both report it).
+     */
     fun mark(host: String) {
         val now = clock()
         val wall = wallClock()
         update { m ->
+            if (m[host]?.let(::live) == true) return@update m
             val level = m[host]?.let { it.level + 1 } ?: 0
             val duration = (BASE_MILLIS shl minOf(level, 20)).coerceAtMost(MAX_MILLIS)
             val next = LinkedHashMap(m)
@@ -86,11 +91,25 @@ internal class ResumptionBackoff(
         return settled
     }
 
-    /** Forgets [host]'s mark and its level (`clearAlternativeServices` of an origin of it). */
-    fun clear(host: String) = update { it - host }
+    /** Forgets [host]'s mark and its level (`clearAlternativeServices` of an origin of it); whether it had one. */
+    fun clear(host: String): Boolean {
+        var had = false
+        update {
+            had = host in it
+            it - host
+        }
+        return had
+    }
 
-    /** Forgets every mark: the backoff belongs to the network it was seen on. */
-    fun onNetworkChanged() = update { emptyMap() }
+    /** Forgets every mark: the backoff belongs to the network it was seen on. Returns the hosts that had one. */
+    fun onNetworkChanged(): List<String> {
+        var had = emptyList<String>()
+        update {
+            had = it.keys.toList()
+            emptyMap()
+        }
+        return had
+    }
 
     /** The backoff level of [host]'s mark, live or expired, or -1 without one (tests). */
     fun levelForTest(host: String): Int = marks.load()[host]?.level ?: -1
