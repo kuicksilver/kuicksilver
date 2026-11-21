@@ -655,10 +655,10 @@ internal class KuicksilverEngine(
         val complete =
             altSvcUpdate {
                 brokenAltSvc.clear(key)
-                if (origin == null) h3.noResumption.onNetworkChanged() else h3.noResumption.clear(origin.host)
                 if (key == null) srtt.clear() else srtt.remove(key)
                 altSvc.clear(key)
             }
+        h3.clearResumptionBackoff(origin?.host)
         if (!complete) {
             runCatching {
                 if (events.logger.isEnabled(LogLevel.Warn)) {
@@ -706,7 +706,6 @@ internal class KuicksilverEngine(
                 if (networkSeen) {
                     if (id != lastNetwork) {
                         brokenAltSvc.onNetworkChanged()
-                        h3.noResumption.onNetworkChanged()
                         altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
                         changed = true
                     }
@@ -723,6 +722,7 @@ internal class KuicksilverEngine(
                 id
             }
         if (changed) {
+            h3.clearResumptionBackoff(null) // the backoff and the tickets stored during it
             httpsRecords?.onNetworkChanged()
             Nat64.system.reset() // RFC 7050 section 3: the new network's Pref64::/n is discovered when needed
             @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -1698,6 +1698,9 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
     ): HttpResponseData {
         val cause = if (h3Failure is H3NotSent) h3Failure.cause ?: h3Failure else h3Failure
+        // a resumed handshake that met a server SCID change: the backoff starts before the fallback (the pool's request path
+        // marked it already when the failure came through a request; a mark while it lives changes nothing)
+        h3.onResumedServerCidChange(data.url.host, cause)
         events.emit("fallback") { fallback(data, cause) }
         // HTTP/1.1 is one more attempt only when HTTP/3 tried the request (H3NotSent: it never reached a stream, except
         // after the repeats the server did not process, which were attempts)

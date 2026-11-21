@@ -280,6 +280,64 @@ class MsquicProvisionalScidTest {
         }
 
     /**
+     * The backoff starts as the resumed connection ends, before anything that learns of its failure can go again: the next
+     * HTTP/3 connection to the host is a plain full handshake, which stores no ticket. Before, only an asynchronous handshake
+     * watcher marked the host, so a connection set up meanwhile went through the resumable path, whose full handshake stored a
+     * ticket that outlived the backoff. Here the server's answer waits until the 0-RTT connection was handed out (its failure
+     * then reaches the call through the connection, as on a loaded host) and the asynchronous ticket drop is held back, so
+     * only a mark set as the connection ended counts: the call that met the failure falls back to TCP, the next call goes
+     * over HTTP/3 on a new connection, and that connection must store no ticket.
+     */
+    @Test fun negative_theRetryAfterAResumedServerCidChangeStoresNoTicket() =
+        h3Test {
+            val tcpOpen = CompletableDeferred<Unit>()
+            msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true, acceptAfter = tcpOpen) { port, relay ->
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    http3 {
+                        earlyData = true
+                        hardDelay = Duration.INFINITE
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // the ticket arrived meanwhile
+                    assertTrue(engine.h3.ticketsForTest() > 0)
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    val gate = CompletableDeferred<Unit>()
+                    engine.h3.dropGateForTest = gate
+                    val handedOut = CompletableDeferred<Unit>()
+                    relay.holdServerDatagrams = handedOut
+                    engine.h3.setupMadeForTest = { handedOut.complete(Unit) }
+                    relay.onlyLargeClientHellos = true
+                    relay.msquicProvisionalScid = true
+                    tcpOpen.complete(Unit)
+                    try {
+                        val r = c.get(url)
+                        r.bodyAsText()
+                        assertEquals(1, relay.provisionalInitialsSent, "the resumed attempt met the provisional SCID")
+                        assertTrue(
+                            engine.h3.noResumption.avoids("127.0.0.1"),
+                            "marked as the connection ended: ${r.kuicksilverDiagnostics}",
+                        )
+                        // the next connection to the host, over HTTP/3 (TCP waits for HTTP/3 to fail: hardDelay)
+                        engine.h3.setupMadeForTest = null
+                        val next = c.get(url)
+                        assertEquals("h3", next.bodyAsText(), "a new HTTP/3 connection: ${next.kuicksilverDiagnostics}")
+                        // one more exchange on it, so its server's NewSessionTicket (sent after the handshake, before any
+                        // response) has been taken; a plain connect stores none
+                        assertEquals("h3", c.get(url).bodyAsText())
+                        assertEquals(1, relay.provisionalInitialsSent, "a full handshake")
+                        assertEquals(0, engine.h3.ticketsForTest(), "the next connection stored no ticket")
+                    } finally {
+                        gate.complete(Unit)
+                        handedOut.complete(Unit)
+                    }
+                }
+            }
+        }
+
+    /**
      * A server that switches its SCID on a full handshake (no ticket offered: the first connection, `earlyData` on): not
      * resuming would change nothing, so the alternative is marked broken as for any other failure and no resumption backoff
      * starts (`ServerConnectionIdChanged.resumptionOffered` false).
@@ -309,6 +367,27 @@ class MsquicProvisionalScidTest {
                         FallbackReason.BrokenAlternative,
                         c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.fallback,
                     )
+                }
+            }
+        }
+
+    /**
+     * Forgetting a host's resumption backoff (`clearAlternativeServices` of its origin; a new network forgets all) drops its
+     * QUIC tickets too: one stored during the backoff (a connection set up before the mark) must not outlive it unsettled.
+     */
+    @Test fun negative_clearingTheBackoffDropsTheHostsTickets() =
+        h3Test {
+            msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true) { port, _ ->
+                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { earlyData = true } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals("h3", c.get(url).bodyAsText())
+                    assertEquals("h3", c.get(url).bodyAsText()) // the ticket arrived meanwhile
+                    assertTrue(engine.h3.ticketsForTest() > 0)
+                    engine.h3.noResumption.mark("127.0.0.1") // as if a ticket had come during a backoff
+                    engine.clearAlternativeServices(io.ktor.http.Url(url))
+                    assertEquals(-1, engine.h3.noResumption.levelForTest("127.0.0.1"))
+                    assertEquals(0, engine.h3.ticketsForTest(), "the host's tickets went with its backoff")
                 }
             }
         }

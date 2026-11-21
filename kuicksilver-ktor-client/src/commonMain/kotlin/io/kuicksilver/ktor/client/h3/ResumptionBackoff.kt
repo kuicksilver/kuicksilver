@@ -31,6 +31,8 @@ internal class ResumptionBackoff(
         val until: Long,
         val untilWall: Long,
         val level: Int,
+        /** The end of this backoff period was seen by [settleExpired]; a new [mark] clears it. */
+        val settled: Boolean = false,
     )
 
     private val marks = AtomicReference<Map<String, Mark>>(emptyMap())
@@ -42,11 +44,16 @@ internal class ResumptionBackoff(
         }
     }
 
-    /** [host]'s resumed handshake failed so: no resumption for the next backoff period, one level longer than the last. */
+    /**
+     * [host]'s resumed handshake failed so: no resumption for the next backoff period, one level longer than the last. A mark
+     * while the host's backoff lives changes nothing: no connection resumes then, so it is the same failure seen again (the
+     * call's failure path and the handshake watcher both report it).
+     */
     fun mark(host: String) {
         val now = clock()
         val wall = wallClock()
         update { m ->
+            if (m[host]?.let(::live) == true) return@update m
             val level = m[host]?.let { it.level + 1 } ?: 0
             val duration = (BASE_MILLIS shl minOf(level, 20)).coerceAtMost(MAX_MILLIS)
             val next = LinkedHashMap(m)
@@ -58,13 +65,54 @@ internal class ResumptionBackoff(
     }
 
     /** Whether connections to [host] must not resume now. */
-    fun avoids(host: String): Boolean = marks.load()[host]?.let { it.until > clock() && it.untilWall > wallClock() } ?: false
+    fun avoids(host: String): Boolean = marks.load()[host]?.let(::live) ?: false
 
-    /** Forgets [host]'s mark and its level (`clearAlternativeServices` of an origin of it). */
-    fun clear(host: String) = update { it - host }
+    private fun live(m: Mark): Boolean = m.until > clock() && m.untilWall > wallClock()
 
-    /** Forgets every mark: the backoff belongs to the network it was seen on. */
-    fun onNetworkChanged() = update { emptyMap() }
+    /** Whether [host] has a backoff that ended and is not settled yet ([settleExpired]); read without a lock. */
+    fun needsSettle(host: String): Boolean = marks.load()[host]?.let { !it.settled && !live(it) } ?: false
+
+    /**
+     * True exactly once after each backoff period of [host] ended: the caller then drops the tickets of the host before its
+     * first resumable connection. A ticket can be stored during the period by a connection set up before the mark (a fresh
+     * HTTP/3 setup of the failed call that raced the mark, whose NewSessionTicket comes after the mark's drop); the period's
+     * tickets go with it, so the first connection after it is a full handshake and only its own ticket is resumed next.
+     * The level stays for the next mark.
+     */
+    fun settleExpired(host: String): Boolean {
+        var settled = false
+        update { m ->
+            settled = false
+            val old = m[host]
+            if (old == null || old.settled || live(old)) {
+                m
+            } else {
+                settled = true
+                m + (host to Mark(old.until, old.untilWall, old.level, settled = true))
+            }
+        }
+        return settled
+    }
+
+    /** Forgets [host]'s mark and its level (`clearAlternativeServices` of an origin of it); whether it had one. */
+    fun clear(host: String): Boolean {
+        var had = false
+        update {
+            had = host in it
+            it - host
+        }
+        return had
+    }
+
+    /** Forgets every mark: the backoff belongs to the network it was seen on. Returns the hosts that had one. */
+    fun onNetworkChanged(): List<String> {
+        var had = emptyList<String>()
+        update {
+            had = it.keys.toList()
+            emptyMap()
+        }
+        return had
+    }
 
     /** The backoff level of [host]'s mark, live or expired, or -1 without one (tests). */
     fun levelForTest(host: String): Int = marks.load()[host]?.level ?: -1
