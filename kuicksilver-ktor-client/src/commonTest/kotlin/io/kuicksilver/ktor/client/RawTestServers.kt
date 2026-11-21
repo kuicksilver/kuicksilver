@@ -258,9 +258,6 @@ internal class UdpRelay(
      */
     @kotlin.concurrent.Volatile var onlyLargeClientHellos: Boolean = false
 
-    /** Runs before each provisional Initial goes out (tests change the client's state at that point). */
-    @kotlin.concurrent.Volatile var onProvisional: (() -> Unit)? = null
-
     /** How many provisional Initials the relay sent ([msquicProvisionalScid]). */
     @kotlin.concurrent.Volatile var provisionalInitialsSent: Int = 0
 
@@ -442,7 +439,6 @@ internal suspend fun udpRelay(
                                 }
                             if (due) {
                                 provisional?.let {
-                                    relay.onProvisional?.invoke()
                                     front.send(
                                         io.ktor.network.sockets
                                             .Datagram(kotlinx.io.Buffer().apply { write(it) }, d.address),

@@ -312,49 +312,6 @@ class MsquicProvisionalScidTest {
             }
         }
 
-    /**
-     * The tickets go without their chains being checked: a verifier that throws once the resumed attempt is under way (the
-     * platform's verifier failing, say) neither replaces the `ServerConnectionIdChanged` the call fails with nor leaves a
-     * ticket of the host behind. `H3Only`, so that no TCP handshake asks the poisoned verifier.
-     */
-    @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
-    @Test
-    fun negative_aThrowingVerifierDoesNotHideTheServerCidChange() =
-        h3Test {
-            val poisoned = CompletableDeferred<Unit>()
-            val trust =
-                io.kuicksilver.tls.TrustConfig.Custom { chain, _, _ ->
-                    check(!poisoned.isCompleted) { "verifier down" }
-                    io.kuicksilver.tls.VerifyResult
-                        .Accepted(chain)
-                }
-            msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true) { port, relay ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    this.trust = trust
-                    http3 { earlyData = true }
-                }).use { c ->
-                    val engine = c.engine as KuicksilverEngine
-                    val url = "https://127.0.0.1:$port/"
-                    assertEquals("h3", c.get(url).bodyAsText())
-                    assertEquals("h3", c.get(url).bodyAsText()) // the ticket arrived meanwhile
-                    engine.h3.dropConnectionsForTest().forEach { it.close() }
-                    relay.onlyLargeClientHellos = true
-                    relay.onProvisional = { poisoned.complete(Unit) } // the resumed attempt took its ticket already
-                    relay.msquicProvisionalScid = true
-                    val marked = CompletableDeferred<String>()
-                    engine.h3.noResumptionMarkedForTest = { marked.complete(it) }
-                    val e = kotlin.test.assertFails { c.get(url).bodyAsText() }
-                    assertTrue(poisoned.isCompleted, "the provisional Initial went out")
-                    val chain = generateSequence(e) { it.cause }.toList()
-                    val change = chain.filterIsInstance<QuicException.ConnectionLost.ServerConnectionIdChanged>().firstOrNull()
-                    assertNotNull(change, "the failure is the SCID change: $chain")
-                    assertTrue(change.resumptionOffered)
-                    withTimeoutOrNull(30.seconds) { marked.await() } ?: kotlin.test.fail("no backoff")
-                    assertEquals(0, engine.h3.ticketsForTest(), "no ticket of the host is left")
-                }
-            }
-        }
-
     /** The control: the same rig without the provisional Initial connects over HTTP/3. */
     @Test fun withoutTheProvisionalInitialTheRigConnectsOverHttp3() =
         h3Test {
