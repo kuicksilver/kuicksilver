@@ -467,10 +467,11 @@ public enum class FallbackReason {
      * The QUIC handshake failed because the server sent its handshake data from another Source Connection ID than its first
      * Initial ([io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged]; RFC 9000 sections 7.2 and 7.3):
      * an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams (msquic#4905), which a
-     * resumption's (pre-shared key, ML-KEM, GREASE ECH) is. The call went over TCP at once. The alternative is not marked
-     * broken: the engine drops the host's session tickets and stops resuming to it (no 0-RTT) for 5 minutes, doubling at
-     * each new failure up to 2 days and forgotten on a network change, so the next calls use HTTP/3 with full handshakes,
-     * whose ClientHello fits 2 datagrams. Since 0.3.0.
+     * resumption's (pre-shared key, ML-KEM, GREASE ECH) is. The call went over TCP at once. When the failed handshake offered
+     * resumption (`resumptionOffered`) the alternative is not marked broken: the engine drops the host's session tickets
+     * and stops resuming to it (no 0-RTT) for 5 minutes, doubling at each new failure up to 2 days and forgotten on a
+     * network change, so the next calls use HTTP/3 with full handshakes, whose ClientHello fits 2 datagrams. On a full
+     * handshake it is marked broken as for any other failure. Since 0.3.0.
      */
     ServerConnectionIdChanged,
 }
@@ -520,6 +521,22 @@ private fun causedByNoDf(e: Throwable): Boolean {
     var depth = 0
     while (c != null && depth++ < 8) {
         if (c is QuicException.DontFragmentUnavailable) return true
+        c = c.cause
+    }
+    return false
+}
+
+/**
+ * Whether [e] or one of its causes is `ServerConnectionIdChanged` on a handshake that offered resumption: an msquic server
+ * given the 3-datagram ClientHello of a resumption (msquic#4905). Such a failure suspends resumption to the host instead of
+ * marking the alternative broken; one on a full handshake is an ordinary failure of the alternative.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun resumedServerCidChange(e: Throwable?): Boolean {
+    var c: Throwable? = e
+    var depth = 0
+    while (c != null && depth++ < 8) {
+        if (c is QuicException.ConnectionLost.ServerConnectionIdChanged) return c.resumptionOffered
         c = c.cause
     }
     return false

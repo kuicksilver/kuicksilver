@@ -1260,10 +1260,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with TRANSPORT_PARAMETER_ERROR (section 7.3). A handshake that can no longer complete ends at once: while nothing
   with CRYPTO came from the fixed SCID, a discarded packet from another SCID that decrypts and carries CRYPTO closes the
   connection silently with the new `QuicException.ConnectionLost.ServerConnectionIdChanged` (experimental) instead of the
-  handshake timeout, and the Ktor client reports `FallbackReason.ServerConnectionIdChanged` (experimental). It does not
-  mark the alternative broken for it: it drops the host's session tickets and stops resuming to it (no 0-RTT) for 5
-  minutes, doubling at each new failure up to 2 days and forgotten on a network change, so the next calls use HTTP/3 with
-  full handshakes. Before, such an ACK-only Initial was processed without fixing the SCID, so
+  handshake timeout, and the Ktor client reports `FallbackReason.ServerConnectionIdChanged` (experimental). When that
+  handshake offered resumption (`ServerConnectionIdChanged.resumptionOffered`) it does not mark the alternative broken:
+  it drops the host's session tickets (the new `SessionCache.dropQuic`, which checks no chain) and stops resuming to it
+  (no 0-RTT) for 5 minutes, doubling at each new failure up to 2 days and forgotten on a network change, so the next
+  calls use HTTP/3 with full handshakes; on a full handshake the alternative is marked broken as for any failure. Before, such an ACK-only Initial was processed without fixing the SCID, so
   that an msquic server, which sends from the client's DCID until its listener accepts the connection and then switches
   to a new SCID that it also names in `initial_source_connection_id` (msquic#3762, #4905), could finish the handshake.
   msquic servers (IIS, .NET Kestrel on Windows) with a ClientHello of 3 or more datagrams (resumption with ML-KEM and ECH

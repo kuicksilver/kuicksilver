@@ -186,12 +186,20 @@ public sealed class QuicException(
          * server does after a ClientHello of 3 or more datagrams (msquic#3762, #4905; docs/guide/troubleshooting.md, "msquic
          * servers and a large ClientHello"). Anyone who saw the client's first Initial can also cause it; the RFC accepts that a
          * handshake can be made to fail that way (section 21.1.1.3).
+         *
+         * @property resumptionOffered Whether the failed ClientHello offered a session ticket (resumption, with or without
+         *   0-RTT): msquic switches its ID for a ClientHello of 3 or more datagrams, which a resumption one is and a full one
+         *   usually is not, so a client can go on with full handshakes when this is true.
          */
         @ExperimentalKuicksilverApi
-        public class ServerConnectionIdChanged :
-            ConnectionLost("the server changed its Source Connection ID during the handshake (RFC 9000 sections 7.2, 7.3)") {
+        public class ServerConnectionIdChanged(
+            public val resumptionOffered: Boolean,
+        ) : ConnectionLost(
+                "the server changed its Source Connection ID during the handshake (RFC 9000 sections 7.2, 7.3)" +
+                    if (resumptionOffered) "; the ClientHello offered resumption" else "",
+            ) {
             /** A copy of this exception, for the coroutines stack-trace recovery. */
-            override fun createCopy(): ServerConnectionIdChanged = ServerConnectionIdChanged().withSuppressedOf(this)
+            override fun createCopy(): ServerConnectionIdChanged = ServerConnectionIdChanged(resumptionOffered).withSuppressedOf(this)
         }
 
         /** A bug or an unexpected failure inside the stack: the connection is dropped silently (no CONNECTION_CLOSE leaves, the peer sees an idle timeout) and the cause is kept for the report. */

@@ -101,8 +101,8 @@ class MsquicProvisionalScidTest {
      * so without resumption: msquic answers a full ClientHello (2 datagrams) from a provisional SCID only when one of its
      * datagrams is lost, as here on the first connection. The call is served over TCP with no wait to speak of, whether the
      * QUIC attempt failed before the head start ran out (`ServerConnectionIdChanged`, the usual case on loopback) or TCP won
-     * first (`H3NotReady`, the losing setup failing right after). The alternative is not marked broken for it: the next call
-     * uses HTTP/3.
+     * first (`H3NotReady`, the losing setup failing right after). A full handshake that fails so marks the alternative
+     * broken as any other failure does (not resuming would change nothing), and the next call goes straight to TCP.
      */
     @Test fun negative_msquicProvisionalScidUnderTheDefaultRace() =
         h3Test {
@@ -110,8 +110,6 @@ class MsquicProvisionalScidTest {
                 val marks = BrokenMarks()
                 testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = marks }).use { c ->
                     val engine = c.engine as KuicksilverEngine
-                    val loserSettled = CompletableDeferred<Unit>()
-                    engine.raceLoserSettledForTest = { loserSettled.complete(Unit) }
                     val t0 = TimeSource.Monotonic.markNow()
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("h1", r.bodyAsText())
@@ -126,33 +124,19 @@ class MsquicProvisionalScidTest {
 
                         FallbackReason.H3NotReady -> {
                             assertNull(d.h3Failure, "$d")
-                            withTimeoutOrNull(30.seconds) { loserSettled.await() } ?: kotlin.test.fail("the losing setup never settled")
                         }
 
                         else -> {
                             kotlin.test.fail("unexpected fallback: $d")
                         }
                     }
-                    assertTrue(!d.markedBroken && !marks.marked.isCompleted, "no broken mark for a server SCID change: $d")
-                    // the next call tries HTTP/3 again (the pooled HTTP/1.1 connection may still win its race); its setup succeeds
+                    val marked =
+                        withTimeoutOrNull(30.seconds) { marks.marked.await() } ?: kotlin.test.fail("the alternative was not marked broken")
+                    assertEquals("https://127.0.0.1:$port" to "127.0.0.1:$port", marked)
+                    assertEquals(-1, engine.h3.noResumption.levelForTest("127.0.0.1"), "no resumption backoff for a full handshake")
                     val again = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
-                    assertTrue(again.fallback != FallbackReason.BrokenAlternative, "$again")
-                    val target = io.ktor.http.Url("https://127.0.0.1:$port/")
-                    val request =
-                        io.ktor.client.request
-                            .HttpRequestBuilder()
-                            .apply { url(target) }
-                            .build()
-                    withTimeoutOrNull(30.seconds) {
-                        engine.h3
-                            .connection(
-                                io.kuicksilver.ktor.client.h3
-                                    .H3Target(target.host, target.host, target.port),
-                                request,
-                            ).quic
-                            .awaitHandshake()
-                    } ?: kotlin.test.fail("no HTTP/3 connection within 30 s")
-                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, again.protocol)
+                    assertEquals(FallbackReason.BrokenAlternative, again.fallback, "$again")
                 }
             }
         }
@@ -290,6 +274,83 @@ class MsquicProvisionalScidTest {
                     val second = withTimeoutOrNull(30.seconds) { marked.await() }
                     assertNotNull(second, "no second backoff: ${third.kuicksilverDiagnostics}")
                     assertEquals(1, engine.h3.noResumption.levelForTest("127.0.0.1"), "the backoff doubled")
+                }
+            }
+        }
+
+    /**
+     * A server that switches its SCID on a full handshake (no ticket offered: the first connection, `earlyData` on): not
+     * resuming would change nothing, so the alternative is marked broken as for any other failure and no resumption backoff
+     * starts (`ServerConnectionIdChanged.resumptionOffered` false).
+     */
+    @Test fun negative_aServerCidChangeOnAFullHandshakeMarksTheAlternativeBroken() =
+        h3Test {
+            msquicLikeOrigin(msquicProvisionalScid = true, earlyData = true) { port, relay ->
+                val marks = BrokenMarks()
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    eventListener = marks
+                    http3 {
+                        earlyData = true
+                        hardDelay = Duration.INFINITE
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val r = c.get("https://127.0.0.1:$port/")
+                    assertEquals("h1", r.bodyAsText())
+                    val d = assertNotNull(r.kuicksilverDiagnostics)
+                    assertEquals(FallbackReason.ServerConnectionIdChanged, d.fallback, "$d")
+                    val failure = assertIs<QuicException.ConnectionLost.ServerConnectionIdChanged>(d.h3Failure)
+                    assertTrue(!failure.resumptionOffered, "a full handshake")
+                    assertEquals(1, relay.provisionalInitialsSent)
+                    withTimeoutOrNull(30.seconds) { marks.marked.await() } ?: kotlin.test.fail("no altSvcMarkedBroken")
+                    assertEquals(-1, engine.h3.noResumption.levelForTest("127.0.0.1"), "no resumption backoff")
+                    assertEquals(
+                        FallbackReason.BrokenAlternative,
+                        c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.fallback,
+                    )
+                }
+            }
+        }
+
+    /**
+     * The tickets go without their chains being checked: a verifier that throws once the resumed attempt is under way (the
+     * platform's verifier failing, say) neither replaces the `ServerConnectionIdChanged` the call fails with nor leaves a
+     * ticket of the host behind. `H3Only`, so that no TCP handshake asks the poisoned verifier.
+     */
+    @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+    @Test
+    fun negative_aThrowingVerifierDoesNotHideTheServerCidChange() =
+        h3Test {
+            val poisoned = CompletableDeferred<Unit>()
+            val trust =
+                io.kuicksilver.tls.TrustConfig.Custom { chain, _, _ ->
+                    check(!poisoned.isCompleted) { "verifier down" }
+                    io.kuicksilver.tls.VerifyResult
+                        .Accepted(chain)
+                }
+            msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true) { port, relay ->
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    this.trust = trust
+                    http3 { earlyData = true }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals("h3", c.get(url).bodyAsText())
+                    assertEquals("h3", c.get(url).bodyAsText()) // the ticket arrived meanwhile
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    relay.onlyLargeClientHellos = true
+                    relay.onProvisional = { poisoned.complete(Unit) } // the resumed attempt took its ticket already
+                    relay.msquicProvisionalScid = true
+                    val marked = CompletableDeferred<String>()
+                    engine.h3.noResumptionMarkedForTest = { marked.complete(it) }
+                    val e = kotlin.test.assertFails { c.get(url).bodyAsText() }
+                    assertTrue(poisoned.isCompleted, "the provisional Initial went out")
+                    val chain = generateSequence(e) { it.cause }.toList()
+                    val change = chain.filterIsInstance<QuicException.ConnectionLost.ServerConnectionIdChanged>().firstOrNull()
+                    assertNotNull(change, "the failure is the SCID change: $chain")
+                    assertTrue(change.resumptionOffered)
+                    withTimeoutOrNull(30.seconds) { marked.await() } ?: kotlin.test.fail("no backoff")
+                    assertEquals(0, engine.h3.ticketsForTest(), "no ticket of the host is left")
                 }
             }
         }

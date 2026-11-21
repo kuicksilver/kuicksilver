@@ -146,14 +146,16 @@ with `http3 { earlyData = true }`, so without it only a lost datagram makes this
 - With `http3 { earlyData = true }` (opt-in) the resumed connection is handed out at once and wins the race, and a GET
   goes early. The switched ServerHello ends it about two round trips in, and the call is served without waiting for a
   timeout, over TCP (`fallback = ServerConnectionIdChanged`, `h3Failure` the exception) or over a fresh full HTTP/3
-  handshake when that wins. The alternative is not marked broken: the engine drops the host's session tickets and stops
+  handshake when that wins. When the failed handshake offered resumption (`ServerConnectionIdChanged.resumptionOffered`),
+  the alternative is not marked broken: the engine drops the host's session tickets and stops
   resuming to it (no 0-RTT) for 5 minutes, doubling at each new failure up to 2 days and forgotten when the network
   changes, so the next calls use HTTP/3 with full handshakes, whose ClientHello msquic answers. Before the early end such a
   call waited for min(handshakeTimeout, connectTimeout), 10 s by default.
 - Without `earlyData` (a lost ClientHello datagram): the default race starts HTTP/3 first and TCP after a head start of
   1.5 × the smoothed RTT, clamped to 100 ms..2 s, so the call is served over TCP with little extra wait, as
   `fallback = ServerConnectionIdChanged` when QUIC failed first or `fallback = H3NotReady` with `h3Failure = null` when TCP
-  won; the next call tries HTTP/3 again.
+  won. A full handshake that fails so marks the alternative broken as any other failure does (5 minutes, doubling up to
+  2 days): not resuming would change nothing there.
 - `H3Only` fails the call with `ServerConnectionIdChanged` once the attempt ends; the raw QUIC API fails `connect` with it.
 
 Interop: [msquic's provisional SCID](../spec/interop.md#msquics-provisional-scid-the-cells-expected-red-2026-11-21).
@@ -625,7 +627,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `Other` | any other HTTP/3 failure; `h3Failure` has the exception |
 | `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request (a network that cuts UDP flows): the connection was closed, the alternative marked broken, and the request went over TCP: [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `H2Refused` | the server answered HTTP/2 with `HTTP_1_1_REQUIRED`: [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
-| `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake (an msquic server given a ClientHello of 3 or more datagrams): this call went over TCP at once; the next ones use HTTP/3 without resumption (no 0-RTT) for a while: [msquic servers](#msquic-servers-and-a-large-clienthello) |
+| `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake (an msquic server given a ClientHello of 3 or more datagrams): this call went over TCP at once; after a resumed handshake the next ones use HTTP/3 without resumption (no 0-RTT) for a while, after a full one the alternative is marked broken: [msquic servers](#msquic-servers-and-a-large-clienthello) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
 alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).

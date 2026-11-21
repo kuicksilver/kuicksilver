@@ -61,4 +61,27 @@ class ResumptionBackoffTest {
         wall -= 10_000
         assertFalse(c.avoids("a"))
     }
+
+    /** At most MAX_HOSTS hosts are kept: a new one evicts the least recently marked; a mark again makes a host the newest. */
+    @Test fun negative_theHostListIsBounded() {
+        val b = backoff()
+        for (i in 0 until ResumptionBackoff.MAX_HOSTS) b.mark("h$i")
+        b.mark("h0") // the oldest, marked again: now the newest
+        b.mark("new")
+        assertTrue(b.avoids("h0") && b.avoids("new"))
+        assertFalse(b.avoids("h1"), "the least recently marked went")
+        assertEquals(-1, b.levelForTest("h1"))
+        assertEquals(1, b.levelForTest("h0"))
+        assertTrue(b.avoids("h${ResumptionBackoff.MAX_HOSTS - 1}"))
+    }
+
+    @Test fun clearForgetsOneHost() {
+        val b = backoff()
+        b.mark("a")
+        b.mark("b")
+        b.clear("a")
+        assertFalse(b.avoids("a"))
+        assertEquals(-1, b.levelForTest("a"))
+        assertTrue(b.avoids("b"))
+    }
 }

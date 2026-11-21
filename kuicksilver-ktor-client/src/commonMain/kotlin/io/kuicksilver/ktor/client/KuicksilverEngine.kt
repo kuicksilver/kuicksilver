@@ -655,6 +655,7 @@ internal class KuicksilverEngine(
         val complete =
             altSvcUpdate {
                 brokenAltSvc.clear(key)
+                if (origin == null) h3.noResumption.onNetworkChanged() else h3.noResumption.clear(origin.host)
                 if (key == null) srtt.clear() else srtt.remove(key)
                 altSvc.clear(key)
             }
@@ -1720,11 +1721,11 @@ internal class KuicksilverEngine(
     }
 
     /**
-     * Whether [e] is a failure that only a resumed handshake meets: `ServerConnectionIdChanged`, an msquic server given a
-     * ClientHello of 3 or more datagrams (msquic#4905). The alternative is not marked broken for it: the pool's
-     * `noResumption` backoff makes the next connections full handshakes, which msquic answers.
+     * Whether [e] is `ServerConnectionIdChanged` on a handshake that offered resumption ([resumedServerCidChange]): the
+     * alternative is not marked broken for it, the pool's `noResumption` backoff makes the next connections full
+     * handshakes, which msquic answers. The same failure on a full handshake marks it broken like any other.
      */
-    private fun resumptionOnly(e: Throwable?): Boolean = classifyH3Failure(e) == FallbackReason.ServerConnectionIdChanged
+    private fun resumptionOnly(e: Throwable?): Boolean = resumedServerCidChange(e)
 
     override fun toString(): String = "Kuicksilver"
 }

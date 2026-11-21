@@ -1609,30 +1609,28 @@ internal class H3Pool(
         if (c.quic.isHandshakeComplete) return
         (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
             val failure = runCatching { c.quic.awaitHandshake() }.exceptionOrNull() ?: return@launch
-            if (serverCidChangeIn(failure)) onServerCidChange(host, tls)
+            if (io.kuicksilver.ktor.client
+                    .resumedServerCidChange(failure)
+            ) {
+                onServerCidChange(host, tls)
+            }
         }
     }
 
-    /** [host]'s resumed handshake met a server SCID change: no resumption there for the backoff, and its tickets of [tls] go. */
+    /**
+     * [host]'s resumed handshake met a server SCID change: no resumption there for the backoff, and every QUIC ticket of its
+     * server name goes, without checking their chains (`SessionCache.dropQuic`: a verifier that throws or rejects would stop
+     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). With a session cache the application shares
+     * between engines, the backoff stays this pool's: another engine marks the host on its own failure.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun onServerCidChange(
         host: String,
         tls: io.kuicksilver.tls.TlsConfig,
     ) {
         noResumption.mark(host)
-        while (true) tickets.takeQuic(tls)?.close() ?: break
+        runCatching { tickets.dropQuic(tls.serverName ?: host) }
         noResumptionMarkedForTest?.invoke(host)
-    }
-
-    /** Whether [e] or one of its causes is `ServerConnectionIdChanged`. */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun serverCidChangeIn(e: Throwable): Boolean {
-        var x: Throwable? = e
-        var depth = 0
-        while (x != null && depth++ < 8) {
-            if (x is io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged) return true
-            x = x.cause
-        }
-        return false
     }
 
     /** Test hook: runs once [noteServerCidChange] marked a host and dropped its tickets. */
@@ -1689,7 +1687,11 @@ internal class H3Pool(
                 ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
             } catch (e: Throwable) {
                 // the switched ServerHello can end the attempt before its 0-RTT keys were handed out
-                if (serverCidChangeIn(e)) onServerCidChange(t.originHost, tls)
+                if (io.kuicksilver.ktor.client
+                        .resumedServerCidChange(e)
+                ) {
+                    onServerCidChange(t.originHost, tls)
+                }
                 throw e
             }.also { c ->
                 noteLateEchRejection(c, route, offer)

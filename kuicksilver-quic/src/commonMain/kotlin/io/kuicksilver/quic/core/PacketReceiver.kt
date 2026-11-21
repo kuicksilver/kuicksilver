@@ -257,7 +257,7 @@ internal class PacketReceiver(
             if (switchedServerHandshake(data, type)) {
                 c.silentClose(
                     io.kuicksilver.quic.QuicException.ConnectionLost
-                        .ServerConnectionIdChanged(),
+                        .ServerConnectionIdChanged(c.resumptionOffered),
                 )
             }
             return false
