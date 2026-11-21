@@ -251,10 +251,12 @@ internal class UdpRelay(
     @kotlin.concurrent.Volatile var provisionalForEveryConnection: Boolean = false
 
     /**
-     * With [msquicProvisionalScid], as msquic really does: only a connection whose client sends a third Initial datagram to
-     * its first DCID (a ClientHello of 3 datagrams: a resumption with ML-KEM and GREASE ECH) gets the provisional Initial,
-     * just before that third datagram reaches the server (msquic acknowledges after 2 ack-eliciting packets). Every such
-     * connection gets one.
+     * With [msquicProvisionalScid], as msquic really does: only a connection whose ClientHello needs 3 or more datagrams (a
+     * resumption with ML-KEM and GREASE ECH: about 2.4 KB, where a full one is about 1.7 KB) gets the provisional Initial
+     * (msquic acknowledges after 2 ack-eliciting packets, before it has the whole ClientHello). The relay reads the
+     * ClientHello's length from the first Initial (its CRYPTO frame at offset 0, opened with the client's Initial keys)
+     * and answers that first datagram; it does not count datagrams, so a resent full ClientHello (a probe timeout on a
+     * loaded host) gets none. Every such connection gets one.
      */
     @kotlin.concurrent.Volatile var onlyLargeClientHellos: Boolean = false
 
@@ -304,6 +306,99 @@ private fun longHeaderCid(
     val len = if (scid) d[6 + dcidLen].toInt() and 0xff else dcidLen
     if (d.size < off + len) return null
     return d.copyOfRange(off, off + len).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+}
+
+/** A ClientHello longer than this does not fit 2 Initial datagrams of 1200 bytes (about 1100 bytes of CRYPTO each). */
+private const val LARGE_CLIENT_HELLO = 2200
+
+/**
+ * The length of the ClientHello (its TLS handshake header) in the client Initial at the start of [datagram]: the packet is
+ * opened with the client's Initial keys (RFC 9001 section 5.2) and its CRYPTO frame at offset 0 read. Null when it is no
+ * v1 or v2 client Initial, does not open, or carries no CRYPTO frame at offset 0.
+ */
+internal fun clientHelloLength(datagram: ByteArray): Int? {
+    if (msquicProvisionalInitial(datagram) == null) return null // the same header checks: a v1 or v2 client Initial
+    val version =
+        ((datagram[1].toInt() and 0xff) shl 24) or ((datagram[2].toInt() and 0xff) shl 16) or ((datagram[3].toInt() and 0xff) shl 8) or
+            (datagram[4].toInt() and 0xff)
+    var p = 5
+    val dcidLen = datagram[p].toInt() and 0xff
+    val dcid = datagram.copyOfRange(p + 1, p + 1 + dcidLen)
+    p += 1 + dcidLen
+    p += 1 + (datagram[p].toInt() and 0xff) // SCID
+
+    fun varint(): Long {
+        val len = 1 shl ((datagram[p].toInt() and 0xff) ushr 6)
+        var v = (datagram[p].toLong() and 0x3f)
+        for (k in 1 until len) v = (v shl 8) or (datagram[p + k].toLong() and 0xff)
+        p += len
+        return v
+    }
+    val tokenLength = varint().toInt() // read before p is added to: varint() moves p itself
+    p += tokenLength
+    val length = varint().toInt()
+    val pnOffset = p
+    if (pnOffset + length > datagram.size || length < 20) return null
+    // the server's read keys are the client's write keys
+    val (read, write) =
+        io.kuicksilver.tls.KslQuicCrypto
+            .initialProtectors(dcid, version, TlsRole.Server)
+    val buf =
+        io.kuicksilver.native.PacketBuffer
+            .allocate(pnOffset + length)
+    try {
+        buf.copyFrom(datagram, 0, 0, pnOffset + length)
+        val mask = ByteArray(5)
+        read.headerMask(buf, pnOffset + 4, mask)
+        val first = (buf[0].toInt() and 0xff) xor (mask[0].toInt() and 0x0f)
+        val pnLen = (first and 0x03) + 1
+        var pn = 0L
+        for (i in 0 until pnLen) pn = (pn shl 8) or ((buf[pnOffset + i].toInt() xor mask[1 + i].toInt()).toLong() and 0xff)
+        buf[0] = first.toByte()
+        for (i in 0 until pnLen) buf[pnOffset + i] = (buf[pnOffset + i].toInt() xor mask[1 + i].toInt()).toByte()
+        val payloadStart = pnOffset + pnLen
+        val n =
+            try {
+                read.open(pn, buf, 0, payloadStart, buf, payloadStart, pnOffset + length - payloadStart)
+            } catch (_: Throwable) {
+                return null
+            }
+        val plain = ByteArray(n) { buf[payloadStart + it] }
+        p = 0
+
+        // frames: PADDING and PING are skipped, a CRYPTO frame at offset 0 gives the length, anything else ends the search
+        fun pv(): Long {
+            val len = 1 shl ((plain[p].toInt() and 0xff) ushr 6)
+            var v = (plain[p].toLong() and 0x3f)
+            for (k in 1 until len) v = (v shl 8) or (plain[p + k].toLong() and 0xff)
+            p += len
+            return v
+        }
+        while (p < plain.size) {
+            when (pv()) {
+                0L, 1L -> {}
+
+                6L -> {
+                    val offset = pv()
+                    val len = pv().toInt()
+                    if (offset == 0L && len >= 4 && plain[p].toInt() == 1) {
+                        return ((plain[p + 1].toInt() and 0xff) shl 16) or ((plain[p + 2].toInt() and 0xff) shl 8) or
+                            (plain[p + 3].toInt() and 0xff)
+                    }
+                    p += len
+                }
+
+                else -> {
+                    return null
+                }
+            }
+        }
+        return null
+    } finally {
+        buf.close()
+        read.close()
+        write.close()
+    }
 }
 
 /** The QUIC v2 version number (RFC 9369 section 3.1). */
@@ -433,7 +528,7 @@ internal suspend fun udpRelay(
                             val n = if (provisional != null) relay.countInitial(dcid!!) else 0
                             val due =
                                 if (relay.onlyLargeClientHellos) {
-                                    n == 3
+                                    n == 1 && (clientHelloLength(bytes) ?: 0) > LARGE_CLIENT_HELLO
                                 } else {
                                     n == 1 && (relay.provisionalForEveryConnection || relay.provisionalInitialsSent == 0)
                                 }
