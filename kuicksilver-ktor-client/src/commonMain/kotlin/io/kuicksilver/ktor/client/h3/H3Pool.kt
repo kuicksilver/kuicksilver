@@ -1739,7 +1739,6 @@ internal class H3Pool(
             // handshake fails with the rejection after this returned: the request's next connection
             // (its fallback, or a retry) then offers the retry configurations
             // the first resumable connection after a resumption backoff: the tickets stored during it go first
-            // (ResumptionBackoff.settleExpired)
             // (ResumptionBackoff.settleExpired), under settleLock: a concurrent connect waits for the drop instead of taking a
             // stale ticket meanwhile
             // The lock only for a host whose ended backoff is not settled yet (the common case takes none); the mark is
