@@ -262,8 +262,9 @@ class MsquicProvisionalScidTest {
                     engine.h3.noResumption.expireForTest("127.0.0.1")
                     assertTrue(!engine.h3.noResumption.avoids("127.0.0.1"))
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
-                    assertEquals("h3", c.get(url).bodyAsText())
-                    assertEquals(1, relay.provisionalInitialsSent)
+                    val full = c.get(url)
+                    assertEquals("h3", full.bodyAsText(), "${full.kuicksilverDiagnostics} provisional=${relay.provisionalInitialsSent}")
+                    assertEquals(1, relay.provisionalInitialsSent, "a full handshake first: no ticket to resume")
                     val ticket = withTimeoutOrNull(30.seconds) { while (engine.h3.ticketsForTest() == 0) kotlinx.coroutines.yield() }
                     assertNotNull(ticket, "the full handshake brought a ticket")
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
