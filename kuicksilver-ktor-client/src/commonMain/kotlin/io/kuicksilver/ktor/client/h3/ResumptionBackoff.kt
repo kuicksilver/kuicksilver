@@ -19,8 +19,8 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *
  * Only a failure of a handshake that offered resumption marks a host (`ServerConnectionIdChanged.resumptionOffered`): the
  * same failure on a full handshake marks the alternative broken instead, as nothing would get better by not resuming. The
- * backoff is the pool's: with a session cache the application shares between engines, this engine drops the host's
- * tickets from it, and another engine marks the host on its own failure.
+ * backoff is the pool's alone, as its session cache is: another engine keeps its own tickets and marks the host on its own
+ * failure.
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class ResumptionBackoff(

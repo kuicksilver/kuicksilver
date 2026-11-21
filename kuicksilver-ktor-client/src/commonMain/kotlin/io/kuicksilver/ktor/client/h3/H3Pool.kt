@@ -1620,8 +1620,8 @@ internal class H3Pool(
     /**
      * [host]'s resumed handshake met a server SCID change: no resumption there for the backoff, and every QUIC ticket of its
      * server name goes, without checking their chains (`SessionCache.dropQuic`: a verifier that throws or rejects would stop
-     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). With a session cache the application shares
-     * between engines, the backoff stays this pool's: another engine marks the host on its own failure.
+     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). The backoff and the session cache are this
+     * pool's own: another engine keeps its own tickets and marks the host on its own failure.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun onServerCidChange(
