@@ -280,10 +280,13 @@ class MsquicProvisionalScidTest {
         }
 
     /**
-     * The backoff starts as the resumed connection ends, before anything that learns of its failure goes again: the retry is
-     * a plain full handshake, which stores no ticket. Before, only an asynchronous handshake watcher marked the host, after the
-     * call's retry had begun through the resumable path, whose full handshake stored a ticket that outlived the backoff. The
-     * asynchronous part (the ticket drop) is held back here, so only a synchronous mark can have marked the host.
+     * The backoff starts as the resumed connection ends, before anything that learns of its failure can go again: the next
+     * HTTP/3 connection to the host is a plain full handshake, which stores no ticket. Before, only an asynchronous handshake
+     * watcher marked the host, so a connection set up meanwhile went through the resumable path, whose full handshake stored a
+     * ticket that outlived the backoff. Here the server's answer waits until the 0-RTT connection was handed out (its failure
+     * then reaches the call through the connection, as on a loaded host) and the asynchronous ticket drop is held back, so
+     * only a mark set as the connection ended counts: the call that met the failure falls back to TCP, the next call goes
+     * over HTTP/3 on a new connection, and that connection must store no ticket.
      */
     @Test fun negative_theRetryAfterAResumedServerCidChangeStoresNoTicket() =
         h3Test {
@@ -303,8 +306,6 @@ class MsquicProvisionalScidTest {
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
                     val gate = CompletableDeferred<Unit>()
                     engine.h3.dropGateForTest = gate
-                    // the server's answer (the switched ServerHello) waits until the 0-RTT connection was handed out: its failure
-                    // then reaches the call through the connection, as on a loaded host, not through connectEarly itself
                     val handedOut = CompletableDeferred<Unit>()
                     relay.holdServerDatagrams = handedOut
                     engine.h3.setupMadeForTest = { handedOut.complete(Unit) }
@@ -313,18 +314,21 @@ class MsquicProvisionalScidTest {
                     tcpOpen.complete(Unit)
                     try {
                         val r = c.get(url)
-                        val body = r.bodyAsText()
+                        r.bodyAsText()
                         assertEquals(1, relay.provisionalInitialsSent, "the resumed attempt met the provisional SCID")
                         assertTrue(
                             engine.h3.noResumption.avoids("127.0.0.1"),
-                            "marked before the call went again: ${r.kuicksilverDiagnostics}",
+                            "marked as the connection ended: ${r.kuicksilverDiagnostics}",
                         )
-                        if (body == "h3") {
-                            // the retry's connection: one more exchange on it, so its server's NewSessionTicket (sent after the
-                            // handshake, before any response) has been taken; a plain connect stores none
-                            assertEquals("h3", c.get(url).bodyAsText())
-                        }
-                        assertEquals(0, engine.h3.ticketsForTest(), "the retry stored no ticket (body $body)")
+                        // the next connection to the host, over HTTP/3 (TCP waits for HTTP/3 to fail: hardDelay)
+                        engine.h3.setupMadeForTest = null
+                        val next = c.get(url)
+                        assertEquals("h3", next.bodyAsText(), "a new HTTP/3 connection: ${next.kuicksilverDiagnostics}")
+                        // one more exchange on it, so its server's NewSessionTicket (sent after the handshake, before any
+                        // response) has been taken; a plain connect stores none
+                        assertEquals("h3", c.get(url).bodyAsText())
+                        assertEquals(1, relay.provisionalInitialsSent, "a full handshake")
+                        assertEquals(0, engine.h3.ticketsForTest(), "the next connection stored no ticket")
                     } finally {
                         gate.complete(Unit)
                         handedOut.complete(Unit)

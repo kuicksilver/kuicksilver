@@ -93,6 +93,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.update
@@ -1032,7 +1033,14 @@ internal class H3Pool(
     /** Test hook: runs once the race to a CONNECT-UDP proxy has a connection, in place of the start of its CONNECT-UDP request. */
     internal var proxyConnectedForTest: (suspend (Http3Connection) -> Unit)? = null
 
+    /**
+     * The pool's own coroutines when it has no [migrationScope] (the resumption backoff's ticket drops and watchers): cancelled
+     * by [close], so none outlives the pool.
+     */
+    private val ownScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
     fun close() {
+        ownScope.cancel()
         refusingWebTransport = true
         closed = true
         direct.close()
@@ -1609,19 +1617,25 @@ internal class H3Pool(
         host: String,
     ) {
         if (c.quic.isHandshakeComplete) return
+        val scope = migrationScope ?: ownScope
         val closed = c.quic.closed
-        closed.invokeOnCompletion { cause ->
-            if (cause != null) return@invokeOnCompletion
-            if (!io.kuicksilver.ktor.client
-                    .resumedServerCidChange(closed.getCompleted())
-            ) {
-                return@invokeOnCompletion
+        val handle =
+            closed.invokeOnCompletion { cause ->
+                if (cause != null) return@invokeOnCompletion
+                if (!io.kuicksilver.ktor.client
+                        .resumedServerCidChange(closed.getCompleted())
+                ) {
+                    return@invokeOnCompletion
+                }
+                noResumption.mark(host) // synchronous, on the connection's end: a plain CAS
+                scope.launch {
+                    dropGateForTest?.await()
+                    onServerCidChange(host)
+                }
             }
-            noResumption.mark(host) // synchronous, on the connection's end: a plain CAS
-            (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
-                dropGateForTest?.await()
-                onServerCidChange(host)
-            }
+        // a handshake that completed can no longer fail so: the handler goes with it, not with the connection
+        scope.launch {
+            if (runCatching { c.quic.awaitHandshake() }.isSuccess) handle.dispose()
         }
     }
 
@@ -1665,7 +1679,7 @@ internal class H3Pool(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     internal suspend fun clearResumptionBackoff(host: String?) {
         val hosts = if (host == null) noResumption.onNetworkChanged() else listOfNotNull(host.takeIf { noResumption.clear(it) })
-        settleLock.withLock { for (h in hosts) runCatching { tickets.dropQuic(h) } }
+        if (hosts.isNotEmpty()) settleLock.withLock { for (h in hosts) runCatching { tickets.dropQuic(h) } }
     }
 
     /** Held while the end of a backoff is settled and its tickets dropped: a resumable connect waits for the drop. */
@@ -1728,10 +1742,15 @@ internal class H3Pool(
             // (ResumptionBackoff.settleExpired)
             // (ResumptionBackoff.settleExpired), under settleLock: a concurrent connect waits for the drop instead of taking a
             // stale ticket meanwhile
-            settleLock.withLock {
-                if (noResumption.settleExpired(t.originHost)) {
-                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    runCatching { tickets.dropQuic(t.originHost) }
+            // The lock only for a host whose ended backoff is not settled yet (the common case takes none); the mark is
+            // settled after the drop, so a connect that checks meanwhile still finds it unsettled and waits for the lock
+            if (noResumption.needsSettle(t.originHost)) {
+                settleLock.withLock {
+                    if (noResumption.needsSettle(t.originHost)) {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        runCatching { tickets.dropQuic(t.originHost) }
+                        noResumption.settleExpired(t.originHost)
+                    }
                 }
             }
             try {

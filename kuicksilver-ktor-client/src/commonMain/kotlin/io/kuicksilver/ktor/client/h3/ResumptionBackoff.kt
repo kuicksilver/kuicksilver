@@ -69,6 +69,9 @@ internal class ResumptionBackoff(
 
     private fun live(m: Mark): Boolean = m.until > clock() && m.untilWall > wallClock()
 
+    /** Whether [host] has a backoff that ended and is not settled yet ([settleExpired]); read without a lock. */
+    fun needsSettle(host: String): Boolean = marks.load()[host]?.let { !it.settled && !live(it) } ?: false
+
     /**
      * True exactly once after each backoff period of [host] ended: the caller then drops the tickets of the host before its
      * first resumable connection. A ticket can be stored during the period by a connection set up before the mark (a fresh
