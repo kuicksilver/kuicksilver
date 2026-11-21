@@ -23,7 +23,6 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
 | 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | Safari (expected), any client announcing draft-02 and a newer draft | no (`webTransport`) | our reading of draft-16 §7.1 (borderline) |
 | 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
-| 5 | [msquic's provisional Initial SCID](#5-msquics-provisional-initial-scid) | msquic | yes (client) | departs from RFC 9000 §7.2 MUSTs |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
 | 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
@@ -165,52 +164,8 @@ announced only the old codepoint, which must then read them as that draft's fram
 **Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
 transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
 take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
-(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:271`); quic-go ties its own removal to a
+(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273`); quic-go ties its own removal to a
 new ticket format for the same reason.
-
-## 5. msquic's provisional Initial SCID
-
-**What it does.** A client takes the Source Connection ID of the server's first Initial and discards later long-header
-packets with another one. One exception: an Initial with nothing but ACK, PING and PADDING whose SCID is the DCID the
-client sends to is processed (its ACK counts, so the RTT sample is taken and acknowledged data is not resent) without
-fixing the SCID; the next Initial fixes it. Otherwise it is an Initial like any other: its packet number is recorded (a
-copy is a duplicate, RFC 9000 §12.3) and it is acknowledged, at once when a PING makes it ack-eliciting (§13.2.1).
-
-**Peers.** msquic (17f6e9f): until it has the whole ClientHello its connection sends from the client's own DCID (the
-IsInitial source CID, `src/core/connection.c`), and takes its own SCID only when the listener accepts the connection
-(`QuicConnGenerateNewSourceCid` in `src/core/listener.c`): one connection, two SCIDs, every packet numbered from one
-counter (`Send.NextPacketNumber`), and every sent packet, ACK-only ones included, tracked as sent
-(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic.
-After a Retry the same holds with the Retry SCID as the DCID: msquic makes the connection from the Initial that carries
-its Retry token (`QuicBindingCreateConnection`, `src/core/binding.c`) as from a first Initial. Any server that keeps its
-Retry SCID (ours by default) therefore gets the exception for an ACK-only Initial too: its SCID is the DCID already, so
-only the fixing of the SCID waits for its next Initial.
-
-**Standard text.** RFC 9000 §7.2: "Once a client has received a valid Initial packet from the server, it MUST discard
-any subsequent packet it receives on that connection with a different Source Connection ID." and "A client MUST change
-the Destination Connection ID it uses for sending packets in response to only the first received Initial or Retry
-packet." The provisional Initial is a valid Initial that does not fix the SCID, so both MUSTs are departed from for it.
-It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §7.2 row of the summary is 🔶 for it
-([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
-
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:416` (the decision, with
-`onlyAcks` at :552), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:332`
-(sequence 0 replaced while it is the only one).
-
-**On by default.** Yes, on every client; no switch.
-
-**Tests.** `core.ReceivePathTest.ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid`,
-`.provisionalInitialWithPingIsAcknowledged`, `.negative_ackOnlyInitialFromAnotherScidFixesIt`, `.clientDiscardsLongHeaderWithDifferentScid`,
-`core.HandshakeLimitsTest.ackOnlyFirstInitialUnderAmplificationLimitKeepsOneQuickHandshake`.
-
-**Risk.** Low. Initial keys are public, so whoever sees the client's first Initial can forge an ACK-only Initial from its
-DCID; the RFC already lets such an attacker forge an Initial that fixes a wrong SCID. A forged provisional Initial can
-acknowledge the client's Initial packets, so they are not resent until a real server packet arrives (a stall, up to the
-handshake timeout); it fixes nothing. Its packet number is recorded, so it can make a real server packet with the same
-number a duplicate, which the server then resends; any forged Initial can do that.
-
-**Removal.** When msquic sends its first Initial from its own SCID (not the case in 17f6e9f), or answers with nothing
-before its listener accepts the connection.
 
 ## 6. A resent STREAM range never carries the FIN
 
@@ -351,6 +306,16 @@ the data.
 
 ## Removed
 
+- **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number is kept free so the anchors of the others stay). The
+  client processed an Initial with nothing but ACK, PING and PADDING whose SCID was the DCID it sends to without letting
+  it fix the server's SCID, so that an msquic server, which sends from the client's DCID until its listener accepts the
+  connection and then switches to a new SCID that it also names in `initial_source_connection_id`, could finish the
+  handshake. That departed from both MUSTs of RFC 9000 §7.2 ("MUST discard any subsequent packet it receives on that
+  connection with a different Source Connection ID"; "MUST change the Destination Connection ID [...] in response to
+  only the first received Initial or Retry packet") and, in effect, from §7.3. The client is now strict, as quic-go,
+  ngtcp2, quinn and picoquic are: such a handshake fails (msquic#3762, #4905) and the Ktor client goes over TCP
+  ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is), [interop](interop.md)) —
+  `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently`.
 - **`Proxy-Connection: Keep-Alive` on CONNECT** (0.3.0). The CONNECT that opens a tunnel through an HTTP proxy carried the
   field for HTTP/1.0 proxies, as OkHttp 5.3.2 does (`RealRoutePlanner`, "For HTTP/1.0 proxies like Squid"), against RFC
   9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests". No peer
@@ -359,8 +324,8 @@ the data.
 
 ## Considered and not listed
 
-- **Discarding later long-header packets with another SCID** (msquic answers a repeated Initial from a second connection
-  instance): the RFC 9000 §7.2 MUST itself.
+- **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
+  among them): the RFC 9000 §7.2 MUST itself.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC
   9325 §3.1.1 says "Implementations MUST support TLS 1.2"; Extended Master Secret is required, so legacy peers are refused
   as RFC 7627 §5.2 allows. No cipher suite, version or renegotiation is relaxed for old stacks.

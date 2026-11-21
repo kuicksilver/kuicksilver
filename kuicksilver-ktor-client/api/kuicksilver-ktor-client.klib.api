@@ -54,6 +54,7 @@ final enum class io.kuicksilver.ktor.client/FallbackReason : kotlin/Enum<io.kuic
     enum entry QuicStalled // io.kuicksilver.ktor.client/FallbackReason.QuicStalled|null[0]
     enum entry QuicUnavailable // io.kuicksilver.ktor.client/FallbackReason.QuicUnavailable|null[0]
     enum entry Refused // io.kuicksilver.ktor.client/FallbackReason.Refused|null[0]
+    enum entry ServerConnectionIdChanged // io.kuicksilver.ktor.client/FallbackReason.ServerConnectionIdChanged|null[0]
     enum entry StreamFailed // io.kuicksilver.ktor.client/FallbackReason.StreamFailed|null[0]
     enum entry TlsFailure // io.kuicksilver.ktor.client/FallbackReason.TlsFailure|null[0]
     enum entry UdpUnreachable // io.kuicksilver.ktor.client/FallbackReason.UdpUnreachable|null[0]

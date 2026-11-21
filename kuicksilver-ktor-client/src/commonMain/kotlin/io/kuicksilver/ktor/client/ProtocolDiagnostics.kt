@@ -370,6 +370,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
  * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
+ * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams, a resumption's) | nothing on the client: the server's QUIC stack (msquic#4905); this call went over TCP, the next ones use HTTP/3 without resumption for a while |
  *
  * New values may be added in later versions (docs/stability.md).
  */
@@ -464,6 +465,18 @@ public enum class FallbackReason {
      * each new refusal). The reason HTTP/3 was not used is in the log line as `h3Fallback=`.
      */
     H2Refused,
+
+    /**
+     * The QUIC handshake failed because the server sent its handshake data from another Source Connection ID than its first
+     * Initial ([io.kuicksilver.quic.QuicException.ConnectionLost.ServerConnectionIdChanged]; RFC 9000 sections 7.2 and 7.3):
+     * an msquic server (IIS, .NET Kestrel on Windows) given a ClientHello of 3 or more datagrams (msquic#4905), which a
+     * resumption's (pre-shared key, ML-KEM, GREASE ECH) is. The call went over TCP at once. When the failed handshake offered
+     * resumption (`resumptionOffered`) the alternative is not marked broken: the engine drops the host's session tickets
+     * and stops resuming to it (no 0-RTT) for 5 minutes, doubling at each new failure up to 2 days and forgotten on a
+     * network change, so the next calls use HTTP/3 with full handshakes, whose ClientHello fits 2 datagrams. On a full
+     * handshake it is marked broken as for any other failure. Since 0.3.0.
+     */
+    ServerConnectionIdChanged,
 }
 
 /** Where the HTTP/3 endpoint of a call came from ([ProtocolDiagnostics.alternativeSource]). */
@@ -516,6 +529,22 @@ private fun causedByNoDf(e: Throwable): Boolean {
     return false
 }
 
+/**
+ * Whether [e] or one of its causes is `ServerConnectionIdChanged` on a handshake that offered resumption: an msquic server
+ * given the 3-datagram ClientHello of a resumption (msquic#4905). Such a failure suspends resumption to the host instead of
+ * marking the alternative broken; one on a full handshake is an ordinary failure of the alternative.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun resumedServerCidChange(e: Throwable?): Boolean {
+    var c: Throwable? = e
+    var depth = 0
+    while (c != null && depth++ < 8) {
+        if (c is QuicException.ConnectionLost.ServerConnectionIdChanged) return c.resumptionOffered
+        c = c.cause
+    }
+    return false
+}
+
 private fun classifyH3FailureByType(e: Throwable?): FallbackReason? =
     when (e) {
         null -> {
@@ -549,6 +578,10 @@ private fun classifyH3FailureByType(e: Throwable?): FallbackReason? =
 
         is QuicException.ConnectionLost.VersionNegotiation -> {
             FallbackReason.Refused
+        }
+
+        is QuicException.ConnectionLost.ServerConnectionIdChanged -> {
+            FallbackReason.ServerConnectionIdChanged
         }
 
         is QuicException.ConnectionLost.ZeroRttRejected, is QuicException.StreamError.EarlyDataRejected -> {

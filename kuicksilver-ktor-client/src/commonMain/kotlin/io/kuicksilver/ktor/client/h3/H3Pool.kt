@@ -326,6 +326,17 @@ internal class H3Pool(
      */
     private val tickets = io.kuicksilver.tls.SessionCache()
 
+    /**
+     * Origin hosts not to resume to for a while (no ticket, no 0-RTT): a resumed handshake there ended with
+     * `ServerConnectionIdChanged`, an msquic server given a ClientHello of 3 or more datagrams. Their connections use a full
+     * handshake, whose ClientHello fits 2 datagrams, instead of the alternative being marked broken ([ResumptionBackoff]).
+     */
+    internal val noResumption =
+        ResumptionBackoff(clock) {
+            io.ktor.util.date
+                .getTimeMillis()
+        }
+
     /** The number of session tickets the pool holds (tests: a 0-RTT test waits for its ticket before it drops the connection). */
     internal suspend fun ticketsForTest(): Int = tickets.size()
 
@@ -1583,6 +1594,48 @@ internal class H3Pool(
         }
     }
 
+    /**
+     * A resumable connection to [host] whose handshake ends with `ServerConnectionIdChanged` (an msquic server answering a
+     * resumption ClientHello of 3 datagrams from a provisional SCID, msquic#4905): [host]'s tickets of [tls] are dropped and
+     * its next connections use a full handshake for the [noResumption] backoff. Watched in the pool's scope, as
+     * [reportEarlyHandshake]; nothing for a connection whose handshake is done.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun noteServerCidChange(
+        c: Http3Connection,
+        host: String,
+        tls: io.kuicksilver.tls.TlsConfig,
+    ) {
+        if (c.quic.isHandshakeComplete) return
+        (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
+            val failure = runCatching { c.quic.awaitHandshake() }.exceptionOrNull() ?: return@launch
+            if (io.kuicksilver.ktor.client
+                    .resumedServerCidChange(failure)
+            ) {
+                onServerCidChange(host, tls)
+            }
+        }
+    }
+
+    /**
+     * [host]'s resumed handshake met a server SCID change: no resumption there for the backoff, and every QUIC ticket of its
+     * server name goes, without checking their chains (`SessionCache.dropQuic`: a verifier that throws or rejects would stop
+     * a loop of `takeQuic`, and must not replace the failure the caller rethrows). With a session cache the application shares
+     * between engines, the backoff stays this pool's: another engine marks the host on its own failure.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun onServerCidChange(
+        host: String,
+        tls: io.kuicksilver.tls.TlsConfig,
+    ) {
+        noResumption.mark(host)
+        runCatching { tickets.dropQuic(tls.serverName ?: host) }
+        noResumptionMarkedForTest?.invoke(host)
+    }
+
+    /** Test hook: runs once [noteServerCidChange] marked a host and dropped its tickets. */
+    internal var noResumptionMarkedForTest: ((String) -> Unit)? = null
+
     /** Tests: [block] under the pool's lock (a request that needs the lock waits for it). */
     internal suspend fun <T> withLockForTest(block: suspend () -> T): T = lock.withLock { block() }
 
@@ -1623,16 +1676,27 @@ internal class H3Pool(
         return if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
             ep.connect(remote, tls, quic, wtSettings)
-        } else if (config.http3.earlyData) {
+        } else if (config.http3.earlyData && !noResumption.avoids(t.originHost)) {
             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
             // the handshake timer (a request sent early then fails, and falls back, at that time).
             // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
             // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
             // handshake fails with the rejection after this returned: the request's next connection
             // (its fallback, or a retry) then offers the retry configurations
-            ep
-                .connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
-                .also { c -> noteLateEchRejection(c, route, offer) }
+            try {
+                ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+            } catch (e: Throwable) {
+                // the switched ServerHello can end the attempt before its 0-RTT keys were handed out
+                if (io.kuicksilver.ktor.client
+                        .resumedServerCidChange(e)
+                ) {
+                    onServerCidChange(t.originHost, tls)
+                }
+                throw e
+            }.also { c ->
+                noteLateEchRejection(c, route, offer)
+                noteServerCidChange(c, t.originHost, tls)
+            }
         } else {
             ep.connect(remote, tls, quic, config.http3.settings)
         }

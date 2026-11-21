@@ -201,7 +201,9 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
         ticket.close()
         return false
     }
-    if (!handshake.session.resume(ticket) || stored == null) return false
+    if (!handshake.session.resume(ticket)) return false
+    resumptionOffered = true
+    if (stored == null) return false
     val (_, alpn, tp) = stored
     if (!handshake.session.enableEarlyData(null, null)) return false
     remembered = tp

@@ -33,6 +33,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class ReceivePathTest {
@@ -545,18 +546,18 @@ class ReceivePathTest {
     }
 
     /**
-     * RFC 9000 section 7.2, msquic: until it has the whole ClientHello its connection sends from the client's own DCID
-     * (connection.c, the IsInitial source CID) and takes its real SCID only when the listener accepts (listener.c,
-     * QuicConnGenerateNewSourceCid). An Initial with nothing but ACK and PADDING from the DCID the client sends to is processed
-     * (its ACK gives an RTT sample) without fixing the SCID. Its packet number is recorded like any other (RFC 9000 section
-     * 12.3: a copy is a duplicate; msquic numbers every packet of the connection from one counter, so its later Initials
-     * continue above it). The first Initial with another SCID fixes it.
+     * RFC 9000 section 7.2: "Once a client has received a valid Initial packet from the server, it MUST discard any subsequent
+     * packet it receives on that connection with a different Source Connection ID." An Initial with nothing but ACK and
+     * PADDING whose SCID is the client's own DCID (what msquic sends before its listener accepts the connection, msquic#3762)
+     * is a valid Initial like any other: it is processed (its ACK gives an RTT sample, its packet number is recorded, so a
+     * copy is a duplicate, section 12.3) and it fixes the server's SCID. The ServerHello that follows from another SCID is
+     * discarded. Until 0.3.0 such a packet was processed without fixing the SCID (the msquic exception, now removed).
      */
-    @Test fun ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid() {
+    @Test fun negative_ackOnlyInitialFromTheClientsOwnDcidFixesTheScid() {
         val p = CorePair(crypto = ksl)
         p.use { _ ->
-            // msquic's case: the server has half the ClientHello (the second datagram is lost) and acknowledges it with packet
-            // number 0; that answer is lost here and replaced by the same ACK-only packet sent from the client's own DCID
+            // the server has half the ClientHello (the second datagram is lost) and acknowledges it with packet number 0; that
+            // answer is lost here and replaced by the same ACK-only packet sent from the client's own DCID
             p.filterToServer = { i, _ -> i != 1 }
             p.filterToClient = { i, _ -> i > 0 }
             p.step()
@@ -566,22 +567,23 @@ class ReceivePathTest {
             feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
             assertEquals(dropped, p.client.datagramsDropped, "the ACK-only Initial is processed")
             assertTrue(p.client.rtt.hasSample, "its ACK counts")
-            assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
+            assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is the server's now")
             // RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has not
             // processed another packet with the same packet number"
             feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
-            assertEquals(1L, p.client.duplicatesDropped, "a copy of the provisional packet is a duplicate")
-            assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
-            assertEquals(p.server!!.localCid, p.client.remoteCid)
+            assertEquals(1L, p.client.duplicatesDropped, "a copy of the packet is a duplicate")
+            assertFalse(p.runUntil(2.seconds) { p.client.hasHandshakeKeys }, "the ServerHello, from another SCID, is discarded")
+            assertTrue(p.client.datagramsDropped > dropped, "the server's datagrams were dropped for their SCID")
+            assertEquals(dcid, p.client.remoteCid)
         }
     }
 
     /**
-     * RFC 9000 section 13.2.1: "MUST acknowledge all ack-eliciting Initial and Handshake packets immediately". A provisional
-     * Initial (from the client's own DCID, msquic) that carries a PING besides its ACK is acknowledged at once, like any
-     * other, and still does not fix the SCID.
+     * RFC 9000 section 13.2.1: "MUST acknowledge all ack-eliciting Initial and Handshake packets immediately". An Initial from
+     * the client's own DCID that carries a PING besides its ACK is acknowledged at once, like any other, and fixes the SCID
+     * (section 7.2): the ServerHello from another SCID is discarded.
      */
-    @Test fun provisionalInitialWithPingIsAcknowledged() {
+    @Test fun negative_ackAndPingInitialFromTheClientsOwnDcidIsAcknowledgedAndFixesTheScid() {
         val p = CorePair(crypto = ksl)
         p.use { _ ->
             p.filterToServer = { i, _ -> i != 1 } // as above: the server acknowledges half the ClientHello with packet number 0
@@ -596,9 +598,136 @@ class ReceivePathTest {
             feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0, ping = true), CoreFixtures.serverAddr, p.now)
             assertEquals(0L, initial.largestReceived, "the packet is recorded")
             assertTrue(initial.ackRequired, "an ack-eliciting Initial is acknowledged immediately")
-            assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
-            assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
-            assertEquals(p.server!!.localCid, p.client.remoteCid)
+            assertFalse(p.runUntil(2.seconds) { p.client.hasHandshakeKeys }, "the ServerHello, from another SCID, is discarded")
+            assertEquals(dcid, p.client.remoteCid)
+        }
+    }
+
+    /**
+     * The msquic server shape (msquic#3762, #4905; docs/spec/interop.md): before it has the whole ClientHello its connection
+     * acknowledges from the client's own DCID, then takes a new SCID for the ServerHello and every later packet, and its
+     * initial_source_connection_id carries the new one. A strict client (RFC 9000 sections 7.2 and 7.3, as quic-go, ngtcp2,
+     * quinn and picoquic) fixes the first SCID and discards everything after it, so the handshake cannot complete. It does
+     * not wait for the handshake timeout: the first decryptable packet with CRYPTO from another SCID, while nothing with
+     * CRYPTO came from the fixed one, ends the connection at once with ServerConnectionIdChanged, and silently (nothing is
+     * sent to an SCID nobody authenticated). A copy that does not decrypt changes nothing.
+     */
+    @Test fun negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently() {
+        val p = CorePair(crypto = ksl)
+        p.use { _ ->
+            // the real server's whole answer is held back while the provisional Initial goes first
+            val held = ArrayList<ByteArray>()
+            p.filterToClient = { _, b ->
+                held += b
+                false
+            }
+            for (i in 0 until 4) if (held.isEmpty()) p.step()
+            assertTrue(held.isNotEmpty(), "the server answered the ClientHello")
+            val server = p.server!!
+            val dcid = p.client.remoteCid
+            assertTrue(server.localCid != dcid, "the ServerHello's SCID is a new one")
+            assertEquals(
+                server.localCid,
+                server.buildLocalTp().initialSourceConnectionId,
+                "its initial_source_connection_id is the new SCID, not the one of its first Initial (msquic)",
+            )
+            val dropped = p.client.datagramsDropped
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            assertEquals(dropped, p.client.datagramsDropped, "the provisional Initial is processed")
+            // a forged copy that does not decrypt is only discarded
+            val corrupt = held[0].copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 0x5a).toByte() }
+            feed(p.client, corrupt, CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertNull(p.closedReason(p.clientEvents), "an undecryptable packet ends nothing")
+            assertTrue(p.client.datagramsDropped > dropped)
+            val start = p.now
+            feed(p.client, held[0], CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertIs<QuicException.ConnectionLost.ServerConnectionIdChanged>(p.closedReason(p.clientEvents), "${p.clientEvents}")
+            assertEquals(start, p.now, "at once, not by a timer")
+            assertFalse(p.client.hasHandshakeKeys, "nothing of the ServerHello was taken")
+            assertEquals(ConnectionState.Closed, p.client.state)
+            val batch = PacketBatch(8)
+            try {
+                assertEquals(0, p.client.poll(batch, p.now), "no CONNECTION_CLOSE or anything else leaves")
+            } finally {
+                batch.close()
+            }
+            for (d in held.drop(1)) feed(p.client, d, CoreFixtures.serverAddr, p.now)
+            assertNull(p.clientEvents.firstOrNull { it is ConnectionEvent.HandshakeCompleted })
+        }
+    }
+
+    /**
+     * The early end needs handshake data: a decryptable Initial from another SCID than the fixed one with nothing but ACK,
+     * PING and PADDING, before any ServerHello, is discarded (RFC 9000 section 7.2) and ends nothing. Decrypting it for the
+     * check records nothing either: no packet number, no ACK owed, no RTT sample, no acknowledgement of our packets.
+     */
+    @Test fun negative_anAckOnlyInitialFromAnotherScidBeforeTheServerHelloEndsNothing() {
+        val p = CorePair(crypto = ksl)
+        p.use { _ ->
+            p.filterToClient = { _, _ -> false }
+            for (i in 0 until 4) if (p.server == null) p.step()
+            val dcid = p.client.remoteCid
+            p.advance(20.milliseconds)
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            val initial =
+                p.client.loss
+                    .space(SpaceId.Initial)
+            val largest = initial.ack.largestReceived
+            val ackRequired = initial.ack.ackRequired
+            val srtt = p.client.rtt.smoothed
+            val inFlight = initial.sent.size
+            val dropped = p.client.datagramsDropped
+            p.advance(20.milliseconds)
+            val other = p.server!!.localCid
+            feed(p.client, ackOnlyInitial(p.client, scid = other, pn = 7, largestAcked = 1, ping = true), CoreFixtures.serverAddr, p.now)
+            p.drainEvents(p.client, p.clientEvents)
+            assertNull(p.closedReason(p.clientEvents), "no handshake data: the connection goes on")
+            assertEquals(ConnectionState.Handshaking, p.client.state)
+            assertEquals(dropped + 1, p.client.datagramsDropped, "discarded for its SCID")
+            assertEquals(largest, initial.ack.largestReceived, "its packet number is not recorded")
+            assertEquals(ackRequired, initial.ack.ackRequired, "no ACK is owed for its PING")
+            assertEquals(srtt, p.client.rtt.smoothed, "no RTT sample from its ACK")
+            assertEquals(inFlight, initial.sent.size, "its ACK acknowledged none of our packets")
+            assertEquals(dcid, p.client.remoteCid)
+        }
+    }
+
+    /**
+     * RFC 9000 section 7.3: "Each endpoint includes the value of the Source Connection ID field from the first Initial packet
+     * it sent in the initial_source_connection_id transport parameter" and "An endpoint MUST treat the following as a
+     * connection error of type TRANSPORT_PARAMETER_ERROR or PROTOCOL_VIOLATION: [...] a mismatch between values received from
+     * a peer in these transport parameters and the value sent in the corresponding Destination or Source Connection ID fields
+     * of Initial packets." The client compares the parameter with the SCID of the server's first Initial: an msquic-shaped
+     * server whose parameter names its later SCID fails with TRANSPORT_PARAMETER_ERROR.
+     */
+    @Test fun negative_initialSourceConnectionIdMustBeTheScidOfTheFirstServerInitial() {
+        val p = CorePair(crypto = ksl)
+        p.use { _ ->
+            p.filterToClient = { _, _ -> false }
+            for (i in 0 until 4) if (p.server == null) p.step()
+            val server = p.server!!
+            val dcid = p.client.remoteCid
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            val tp = server.buildLocalTp()
+            assertEquals(server.localCid, tp.initialSourceConnectionId)
+            val e =
+                kotlin.test.assertFailsWith<io.kuicksilver.quic.wire.QuicWireException> {
+                    ConnectionHandshakeSink(p.client).onPeerTransportParameters(
+                        io.kuicksilver.quic.wire.TransportParametersCodec
+                            .encode(tp, io.kuicksilver.tls.TlsRole.Server, 27),
+                        p.client.version.version,
+                    )
+                }
+            assertEquals(io.kuicksilver.quic.TransportError.TRANSPORT_PARAMETER_ERROR, e.code, e.message)
+            // the same parameters naming the SCID of that first Initial pass the check
+            tp.initialSourceConnectionId = dcid
+            ConnectionHandshakeSink(p.client).onPeerTransportParameters(
+                io.kuicksilver.quic.wire.TransportParametersCodec
+                    .encode(tp, io.kuicksilver.tls.TlsRole.Server, 27),
+                p.client.version.version,
+            )
         }
     }
 

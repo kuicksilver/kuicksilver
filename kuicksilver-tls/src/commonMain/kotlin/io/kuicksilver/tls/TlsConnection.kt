@@ -1557,6 +1557,30 @@ public class SessionCache(
         return QuicSessionTicket(e)
     }
 
+    /**
+     * QUIC: drops every ticket stored for [serverName] (any ALPN, trust, client identity, with ECH or without) without checking
+     * its chain, so neither a verifier that throws nor one that rejects can stop it; returns how many went. TCP sessions stay.
+     * A client that must not resume to a server for a while (a Ktor engine after `ServerConnectionIdChanged` on a resumed
+     * handshake) clears that server's tickets with it.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun dropQuic(serverName: String): Int =
+        mutex.withLock {
+            var n = 0
+            val it = entries.entries.iterator()
+            while (it.hasNext()) {
+                val (k, l) = it.next()
+                // "quic|<alpn>|<sni>|...": an ALPN list is joined with commas, never with "|"
+                val parts = k.split('|', limit = 4)
+                if (parts.size < 3 || parts[0] != "quic" || parts[2] != serverName) continue
+                l.forEach { e -> e.close() }
+                n += l.size
+                count -= l.size
+                it.remove()
+            }
+            n
+        }
+
     /** QUIC: stores [ticket] for [config], replacing the previous one of that origin. */
     @ExperimentalKuicksilverApi
     public suspend fun putQuic(

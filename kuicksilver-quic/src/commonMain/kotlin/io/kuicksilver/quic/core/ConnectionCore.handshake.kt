@@ -494,14 +494,19 @@ internal class ConnectionHandshakeSink(
             } catch (e: QuicWireException) {
                 throw e
             }
-        // authentication of connection IDs (RFC 9000 section 7.3)
+        // authentication of connection IDs (RFC 9000 section 7.3): "Each endpoint includes the value of the Source Connection ID field
+        // from the first Initial packet it sent in the initial_source_connection_id transport parameter", and "a mismatch between
+        // values received from a peer in these transport parameters and the value sent in the corresponding Destination or Source
+        // Connection ID fields of Initial packets" is "a connection error of type TRANSPORT_PARAMETER_ERROR or PROTOCOL_VIOLATION".
+        // remoteCid is still that value here: the peer's first Initial fixed it (section 7.2) and nothing replaces it before the
+        // handshake keys (an msquic server that names its later SCID fails here, msquic#4905)
         if (tp.initialSourceConnectionId !=
             core.remoteCid
         ) {
             throw QuicWireException(
                 TransportError.TRANSPORT_PARAMETER_ERROR,
                 0,
-                "initial_source_connection_id does not match the peer's Source Connection ID",
+                "initial_source_connection_id does not match the Source Connection ID of the peer's first Initial",
             )
         }
         if (core.role == TlsRole.Client) {

@@ -137,4 +137,34 @@ class SessionCacheTest {
             assertEquals(null, cache.takeQuic(rejecting), "a chain the trust now rejects is not resumed")
             assertTrue(e.closed)
         }
+
+    /**
+     * `dropQuic` (a Ktor engine after `ServerConnectionIdChanged` on a resumed handshake) drops every QUIC ticket of one server
+     * name, whatever its ALPN, trust or ECH, without asking the verifier: one that throws (or rejects) cannot stop it. Other
+     * names' tickets and TCP sessions stay.
+     */
+    @Test fun negative_dropQuicDropsEveryTicketOfTheNameWithoutVerifying(): Unit =
+        runBlocking {
+            val cache = SessionCache()
+            var verified = 0
+            val throwing =
+                TrustConfig.Custom { _, _, _ ->
+                    verified++
+                    throw IllegalStateException("verifier down")
+                }
+            val a1 = QuicSessionTicket(SessionCache.Entry(0L, listOf(Fixtures.testCa), emptyList()))
+            val a2 = QuicSessionTicket(SessionCache.Entry(0L, listOf(Fixtures.testCa), emptyList()))
+            val b = QuicSessionTicket(SessionCache.Entry(0L, emptyList(), emptyList()))
+            cache.putQuic(Fixtures.client(trust = throwing, name = "a.test"), a1)
+            cache.putQuic(Fixtures.client(trust = throwing, name = "a.test") { alpn = listOf("other") }, a2)
+            cache.putQuic(Fixtures.client(name = "b.test"), b)
+            val tcp = SessionCache.Entry(0L, emptyList(), emptyList())
+            cache.put(SessionCache.key("a.test", "a.test", TrustConfig.Platform, null), tcp)
+            assertEquals(2, cache.dropQuic("a.test"))
+            assertEquals(0, verified, "no chain was checked")
+            assertTrue(a1.entry.closed && a2.entry.closed, "their native sessions are freed")
+            assertTrue(!b.entry.closed && !tcp.closed, "another name's ticket and the TCP session stay")
+            assertEquals(2, cache.size())
+            assertEquals(0, cache.dropQuic("a.test"))
+        }
 }
