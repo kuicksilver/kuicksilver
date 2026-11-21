@@ -84,4 +84,25 @@ class ResumptionBackoffTest {
         assertEquals(-1, b.levelForTest("a"))
         assertTrue(b.avoids("b"))
     }
+
+    /**
+     * The end of each backoff period is seen once (the pool then drops the tickets stored during the period, so the first
+     * connection after it is a full handshake): not while the mark lives, once after it, not again until a new mark ended.
+     */
+    @Test fun negative_theEndOfAPeriodIsSettledOnce() {
+        val b = backoff()
+        assertFalse(b.settleExpired("a"), "no mark")
+        b.mark("a")
+        assertFalse(b.settleExpired("a"), "the period runs")
+        pass(ResumptionBackoff.BASE_MILLIS)
+        assertTrue(b.settleExpired("a"), "the period ended")
+        assertFalse(b.settleExpired("a"), "once")
+        assertEquals(0, b.levelForTest("a"), "the level stays for the next mark")
+        b.mark("a")
+        assertFalse(b.settleExpired("a"))
+        pass(2 * ResumptionBackoff.BASE_MILLIS)
+        assertTrue(b.settleExpired("a"), "a new period ends again")
+        b.expireForTest("a")
+        assertTrue(b.settleExpired("a"), "the tests' early end too")
+    }
 }

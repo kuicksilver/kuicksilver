@@ -2602,6 +2602,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocket
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.clearForgetsOneHost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.eitherClockEndsTheBackoff
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.negative_aNetworkChangeForgetsTheBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.negative_theEndOfAPeriodIsSettledOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.negative_theHostListIsBounded
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.ResumptionBackoffTest.theBackoffDoublesUpToTwoDaysAndEnds
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.hostJvmClientToAServerOnIos

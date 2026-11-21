@@ -31,6 +31,8 @@ internal class ResumptionBackoff(
         val until: Long,
         val untilWall: Long,
         val level: Int,
+        /** The end of this backoff period was seen by [settleExpired]; a new [mark] clears it. */
+        val settled: Boolean = false,
     )
 
     private val marks = AtomicReference<Map<String, Mark>>(emptyMap())
@@ -58,7 +60,31 @@ internal class ResumptionBackoff(
     }
 
     /** Whether connections to [host] must not resume now. */
-    fun avoids(host: String): Boolean = marks.load()[host]?.let { it.until > clock() && it.untilWall > wallClock() } ?: false
+    fun avoids(host: String): Boolean = marks.load()[host]?.let(::live) ?: false
+
+    private fun live(m: Mark): Boolean = m.until > clock() && m.untilWall > wallClock()
+
+    /**
+     * True exactly once after each backoff period of [host] ended: the caller then drops the tickets of the host before its
+     * first resumable connection. A ticket can be stored during the period by a connection set up before the mark (a fresh
+     * HTTP/3 setup of the failed call that raced the mark, whose NewSessionTicket comes after the mark's drop); the period's
+     * tickets go with it, so the first connection after it is a full handshake and only its own ticket is resumed next.
+     * The level stays for the next mark.
+     */
+    fun settleExpired(host: String): Boolean {
+        var settled = false
+        update { m ->
+            settled = false
+            val old = m[host]
+            if (old == null || old.settled || live(old)) {
+                m
+            } else {
+                settled = true
+                m + (host to Mark(old.until, old.untilWall, old.level, settled = true))
+            }
+        }
+        return settled
+    }
 
     /** Forgets [host]'s mark and its level (`clearAlternativeServices` of an origin of it). */
     fun clear(host: String) = update { it - host }

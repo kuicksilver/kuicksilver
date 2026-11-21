@@ -1683,6 +1683,12 @@ internal class H3Pool(
             // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
             // handshake fails with the rejection after this returned: the request's next connection
             // (its fallback, or a retry) then offers the retry configurations
+            // the first resumable connection after a resumption backoff: the tickets stored during it go first
+            // (ResumptionBackoff.settleExpired)
+            if (noResumption.settleExpired(t.originHost)) {
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                runCatching { tickets.dropQuic(tls.serverName ?: t.originHost) }
+            }
             try {
                 ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
             } catch (e: Throwable) {
