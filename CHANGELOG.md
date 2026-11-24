@@ -1049,7 +1049,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC (hardening): frames that RFC 9000 lets a receiver refuse and that ngtcp2, quic-go and picoquic refuse now close
   the connection with PROTOCOL_VIOLATION; each could come only from a peer that broke a sender MUST. A RETIRE_CONNECTION_ID
   in a 0-RTT packet (section 12.5: "A server MAY treat receipt of these frames in 0-RTT packets as a connection error");
-  a frame type encoded in more bytes than it needs (section 12.4); a RETIRE_CONNECTION_ID naming the connection ID the
+  a known frame type encoded in more bytes than it needs (section 12.4; an unknown type stays FRAME_ENCODING_ERROR,
+  the section's MUST); a RETIRE_CONNECTION_ID naming the connection ID the
   packet carrying it was sent to (section 19.16: "MUST NOT refer to the Destination Connection ID field of the packet in
   which the frame is contained"); a NEW_CONNECTION_ID that repeats a sequence number with another stateless reset token,
   or an issued connection ID under another sequence number (section 19.15; before, the first was ignored and the second

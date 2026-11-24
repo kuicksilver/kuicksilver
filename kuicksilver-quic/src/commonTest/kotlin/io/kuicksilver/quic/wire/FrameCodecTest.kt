@@ -245,7 +245,9 @@ class FrameCodecTest {
 
     /**
      * RFC 9000 section 12.4: "An endpoint MAY treat the receipt of a frame type that uses a longer encoding than necessary as
-     * a connection error of type PROTOCOL_VIOLATION" (ngtcp2, quic-go, picoquic). Every length, known or unknown type.
+     * a connection error of type PROTOCOL_VIOLATION" (ngtcp2, quic-go, picoquic), for a known type in every length; an unknown
+     * type stays FRAME_ENCODING_ERROR ("MUST treat the receipt of a frame of unknown type as a connection error of type
+     * FRAME_ENCODING_ERROR"), as in ngtcp2 and picoquic.
      */
     @Test fun negative_nonMinimalFrameTypeIsProtocolViolation() {
         expectCode(0x0a, hex("40 01")) // PING in two bytes
@@ -253,7 +255,9 @@ class FrameCodecTest {
         expectCode(0x0a, hex("c0 00 00 00 00 00 00 01")) // PING in eight bytes
         expectCode(0x0a, hex("40 00")) // PADDING in two bytes
         expectCode(0x0a, hex("01 40 1e")) // HANDSHAKE_DONE in two bytes, after a minimal PING
-        expectCode(0x0a, hex("80 00 00 21")) // an unknown type, non-minimal: the encoding is checked first
+        // an unknown type is FRAME_ENCODING_ERROR however it is encoded: that is the MUST of section 12.4, minimality its MAY
+        expectCode(0x07, hex("80 00 00 21"))
+        expectCode(0x07, hex("40 21"))
         val e = expectCode(0x0a, hex("40 08 04 01 2a"))
         assertEquals(0x08L, e.frameType, "the frame type of a non-minimal STREAM")
     }

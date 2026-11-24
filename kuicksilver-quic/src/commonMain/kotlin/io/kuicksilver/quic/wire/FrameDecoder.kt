@@ -106,8 +106,12 @@ internal object FrameDecoder {
             val typeStart = r.pos
             val type = r.varint()
             r.frameType = type
-            // RFC 9000 section 12.4: "An endpoint MAY treat the receipt of a frame type that uses a longer encoding than necessary as
-            // a connection error of type PROTOCOL_VIOLATION" (the sender MUST use the shortest one); ngtcp2, quic-go and picoquic do
+            // RFC 9000 section 12.4: "An endpoint MUST treat the receipt of a frame of unknown type as a connection error of type
+            // FRAME_ENCODING_ERROR", however it is encoded (ngtcp2, picoquic); for a known type, "An endpoint MAY treat the receipt
+            // of a frame type that uses a longer encoding than necessary as a connection error of type PROTOCOL_VIOLATION" (the
+            // sender MUST use the shortest one), as ngtcp2, quic-go and picoquic do
+            val mask = allowedIn(type)
+            if (mask == 0) throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, type, "unknown frame type 0x${type.toString(16)}")
             if (r.pos - typeStart != VarInt.size(type)) {
                 throw QuicWireException(TransportError.PROTOCOL_VIOLATION, type, "frame type 0x${type.toString(16)} not minimally encoded")
             }
@@ -129,8 +133,6 @@ internal object FrameDecoder {
                     nonProbing++
                 }
             }
-            val mask = allowedIn(type)
-            if (mask == 0) throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, type, "unknown frame type 0x${type.toString(16)}")
             if (mask and allowedBit ==
                 0
             ) {
