@@ -626,7 +626,13 @@ it with `withTimeout`. With flow control the session's own limits bound it, besi
 limits alone do. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
 session (section 4.4); a session of draft-14 or later exists only with `reset_stream_at` on both sides, which
 `Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
-RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
+RESET_STREAM, as its draft has it). `reset(code, reliableOffset)` (experimental) also keeps the first `reliableOffset`
+bytes of the stream for the peer's application, however many packets are lost: the bytes written before the call go up
+to that offset, then the reset, which can wait for the peer's flow-control credit without a deadline; a later
+`reset(code)` takes over at once (the call closes `output`, so cancelling `output` afterwards does nothing; a later
+`reset(code)` or the session's end is the way to take over; an offset beyond them is cut to them; on a draft-02 session, which has no
+RESET_STREAM_AT, an offset above 0 throws IllegalStateException and resets nothing). A receiving stream reads the bytes
+its peer's reset kept before it fails with `WebTransportException.StreamReset`. A session's streams are sent at the priority of its CONNECT stream (the request's
 `priority`, else its `priority` field, else urgency 3 incremental) and follow the client's PRIORITY_UPDATE for it
 (section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream, strictly in both
 directions: more urgent streams' data goes first, so a bulk download at a more urgent level holds the datagrams back

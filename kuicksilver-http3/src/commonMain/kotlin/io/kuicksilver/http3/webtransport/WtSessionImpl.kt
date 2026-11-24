@@ -542,6 +542,8 @@ internal class WtSessionImpl(
                     flow,
                     inCount,
                     sendTurns,
+                    // RESET_STREAM_AT goes only where both sides advertised it (draft-ietf-quic-reliable-stream-reset section 3)
+                    reliableResets = h3.quic.resetStreamAtEnabled,
                 )
             if (closedInfo.isCompleted) {
                 s.gone()

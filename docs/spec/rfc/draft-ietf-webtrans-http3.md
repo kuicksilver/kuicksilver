@@ -143,7 +143,7 @@ Original row: draft-ietf-webtrans-http3-16 §4.4, §4.5, §4.7, §6 (session); d
   grows nothing (`WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection`, JVM)
 - an application that cancels a stream's `output` resets it, one that cancels its `input` stops it, both with code 0
 - `drainRequested` on the peer's drain or a GOAWAY, and on this side's own `drain()` (0.3.0: the sending side's application winds down too; the Ktor client's `closeHttp3Connections()` drains every session, also one whose CONNECT completes after it) — `WebTransportCloseTest.ownDrainSetsBothFlags`, `ClientKillSwitchTest.closeHttp3ConnectionsDrainsWebTransportSessions`, `.webTransportSessionTrackedAfterCloseIsDrained`
-- §4.4 "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] when resetting a WebTransport data stream, with a Reliable Size set to the size of the WebTransport header on that stream plus any offset provided by the application" (draft-16: "at least the size of the WebTransport header"; our API takes no offset, so the size is the header's, which meets both): every reset of our sending side of a WebTransport stream (by the application, its cancelled `output`, the session's end, a stream rejected while buffered or one opened as the session closed) is a RESET_STREAM_AT, with the header we wrote as the reliable size (cut by the transport to what was written) or 0 on a stream the peer opened, whose header travels the other way (reliable-stream-reset-11 §4: "a RESET_STREAM_AT frame with this value is logically equivalent to a RESET_STREAM frame"); a session of draft-14 or later exists only with `reset_stream_at` on both sides (SETTINGS row), so the frame always goes; only a draft-02 session (browsers, whose draft predates the frame) may lack it, and the transport then sends the RESET_STREAM of draft-02 (`wtResetUsesResetStreamAtWhenNegotiated`, `withoutResetStreamAtBothSidesFallBackToDraft02`)
+- §4.4 "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] when resetting a WebTransport data stream, with a Reliable Size set to the size of the WebTransport header on that stream plus any offset provided by the application" (draft-16: "at least the size of the WebTransport header"; the application's offset is `reset(code, reliableOffset)`, [its row](#s4-4-reliable-offset); without one the size is the header's, which meets both): every reset of our sending side of a WebTransport stream (by the application, its cancelled `output`, the session's end, a stream rejected while buffered or one opened as the session closed) is a RESET_STREAM_AT, with the header we wrote as the reliable size (cut by the transport to what was written) or 0 on a stream the peer opened, whose header travels the other way (reliable-stream-reset-11 §4: "a RESET_STREAM_AT frame with this value is logically equivalent to a RESET_STREAM frame"); a session of draft-14 or later exists only with `reset_stream_at` on both sides (SETTINGS row), so the frame always goes; only a draft-02 session (browsers, whose draft predates the frame) may lack it, and the transport then sends the RESET_STREAM of draft-02 (`wtResetUsesResetStreamAtWhenNegotiated`, `withoutResetStreamAtBothSidesFallBackToDraft02`)
 
 **Tests that pin it.**
 
@@ -152,6 +152,42 @@ Original row: draft-ietf-webtrans-http3-16 §4.4, §4.5, §4.7, §6 (session); d
 **Peer interop notes.**
 
 - `close` sends the capsule and FIN (5 s for the peer's credit, then a reset) and waits for the peer's FIN, sending STOP_SENDING `WT_SESSION_GONE` only when it does not come within 5 s (stopping at once made Chrome report a lost connection instead of the close code), the peer's capsule or FIN (code 0) closes the session the same way, a malformed close (reason above 1024 bytes, not UTF-8, data after it) or drain → `H3_MESSAGE_ERROR` on the CONNECT stream
+
+**Open items.** None.
+
+## <a id="s4-4-reliable-offset"></a>§4.4 — reset with a reliable offset
+
+Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#http)
+
+**Requirement.** §4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] when resetting
+a WebTransport data stream, with a Reliable Size set to the size of the WebTransport header on that stream plus any offset
+provided by the application (see "abort send side" in Section 4.3 of [OVERVIEW])", "along with any data the application
+asked to deliver". draft-ietf-webtrans-overview §4.3 has the application provide "an offset in the stream that is
+reliably delivered". draft-ietf-quic-reliable-stream-reset-11 §3: "An endpoint MUST NOT send a RESET_STREAM_AT frame
+unless the peer advertised support using the reset_stream_at transport parameter".
+
+**Recorded status.** ✅ 0.3.0 (experimental)
+
+**How it is met.**
+
+- `WebTransportSendStream.reset(code, reliableOffset)`: `output` takes no more writes; the bytes written before the call
+  are sent up to `reliableOffset` (under the session's flow control and turns), then RESET_STREAM_AT with Reliable Size
+  = header + `reliableOffset`; an offset beyond the bytes written before the call is cut to them, a negative one is
+  IllegalArgumentException, 0 is `reset(code)`; it goes also when `output` was already closed (its FIN not yet
+  acknowledged); sending the reliable bytes may wait indefinitely for the peer's flow-control credit, and the offset is
+  never cut on a deadline (that would break the reliability asked for); a later `reset(code)`, or the session's end,
+  takes over at once and resets with the bytes already sent kept (Reliable Size = header + bytes sent)
+- a session without RESET_STREAM_AT (draft-02; the connection's `reset_stream_at` is not on both sides): an offset above
+  0 is IllegalStateException and resets nothing, as RESET_STREAM would not keep the bytes and RESET_STREAM_AT must not go
+- receiving: a stream the peer reset reads the bytes the transport delivered before the reset (the reliable prefix of a
+  RESET_STREAM_AT; reliable-stream-reset §3 makes the Reliable Size the minimum delivered to the application), then
+  fails, also when the last chunk and the reset reach the input together with `WebTransportException.StreamReset`; our own stop or the session's end still drops
+  what was not read
+- the default implementation, for streams outside this library, takes 0 only
+
+**Tests that pin it.**
+
+- `webtransport.WtReliableResetTest.*` (`theReliablePrefixReachesThePeerThroughLoss`, `negative_anOffsetBeyondTheWrittenBytesIsCutToThem`, `negative_aNegativeOffsetIsRefused`, `negative_aReliableOffsetWithoutResetStreamAtIsRefused`, `aReliableResetAfterTheFinStillGoes`, `negative_aLaterResetTakesOverAReliableResetWaitingForCredit`), `webtransport.WtInputTest.aPeerResetFailsTheReadsAfterTheDeliveredBytes`, `.negative_aChunkDeliveredAsTheResetLandsIsReadFirst`
 
 **Open items.** None.
 

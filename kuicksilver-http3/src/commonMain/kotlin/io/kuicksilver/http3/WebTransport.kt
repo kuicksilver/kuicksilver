@@ -157,6 +157,34 @@ public interface WebTransportSendStream {
 
     /** Abandons sending with the application [code], 0..2^32-1 (RESET_STREAM); [output] then fails. */
     public fun reset(code: Long)
+
+    /**
+     * Abandons sending with the application [code], 0..2^32-1, but still delivers the first [reliableOffset] bytes of the
+     * stream to the peer's application, however many packets are lost, before it sees the reset: the "abort send side"
+     * with an offset of draft-ietf-webtrans-overview section 4.3, carried by RESET_STREAM_AT whose Reliable Size is the
+     * stream's header plus [reliableOffset] (draft-ietf-webtrans-http3-17 section 4.4). [output] fails at once for new
+     * writes; the bytes written before the call are sent up to [reliableOffset] (as the session's flow control lets them),
+     * then the reset goes, also when [output] was already closed (its FIN not yet acknowledged). Sending those bytes can
+     * wait indefinitely for the peer's flow-control credit; the offset is never cut on a deadline, as that would break the
+     * reliability asked for. A later [reset] (one argument), or the session's end, takes over at once: it resets with the
+     * bytes already sent kept (Reliable Size = header + bytes sent). The call closes [output], so cancelling [output]
+     * afterwards does nothing: a later [reset] or the session's end is the way to take over. A [reliableOffset] beyond the bytes written before
+     * the call is cut to them; 0 is [reset].
+     *
+     * Throws IllegalArgumentException for a negative [reliableOffset], and IllegalStateException, without resetting, for
+     * an offset above 0 on a session without RESET_STREAM_AT (draft-02, which browsers speak: the transport must not send
+     * the frame to a peer that did not advertise `reset_stream_at`, draft-ietf-quic-reliable-stream-reset section 3, and a
+     * RESET_STREAM would not keep the bytes). The default, for implementations outside this library, takes 0 only and
+     * throws UnsupportedOperationException for any other offset.
+     */
+    public fun reset(
+        code: Long,
+        reliableOffset: Long,
+    ) {
+        require(reliableOffset >= 0) { "reliableOffset $reliableOffset is negative" }
+        if (reliableOffset == 0L) return reset(code)
+        throw UnsupportedOperationException("this stream does not keep a reliable offset")
+    }
 }
 
 /** A bidirectional WebTransport stream: both sides, each ending on its own. */

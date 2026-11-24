@@ -76,4 +76,46 @@ class WtInputTest {
             assertContentEquals(expected, got.toByteArray())
             assertEquals(expected.size.toLong(), credited)
         }
+
+    /**
+     * The peer's reset after a delivered chunk (with RESET_STREAM_AT, the reliable prefix, draft-ietf-webtrans-http3-17
+     * section 4.4): the chunk is read first, then the reset; a local failure drops what was not read, as before.
+     */
+    @Test fun aPeerResetFailsTheReadsAfterTheDeliveredBytes() =
+        runBlocking<Unit> {
+            val reset = kotlinx.io.IOException("reset by the peer")
+            val input = WtInput(onRead = {}, onCancel = {})
+            input.deliver("hello".encodeToByteArray())
+            input.failAfterData(reset)
+            val buf = ByteArray(16)
+            assertEquals(5, input.readAvailable(buf, 0, buf.size))
+            assertContentEquals("hello".encodeToByteArray(), buf.copyOf(5))
+            assertEquals(reset, kotlin.test.assertFailsWith<kotlinx.io.IOException> { input.readAvailable(buf, 0, buf.size) })
+
+            val stopped = WtInput(onRead = {}, onCancel = {})
+            stopped.deliver("lost".encodeToByteArray())
+            stopped.fail(reset)
+            kotlin.test.assertFailsWith<kotlinx.io.IOException> { stopped.readAvailable(buf, 0, buf.size) }
+        }
+
+    /**
+     * The pump delivers its last chunk and the peer's reset just after the reader found the slot empty: the reader still
+     * takes the chunk before the reset (draft-ietf-quic-reliable-stream-reset section 3, the Reliable Size is delivered).
+     * The interleaving is forced by [WtInput.afterEmptySlotForTest]; before, the reader read the reset after the slot and
+     * threw with the chunk left in it.
+     */
+    @Test fun negative_aChunkDeliveredAsTheResetLandsIsReadFirst() =
+        runBlocking<Unit> {
+            val reset = kotlinx.io.IOException("reset by the peer")
+            val input = WtInput(onRead = {}, onCancel = {})
+            input.afterEmptySlotForTest = {
+                input.afterEmptySlotForTest = null
+                input.deliver(byteArrayOf(42))
+                input.failAfterData(reset)
+            }
+            val buf = ByteArray(4)
+            assertEquals(1, input.readAvailable(buf, 0, buf.size))
+            assertEquals(42, buf[0].toInt())
+            assertEquals(reset, kotlin.test.assertFailsWith<kotlinx.io.IOException> { input.readAvailable(buf, 0, buf.size) })
+        }
 }

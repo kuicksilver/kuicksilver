@@ -612,6 +612,10 @@ public abstract interface class io/kuicksilver/http3/UdpTunnel {
 public abstract interface class io/kuicksilver/http3/WebTransportBidiStream : io/kuicksilver/http3/WebTransportReceiveStream, io/kuicksilver/http3/WebTransportSendStream {
 }
 
+public final class io/kuicksilver/http3/WebTransportBidiStream$DefaultImpls {
+	public static fun reset (Lio/kuicksilver/http3/WebTransportBidiStream;JJ)V
+}
+
 public final class io/kuicksilver/http3/WebTransportCloseInfo {
 	public fun <init> (JLjava/lang/String;Ljava/lang/Throwable;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -675,6 +679,11 @@ public abstract interface class io/kuicksilver/http3/WebTransportSendStream {
 	public abstract fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
 	public abstract fun getStreamId ()J
 	public abstract fun reset (J)V
+	public fun reset (JJ)V
+}
+
+public final class io/kuicksilver/http3/WebTransportSendStream$DefaultImpls {
+	public static fun reset (Lio/kuicksilver/http3/WebTransportSendStream;JJ)V
 }
 
 public abstract interface class io/kuicksilver/http3/WebTransportSession {

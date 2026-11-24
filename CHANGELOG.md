@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- WebTransport (experimental): `WebTransportSendStream.reset(code, reliableOffset)` resets a stream but still delivers
+  its first `reliableOffset` bytes to the peer's application, however many packets are lost. This is "abort send side"
+  with an offset (draft-ietf-webtrans-overview section 4.3), carried by RESET_STREAM_AT with the stream's header plus
+  the offset as its Reliable Size (draft-ietf-webtrans-http3-17 section 4.4).
+  - An offset beyond the bytes written before the call is cut to them. The reset goes also after `output` was closed.
+  - Sending the reliable bytes may wait for the peer's flow-control credit without a deadline. A later `reset(code)`
+    takes over at once and keeps only the bytes already sent.
+  - On a draft-02 session, which has no RESET_STREAM_AT, an offset above 0 throws IllegalStateException.
+  - A stream reset by the peer now reads the bytes the transport delivered before the reset, then fails with
+    `StreamReset`. Before, a reset that arrived before the application read them dropped them.
 - QUIC: a configurable datagram size for tunnels such as WireGuard and NAT paths (experimental; `docs/guide/quic.md`,
   "Tunnels and NAT paths"): `QuicConfig.initialUdpPayloadSize` (1200 by default; less is refused, RFC 9000 section 14) is the
   size a connection's first path starts with on a socket that sets DF, Initial padding included, and
