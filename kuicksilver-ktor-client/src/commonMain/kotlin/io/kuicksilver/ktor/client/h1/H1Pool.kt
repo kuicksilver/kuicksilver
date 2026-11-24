@@ -965,26 +965,28 @@ internal class H1Pool(
         seen: Long?,
     ): Any {
         if (signal == null) return pool.acquire(key) ?: PERMIT
-        return coroutineScope {
-            var got: Any? = null
-            val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
-            if (got != null) return@coroutineScope got
-            val watcher =
-                launch {
-                    signal.first { it > seen!! }
-                    a.cancel()
+        // the grant, kept outside the scope: a cancellation that reaches the scope before it ends (as its block returns
+        // the grant, or while the watcher winds down) makes coroutineScope throw instead of returning it, which dropped an
+        // idle connection taken from the pool, open and out of it for good. coroutineScope throws only once every child has
+        // ended, so the grant is final when the catch hands it back
+        var got: Any? = null
+        try {
+            return coroutineScope {
+                val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
+                if (got == null) {
+                    val watcher =
+                        launch {
+                            signal.first { it > seen!! }
+                            a.cancel()
+                        }
+                    a.join()
+                    watcher.cancel()
                 }
-            try {
-                a.join()
-            } catch (e: Throwable) {
-                a.cancel()
-                watcher.cancel()
-                withContext(NonCancellable) { a.join() }
-                got?.let { giveBack(key, it) }
-                throw e
+                got ?: CHANGED
             }
-            watcher.cancel()
-            got ?: CHANGED
+        } catch (e: Throwable) {
+            got?.let { giveBack(key, it) }
+            throw e
         }
     }
 

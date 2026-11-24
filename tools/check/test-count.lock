@@ -1958,6 +1958,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.h3RequestsQueueOnExhaustedMaxStreams
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.idleConnectionsAreClosedAfterTheIdleTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.idleH3ConnectionIsClosedAndForgotten
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.negative_anIdleConnectionTakenAsTheCallerIsCancelledGoesBackToThePool
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.negative_connectionWhoseTransportEndedIsNotReused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.negative_connectionWhoseTransportEndsBeforeItIsCountedIsNotUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientPoolTest.perRouteLimitHoldsAndEveryRequestCompletes
