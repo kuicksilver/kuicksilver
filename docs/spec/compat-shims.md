@@ -25,7 +25,6 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
-| 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
 | 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks) | yes (client and server) | stricter than RFC 9113 (borderline) |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
 
@@ -225,28 +224,6 @@ as the SP separator while ignoring preceding or trailing whitespace".
 
 **Removal.** None planned: the leniency is what the RFC allows and what other clients do.
 
-## 8. SOCKS5 username/password reply with VER 5
-
-**What it does.** The reply to the username/password subnegotiation is accepted with VER 1, as RFC 1929 defines, or 5
-(the SOCKS version); any other VER fails the connection with `ProxyException`. STATUS is checked as usual.
-
-**Peers.** SOCKS5 proxies that answer the subnegotiation with the SOCKS version (not named in the source); curl
-tolerates them too.
-
-**Standard text.** RFC 1929 §2: "The VER field contains the current version of the subnegotiation, which is X'01'.", and
-the reply is `VER STATUS` with a 1-octet VER; the RFC gives no rule for another value.
-
-**Where.** `kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78`.
-
-**On by default.** Yes, with a SOCKS5 proxy and credentials; no switch.
-
-**Tests.** `h1.Socks5Test.authReplyVersion5Tolerated` (VER 5 accepted, VER 4 refused).
-
-**Risk.** Low: the VER byte carries no authentication; a proxy that rejects the credentials still fails the connection
-by STATUS.
-
-**Removal.** None planned; the proxies are not tracked.
-
 ## 9. HTTP/2: a stream that depends on itself is a stream error
 
 Borderline: stricter, not lenient, and kept for a test tool built on the older RFC rather than for a peer; listed
@@ -316,6 +293,12 @@ the data.
   ngtcp2, quinn and picoquic are: such a handshake fails (msquic#3762, #4905) and the Ktor client goes over TCP
   ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is), [interop](interop.md)) —
   `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently`.
+- **SOCKS5 username/password reply with VER 5** (shim 8, 0.3.0; its number is kept free). The reply to the RFC 1929
+  subnegotiation was accepted with VER 5 (the SOCKS version) as well as X'01', as curl does (it ignores the byte); no
+  proxy that needs it was ever named. RFC 1929 §2: "The VER field contains the current version of the subnegotiation,
+  which is X'01'"; Go's x/net/internal/socks refuses any other value too. Any VER but 1 now fails the connection with
+  `ProxyException` before the CONNECT is sent — `h1.Socks5Test.negative_authReplyVersionMustBe1`. Should a real proxy
+  need it, it would come back as an opt-in.
 - **`Proxy-Connection: Keep-Alive` on CONNECT** (0.3.0). The CONNECT that opens a tunnel through an HTTP proxy carried the
   field for HTTP/1.0 proxies, as OkHttp 5.3.2 does (`RealRoutePlanner`, "For HTTP/1.0 proxies like Squid"), against RFC
   9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests". No peer

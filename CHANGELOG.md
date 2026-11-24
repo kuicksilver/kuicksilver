@@ -541,8 +541,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ksl_key_lb_dup`, `ksl_key_lb_derive` and `ksl_key_ecb16` are additive under ABI 7. See docs/guide/quic.md, "Behind a load balancer".
 - Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
   standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
-  `reset_stream_at` codepoint, quiche's FIN handling, lenient HTTP/1.1 and SOCKS5
-  replies), each with its peers, the standard text, where it lives, its default, tests,
+  `reset_stream_at` codepoint, quiche's FIN handling, lenient HTTP/1.1 replies), each with its peers, the standard text, where it lives, its default, tests,
   risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
@@ -790,7 +789,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configured with an empty one, also a URL with a user name only (`socks5h://user@host`), fails with
   `IllegalArgumentException` at once, the engine's creation for its `proxy`, `ResolvedProxy.socks5` or the request
   for a resolver's (curl and Go send PLEN 0 anyway; there is no user-only form, so give a one-byte password). An HTTP
-  proxy takes an empty password (RFC 7617).
+  proxy takes an empty password (RFC 7617). The proxy's replies are read strictly, as Go's x/net/internal/socks does:
+  the authentication reply's VER must be X'01' (RFC 1929 section 2) and the CONNECT reply's RSV X'00' (RFC 1928 section
+  6), else `ProxyException` before the CONNECT or before any TLS.
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
@@ -1046,6 +1047,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, SOCKS5 (breaking strictness, RFC 1929 section 2 and RFC 1928 section 6): a proxy that answers the
+  username/password subnegotiation with VER 5 (the SOCKS version) instead of X'01' now fails with `ProxyException`
+  ("answered the authentication with version 5") before the CONNECT is sent; the compatibility shim that accepted it
+  is removed (no proxy that needs it was ever named; Go refuses it too). A CONNECT reply whose reserved byte (RSV) is
+  not X'00' fails with `ProxyException` ("non-zero reserved field") before any TLS.
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no

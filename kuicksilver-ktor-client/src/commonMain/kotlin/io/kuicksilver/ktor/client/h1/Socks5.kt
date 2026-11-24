@@ -39,8 +39,9 @@ private const val CMD_CONNECT: Byte = 1
  * if [credentials] were offered, then the request; afterwards the channels carry the connection to the destination.
  * Every read has a fixed bound (the longest is a 255-byte bound name); the caller's connect timeout bounds the wait.
  *
- * Fails with [ProxyException] when the proxy offers no method we proposed, rejects the credentials, answers with a reply
- * other than "succeeded" (its REP field as [ProxyException.replyCode]) or with a malformed reply, and with an
+ * Fails with [ProxyException] when the proxy offers no method we proposed, rejects the credentials, answers the
+ * authentication with a version other than 1 (RFC 1929 section 2), answers with a reply other than "succeeded" (its REP
+ * field as [ProxyException.replyCode]) or with a malformed reply (a non-zero RSV among them, RFC 1928 section 6), and with an
  * IllegalArgumentException, before anything is sent, for a user name, password or destination name longer than 255
  * bytes, an empty user name or an empty password (RFC 1929 section 2: UNAME and PASSWD have 1 to 255 octets). [proxy] names the proxy in messages; the credentials never appear in them.
  */
@@ -75,8 +76,8 @@ internal suspend fun socks5Connect(
             output.flush()
             val v = input.readByte()
             val status = input.readByte()
-            // RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
-            if (v != AUTH_VERSION && v != VERSION) throw ProxyException("$proxy answered the authentication with version $v", null)
+            // RFC 1929 section 2: the subnegotiation's VER is X'01', in the reply too (Go's x/net/internal/socks holds it)
+            if (v != AUTH_VERSION) throw ProxyException("$proxy answered the authentication with version $v", null)
             if (status != 0.toByte()) throw ProxyException("$proxy rejected the credentials", null)
         }
 
@@ -107,6 +108,8 @@ internal suspend fun socks5Connect(
     if (head[0] != VERSION) throw ProxyException("$proxy sent a reply that is not SOCKS5", null)
     val rep = head[1].toInt() and 0xff
     if (rep != 0) throw ProxyException("$proxy failed the CONNECT: ${replyText(rep)} (SOCKS5 reply $rep)", rep)
+    // section 6: "Fields marked RESERVED (RSV) must be set to X'00'" (checked after REP, as Go's x/net/internal/socks)
+    if (head[2] != 0.toByte()) throw ProxyException("$proxy sent a SOCKS5 reply with a non-zero reserved field", null)
     val boundLength =
         when (head[3].toInt()) {
             1 -> 4

@@ -2562,15 +2562,16 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTim
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.negative_socketTimeoutOnPooledConnectionIsNotRetried
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.negative_stalledApplicationBodyTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.steadyUploadLongerThanTheSocketTimeoutSucceeds
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.authReplyVersion5Tolerated
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.greetingOffersUserPassOnlyWithCredentials
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.hostnameSentAsDomainAtyp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.ipv6LiteralUsesAtyp4
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_authReplyVersionMustBe1
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksAuthRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksCredentialsNotSentWhenServerChoosesNoAuth
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksEmptyPasswordRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksNoAcceptableMethodFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksOverlongCredentialsRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksReplyNonZeroReservedFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksReplyUnknownAtypFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksUnofferedMethodFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_truncatedReplyFails
