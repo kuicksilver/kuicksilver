@@ -123,25 +123,27 @@ class ClientH2WebSocketTest {
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(0, e.h1.h2.streamCount)
                     e.h1.h2HealthAfterIdleMillis = 0 // the WebSocket's reuse is checked
-                    val checking = CompletableDeferred<Unit>()
+                    // the engine's coroutine of the WebSocket's call, in its health check: Ktor cancels it through the
+                    // session's job after the caller ended, so the test cancels it itself and waits for its end
+                    val checking = CompletableDeferred<kotlinx.coroutines.Job>()
                     e.h1.healthCheckForTest = {
-                        checking.complete(Unit)
+                        checking.complete(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!)
                         kotlinx.coroutines.awaitCancellation() // the health check outlasts its caller
                     }
                     try {
                         kotlinx.coroutines.coroutineScope {
                             val ws = launch { c.webSocket("wss://127.0.0.1:$port/ws") { fail("the WebSocket is cancelled first") } }
-                            checking.await()
+                            val call = checking.await()
                             assertEquals(1, e.h1.h2.streamCount, "the WebSocket reserved its stream before the check")
                             ws.cancel()
+                            call.cancel()
+                            call.join()
                             ws.join()
                         }
-                        // the cancellation reaches the engine's call after the caller ended (Ktor's WebSocket call is
-                        // cancelled through its session's job): the slot comes back once it has
-                        awaitStreamsReleased(e)
                     } finally {
                         e.h1.healthCheckForTest = null
                     }
+                    assertEquals(0, e.h1.h2.streamCount, "the cancelled WebSocket's stream is given back")
                     assertEquals(1, e.h1.h2.connectionCount, "the connection stays, idle and so evictable")
                 }
             }
