@@ -166,6 +166,29 @@ internal object WtSettings {
         )
 
     /**
+     * The settings a client does not hold a resumed connection to (RFC 9114 section 7.2.4.2), by the SETTINGS [now] that
+     * connection's server sent. draft-17 section 3.2: "a client MUST discard any values for the settings defined in this
+     * document (Section 9.2) that it retained from a previous connection and use the values received on the current
+     * connection. A server can therefore accept 0-RTT regardless of the values it previously sent for these settings, and
+     * the requirements in Section 7.2.4.2 of [HTTP3] to treat incompatible or omitted settings as a connection error do
+     * not apply to these settings." Draft-17's `SETTINGS_WT_ENABLED` always; the three `SETTINGS_WT_INITIAL_*` when the
+     * server speaks draft-17, which our client then selects (it offers draft-17 first, [WtVersion.ours]). A server of
+     * draft-16 or draft-14 is held to the values it sent before: their section 3.2, "A client MUST close the connection
+     * with H3_SETTINGS_ERROR if the SETTINGS frame received in the resumed connection reduces any flow control values".
+     */
+    fun discardedOnResumption(now: Map<Long, Long>): Set<Long> =
+        if (WtVersion.Draft17 in WtVersion.offeredIn(now)) {
+            setOf(
+                SettingsId.WT_ENABLED_DRAFT17,
+                SettingsId.WT_INITIAL_MAX_STREAMS_UNI,
+                SettingsId.WT_INITIAL_MAX_STREAMS_BIDI,
+                SettingsId.WT_INITIAL_MAX_DATA,
+            )
+        } else {
+            setOf(SettingsId.WT_ENABLED_DRAFT17)
+        }
+
+    /**
      * What we advertise. A server announces every version so each browser and library finds its own; a client announces
      * draft-17, draft-16 and draft-02 (draft-17 section 3.1: "For draft versions of WebTransport only, clients MUST also
      * send SETTINGS_WT_ENABLED for each draft version they support"; section 7.1: "An endpoint that supports multiple draft

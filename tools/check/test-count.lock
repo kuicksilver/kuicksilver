@@ -757,6 +757,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.stor
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.storedSettingsBindTheZeroRttRequests
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.unsafeRequestWaitsForHandshakeOnTheClient
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.webTransportFlowControlChangeInvalidatesEarlyData
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.webTransportSettingsChangedAfter0RttAreTakenAsSentInDraft17
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.bidirectionalEcho
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.cleanEndUnregistersDatagrams
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.connectContentLengthDoesNotLimitTheTunnel
@@ -1020,6 +1021,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.n
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.peerNoErrorCloseAfterGoAwayRefusesRequestsAsNotProcessed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.peerNoErrorCloseHandledBeforeItsGoAwayStillRefusesRequests
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.threeUniStreamsAreEnough
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsGapTest.draft17SettingsAreTakenAsTheResumedServerSendsThem
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsGapTest.negative_loweredWebTransportSettingIsIncompatible
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsTest.negative_aDefaultTheServerNowRestrictsIsIncompatible
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsTest.negative_lowerChangedOrOmittedIsIncompatible
