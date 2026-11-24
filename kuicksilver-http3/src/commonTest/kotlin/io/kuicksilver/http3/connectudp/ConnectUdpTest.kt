@@ -1174,7 +1174,7 @@ class ConnectUdpTest {
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.AllowAll,
                         resolver = UdpProxyResolver { host -> if (host == "dual.example") listOf(v4, v6) else listOf(v4) },
-                        socketOpenTimeout = 300.milliseconds,
+                        socketOpenTimeout = 1.seconds, // the IPv6 socket opens within it, also on a loaded machine
                         socketFactory = { a ->
                             if (':' in a.ipLiteral()) {
                                 f(a)
@@ -1197,7 +1197,7 @@ class ConnectUdpTest {
                             assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "v4only.example", 5000) }
                         }
                     assertEquals(502, e.status)
-                    assertTrue("error=proxy_internal_error" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                    assertEquals("proxy; error=proxy_internal_error; details=\"socket open timed out\"", e.headers["proxy-status"])
                     // the two blocked calls return now: the sockets they open belong to no tunnel and are closed
                     release.complete(Unit)
                     val closed = HashSet<InetSocketAddress>()
@@ -1234,8 +1234,138 @@ class ConnectUdpTest {
                         assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
                     }
                 assertEquals(502, e.status)
-                assertTrue("error=proxy_internal_error" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                assertEquals("proxy; error=proxy_internal_error; details=\"socket open timed out\"", e.headers["proxy-status"])
                 withTimeout(10.seconds) { cancelled.await() }
+            }
+        }
+
+    /**
+     * A [UdpProxy.serve] call cancelled while the socket factory runs (the application's handler cancelled) does not wait
+     * for the factory and leaves nothing behind: a factory that suspends is cancelled, and a socket a factory that blocks
+     * its thread returns later is closed. Red with a waiter that gives up without cancelling the call or closing its socket.
+     */
+    @Test fun negative_aCancelledServeGivesUpOnTheSocketFactory() =
+        h3Test {
+            val entered = Channel<String>(Channel.UNLIMITED)
+            val suspendedCancelled = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val late = OpenedIos<InetSocketAddress>()
+            // no serveAll: the test serves each request itself, to cancel the call
+            val rig =
+                ProxyRig(H3Pair.open(serverSettings = proxySettings)) { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketOpenTimeout = kotlin.time.Duration.INFINITE, // only the cancellation ends the wait
+                        socketFactory = { a ->
+                            if (':' in a.ipLiteral()) {
+                                entered.send("IPv6, blocking")
+                                kotlinx.coroutines.runBlocking { release.await() } // blocks this thread until released
+                                f(a).also { late.add(it.localAddress) }
+                            } else {
+                                entered.send("IPv4, suspending")
+                                try {
+                                    awaitCancellation()
+                                } finally {
+                                    suspendedCancelled.complete(Unit)
+                                }
+                            }
+                        },
+                    )
+                }
+            try {
+                rig.use { r ->
+                    for (target in listOf("192.0.2.50", "2001:db8::50")) {
+                        val client = r.background { runCatching { r.pair.client.connectUdp(template, target, 5000) } }
+                        val request = withTimeout(10.seconds) { r.pair.server.acceptRequest() }
+                        val serving = r.background { r.proxy.serve(request) }
+                        withTimeout(10.seconds) { entered.receive() }
+                        serving.cancel()
+                        withTimeout(10.seconds) { serving.join() } // the call ends without waiting for the factory
+                        client.cancel()
+                    }
+                    withTimeout(10.seconds) { suspendedCancelled.await() }
+                    release.complete(Unit)
+                    // the blocked call returns now: its socket belongs to no request and is closed
+                    withTimeout(10.seconds) {
+                        while (true) if (rig.socketsClosed.receive() == late.list.singleOrNull()) break
+                    }
+                }
+            } finally {
+                release.complete(Unit)
+            }
+        }
+
+    /**
+     * A late socket whose `close` throws stays the proxy's business: the throw does not escape the factory's call (on
+     * Android and Kotlin/Native an uncaught coroutine exception ends the process), and the proxy serves on.
+     */
+    @Test fun negative_aLateSocketWhoseCloseThrowsDoesNotEscape() =
+        h3Test {
+            val release = CompletableDeferred<Unit>()
+            val closeCalled = CompletableDeferred<Unit>()
+            val calls = AtomicInt(0)
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketOpenTimeout = 300.milliseconds,
+                        socketFactory = { a ->
+                            if (calls.incrementAndFetch() == 1) {
+                                kotlinx.coroutines.runBlocking { release.await() } // blocks this thread until released
+                                ThrowingClose(f(a)) { closeCalled.complete(Unit) }
+                            } else {
+                                f(a)
+                            }
+                        },
+                    )
+                }
+            try {
+                rig.use { r ->
+                    val e =
+                        withTimeout(10.seconds) {
+                            assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                        }
+                    assertEquals(502, e.status)
+                    release.complete(Unit)
+                    withTimeout(10.seconds) { closeCalled.await() }
+                    awaitCondition("the late call's end") { rig.proxy.impl.openingCallsForTest == 0 }
+                    assertEquals(
+                        null,
+                        rig.proxy.impl.uncaughtInOpening
+                            .load(),
+                        "the throwing close escaped the call",
+                    )
+                    val got = rig.echo(echoAt)
+                    val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                    t.send("on".encodeToByteArray())
+                    assertContentEquals("on".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                    t.close()
+                }
+            } finally {
+                release.complete(Unit)
+            }
+        }
+
+    /**
+     * A CancellationException the factory throws itself (its own withTimeout) is a family that failed to open, not the
+     * request's cancellation: the answer is 502 proxy_internal_error. Red before: the request was reset unanswered.
+     */
+    @Test fun negative_aSocketFactorysOwnCancellationFailsItsFamily() =
+        h3Test {
+            val rig =
+                rig { _ ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketFactory = { withTimeout(1.milliseconds) { awaitCancellation() } },
+                    )
+                }
+            rig.use { r ->
+                val e =
+                    withTimeout(10.seconds) {
+                        assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                    }
+                assertEquals(502, e.status)
+                assertEquals("proxy; error=proxy_internal_error", e.headers["proxy-status"])
             }
         }
 
@@ -2158,6 +2288,18 @@ internal fun h3Code(e: Throwable): Long? =
             else -> null
         }
     }
+
+/** A socket whose [close] closes [inner], tells [onClose] and then throws. */
+private class ThrowingClose(
+    private val inner: io.kuicksilver.quic.DatagramIo,
+    private val onClose: () -> Unit,
+) : io.kuicksilver.quic.DatagramIo by inner {
+    override fun close() {
+        inner.close()
+        onClose()
+        throw IllegalStateException("injected: close failed")
+    }
+}
 
 /** A proxy socket without Don't Fragment for [family] ([DatagramIo.noDontFragmentFamily]). */
 private class NoDfFor(

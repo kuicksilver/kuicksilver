@@ -4,9 +4,10 @@
 # Negative controls of tools/check/env-apis.py on a scratch repository: library code without name-service calls passes
 # (a `hostname` parameter, a named argument, a comment, a string and samples do not count); Ktor's .hostname
 # (also through an implicit receiver, the H1Request case), java.net's hostName and canonicalHostName,
-# InetAddress.getLocalHost, the C gethostname / getnameinfo, a call inside a string template, a reference ::getHostName
-# a Java source and a use in a test source set (commonTest, jvmTest) each fail; an allowlist entry with its count and reason lets that many uses of one file pass, one more
-# fails, and an entry without a count or a reason, with an unknown api or with more than the file has fails.
+# InetAddress.getLocalHost, the C gethostname / getnameinfo, a call inside a string template, a reference ::getHostName,
+# a Java source and a use in a test source set (commonTest, jvmTest) each fail; an allowlist entry with its count and
+# reason lets that many uses of one file pass, one more fails, and an entry without a count or a reason, with an unknown
+# api or with more than the file has fails.
 # Usage: env-apis-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

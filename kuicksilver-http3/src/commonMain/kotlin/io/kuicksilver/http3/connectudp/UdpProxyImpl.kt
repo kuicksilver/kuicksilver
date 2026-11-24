@@ -39,10 +39,12 @@ import io.kuicksilver.quic.withUnmappedIp
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
@@ -92,6 +94,11 @@ private val GIVEN_UP = Any()
 internal class SocketOpenTimeoutException(
     timeout: Duration,
 ) : Exception("the socket factory did not return within $timeout")
+
+/** The socket factory threw a CancellationException of its own (its own timeout): that family failed for the request. */
+internal class SocketFactoryCancelledException(
+    cause: CancellationException,
+) : Exception("the socket factory threw a CancellationException of its own", cause)
 
 /** Datagrams taken from a tunnel's socket per receive call. */
 private const val RECEIVE_BATCH = 4
@@ -296,11 +303,30 @@ internal class UdpProxyImpl(
     }
 
     /**
-     * The factory's calls: a call that blocks its thread holds one of these, never a thread of the request's dispatcher
-     * or more than [MAX_OPENING] of `Dispatchers.IO` (a call given up on keeps its thread until it returns).
+     * The factory's calls, on a `Dispatchers.IO.limitedParallelism(MAX_OPENING)` view of this proxy's own: a call that
+     * blocks its thread holds one of its [MAX_OPENING] threads, never a thread of the request's dispatcher. Such a view is
+     * not counted against `Dispatchers.IO`'s 64 threads, so each proxy may add up to [MAX_OPENING] threads of its own; a
+     * call given up on keeps its thread until it returns. What escapes a call (nothing should: [openSocket] catches the
+     * factory's throws and a late socket's `close`) is kept in [uncaughtInOpening], never handed to the platform's
+     * handler, which ends the process on Android and Kotlin/Native.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val opening = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(MAX_OPENING))
+    private val opening =
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.IO.limitedParallelism(MAX_OPENING) +
+                CoroutineExceptionHandler { _, e -> uncaughtInOpening.store(e) },
+        )
+
+    /** The last throwable that escaped a factory call of [opening] (tests: null when none did). */
+    internal val uncaughtInOpening = AtomicReference<Throwable?>(null)
+
+    /** Factory calls of [opening] not finished yet, given up on or not (tests wait for 0). */
+    internal val openingCallsForTest: Int get() = opening.coroutineContext[Job]!!.children.count()
+
+    /** Closes a socket no one owns any more; a throwing `close` is no reason to fail anything else. */
+    private fun closeUnowned(io: DatagramIo?) {
+        if (io != null) runCatching { io.close() }
+    }
 
     /**
      * [UdpProxyConfig.socketFactory]'s socket on [bind], bounded by [UdpProxyConfig.socketOpenTimeout]: the call runs in
@@ -320,11 +346,12 @@ internal class UdpProxyImpl(
                     } catch (e: Throwable) {
                         e
                     }
-                if (!slot.compareAndSet(OPENING, outcome)) (outcome as? DatagramIo)?.close() // the waiter gave up: no one owns it
+                if (!slot.compareAndSet(OPENING, outcome)) closeUnowned(outcome as? DatagramIo) // the waiter gave up: no one owns it
             }
 
         fun giveUp() {
-            if (slot.compareAndSet(OPENING, GIVEN_UP)) call.cancel() else (slot.load() as? DatagramIo)?.close()
+            // the cancellation the waiter rethrows stays the exception: a throwing close does not replace it
+            if (slot.compareAndSet(OPENING, GIVEN_UP)) call.cancel() else closeUnowned(slot.load() as? DatagramIo)
         }
         try {
             withTimeoutOrNull(config.socketOpenTimeout) { call.join() } // only waits: the outcome is kept in slot
@@ -338,7 +365,12 @@ internal class UdpProxyImpl(
         }
         // the outcome, also one stored as the deadline fired: a socket that came in time is the request's
         return when (val outcome = slot.load()) {
+            // the factory's own cancellation (its withTimeout, say), not the request's: the call is never cancelled
+            // while slot is OPENING, so this is a family that failed to open, not a request to stop serving
+            is CancellationException -> throw SocketFactoryCancelledException(outcome)
+
             is Throwable -> throw outcome
+
             else -> outcome as DatagramIo
         }
     }
@@ -405,6 +437,7 @@ internal class UdpProxyImpl(
         var io: OnceClosed? = null
         val lacking = LinkedHashSet<IpFamily>() // the families found without DF for this request, for the refusal's details
         val failed = HashSet<IpFamily>() // the families whose socket failed to open for another reason in this request
+        var timedOut = false // one of them did not open within socketOpenTimeout (the refusal's details say so)
         for (a in allowed.sortedBy { if (familyOf(it) in noDfFamilies) 1 else 0 }) {
             val family = familyOf(a)
             if (family in noDfFamilies) {
@@ -423,9 +456,10 @@ internal class UdpProxyImpl(
                     if (e.permanent) learnNoDf(family)
                     lacking += family
                     continue
-                } catch (_: Throwable) {
+                } catch (e: Throwable) {
                     // the other family's socket may still open (also after a factory given up on at socketOpenTimeout):
                     // 502 only when no candidate did
+                    if (e is SocketOpenTimeoutException) timedOut = true
                     failed += family
                     continue
                 }
@@ -442,7 +476,10 @@ internal class UdpProxyImpl(
             break
         }
         if (address == null || io == null) {
-            if (failed.isNotEmpty()) return refuse(request, answered, 502, "proxy_internal_error")
+            if (failed.isNotEmpty()) {
+                // RFC 9209 section 2.1.6 details: a socket that did not open in time says so (no error type of its own)
+                return refuse(request, answered, 502, "proxy_internal_error", if (timedOut) "socket open timed out" else null)
+            }
             return refuseNoDf(request, answered, lacking.joinToString(" or ") { it.label })
         }
         val v4 = address.size == 4

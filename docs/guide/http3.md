@@ -426,8 +426,8 @@ cannot move it. The proxy's own addresses are refused as well (`refuseOwnAddress
 connection reached, the listener's own); other addresses of the host (NAT aliases) go to `and UdpTargetFilter.excluding(...)`;
 `UdpTargetFilter.addresses`, `hosts` and `ports` build allow-lists. Only then the socket is opened (`socketFactory`, on a
 wildcard address of the target's family, within `socketOpenTimeout`, 5 s: a family whose socket did not open in time
-counts as failed, and with no family left the answer is 502 `proxy_internal_error`) and the request answered 200 with
-`capsule-protocol: ?1`; nothing goes to the target before that answer.
+counts as failed, and with no family left the answer is 502 `proxy_internal_error`, `details="socket open timed out"`) and
+the request answered 200 with `capsule-protocol: ?1`; nothing goes to the target before that answer.
 
 While the tunnel lasts, datagrams with another Context ID are dropped (section 4), one whose UDP payload exceeds 65527
 bytes aborts the stream with `H3_DATAGRAM_ERROR` (section 5), a payload above what the link carries unfragmented

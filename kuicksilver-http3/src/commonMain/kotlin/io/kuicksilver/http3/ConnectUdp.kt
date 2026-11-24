@@ -322,10 +322,14 @@ public fun interface UdpProxyResolver {
  *   failure that may pass on a later attempt (out of descriptors, a bind refused under load), so later requests try again.
  * @property socketOpenTimeout how long [socketFactory][UdpProxyConfig.socketFactory] may take to open one socket; then
  *   that family counts as failed for the request, as a factory that throws does: the other family's candidate is tried,
- *   and with none opened the answer is 502 with `proxy_internal_error`, not a request left waiting for the client to give
- *   up. A factory call runs on threads of the proxy's own (at most 16 at once, so factories that block cannot hold every
- *   thread of `Dispatchers.IO`); one that suspends is cancelled at the deadline, one that blocks its thread is given up
- *   on, not interrupted, and a socket it returns after the deadline is closed.
+ *   and with none opened the answer is 502 with `proxy-status: <proxyName>; error=proxy_internal_error; details="socket
+ *   open timed out"`, not a request left waiting for the client to give up. `Duration.INFINITE` turns the bound off. A
+ *   factory call runs on a `Dispatchers.IO.limitedParallelism(16)` view of each proxy's own, so a factory that blocks
+ *   holds none of the request's threads; such a view is not counted against `Dispatchers.IO`'s 64 threads, so each proxy
+ *   may add up to 16 threads. A call that suspends is cancelled at the deadline (and when the [UdpProxy.serve] call is
+ *   cancelled), one that blocks its thread is given up on, not interrupted, and a socket it returns after either is
+ *   closed. A `CancellationException` the factory throws itself (its own `withTimeout`) fails the family as any other
+ *   exception does.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
