@@ -59,4 +59,4 @@ patch_10_sha256 = "544fe772aa31496dda0d459d10982ff859f94c3fd384763dab7978535d5ae
 # openssl/openssl@14a9f9ad6e). Owner decision 2026-11-25: the pin moves to the first 4.1.x release that contains
 # openssl/openssl@14a9f9ad6e (expected 4.1.1) as soon as it ships, and this patch is dropped with it.
 patch_11 = "tools/openssl/patches/openssl-4.1.0-crl-dp-dos.patch"
-patch_11_sha256 = "015b883c6cd5c9ac6c9a0f5d5f00a85daa169c97e576c83d007ef237402936da"
+patch_11_sha256 = "0cf2c55e9d48be1156a44ccddc357e583c6a2aff670c598d7d5f8a6e2c660322"

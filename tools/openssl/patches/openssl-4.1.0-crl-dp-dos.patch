@@ -1,11 +1,13 @@
 OpenSSL 4.1.0: CPU denial of service in X.509 verification with CRLs, crl_crldp_check (CVE-2026-121482)
 
 Upstream code: OpenSSL commit openssl/openssl@54e14955ef ("Reduce CPU usage for crl_crldp_check", pull request #33546,
-openssl/srt#560), verbatim, as merged to master on 2026-11-18 and cherry-picked to openssl-4.1 as openssl/openssl@14a9f9ad6e
-(the diff below is that commit's; crypto/x509/x509_vfy.c before it is 4.1.0's, so its hunks apply at the same lines). The
-commit changes no test. The eleventh patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl/srt#560), verbatim, as merged to master on 2026-11-18 and cherry-picked to openssl-4.1 as openssl/openssl@14a9f9ad6e.
+Below this description is `git format-patch -1 --no-signature 14a9f9ad6e` of that commit, unchanged; crypto/x509/x509_vfy.c
+before it is 4.1.0's, so its hunks apply at the same lines. The commit changes no test. The eleventh patch carried under
+ADR-0019 (docs/adr/0019-openssl-4-and-ech.md; owner decision 2026-11-25), applied after
 openssl-4.1.0-armcap-sve2-without-sve.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_11, applied by
-tools/openssl/apply-patch.pl to the verified tarball, and dropped with OpenSSL 4.1.1, the first release that has the commit.
+tools/openssl/apply-patch.pl to the verified tarball, and dropped when the pin moves to the first 4.1.x release that
+contains openssl/openssl@14a9f9ad6e (expected 4.1.1), as soon as it ships.
 
 The bug: with X509_V_FLAG_CRL_CHECK (ksl sets it, with CRL_CHECK_ALL, once the application configures CRLs) get_crl_score
 scores every CRL of a certificate's issuer, and for a CRL with an issuingDistributionPoint crl_crldp_check built the full
@@ -15,7 +17,36 @@ its issuer) x (its distribution points) name builds, in check_revocation, which 
 signature: a peer's leaf under a configured issuer's name, signed by nobody, is enough. The fix builds the names once per
 certificate and lookup (get_crldp_full_names, reused across the CRLs scored), refuses a certificate with more than 16
 (MAX_DP_NAMES) relative distribution points when a CRL with an issuingDistributionPoint is scored for it
-(X509_V_ERR_UNSPECIFIED through the verify callback, fail closed), and returns that error from get_crl_sk and get_crl_delta.
+(X509_V_ERR_UNSPECIFIED through the verify callback, fail closed; ksl_ocsp.c crl_dp_refusal reports that refusal as
+X509_V_ERR_UNABLE_TO_GET_CRL), and returns that error from get_crl_sk and get_crl_delta.
+
+From 14a9f9ad6e8a17437fb75545f33e4fc56e9d41f6 Mon Sep 17 00:00:00 2001
+From: Neil Horman <nhorman@openssl.org>
+Date: Wed, 4 Nov 2026 18:02:16 -0500
+Subject: [PATCH] Reduce CPU usage for crl_crldp_check
+
+crl_crldp_check rebuilds the full X509_NAME for each crl distribution
+point in a certificate.  This operation needs to be preformed for each
+crl dp in a cert, time each crl being checked, leading to expoentital
+CPU time to execute a verification.  A malicious user can provide a
+certificate with a large number of CRL DPs, causing potential DoS on a
+system through extended execution time.
+
+Fix it by pre-building the CRLDP full names, before iterating over the
+loops, allowing for reuse of those names, rather than having to rebuild
+them each iteration
+
+Fixes: openssl/srt#560
+
+Fixes: CVE-2026-121482
+Reviewed-by: Mounir Idrassi <mounir.idrassi@idrix.fr>
+Reviewed-by: Bob Beck <beck@openssl.org>
+Merge-date: Wed Nov 18 20:33:16 2026
+Merged-from: https://github.com/openssl/openssl/pull/33546
+(cherry picked from commit 54e14955ef7cbea3b82adbc52b52aab8ac76387a)
+---
+ crypto/x509/x509_vfy.c | 196 +++++++++++++++++++++++++++++++++--------
+ 1 file changed, 161 insertions(+), 35 deletions(-)
 
 diff --git a/crypto/x509/x509_vfy.c b/crypto/x509/x509_vfy.c
 index 032a86d03a..e7ae05eee2 100644
