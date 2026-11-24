@@ -50,7 +50,7 @@ ksl_clean_build_env() { # [note]
     fi
   done
   export KSL_PINNED_NDK=1
-  pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gradle/toolchains.toml" 2>/dev/null)
+  pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gradle/toolchains.toml" 2>/dev/null || true)   # no pin file (a test fixture): no pin
   if [ -n "${ANDROID_NDK_HOME:-}" ] && [ "$(sed -n 's/^Pkg.Revision *= *//p' "$ANDROID_NDK_HOME/source.properties" 2>/dev/null | tr -d '\r')" != "$pin" ]; then
     [ "${1:-}" != note ] || echo "     note: ANDROID_NDK_HOME is ignored: it is not the pinned NDK $pin"
     ksl_dropped_ndk_home="$ANDROID_NDK_HOME"; unset ANDROID_NDK_HOME
@@ -77,7 +77,9 @@ ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables abo
         if [ -n "${ANDROID_NDK_ROOT:-}" ]; then
           for c in "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-"$t"; do [ "${!v}" = "$c" ] && ok=1; done
         fi ;;
-      SDKROOT) [ -n "${!v}" ] && [ "${!v}" = "$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)" ] && ok=1 ;;
+      # xcrun without the SDKROOT under test: one that does not exist sends Apple's tool shims to xcodebuild, whose failure
+      # opens macOS's "install the command line developer tools" dialog
+      SDKROOT) [ -n "${!v}" ] && [ "${!v}" = "$(env -u SDKROOT -u TOOLCHAINS xcrun --sdk macosx --show-sdk-path 2>/dev/null)" ] && ok=1 ;;
     esac
     [ "$ok" = 1 ] || out="$out $v"
   done

@@ -16,7 +16,7 @@ ksl_llvm_tool() {
   var="LLVM_$(printf '%s' "${name#llvm-}" | tr '[:lower:]-' '[:upper:]_')"
   if [ "${KSL_PINNED_NDK:-0}" = 1 ]; then
     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-    pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null)
+    pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
     local cands=()
     [ -z "${!var:-}" ] || cands+=("${!var}")
     for ndk in "${ANDROID_NDK_ROOT:-}" "${ANDROID_NDK_HOME:-}"; do

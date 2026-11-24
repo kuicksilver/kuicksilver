@@ -15,6 +15,26 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml")
 [ -n "$pin" ] || { echo "FAIL: no ndk pin in gradle/toolchains.toml"; exit 2; }
 sdk="$tmp/home/Library/Android/sdk"; rc=0
+# The stripped environments below (env -i) get a PATH of their own: links to the few system tools these scripts run, none
+# of them one of macOS's developer-tool shims (/usr/bin/clang, cc, xcrun, git, python3, ...: Xcode's or the Command Line
+# Tools' tool behind a stub that, when it finds no developer directory, opens the "install the command line developer
+# tools" dialog). A shim reached anyway is "command not found" and fails its check instead of opening a window; the
+# developer directory and TMPDIR are passed through all the same.
+sys="$tmp/sys"; mkdir -p "$sys"
+for t in bash sh sed tr ls sort dirname cat head tail grep env; do
+  s=$(PATH=/bin:/usr/bin command -v "$t") || { echo "FAIL: no $t"; exit 2; }
+  if [ "$(uname -s)" = Darwin ] && grep -qa xcselect "$s"; then echo "FAIL: $s is a developer-tool shim; not linked into a stripped PATH"; exit 2; fi
+  ln -s "$s" "$sys/$t"
+done
+# every developer-tool shim of /usr/bin is there as a stub that logs and fails, and the test fails on any: loud, not a dialog
+if [ "$(uname -s)" = Darwin ]; then
+  for s in /usr/bin/*; do
+    t=$(basename "$s"); [ -e "$sys/$t" ] || ! grep -qa xcselect "$s" 2>/dev/null && continue
+    printf '#!/bin/sh\necho "%s" >> "%s"\necho "stripped PATH: %s is a developer-tool shim, not run" >&2\nexit 127\n' "$t" "$tmp/shim.log" "$t" > "$sys/$t"; chmod +x "$sys/$t"
+  done
+fi
+keep=(TMPDIR="${TMPDIR:-/tmp}")
+if [ "$(uname -s)" = Darwin ] && dd=$(/usr/bin/xcode-select -p 2>/dev/null); then keep+=(DEVELOPER_DIR="${DEVELOPER_DIR:-$dd}"); fi
 ndk() { # <dir> <revision>: a fake NDK with an llvm-ar
   mkdir -p "$1/toolchains/llvm/prebuilt/host/bin"; printf 'Pkg.Desc = Android NDK\nPkg.Revision = %s\n' "$2" > "$1/source.properties"
   printf '#!/bin/sh\n' > "$1/toolchains/llvm/prebuilt/host/bin/llvm-ar"; chmod +x "$1/toolchains/llvm/prebuilt/host/bin/llvm-ar"
@@ -24,7 +44,7 @@ mkdir -p "$tmp/path"; printf '#!/bin/sh\n' > "$tmp/path/llvm-ar"; chmod +x "$tmp
 P="$sdk/ndk/$pin/toolchains/llvm/prebuilt/host/bin/llvm-ar"; N="$sdk/ndk/999.0.1/toolchains/llvm/prebuilt/host/bin/llvm-ar"
 O="$tmp/other-ndk/toolchains/llvm/prebuilt/host/bin/llvm-ar"
 look() { # [VAR=value ...]: ksl_llvm_tool llvm-ar in a clean environment with the scratch home; prints the path and the exit
-  env -i HOME="$tmp/home" PATH="$tmp/path:/usr/bin:/bin" "$@" bash -c '. "$1"; ksl_llvm_tool llvm-ar 2>&1; echo "exit $?"' _ "$here/llvm-tool.sh"
+  env -i "${keep[@]}" HOME="$tmp/home" PATH="$tmp/path:$sys" "$@" bash -c '. "$1"; ksl_llvm_tool llvm-ar 2>&1; echo "exit $?"' _ "$here/llvm-tool.sh"
 }
 check() { # <name> <expected output (path, or message part)> <expected exit> [VAR=value ...]
   local name="$1" want="$2" code="$3" out; shift 3
@@ -52,7 +72,7 @@ drifted() { # <script> <flag value>: ksl_clean_build_env, then the script's drif
   line=$(grep -m1 -E '^ *\[ "\$[a-z_]+" = 0 \] \|\| ksl_allow_toolchain_drift$' "$1" | sed 's/^ *//')
   flag=$(sed -n 's/^\[ "\$\([a-z_]*\)".*/\1/p' <<< "$line")
   [ -n "$line" ] || { echo "no drift line"; return; }
-  env -i HOME="$tmp/home" PATH="$tmp/path:/usr/bin:/bin" ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '
+  env -i "${keep[@]}" HOME="$tmp/home" PATH="$tmp/path:$sys" ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '
     . "$1"; ksl_clean_build_env; . "$2"; eval "$3=$4"; eval "$5"; ksl_llvm_tool llvm-ar 2>&1; echo "exit $?"' _ \
     "$root/tools/clean-build-env.sh" "$here/llvm-tool.sh" "$flag" "$2" "$line"
 }
@@ -67,12 +87,13 @@ for s in tools/release/local-release.sh tools/verify/verify-release.sh; do
 done
 mv "$tmp/pinned-aside" "$sdk/ndk/$pin"
 # ksl_clean_build_env: release mode on, a foreign ANDROID_NDK_HOME dropped, the pinned one kept
-cl() { env -i HOME="$tmp/home" PATH=/usr/bin:/bin "$@" bash -c '. "$1"; ksl_clean_build_env; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh"; }
+cl() { env -i "${keep[@]}" HOME="$tmp/home" PATH="$sys" "$@" bash -c '. "$1"; ksl_clean_build_env; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh"; }
 out=$(cl ANDROID_NDK_HOME="$tmp/other-ndk")
 if [ "$out" = "1 unset" ]; then echo "PASS negative_cleanEnvDropsForeignNdkHome"; else echo "FAIL negative_cleanEnvDropsForeignNdkHome: $out"; rc=1; fi
 out=$(cl ANDROID_NDK_HOME="$sdk/ndk/$pin")
 if [ "$out" = "1 $sdk/ndk/$pin" ]; then echo "PASS clean env: keeps the pinned ANDROID_NDK_HOME"; else echo "FAIL clean env: keeps the pinned ANDROID_NDK_HOME: $out"; rc=1; fi
-out=$(env -i HOME="$tmp/home" PATH=/usr/bin:/bin ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '. "$1"; ksl_clean_build_env; ksl_allow_toolchain_drift; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh")
+out=$(env -i "${keep[@]}" HOME="$tmp/home" PATH="$sys" ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '. "$1"; ksl_clean_build_env; ksl_allow_toolchain_drift; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh")
 if [ "$out" = "unset $tmp/other-ndk" ]; then echo "PASS clean env: ksl_allow_toolchain_drift undoes the pinned mode and the dropped ANDROID_NDK_HOME"; else echo "FAIL ksl_allow_toolchain_drift: $out"; rc=1; fi
+if [ -s "$tmp/shim.log" ]; then echo "FAIL a stripped environment reached a developer-tool shim: $(sort -u "$tmp/shim.log" | tr '\n' ' ')"; rc=1; fi
 [ $rc = 0 ] && echo "llvm-tool: all controls passed"
 exit $rc

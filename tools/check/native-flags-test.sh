@@ -253,8 +253,16 @@ rm -f "$log".*; out=$(OT=ios-arm64 ossl "$tmp/o-ar4" LLVM_AR="$far/llvm-ar"); rc
 check "openssl: ... and so does iOS" "$([ $rc = 0 ] && grep -qxF "AR=$far/llvm-ar" "$log.env" && echo 0 || echo 1)" "exit $rc: $out"
 check "openssl: the Apple target line names the archiver (ksl-ar=llvm-ar), Linux's does not" \
   "$(grep -q ' ksl-ar=llvm-ar$' "$tmp/o-ar1/macos-arm64/configure-target.txt" && [ "$(bash "$root/tools/openssl/build.sh" --print-target macos-arm64 | awk '{print $NF}')" = ksl-ar=llvm-ar ] && ! grep -q ksl-ar "$tmp/o1/linux-x64/configure-target.txt" && echo 0 || echo 1)" "$(cat "$tmp/o-ar1/macos-arm64/configure-target.txt")"
-rm -f "$log".*; out=$(unset LLVM_AR ANDROID_NDK_ROOT ANDROID_NDK_HOME ANDROID_HOME ANDROID_SDK_ROOT; OT=macos-arm64 ossl "$tmp/o-ar5" HOME="$tmp/no-sdk" KSL_PINNED_NDK=1); rc=$?
-check "negative_appleOpensslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$log.args" ] && echo 0 || echo 1)" "exit $rc: $out"
+# the runs without an llvm-ar use a scratch home: macOS's developer-tool shims (clang, cc, xcrun, git, python3, ar, ...)
+# are stubbed first in PATH, so one reached there fails the check (it logs) instead of possibly opening the "install the
+# command line developer tools" dialog, and the developer directory is passed on explicitly
+noshim="$tmp/no-shim"; nslog="$tmp/no-shim.log"; mkdir -p "$noshim"; rm -f "$nslog"
+for t in clang clang++ cc c++ gcc xcrun xcodebuild git python3 make ld ar ranlib libtool nm strip lipo otool; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 1\n' "$t" "$nslog" > "$noshim/$t"; chmod +x "$noshim/$t"
+done
+devdir=(); if [ "$(uname -s)" = Darwin ] && d=$(/usr/bin/xcode-select -p 2>/dev/null); then devdir=(DEVELOPER_DIR="${DEVELOPER_DIR:-$d}"); fi
+rm -f "$log".*; out=$(unset LLVM_AR ANDROID_NDK_ROOT ANDROID_NDK_HOME ANDROID_HOME ANDROID_SDK_ROOT; OT=macos-arm64 ossl "$tmp/o-ar5" HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$noshim:$stub:$PATH" ${devdir[@]+"${devdir[@]}"}); rc=$?
+check "negative_appleOpensslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$log.args" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
 # a tool path with a space: make gets a link without one, the cache key the tool itself
 mkdir -p "$tmp/sp ace"; cp "$far/llvm-ar" "$tmp/sp ace/llvm-ar"
 rm -f "$log".*; out=$(OT=macos-arm64 ossl "$tmp/o-ar6" LLVM_AR="$tmp/sp ace/llvm-ar"); rc=$?
@@ -336,11 +344,11 @@ exit 1
     out=$(python3 -I "$root/tools/check/ar-diff.py" --llvm-index "$a" 2>&1); rc=$?
     check "negative_xcodeIndexIn_$(basename "$a")" "$rc" "$out"
   done
-  noar() { env -u LLVM_AR -u ANDROID_NDK_ROOT -u ANDROID_NDK_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$xcode:$PATH" "$@" 2>&1; }
+  noar() { env -u LLVM_AR -u ANDROID_NDK_ROOT -u ANDROID_NDK_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$noshim:$xcode:$PATH" ${devdir[@]+"${devdir[@]}"} "$@" 2>&1; }
   out=$(noar bash "$tree/tools/build-ksl-a.sh" macos-arm64); rc=$?
-  check "negative_libkslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$xlog" ] && echo 0 || echo 1)" "exit $rc: $out"
+  check "negative_libkslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$xlog" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
   out=$(noar bash "$tree/tools/build-test-hooks.sh" macos-arm64 "$tmp/hooks-none"); rc=$?
-  check "negative_testHooksWithoutLlvmArFail" "$([ $rc = 2 ] && grep -q 'no llvm-ar' <<< "$out" && [ ! -e "$tmp/hooks-none/libksl_test_hooks.a" ] && [ ! -e "$xlog" ] && echo 0 || echo 1)" "exit $rc: $out"
+  check "negative_testHooksWithoutLlvmArFail" "$([ $rc = 2 ] && grep -q 'no llvm-ar' <<< "$out" && [ ! -e "$tmp/hooks-none/libksl_test_hooks.a" ] && [ ! -e "$xlog" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
 
   rm -f "$cclog"
   out=$(CC="$wrap" CPPFLAGS="$F_CPP" CFLAGS="-DKSL_FLAGS_PROBE=1 -MD" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
@@ -398,14 +406,19 @@ exit 1
   # the environment a builder may have: each of these reaches clang on its own (the controls show it), the double build
   # must ignore them all
   probe="$tmp/probe-include"; mkdir -p "$probe"; printf '#error ksl-env-probe\n' > "$probe/stdint.h"
-  for e in "CCC_OVERRIDE_OPTIONS=+-include/nonexistent/ksl-env-probe.h" "CPATH=$probe" "C_INCLUDE_PATH=$probe" "SDKROOT=/nonexistent/sdk"; do
-    out=$(env "$e" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+  # The controls compile with the toolchain's own clang, never the /usr/bin/clang shim, and SDKROOT names an empty
+  # directory, never a missing one: given an SDKROOT that does not exist, the shim asks xcodebuild for that SDK's clang,
+  # fails, and macOS opens the "install the command line developer tools" dialog. clang reads SDKROOT as its sysroot,
+  # and in an empty one the system headers are not found, which is what the control shows.
+  realclang=$(env -u SDKROOT -u TOOLCHAINS xcrun -f clang); emptysdk="$tmp/empty-sdk"; mkdir -p "$emptysdk"
+  for e in "CCC_OVERRIDE_OPTIONS=+-include/nonexistent/ksl-env-probe.h" "CPATH=$probe" "C_INCLUDE_PATH=$probe" "SDKROOT=$emptysdk"; do
+    out=$(env "$e" CC="$realclang" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
     check "control: ${e%%=*} reaches clang (a build-ksl-a.sh build fails because of it)" \
-      "$([ $rc != 0 ] && grep -qE 'ksl-env-probe|/nonexistent/sdk' <<< "$out" && echo 0 || echo 1)" "exit $rc"
+      "$([ $rc != 0 ] && grep -qE 'ksl-env-probe|.(stdint|stddef|stdio|string|stdlib)\.h. file not found' <<< "$out" && echo 0 || echo 1)" "exit $rc: $(grep -m2 error <<< "$out")"
   done
   out=$(CC=/nonexistent/cc CPPFLAGS="-include /nonexistent/ksl-flags-probe.h" CFLAGS="-include /nonexistent/ksl-flags-probe.h" \
     LDFLAGS="-Wl,-ksl-no-such-linker-flag" CCC_OVERRIDE_OPTIONS="+-include/nonexistent/ksl-env-probe.h" CPATH="$probe" \
-    C_INCLUDE_PATH="$probe" SDKROOT=/nonexistent/sdk LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
+    C_INCLUDE_PATH="$probe" SDKROOT="$emptysdk" LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
     OPT=-O0 MAKEFLAGS=-e KSL_OPENSSL_OUT=/nonexistent KSL_OPENSSL_PREFIXED=/nonexistent KSL_KEEP_DEBUG=1 \
     LD_RUN_PATH=/nonexistent/rpath TOOLCHAINS=com.ksl.nonexistent PERL5OPT=-MKslNoSuchModule PERL5LIB=/nonexistent \
     CROSS_SYSROOT=/nonexistent \
