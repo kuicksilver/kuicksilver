@@ -125,6 +125,11 @@ class ManualWebTransportServer {
                     }
                     webTransport("/wt/echo") { session ->
                         observe("/wt/echo", session)
+                        // recorded when it happens, not from the handler, which the connection's end may cancel first
+                        session.closed.invokeOnCompletion {
+                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                            clientClose.complete(session.closed.getCompleted())
+                        }
                         connect.complete(
                             "sec-webtransport-http3-draft02=${session.headers["sec-webtransport-http3-draft02"]} " +
                                 "user-agent=${session.headers["user-agent"]}",
@@ -135,8 +140,11 @@ class ManualWebTransportServer {
                                     while (true) {
                                         val st = session.acceptBidi()
                                         launch {
-                                            st.input.copyTo(st.output)
-                                            st.output.flushAndClose()
+                                            // a stream the session's end cuts must not fail the handler
+                                            runCatching {
+                                                st.input.copyTo(st.output)
+                                                st.output.flushAndClose()
+                                            }
                                         }
                                     }
                                 }
@@ -147,7 +155,7 @@ class ManualWebTransportServer {
                                 uni.output.writeFully("uni-hello".encodeToByteArray())
                                 uni.output.flushAndClose()
                             }
-                            clientClose.complete(session.closed.await())
+                            session.closed.await()
                             coroutineContext.cancelChildren()
                         }
                     }
