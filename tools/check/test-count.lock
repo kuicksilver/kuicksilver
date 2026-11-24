@@ -960,6 +960,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestOnAnEndedConnectionReleasesItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestRefusedByGoAwayKeepsItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestFramesTest.negative_headersLengthAboveIntRangeIsTooLarge
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aCallerCancelledAsItsStreamOpensEndsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aCallerCancelledAsTheRequestReturnsAbandonsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aFewGreaseFramesOnRequestStreamsAreFree
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.bodyReceivedCompletesBeforeAReaderTookTheBody

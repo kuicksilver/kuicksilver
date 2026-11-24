@@ -272,6 +272,9 @@ internal class H3Session(
      */
     internal var beforeRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
+    /** Test hook: runs on a client's request stream once the transport opened it, before it is handed to the request. */
+    internal var requestStreamOpenedForTest: (suspend (QuicStream) -> Unit)? = null
+
     /** Test hook: runs on a client's request stream once its HEADERS frame was written, before the flush (or FIN) after it. */
     internal var afterRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
