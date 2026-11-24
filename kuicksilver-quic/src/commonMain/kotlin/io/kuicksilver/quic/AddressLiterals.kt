@@ -52,7 +52,12 @@ public fun InetSocketAddress.resolveAddressOrNull(): ByteArray? =
         null
     }
 
-/** The lookup behind [resolveAddressOrNull], Ktor's `resolveAddress()`; a test replaces it (no DNS answer is certain). */
+/**
+ * The lookup behind [resolveAddressOrNull], the endpoint loop's connect target and [KslDatagramIo]'s bind address: Ktor's
+ * `resolveAddress()`, which throws on Kotlin/Native for a name that does not resolve. A test replaces it (no DNS answer is
+ * certain); volatile, since the loops read it on their own threads.
+ */
+@kotlin.concurrent.Volatile
 internal var addressLookup: (InetSocketAddress) -> ByteArray? = { it.resolveAddress() }
 
 /**

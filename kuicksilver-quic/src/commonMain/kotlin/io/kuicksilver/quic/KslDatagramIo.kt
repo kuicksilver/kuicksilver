@@ -426,10 +426,10 @@ internal class KslDatagramIo private constructor(
                 try {
                     addressResolver(local)
                 } catch (e: Exception) {
-                    refused(kotlinx.io.IOException("the bind address $local does not resolve to an IP address", e))
+                    refused(kotlinx.io.IOException("the bind address $local could not be resolved to an IP address", e))
                     return null
                 } ?: run {
-                    refused(kotlinx.io.IOException("the bind address $local does not resolve to an IP address"))
+                    refused(kotlinx.io.IOException("the bind address $local could not be resolved to an IP address"))
                     return null
                 }
             val flags =
@@ -510,9 +510,11 @@ internal class KslDatagramIo private constructor(
 
         /**
          * The bind address's IP bytes, null when it does not resolve (the JVM); on Kotlin/Native a name that does not resolve
-         * throws instead ([open] takes either as the address error). A test replaces it (no DNS answer is certain).
+         * throws instead ([open] takes either as the address error). [addressLookup] by default; its own hook, so a bind test
+         * can make the bind address unresolvable without touching the connect targets of other endpoints in the process.
          */
-        internal var addressResolver: (InetSocketAddress) -> ByteArray? = { it.resolveAddress() }
+        @kotlin.concurrent.Volatile
+        internal var addressResolver: (InetSocketAddress) -> ByteArray? = { addressLookup(it) }
 
         /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */
         internal var socketOpener: (

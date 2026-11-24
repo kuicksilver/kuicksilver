@@ -4,7 +4,6 @@
 
 package io.kuicksilver.interop
 
-import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
@@ -18,6 +17,7 @@ import io.kuicksilver.quic.Cubic
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.TlsIdentity

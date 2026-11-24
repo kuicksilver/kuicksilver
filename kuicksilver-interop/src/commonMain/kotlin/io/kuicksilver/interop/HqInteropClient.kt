@@ -4,7 +4,6 @@
 
 package io.kuicksilver.interop
 
-import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.EarlyDataState
@@ -16,6 +15,7 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.keylogFile

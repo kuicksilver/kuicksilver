@@ -188,6 +188,10 @@ class NioDatagramIoTest {
                         // the JDK's option on Windows is IPV6_MTU_DISCOVER = DO on an AF_INET6 channel (WindowsSocketOptions.c),
                         // true only in DO mode: probe mode reads false, so the JDK's DO mode was not added
                         if (bits and DF_V6 != 0) assertEquals(if (jdk19) false else null, a.dontFragmentForTest(), "the JDK's DO not added")
+                        // an AF_INET channel (no IPv6 here): the JDK's option is IP_MTU_DISCOVER, PROBE reads false the same way
+                        if (bits and DF_INET6 == 0 && bits and DF_V4 != 0) {
+                            assertEquals(if (jdk19) false else null, a.dontFragmentForTest(), "AF_INET: the JDK's DO not added")
+                        }
                     }
                 }
                 assertFalse(a.capabilities.value.df)

@@ -127,10 +127,11 @@ class KtorDatagramIoTest {
     @Test fun negative_aConnectTargetWhoseLookupThrowsIsNoViablePath() =
         runBlocking {
             val real = addressLookup
-            addressLookup = {
-                throw io.ktor.utils.io.errors.PosixException
+            val stale =
+                io.ktor.utils.io.errors.PosixException
                     .forErrno(platform.posix.ENOTCONN)
-            }
+            // only the target's lookup throws: the bind address goes through the same lookup (KslDatagramIo.addressResolver)
+            addressLookup = { if (it.hostname == "unresolvable.test") throw stale else real(it) }
             try {
                 val name = InetSocketAddress("unresolvable.test", 443)
                 assertSame(name, name.withLiteralHost())
@@ -145,9 +146,39 @@ class KtorDatagramIoTest {
                     val cause = e.cause
                     assertTrue(cause is IOException, "the address error as the cause: $cause")
                     assertTrue("unresolvable.test" in (cause.message ?: ""), "${cause.message}")
+                    assertSame(stale, cause.cause, "the resolver's failure kept as the cause")
                 } finally {
                     client.closeAndJoin()
                 }
+            } finally {
+                addressLookup = real
+            }
+        }
+
+    /**
+     * A closing endpoint answers [QuicException.EndpointClosing] whatever the target, a name that could not be resolved
+     * included. Red before: NoViablePath, the target checked before the endpoint.
+     */
+    @Test fun negative_aClosingEndpointIsEndpointClosingEvenForAnUnresolvableTarget() =
+        runBlocking {
+            val real = addressLookup
+            addressLookup = {
+                if (it.hostname ==
+                    "unresolvable.test"
+                ) {
+                    throw io.ktor.utils.io.errors.PosixException
+                        .forErrno(platform.posix.ENOTCONN)
+                } else {
+                    real(it)
+                }
+            }
+            try {
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                client.close()
+                assertFailsWith<QuicException.EndpointClosing> {
+                    client.connect(InetSocketAddress("unresolvable.test", 443), QuicClientConfig.Builder(CoreFixtures.client()).build())
+                }
+                client.closeAndJoin()
             } finally {
                 addressLookup = real
             }

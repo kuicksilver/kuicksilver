@@ -54,4 +54,19 @@ class UnresolvableTargetJvmTest {
                 client.closeAndJoin()
             }
         }
+
+    /** A closing endpoint answers EndpointClosing whatever the target. Red before: NoViablePath, the target checked first. */
+    @Test fun negative_aClosingEndpointIsEndpointClosingEvenForAnUnresolvableTarget(): Unit =
+        runBlocking {
+            val client =
+                QuicEndpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                )
+            client.close()
+            assertFailsWith<QuicException.EndpointClosing> {
+                client.connect(name, QuicClientConfig.Builder(CoreFixtures.client()).build())
+            }
+            client.closeAndJoin()
+        }
 }
