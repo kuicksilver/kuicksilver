@@ -11,6 +11,10 @@
 #   rv-selfname-leaf        a leaf it issued under its own name /CN=rv-selfname, without key identifiers and keyUsage, so
 #                           X509_check_issued takes the leaf for its own issuer; its real issuer is the CA
 #   rv-self                 a self-signed server certificate (the same key above and below)
+# and the OCSPResponses that say nothing of a certificate (RFC 6960 section 4.2.1: no responseBytes), which a client takes for no
+# staple:
+#   ocsp-try-later          responseStatus tryLater (3), as Apache's mod_ssl staples while its responder is unreachable
+#   ocsp-internal-error     responseStatus internalError (2)
 # Called by gen-revocation-certs.sh with its work directory (rv-mid.pem, rv-leaf-must-staple.pem, the CA keys are not needed);
 # alone it takes rv-mid and rv-leaf-must-staple from the committed DER files and leaves the rest of the PKI as it is.
 # Usage: gen-revocation-issuer-certs.sh [work directory]   (OPENSSL: an OpenSSL 3.x or later CLI)
@@ -47,4 +51,6 @@ printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=D
 "$O" req -x509 -new -key rv-self.key -out rv-self.pem -days $DAYS -sha256 -subj "/CN=rv-self" \
   -addext "basicConstraints=CA:FALSE" -addext "subjectAltName=DNS:server.test" 2>/dev/null
 "$O" x509 -in rv-self.pem -outform DER -out "$der/rv-self.der"
+printf '\x30\x03\x0a\x01\x03' > "$der/ocsp-try-later.der"
+printf '\x30\x03\x0a\x01\x02' > "$der/ocsp-internal-error.der"
 [ $# -ge 1 ] || bash "$root/tools/certs/gen-revocation-kt.sh"

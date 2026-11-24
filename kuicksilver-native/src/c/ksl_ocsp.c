@@ -261,7 +261,27 @@ static X509 *issuer_among(X509 *candidate, STACK_OF(X509) * chain, X509 *leaf) {
     return NULL;
 }
 
+/* Whether the stapled [der] is a whole DER OCSPResponse whose responseStatus is not successful (tryLater, internalError,
+   malformedRequest, sigRequired, unauthorized): such a response has no responseBytes (RFC 6960 section 4.2.1) and so carries
+   no status of the certificate (section 2.3), and the client takes it for no staple, as Firefox does; Apache's mod_ssl, for
+   one, staples a tryLater it made up while its CA's responder is down. One that does not decode, has bytes after it or says
+   successful is an answer, and the checks decide it (an undecodable one fails them). */
+static int no_answer(const uint8_t *der, size_t len) {
+    if (der == NULL || len == 0 || len > LONG_MAX)
+        return 0;
+    const unsigned char *p = der;
+    OCSP_RESPONSE *resp = d2i_OCSP_RESPONSE(NULL, &p, (long)len);
+    int r = resp != NULL && p == der + len && OCSP_response_status(resp) != OCSP_RESPONSE_STATUS_SUCCESSFUL;
+    OCSP_RESPONSE_free(resp);
+    ERR_clear_error();
+    return r;
+}
+
 #ifdef KSL_TEST
+int ksl_test_ocsp_no_answer(const uint8_t *der, size_t len) {
+    return no_answer(der, len);
+}
+
 int ksl_test_presented_issuer(const uint8_t *chain, size_t chain_len, const uint8_t *candidate, size_t candidate_len) {
     STACK_OF(X509) *sk = NULL, *cand = NULL;
     int r = -1;
@@ -331,6 +351,9 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
     }
     const unsigned char *resp = NULL;
     long len = SSL_get_tlsext_status_ocsp_resp(ssl, &resp);
+    /* a non-successful OCSPResponse carries no status of the certificate: no staple (no_answer) */
+    if (resp != NULL && len > 0 && no_answer(resp, (size_t)len))
+        resp = NULL;
     if (resp == NULL || len <= 0) {
         if (!required)
             return 1;

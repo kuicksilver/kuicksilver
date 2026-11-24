@@ -200,6 +200,8 @@ int64_t ksl_ticket_now(void);
 /* ksl_ocsp.c: the issuer presented_issuer picks for the leaf of [chain] (framed DER, leaf first) among [candidate] (framed, one
    certificate, may be NULL) and the chain: 0 for the candidate, i >= 1 for the chain's i-th certificate, -1 for none */
 int ksl_test_presented_issuer(const uint8_t *chain, size_t chain_len, const uint8_t *candidate, size_t candidate_len);
+/* ksl_ocsp.c: 1 when the staple [der] says nothing of the certificate (no_answer), else 0 */
+int ksl_test_ocsp_no_answer(const uint8_t *der, size_t len);
 #endif
 #ifdef KSL_TEST
 extern int64_t ksl_test_ticket_clock_skew;

@@ -114,10 +114,11 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
   above): `Platform` off Linux Native, where beyond the staple the OS verifier decides (Apple and Windows apply their own
   revocation policy, while on Android, its blocklist only, and the JVM, off unless the application enables it, nothing
   more checks revocation), and `Custom` and `Tofu`; a staple for a leaf with no issuer on the pause path (self-signed, or
-  neither sent nor in the verifier's path: not checked; a must-staple leaf fails). Availability, not covered either: a
-  server that staples an unsatisfactory response (stale, or a "tryLater" its web server made up during a responder outage)
-  is refused on every path, since a received staple must be checked (RFC 6066 §8); `RevocationPolicy.Off` is the way out
-  for it; delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
+  neither sent nor in the verifier's path: not checked; a must-staple leaf fails). A staple whose responseStatus is not
+  `successful` (a `tryLater` a web server makes up during a responder outage) carries no certificate status (RFC 6960
+  §2.3, §4.2.1) and counts as no staple, as in Firefox, so it is the soft-fail window above, never a refusal of a normal
+  certificate; a must-staple one, or `RequireStapled`, still fails, and a stale, forged or undecodable staple is refused on
+  every path (RFC 6066 §8), for which `RevocationPolicy.Off` is the way out; delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
 - **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`; `RevocationTest`
   (`negative_quicStapledRevokedFails`, `negative_tcpStapledRevokedFails`, `negative_quicRequiredStapleMissing`,
   `negative_quicMustStapleLeafWithoutStaple`, `negative_serverStaplesNoStaleOrForeignResponse`,

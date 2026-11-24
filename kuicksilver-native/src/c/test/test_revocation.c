@@ -368,6 +368,28 @@ static void stapling_over(int mode, int tls12, const char *what) {
                 "negative_client_mismatch: a response for the same serial under another issuer key");
     hs unauth = {"rv-leaf", NULL, "ocsp-unauthorized", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(unauth, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_unauthorized_responder");
+    /* an OCSPResponse whose responseStatus is not successful (tryLater, internalError) carries no responseBytes (RFC 6960 section
+       4.2.1) and so no status of the certificate: it counts as no staple, on ksl's path and the pause path alike. A leaf that
+       needs a staple (must-staple, or under RequireStapled) fails as without one; any other goes on. A staple that is no
+       OCSPResponse at all (not DER) is still unsatisfactory: an OpenSSL server does not send one, so revocation_no_answer
+       checks that rule on its own */
+    static const char *const no_answer[] = {"ocsp-try-later", "ocsp-internal-error"};
+    for (int path = 0; path < 2; path++) {
+        int vm = path ? KSL_VERIFY_PAUSE : 0;
+        for (int k = 0; k < 2; k++) {
+            hs soft = {"rv-leaf", NULL, no_answer[k], KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+            EXPECT_PASS(soft, 0xff, "a non-successful staple is no staple: a leaf that needs none goes on");
+            hs must_na = {
+                "rv-leaf-must-staple", NULL, no_answer[k], KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+            EXPECT_FAIL(must_na, X509_V_ERR_OCSP_VERIFY_NEEDED,
+                        "negative_must_staple_non_successful: as without a staple (RFC 7633)");
+            hs req_na = {"rv-leaf", NULL, no_answer[k], KSL_REVOCATION_REQUIRE_STAPLED, mode, tls12, vm};
+            EXPECT_FAIL(req_na, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_required_non_successful: as without a staple");
+        }
+        hs revoked_again = {
+            "rv-leaf-revoked", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+        EXPECT_FAIL(revoked_again, X509_V_ERR_CERT_REVOKED, "negative_successful_revoked_still_fails");
+    }
     hs off = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_OFF, mode, tls12, 0};
     EXPECT_PASS(off, 0xff, "off: nothing requested, nothing checked");
     /* the pause path (the platform's or an application's verifier decides trust): the client asks for a staple there too and
@@ -519,6 +541,39 @@ static void test_issuer_among(void) {
           "negative_impostor_candidate: passed over for the presented issuer");
     CHECK(pick("rv-root", 1, "rv-leaf", NULL, NULL) == -1, "negative_candidate_not_the_issuer");
     CHECK(pick("rv-self", 1, "rv-self", NULL, NULL) == -1, "negative_candidate_with_the_leafs_key");
+    END();
+}
+
+/* Which staples say nothing of the certificate (ksl_ocsp.c no_answer): a whole DER OCSPResponse whose responseStatus is not
+   successful (RFC 6960 section 4.2.1: no responseBytes); never one that does not decode, has a byte after it, or says successful
+   (those go to the checks and fail there when they are not satisfactory) */
+static void test_no_answer(void) {
+    SECTION("revocation_no_answer");
+    static const uint8_t try_later[] = {0x30, 0x03, 0x0a, 0x01, 0x03},
+                         internal_error[] = {0x30, 0x03, 0x0a, 0x01, 0x02},
+                         sig_required[] = {0x30, 0x03, 0x0a, 0x01, 0x05},
+                         unauthorized[] = {0x30, 0x03, 0x0a, 0x01, 0x06},
+                         successful_empty[] = {0x30, 0x03, 0x0a, 0x01, 0x00}, cut[] = {0x30, 0x03, 0x0a, 0x02, 0x03},
+                         trailing[] = {0x30, 0x03, 0x0a, 0x01, 0x03, 0x00},
+                         not_enumerated[] = {0x30, 0x03, 0x02, 0x01, 0x03};
+    CHECK(ksl_test_ocsp_no_answer(try_later, sizeof try_later) == 1, "tryLater is no answer");
+    CHECK(ksl_test_ocsp_no_answer(internal_error, sizeof internal_error) == 1, "internalError is no answer");
+    CHECK(ksl_test_ocsp_no_answer(sig_required, sizeof sig_required) == 1, "sigRequired is no answer");
+    CHECK(ksl_test_ocsp_no_answer(unauthorized, sizeof unauthorized) == 1, "unauthorized is no answer");
+    CHECK(ksl_test_ocsp_no_answer(successful_empty, sizeof successful_empty) == 0,
+          "negative_successful_without_bytes: successful is an answer (malformed: it fails the checks)");
+    CHECK(ksl_test_ocsp_no_answer(cut, sizeof cut) == 0,
+          "negative_undecodable_staple: not DER is not taken for no staple");
+    CHECK(ksl_test_ocsp_no_answer(trailing, sizeof trailing) == 0, "negative_trailing_byte: not one OCSPResponse");
+    CHECK(ksl_test_ocsp_no_answer(not_enumerated, sizeof not_enumerated) == 0, "negative_not_an_ocsp_response");
+    blob good = file_of("ocsp-good");
+    CHECK(ksl_test_ocsp_no_answer(good.buf, good.len) == 0, "a successful response is an answer");
+    int64_t until = 0;
+    blob ch = framed(2, "rv-leaf", "rv-mid");
+    CHECK(ksl_ocsp_check(cut, sizeof cut, ch.buf, ch.len, 0, &until) == KSL_OCSP_INVALID,
+          "an undecodable staple fails the checks (KSL_OCSP_INVALID): unsatisfactory, RFC 6066 section 8");
+    free(ch.buf);
+    free(good.buf);
     END();
 }
 
@@ -810,6 +865,7 @@ void run_revocation(void) {
 #ifndef OPENSSL_NO_OCSP
     test_ocsp_check();
     test_issuer_among();
+    test_no_answer();
     test_stapling();
     test_staple_cache();
 #else

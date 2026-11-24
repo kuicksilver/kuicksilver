@@ -3144,8 +3144,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   only copies the issuer's name and key identifier, or carries the leaf's own key, is never taken for the issuer. A certificate whose TLS feature extension lists `status_request` (must-staple) now fails there without a good
   staple (`VerifyReason.UnknownRevocationStatus`, alert 113), and a staple that says revoked or does not verify fails as
   on the `ksl` path (`Revoked`, `InvalidStatusResponse`). `RevocationPolicy.Off` turns both off. The ClientHello on those
-  paths now carries `status_request`. Availability: a server that staples a stale or made-up response (Apache's "tryLater"
-  during a responder outage) now fails on those paths too; `RevocationPolicy.Off` is the way out for it.
+  paths now carries `status_request`. A stapled OCSPResponse whose responseStatus is not `successful` (`tryLater`,
+  `internalError`, `malformedRequest`, `sigRequired`, `unauthorized`; Apache's mod_ssl staples a made-up `tryLater` while
+  its CA's responder is down) counts as no staple on every path, `ksl`'s verifier included (before 0.3.0 it failed there
+  with `InvalidStatusResponse`): it carries no certificate status (RFC 6960 sections 2.3 and 4.2.1), as Firefox reads it.
+  A normal certificate goes on under `StapledIfPresent`; a must-staple one, or any under `RequireStapled`, fails as without
+  a staple (`UnknownRevocationStatus`). A successful response that is revoked, stale, foreign or forged, and a staple that
+  does not decode, still fail; `RevocationPolicy.Off` is the way out for such a server.
 - QUIC client: the server's Source Connection ID is fixed by its first Initial without exception (RFC 9000 section 7.2),
   and the peer's first connection ID is never replaced. Until now an Initial with nothing but ACK, PING and PADDING from
   the client's own DCID left the SCID open, so a later Initial from any other SCID, a forged one included (Initial keys
