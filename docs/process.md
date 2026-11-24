@@ -508,12 +508,15 @@ These run by hand on the maintainer's machine; each has a computed verdict, not 
   for a future OSS-Fuzz application: it builds the same Jazzer targets (the ksl harness aside) the way OSS-Fuzz builds a
   project, checked by hand with `docker build -f .clusterfuzzlite/Dockerfile`, the image's `compile`, and
   `run_fuzzer <target>` in the OSS-Fuzz base runner image.
-- **Browsers.** WebTransport with Chrome (`--with-browser`, `ChromeWebTransportTest`) and Firefox
-  (`tools/interop/wt-firefox-manual.sh`), and Safari by hand ([interop.md](spec/interop.md)). One of the runs changes the
-  server's QUIC-LB configuration (`QuicEndpoint.updateLoadBalancer`) while the browser's session is open: the server then
-  asks the browser to retire its connection IDs (Retire Prior To), and since 0.3.0 it closes a connection whose
-  RETIRE_CONNECTION_ID names the ID of the packet that carries it (RFC 9000 §19.16). The session must outlive the change;
-  our own client's side of it is pinned by `endpoint.EndpointCoreTest.quicLbBackToBackUpdatesWaitForRetirements`.
+- **Browsers.** WebTransport with Chrome (`./gradlew :kuicksilver-ktor-server:jvmTest --tests
+  'io.kuicksilver.ktor.server.browser.ChromeWebTransportTest' -Pkuicksilver.browserTests=true`, also the
+  `--with-browser` step of the gate) and Firefox (`tools/interop/wt-firefox-manual.sh`), and Safari by hand
+  ([interop.md](spec/interop.md)). One run in each browser changes the server's QUIC-LB configuration
+  (`updateLoadBalancer`) while the session is open: the server then asks the browser to retire its connection IDs (Retire
+  Prior To), and since 0.3.0 it closes a connection whose RETIRE_CONNECTION_ID names the ID of the packet that carries it
+  (RFC 9000 §19.16). In Chrome that is `ChromeWebTransportTest.chromeSessionOutlivesAQuicLbChange` (part of the command
+  above), in Firefox `WT_LB_CHANGE=1 tools/interop/wt-firefox-manual.sh`; the page's steps must all pass after the change.
+  Our own client's side is pinned by `endpoint.EndpointCoreTest.quicLbBackToBackUpdatesWaitForRetirements`.
 - **Benchmarks.** [docs/benchmarks.md](benchmarks.md) compares goodput, CPU per GB and handshakes per second with
   quiche, quinn and msquic (`tools/bench/run-table.sh`), with its caveats: one Apple Silicon host, and the amd64 peer
   images run emulated. It is rerun for releases that change performance, not for every release.

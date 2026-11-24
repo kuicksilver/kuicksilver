@@ -3802,6 +3802,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.UnreadBodyLingerJ
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.UpgradeFailureJvmTest.negative_aFailedUpgradeWhoseErrorResponseFailsEndsOnlyItsConnection
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebSocketH2Test.chromeWebSocketOverH2
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebTransportTest.chromeDraft02
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebTransportTest.chromeSessionOutlivesAQuicLbChange
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebTransportTest.chromeWithDraft07EnabledFallsBackToDraft02
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ManualWebTransportServer.browserByHand
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.contract.ContentTestSuite.funkyChunked

@@ -21,8 +21,11 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicLbConfig
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.KslCrypto
+import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelChildren
@@ -57,7 +60,10 @@ import kotlin.time.Duration.Companion.seconds
  * Opt-in: runs only with `-Pkuicksilver.manualWebTransport=true`. Properties (Gradle `-P`, forwarded to the test JVM):
  * `kuicksilver.manualWebTransport.cert` and `.key` (PEM chain and PKCS#8 key, required), `.port` (0, the default, picks a
  * free one), `.dir` (where `ready` is written with the port once the server listens, and `result.json` and `server.txt`
- * once the page has posted), `.timeoutSeconds` (how long to wait for the page, 600 by default). It prints the URL, waits
+ * once the page has posted), `.timeoutSeconds` (how long to wait for the page, 600 by default), `.lbChange` (`true`: the
+ * server runs with a QUIC-LB configuration and moves to another one, `updateLoadBalancer`, as soon as the echo session is
+ * accepted, so the browser retires the connection ID it sends to while the session is open; the page's later steps must
+ * still pass). It prints the URL, waits
  * for the page's POST, prints the JSON, checks every step and stops.
  *
  * Diagnostics, with `.dir` only: a qlog trace per QUIC connection in `<dir>/qlog`, and `<dir>/server-events.txt`, a
@@ -80,6 +86,10 @@ class ManualWebTransportServer {
         val port = prop("port")?.toInt() ?: 0
         val dir = prop("dir")?.let(::File)
         val wait = (prop("timeoutSeconds")?.toLong() ?: 600L).seconds
+        val lbChange = prop("lbChange") == "true"
+        val lbKeys = if (lbChange) List(2) { KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16)) } else emptyList()
+        var changeLoadBalancer: (suspend () -> Unit)? = null
+        val lbChanged = CompletableDeferred<Unit>()
         val certPem = certFile.readText()
         val hash = certificateHash(certPem)
         val identity = TlsIdentity.fromPem(certPem, keyFile.readText().toCharArray())
@@ -114,6 +124,7 @@ class ManualWebTransportServer {
                     this.port = port
                 }
                 webTransport = true
+                if (lbChange) quicLoadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0])
                 qlog = qlogSink
                 connectionListener = events
             }) {
@@ -125,6 +136,11 @@ class ManualWebTransportServer {
                     }
                     webTransport("/wt/echo") { session ->
                         observe("/wt/echo", session)
+                        changeLoadBalancer?.let { change ->
+                            change()
+                            events.add("/wt/echo: QUIC-LB configuration changed (updateLoadBalancer) during session ${session.sessionId}")
+                            lbChanged.complete(Unit)
+                        }
                         connect.complete(
                             "sec-webtransport-http3-draft02=${session.headers["sec-webtransport-http3-draft02"]} " +
                                 "user-agent=${session.headers["user-agent"]}",
@@ -165,6 +181,7 @@ class ManualWebTransportServer {
                     if (ps == null) "none yet" else "$ps unknown=${ps.unknown.entries.joinToString { (k, v) -> "0x${k.toString(16)}=$v" }}"
                 }
         }
+        if (lbChange) changeLoadBalancer = { server.engine.updateLoadBalancer(QuicLbConfig(2, LB_SERVER_ID, 4, lbKeys[1])) }
         runBlocking {
             server.startSuspend(wait = false)
             try {
@@ -191,8 +208,10 @@ class ManualWebTransportServer {
                 assertTrue("\"closeInfo\":{\"code\":9,\"reason\":\"server-bye\"}" in json, json)
                 val closed = assertNotNull(seenClose, "the server did not see the page close its session")
                 assertEquals(7L to "bye", closed.code to closed.reason)
+                if (lbChange) assertTrue(lbChanged.isCompleted, "the QUIC-LB configuration changed during the session")
             } finally {
                 server.stopSuspend(100, 1000)
+                lbKeys.forEach { it.close() }
                 qlogSink?.close()
                 val timeline = events.text()
                 print("Server events:\n$timeline")
@@ -254,6 +273,9 @@ class ManualWebTransportServer {
             generateSequence(e) { it.cause }.take(6).joinToString(" <- ") { "${it::class.simpleName}(${it.message})" }.ifEmpty { "none" }
 
         const val PREFIX = "kuicksilver.manualWebTransport"
+
+        /** The server ID of the QUIC-LB configurations of `.lbChange`. */
+        val LB_SERVER_ID = byteArrayOf(0x31, 0x44, 0x1a)
         val STEPS = listOf("connect", "bidiEcho1MB", "uniFromServer", "datagrams", "clientClose", "serverClose")
     }
 }
