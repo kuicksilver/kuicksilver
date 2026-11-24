@@ -107,6 +107,46 @@ class ClientH2WebSocketTest {
             ?: fail("a stream slot was not returned within 10 s: streamCount = ${e.h1.h2.streamCount}")
     }
 
+    /**
+     * A WebSocket cancelled during the health check of the HTTP/2 connection it reserved a stream on gives the stream back,
+     * as a request does: a reservation kept for good holds a concurrent-stream slot and keeps the connection from ever being
+     * idle, so the pool never evicts it.
+     */
+    @Test fun negative_aWebSocketCancelledDuringTheHealthCheckGivesItsStreamBack() =
+        clientTest {
+            tlsH2WithSilentUdp(enableConnectProtocol = true, onRequest = { _, r ->
+                if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                echo(r)
+            }) { port, _ ->
+                client().use { c ->
+                    val e = engine(c)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(0, e.h1.h2.streamCount)
+                    e.h1.h2HealthAfterIdleMillis = 0 // the WebSocket's reuse is checked
+                    val checking = CompletableDeferred<Unit>()
+                    e.h1.healthCheckForTest = {
+                        checking.complete(Unit)
+                        kotlinx.coroutines.awaitCancellation() // the health check outlasts its caller
+                    }
+                    try {
+                        kotlinx.coroutines.coroutineScope {
+                            val ws = launch { c.webSocket("wss://127.0.0.1:$port/ws") { fail("the WebSocket is cancelled first") } }
+                            checking.await()
+                            assertEquals(1, e.h1.h2.streamCount, "the WebSocket reserved its stream before the check")
+                            ws.cancel()
+                            ws.join()
+                        }
+                        // the cancellation reaches the engine's call after the caller ended (Ktor's WebSocket call is
+                        // cancelled through its session's job): the slot comes back once it has
+                        awaitStreamsReleased(e)
+                    } finally {
+                        e.h1.healthCheckForTest = null
+                    }
+                    assertEquals(1, e.h1.h2.connectionCount, "the connection stays, idle and so evictable")
+                }
+            }
+        }
+
     @Test fun webSocketUsesAnH2ConnectionThatAllowsExtendedConnect() =
         clientTest {
             val request = CompletableDeferred<H2ServerStream>()

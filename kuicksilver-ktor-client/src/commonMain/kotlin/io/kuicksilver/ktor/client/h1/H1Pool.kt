@@ -653,7 +653,7 @@ internal class H1Pool(
                         continue
                     }
                     if (!c.client.serverAllowsExtendedConnect || !c.client.tryReserve()) continue
-                    if (c.client.receivedIdleMillis >= h2HealthAfterIdleMillis && !c.client.checkHealth(healthTimeoutMillis(data))) {
+                    if (!answersHealthCheck(c, data)) {
                         c.client.unreserve()
                         if (c.client.reservedStreams > 0) {
                             c.client.shutdown()
