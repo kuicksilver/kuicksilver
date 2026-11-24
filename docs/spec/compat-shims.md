@@ -34,9 +34,9 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 **What it does.** The wire format is draft-ietf-webtrans-http3-17, but a server with WebTransport also announces
 `SETTINGS_ENABLE_WEBTRANSPORT=1` (0x2b603742, draft-02 to -06) and `SETTINGS_WT_MAX_SESSIONS=1` (0x14e9cd29, draft-13 and
 -14) next to `SETTINGS_WT_ENABLED=1` of draft-17 (0x20b8933b) and draft-16 (0x2c7cf000); a client announces draft-17,
-draft-16 and draft-02. Either side recognises the older settings in the peer's SETTINGS, takes the `:protocol` token
-`webtransport` (draft-02 to -14) as well as `webtransport-h3`, and a client talking to a server without draft-16 or
-draft-17 sends `:protocol webtransport` with `sec-webtransport-http3-draft02: 1`. A draft-02 session has no
+draft-16 and draft-02. Either side recognises the older settings in the peer's SETTINGS; a server takes the `:protocol` token
+`webtransport` for a session of draft-02 or draft-14 (and `webtransport-h3` only for draft-16 and draft-17), and a client
+talking to a server without draft-16 or draft-17 sends `:protocol webtransport` with `sec-webtransport-http3-draft02: 1`. A draft-02 session has no
 `reset_stream_at` (its draft predates RESET_STREAM_AT), so its streams are reset with RESET_STREAM.
 `SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 is `H3_SETTINGS_ERROR`, as draft-02 §3.1 requires. Draft-16 is not part
 of this shim: it is an earlier draft of the same document, which webtransport-go and picoquic speak, announced under
@@ -66,8 +66,8 @@ full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothin
 no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
 
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:15` (the versions,
-`offeredIn` at :55, `WtSettings.ours` at :201, `WtTokens.LEGACY` at :231),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:29` and :32 (the codepoints),
+`offeredIn` at :55, `WtSettings.ours` at :203, `WtTokens.LEGACY` at :233),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:407` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:785` (the client's draft-02
 request field).
@@ -115,8 +115,8 @@ costs other clients nothing.
 
 **Justification (kept, hardening audit 2026-11-21, S2).** It goes with shim 1: without it Chrome refuses the session.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:797`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:237`.
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:795`; the name and
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:239`.
 
 **On by default.** No, as shim 1; then always for a draft-02 session whose client sent the request field's value `1`.
 
@@ -155,8 +155,8 @@ supported by both endpoints" as the highest both can run, and (b), which lets th
 beyond that text: draft-17 makes the shim a clearer departure than draft-16 did, and changes nothing in the audit's
 decision to remove it.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:118` (`wtClientVersion`)
-and :135 (`wtServerVersion`).
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:120` (`wtClientVersion`)
+and :137 (`wtServerVersion`).
 
 **On by default.** No, as shim 1.
 
@@ -370,6 +370,13 @@ the data.
 
 ## Considered and not listed
 
+- **Either WebTransport `:protocol` token for any draft** (webtransport-go accepts both, `isWebTransportProtocol` in
+  `protocol.go`; picoquic too, "we need to be lenient and treat both versions as equivalent", `h3zero_common.c`): not
+  kept. Each draft names its token (draft-16 and draft-17 §3.2, "the :protocol pseudo-header field MUST be set to
+  webtransport-h3"; draft-02 and draft-14, `webtransport`), and every known client sends its own draft's: Chrome and
+  Firefox draft-02 with `webtransport`, Safari draft-14 with `webtransport`, webtransport-go, picoquic and Kuicksilver
+  draft-16 or draft-17 with `webtransport-h3`. A CONNECT whose token is not the selected draft's is malformed (400,
+  `H3_MESSAGE_ERROR`) — `webtransport.WtDraftVersionsTest.negative_tokenOfAnotherDraftIsMalformed`.
 - **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
   among them): the RFC 9000 §7.2 MUST itself.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC

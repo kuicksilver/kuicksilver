@@ -493,7 +493,8 @@ their streams and datagrams, close and drain. Both sides set `webTransport = tru
 `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off, and
 `Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it). Browsers and other libraries do not speak draft-17 yet, so
 a server also announces the SETTINGS of draft-16 (webtransport-go, picoquic), draft-14 (Safari) and draft-02 (Chrome,
-Firefox), and accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client announces draft-17,
+Firefox), and takes each draft's own `:protocol` token (`webtransport-h3` for draft-17 and draft-16, `webtransport`
+for draft-14 and draft-02; another is answered with 400); a client announces draft-17,
 draft-16 and draft-02 and picks the token from the server's SETTINGS. The draft is the highest both sides announce
 (section 7.1), so two Kuicksilver endpoints speak draft-17; a server whose client announces none selects draft-17, as
 section 7.1 says, and then takes only `webtransport-h3`. A request with either token is `isWebTransport`;

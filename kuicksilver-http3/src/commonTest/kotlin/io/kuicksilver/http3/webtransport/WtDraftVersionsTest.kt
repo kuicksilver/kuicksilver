@@ -138,6 +138,25 @@ class WtDraftVersionsTest {
         }
 
     /**
+     * Each draft names its own `:protocol` token: draft-17 and draft-16 section 3.2, "the :protocol pseudo-header field
+     * MUST be set to webtransport-h3" (a request with another is not a WebTransport request of that draft); draft-02 and
+     * draft-14, `webtransport`. A CONNECT whose token is not the selected draft's is malformed: 400 and STOP_SENDING
+     * H3_MESSAGE_ERROR. Compared without regard to case (RFC 9110 section 7.8).
+     */
+    @Test fun negative_tokenOfAnotherDraftIsMalformed() =
+        h3Test {
+            for (d in drafts) {
+                val other = if (d.token == WtTokens.H3) WtTokens.LEGACY else WtTokens.H3
+                val (h, session) = serve(d.settings, other, d.fields)
+                assertEquals("400", h[":status"], "$d")
+                val e = assertFailsWith<Http3Exception.Settings>("$d") { session.getOrThrow() }
+                assertTrue(d.token in e.message.orEmpty(), e.message)
+            }
+            // the right token in another case is the token
+            assertEquals(WtVersion.Draft17, serve(drafts[0].settings, "WebTransport-H3").second.getOrThrow().version)
+        }
+
+    /**
      * The same client with the token of draft-02 to -14: section 7.1 selected draft-17, whose token is `webtransport-h3`
      * (section 3.1), and the older drafts need their own setting (draft-02 and draft-14 section 3.1), so the request is
      * no WebTransport request of any version it could run: malformed, 400.

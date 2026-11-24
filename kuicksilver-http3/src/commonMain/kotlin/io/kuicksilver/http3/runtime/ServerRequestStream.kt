@@ -730,9 +730,6 @@ internal class ServerRequestImpl(
         )
     }
 
-    /** This CONNECT's `:protocol` is draft-15 and later's `webtransport-h3` (in any case, [WtTokens.isWebTransport]). */
-    private fun wtProtocolIsH3(): Boolean = protocol.equals(WtTokens.H3, ignoreCase = true)
-
     /** `acceptWebTransport` (draft-ietf-webtrans-http3-17 sections 3.2, 3.3, 7.1). */
     suspend fun acceptWebTransport(
         headers: Http3Headers,
@@ -749,8 +746,9 @@ internal class ServerRequestImpl(
         // the client's SETTINGS arrived, so none was before. The version is the one section 7.1 selects from the client's
         // codepoints (draft-17 and -16 SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS above 0, draft-02
         // SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send): the highest, or draft-17 when it sent none ("Otherwise,
-        // the server selects the version described in this document"), whose token is webtransport-h3; the older token
-        // from such a client asks for a draft whose own setting it did not send (draft-02 and draft-14 section 3.1). A
+        // the server selects the version described in this document"). The CONNECT must carry that version's token
+        // (draft-17 and -16 section 3.2: ":protocol pseudo-header field MUST be set to webtransport-h3"; draft-02 and -14:
+        // webtransport), compared without regard to case (RFC 9110 section 7.8); another is malformed. A
         // client that announces a newer draft without its transport parameters but also draft-02 is served only when this
         // CONNECT is a draft-02 request ([wtServerVersion]).
         val draft02Request =
@@ -763,13 +761,13 @@ internal class ServerRequestImpl(
                     "no SETTINGS from the client within ${session.wtDeadline}"
                 }
 
-                WtVersion.offeredIn(session.wtPeerSettings).isEmpty() && !wtProtocolIsH3() -> {
-                    "the client sent no WebTransport setting, so the version is draft-17 (draft-ietf-webtrans-http3-17 " +
-                        "section 7.1), whose :protocol is ${WtTokens.H3}, not '${this@ServerRequestImpl.protocol}'"
-                }
-
                 !ps.h3Datagram -> {
                     "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
+                }
+
+                version != null && !this@ServerRequestImpl.protocol.equals(version.protocolToken, ignoreCase = true) -> {
+                    "the session's version is $version (draft-ietf-webtrans-http3-17 section 7.1), whose :protocol is " +
+                        "${version.protocolToken}, not '${this@ServerRequestImpl.protocol}'"
                 }
 
                 else -> {
