@@ -6374,12 +6374,14 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ReloadableIdentityTest.reloadO
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ReloadableIdentityTest.snapshotReplacedBeforeUseIsRetried
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.crlPemParses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.crlsChangeTheTrustKey
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.mustStapleLeafWithItsStaplePassesOnEveryTrustPath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlIssuerOutsideThePathFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlNotCoveringTheLeafFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlRevokedLeafFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlThatDoesNotVerifyFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_declinedResumptionTicketCarriesTheNewStaple
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_expiredCrlFails
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_mustStapleEnforcedOnEveryTrustPath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicMustStapleLeafWithoutStaple
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicRequiredStapleMissing
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicSniOverrideStaplesItsOwnResponseOnly
@@ -6388,6 +6390,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicUn
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_reloadedCrlRefusesRevokedClient
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_requireStapledNeedsKslVerifier
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_responseLimitIsTheCertificateStatusMessage
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_revokedStapleFailsOnThePausePath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_serverStaplesNoStaleOrForeignResponse
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_sniOverrideStaplesItsOwnResponseOnly
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_staleCachedStapleIsNotResumed

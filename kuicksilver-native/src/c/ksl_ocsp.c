@@ -235,32 +235,70 @@ static int must_staple(X509 *leaf) {
     return found;
 }
 
+/* The certificate of the peer's presented chain that issued [leaf]: it names the leaf's issuer and its key verifies the leaf's
+   signature, so a certificate that only takes the issuer's name (whose key would sign any response) is never used. NULL when
+   none did (the leaf sent alone, or its issuer left out). */
+static X509 *presented_issuer(SSL *ssl, X509 *leaf) {
+    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+    for (int i = 0; chain && i < sk_X509_num(chain); i++) {
+        X509 *c = sk_X509_value(chain, i);
+        EVP_PKEY *key = X509_get0_pubkey(c);
+        if (c != leaf && key != NULL && X509_check_issued(c, leaf) == X509_V_OK && X509_verify(leaf, key) == 1) {
+            ERR_clear_error();
+            return c;
+        }
+    }
+    ERR_clear_error();
+    return NULL;
+}
+
 /* A client's status callback (OpenSSL tls_process_initial_server_flight: after the server's Finished in TLS 1.3, after
-   ServerHelloDone in TLS 1.2, so after ksl_cert_verify_cb built the validated chain). RFC 6066 section 8: "Clients requesting an
-   OCSP response and receiving an OCSP response in a "CertificateStatus" message MUST check the OCSP response and abort the
-   handshake if the response is not satisfactory with bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL
-   sends 113; generic alerts do not apply to it). Only where ksl's own verifier ran (KSL_VERIFY_OPENSSL): the issuer is the one
-   that verifier trusted. A leaf that is itself a trust anchor has no issuer here, and its trust is configuration: nothing is
+   ServerHelloDone in TLS 1.2, so after the chain was verified, by ksl_cert_verify_cb or, on the pause path, by the caller's
+   verifier). RFC 6066 section 8: "Clients requesting an OCSP response and receiving an OCSP response in a "CertificateStatus"
+   message MUST check the OCSP response and abort the handshake if the response is not satisfactory with
+   bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL sends 113; generic alerts do not apply to it).
+   The issuer the response is checked against: where ksl's own verifier ran (KSL_VERIFY_OPENSSL), the one it trusted; on the
+   pause path (KSL_VERIFY_PAUSE: the platform's verifier, an application's, TOFU), the presented certificate that issued the leaf
+   (presented_issuer), since the caller's verifier said yes to that chain and only the leaf's real issuer, or a responder it
+   delegated, can sign a response for it. A leaf with no such issuer (a trust anchor itself, or sent without its issuer) is not
    checked, unless a stapled response is required (KSL_REVOCATION_REQUIRE_STAPLED, a must-staple leaf), which then fails
-   (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). A delegated responder listed on a configured CRL of the
-   issuer is not authorized (responder_authorized). The verdict: revoked fails (CERT_REVOKED); a response that does not verify, names another certificate or is outside
-   its validity interval fails (OCSP_VERIFY_FAILED); no response, or "unknown", fails only under KSL_REVOCATION_REQUIRE_STAPLED or
-   for a must-staple leaf (OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN) and passes otherwise. */
+   (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). RFC 7633 section 4.3.3: a client "MUST treat a
+   certificate with a TLS feature extension as an invalid certificate if the features offered by the server do not contain all
+   features present in both the client's ClientHello message and the TLS feature extension", and section 4.2.3.1 has it reject
+   a server inconsistent with status_request (SHOULD): every client but KSL_REVOCATION_OFF sends status_request, on both paths,
+   so a must-staple leaf needs a good staple everywhere. A delegated responder listed on a configured CRL of the issuer is not
+   authorized (responder_authorized; CRLs exist on the ksl verifier's path only). The verdict: revoked fails (CERT_REVOKED); a
+   response that does not verify, names another certificate or is outside its validity interval fails (OCSP_VERIFY_FAILED); no
+   response, or "unknown", fails only under KSL_REVOCATION_REQUIRE_STAPLED or for a must-staple leaf (OCSP_VERIFY_NEEDED,
+   OCSP_CERT_UNKNOWN) and passes otherwise. A resumed session presents no certificate: nothing is checked (the full handshake
+   that made the ticket was). */
 static int client_status(SSL *ssl, ksl_ssl *s) {
     s->ocsp_status = -1;
     s->ocsp_until = 0;
-    if (s->owner->revocation == KSL_REVOCATION_OFF || s->verify_mode != KSL_VERIFY_OPENSSL ||
-        s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 1)
+    if (s->owner->revocation == KSL_REVOCATION_OFF || SSL_session_reused(ssl))
         return 1;
-    X509 *leaf = sk_X509_value(s->validated_chain, 0);
+    X509 *leaf = NULL, *issuer = NULL;
+    if (s->verify_mode == KSL_VERIFY_OPENSSL) {
+        if (s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 1)
+            return 1;
+        leaf = sk_X509_value(s->validated_chain, 0);
+        if (sk_X509_num(s->validated_chain) >= 2)
+            issuer = sk_X509_value(s->validated_chain, 1);
+    } else if (s->verify_mode == KSL_VERIFY_PAUSE) {
+        leaf = SSL_get0_peer_certificate(ssl);
+        if (leaf == NULL)
+            return 1;
+        issuer = presented_issuer(ssl, leaf);
+    } else {
+        return 1; /* KSL_VERIFY_NONE: nothing is verified, tests only */
+    }
     int required = s->owner->revocation == KSL_REVOCATION_REQUIRE_STAPLED || must_staple(leaf);
-    if (sk_X509_num(s->validated_chain) < 2) {
+    if (issuer == NULL) {
         if (!required)
             return 1;
         s->verify_err = X509_V_ERR_OCSP_VERIFY_NEEDED;
         return 0;
     }
-    X509 *issuer = sk_X509_value(s->validated_chain, 1);
     const unsigned char *resp = NULL;
     long len = SSL_get_tlsext_status_ocsp_resp(ssl, &resp);
     if (resp == NULL || len <= 0) {
@@ -270,7 +308,8 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
         return 0;
     }
     int64_t until = 0;
-    X509_STORE *crls = s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
+    X509_STORE *crls =
+        s->verify_mode == KSL_VERIFY_OPENSSL && s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
     int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, ocsp_now(), crls, NULL, &until);
     switch (r) {
     case KSL_OCSP_GOOD:

@@ -360,9 +360,25 @@ static void stapling_over(int mode, int tls12, const char *what) {
     EXPECT_FAIL(unauth, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_unauthorized_responder");
     hs off = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_OFF, mode, tls12, 0};
     EXPECT_PASS(off, 0xff, "off: nothing requested, nothing checked");
+    /* the pause path (the platform's or an application's verifier decides trust): the client asks for a staple there too and
+       checks what it gets against the presented certificate that issued the leaf (RFC 6066 section 8 MUST), and a must-staple
+       leaf needs one (RFC 7633 sections 4.2.3.1 and 4.3.3); before, nothing was checked there */
     hs paused = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
                  KSL_VERIFY_PAUSE};
-    EXPECT_PASS(paused, 0xff, "the pause path (an application verifier) is not checked by ksl");
+    EXPECT_FAIL(paused, X509_V_ERR_CERT_REVOKED, "negative_paused_revoked: a revoked staple on the pause path");
+    hs paused_good = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_good, KSL_OCSP_GOOD, "pause path: a good staple is checked and passes");
+    hs paused_none = {"rv-leaf", NULL, NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_none, 0xff, "pause path: no staple passes for a leaf that does not require one");
+    hs paused_must = {"rv-leaf-must-staple", NULL, NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_must_staple: RFC 7633 leaf without a staple");
+    hs paused_must_ok = {
+        "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_must_ok, KSL_OCSP_GOOD, "pause path: a must-staple leaf with its staple");
+    hs paused_stale = {"rv-leaf", NULL, "ocsp-stale", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_stale, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_paused_stale: not satisfactory (RFC 6066 section 8)");
+    hs paused_off = {"rv-leaf-must-staple", NULL, NULL, KSL_REVOCATION_OFF, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_off, 0xff, "pause path, off: nothing requested, nothing required");
     /* a leaf that is itself the trust anchor, sent alone: nothing to check against, so a required staple fails */
     client_root = "rv-leaf";
     server_leaf_only = 1;
@@ -375,7 +391,18 @@ static void stapling_over(int mode, int tls12, const char *what) {
         "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(anchor_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_must_staple_without_issuer");
     client_root = "rv-root";
+    /* the pause path with the leaf sent alone: no presented certificate issued it, so a staple cannot be checked; it passes
+       unchecked unless the leaf requires one (the same rule as an anchored leaf above) */
+    hs alone_must = {
+        "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_must_staple_without_issuer");
+    hs alone = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(alone, 0xff, "pause path, leaf alone: an uncheckable staple of a leaf that requires none passes");
     server_leaf_only = 0;
+    /* a response whose certID names another issuer key than the presented issuer's: refused on the pause path too */
+    hs paused_mismatch = {"rv-leaf", NULL, "ocsp-other-issuer-key", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                          KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_mismatch, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_paused_response_under_another_issuer_key");
     /* a delegated responder the configured CRL lists is not authorized */
     hs rresp = {"rv-leaf", "ocsp-revoked-responder", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     hs_out o = handshake_with(&rresp, "crl-mid");

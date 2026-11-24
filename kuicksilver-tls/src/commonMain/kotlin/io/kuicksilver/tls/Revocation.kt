@@ -15,23 +15,30 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 /**
  * How a client treats the revocation status of the server's certificate that the server staples (OCSP, RFC 6066 section 8
  * and RFC 9846 section 4.5.1.1), the strategy RFC 9325 section 7.5 asks for ("TLS implementations MUST implement a strategy
- * to distrust revoked certificates"). It applies where `ksl`'s own verifier checks the chain: [TrustConfig.AnchoredCa], and
- * [TrustConfig.Platform] on Linux Native, also inside [TrustConfig.Pinned] and [TrustConfig.ExpectedName]. Elsewhere the
- * platform verifier keeps its own revocation behaviour ([TrustConfig.Platform] on the JVM, Android, Apple and Windows), and a
- * [TrustConfig.Custom] or [TrustConfig.Tofu] decides alone; [RequireStapled] is refused there.
+ * to distrust revoked certificates"). Every client but [Off] sends `status_request` and checks what the server staples, on
+ * every trust path: where `ksl`'s own verifier checks the chain ([TrustConfig.AnchoredCa], and [TrustConfig.Platform] on
+ * Linux Native, also inside [TrustConfig.Pinned] and [TrustConfig.ExpectedName]) against the issuer that verifier trusted;
+ * where another verifier decides trust ([TrustConfig.Platform] on the JVM, Android, Apple and Windows, a
+ * [TrustConfig.Custom], a [TrustConfig.Tofu]) against the presented certificate whose key signed the leaf, after that
+ * verifier said yes (a leaf sent without its issuer is then not checked, unless it is must-staple: it fails). The platform
+ * verifier keeps its own revocation behaviour on top. [RequireStapled] stays limited to `ksl`'s verifier and is refused
+ * elsewhere.
  *
- * A stapled response is checked as RFC 6960 section 3.2 says: it names the server's certificate and the issuer the verifier
- * trusted, its signature verifies under that issuer's key or a delegated responder's (id-kp-OCSPSigning, issued by that
+ * A stapled response is checked as RFC 6960 section 3.2 says: it names the server's certificate and its issuer, its signature verifies under that issuer's key or a delegated responder's (id-kp-OCSPSigning, issued by that
  * issuer), and it is inside its validity interval (5 minutes of clock skew; one day after thisUpdate when it has no
  * nextUpdate). RFC 6066 section 8: a client "MUST check the OCSP response and abort the handshake if the response is not
  * satisfactory with bad_certificate_status_response(113) alert", so under every policy but [Off] a stapled response that
  * says revoked ([VerifyReason.Revoked]) or fails a check ([VerifyReason.InvalidStatusResponse]) ends the handshake with
  * that alert. A certificate with the TLS feature extension `status_request` (RFC 7633, must-staple) needs a good stapled
- * response under every policy but [Off].
+ * response under every policy but [Off], on every trust path, the platform's included: RFC 7633 section 4.3.3, a client
+ * "MUST treat a certificate with a TLS feature extension as an invalid certificate if the features offered by the server do
+ * not contain all features present in both the client's ClientHello message and the TLS feature extension", and section
+ * 4.2.3.1 (SHOULD reject); otherwise [VerifyReason.UnknownRevocationStatus] and alert 113. [Off] is the way out for a server
+ * that is known to break its must-staple certificate (it sends no `status_request` and checks nothing).
  */
 @ExperimentalKuicksilverApi
 public enum class RevocationPolicy {
-    /** No `status_request` is sent and nothing is checked; configured CRLs still apply. */
+    /** No `status_request` is sent and nothing is checked, a must-staple certificate's staple included; configured CRLs still apply. */
     Off,
 
     /**

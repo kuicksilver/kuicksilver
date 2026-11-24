@@ -401,8 +401,15 @@ internal class KslContext private constructor(
             if (config.role == TlsRole.Client) {
                 val mode = verifyModeFor(config)
                 Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, mode)
-                // the stapled OCSP response is checked where ksl's verifier runs; a platform or application verifier keeps its own
-                if (mode == KslConst.VERIFY_OPENSSL) {
+                // every client but RevocationPolicy.Off asks for a stapled OCSP response and checks it (RFC 6066 section 8), on
+                // the pause path too (against the presented issuer, ksl_ocsp.c), so a must-staple leaf needs its staple whoever
+                // decides trust (RFC 7633 sections 4.2.3.1, 4.3.3); requiring a staple for every leaf stays ksl's verifier's
+                if (mode == KslConst.VERIFY_OPENSSL || mode == KslConst.VERIFY_PAUSE) {
+                    if (mode == KslConst.VERIFY_PAUSE && config.revocation == RevocationPolicy.RequireStapled) {
+                        throw TlsException.Config(
+                            "RevocationPolicy.RequireStapled needs a trust ksl verifies (AnchoredCa, or Platform on Linux Native), not ${config.trust}",
+                        )
+                    }
                     Ksl.ctxSetOption(h, KslConst.OPT_REVOCATION, revocationOption(config.revocation))
                 } else if (config.revocation == RevocationPolicy.RequireStapled) {
                     throw TlsException.Config(

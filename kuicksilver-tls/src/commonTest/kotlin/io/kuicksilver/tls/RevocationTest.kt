@@ -307,6 +307,99 @@ class RevocationTest {
         assertFailsWith<TlsException.Config> { Fixtures.client { ocspStapling = good } }
     }
 
+    /**
+     * The trusts whose chain `ksl` does not verify itself (the pause path): an application's verifier, TOFU, and the
+     * platform's where it is not OpenSSL (the JVM, Android, Apple, Windows), each under pins too. The pump's verifier
+     * accepts the chain, standing in for what each would decide.
+     */
+    private val pausedTrusts: List<TrustConfig>
+        get() {
+            val custom = TrustConfig.Custom(CertificateVerifier { chain, _, _ -> VerifyResult.Accepted(chain) })
+            val store =
+                object : TofuStore {
+                    override suspend fun get(name: String): SpkiSha256? = null
+
+                    override suspend fun put(
+                        name: String,
+                        pin: SpkiSha256,
+                    ) {}
+                }
+            val pin = Certificate(RevocationCerts.rvLeafMustStaple).spkiSha256
+            return listOfNotNull(
+                custom,
+                TrustConfig.Tofu(store),
+                TrustConfig.ExpectedName("server.test", base = custom),
+                TrustConfig.Platform.takeIf { !platformTrustViaOpenSsl },
+                TrustConfig.Pinned(setOf(pin), base = TrustConfig.Platform).takeIf { !platformTrustViaOpenSsl },
+            )
+        }
+
+    private fun pausedQuic(
+        client: TlsConfig,
+        server: TlsConfig,
+    ): Pump {
+        val p =
+            Pump(KslQuicCrypto.newSession(client), KslQuicCrypto.newSession(server)).also {
+                it.c.setTransportParameters(Fixtures.tp)
+                it.s.setTransportParameters(Fixtures.tp)
+            }
+        p.run(onVerify = { VerifyResult.Accepted(it.chain) })
+        return p
+    }
+
+    private val mustStaple get() = server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey)
+
+    /**
+     * RFC 7633 section 4.3.3: a client "MUST treat a certificate with a TLS feature extension as an invalid certificate if
+     * the features offered by the server do not contain all features present in both the client's ClientHello message and
+     * the TLS feature extension"; section 4.2.3.1: such a configuration it "SHOULD reject". The client sends status_request
+     * under every [RevocationPolicy] but `Off` on every trust path, so a must-staple leaf without a staple fails everywhere,
+     * the platform's and an application's verifier included (`UnknownRevocationStatus`, alert 113). Before 0.3.0 only the
+     * paths `ksl` verifies (AnchoredCa, Platform on Linux) held it.
+     */
+    @Test fun negative_mustStapleEnforcedOnEveryTrustPath() {
+        for (trust in pausedTrusts) {
+            val p = pausedQuic(client(trust = trust), mustStaple)
+            try {
+                val f = assertIs<DriveResult.Failed>(p.cs.last, "$trust: the client refuses")
+                assertEquals(113, f.alert, "$trust")
+                assertEquals(VerifyReason.UnknownRevocationStatus, assertIs<TlsException.Verify>(f.exception).reason, "$trust")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /** With its staple the must-staple leaf passes on every path; `Off` asks for nothing and requires nothing. */
+    @Test fun mustStapleLeafWithItsStaplePassesOnEveryTrustPath() {
+        val stapled = server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey, OcspStapling(RevocationCerts.ocspMustStaple))
+        for (trust in pausedTrusts) {
+            for ((policy, srv) in listOf(RevocationPolicy.StapledIfPresent to stapled, RevocationPolicy.Off to mustStaple)) {
+                val p = pausedQuic(client(policy, trust), srv)
+                try {
+                    assertTrue(p.cs.done && p.ss.done, "$trust, $policy: ${p.cs.last}")
+                } finally {
+                    p.close()
+                }
+            }
+        }
+    }
+
+    /**
+     * Once the client asks for a staple on the pause path it checks what arrives (RFC 6066 section 8: a client "MUST check
+     * the OCSP response and abort the handshake if the response is not satisfactory"): a revoked staple fails there too.
+     */
+    @Test fun negative_revokedStapleFailsOnThePausePath() {
+        val revoked = server(RevocationCerts.rvLeafRevoked, RevocationCerts.rvLeafRevokedKey, OcspStapling(RevocationCerts.ocspRevoked))
+        val p = pausedQuic(client(trust = pausedTrusts.first()), revoked)
+        try {
+            val f = assertIs<DriveResult.Failed>(p.cs.last, "the client refuses")
+            assertEquals(VerifyReason.Revoked, assertIs<TlsException.Verify>(f.exception).reason)
+        } finally {
+            p.close()
+        }
+    }
+
     /** A platform or application verifier keeps its own revocation behaviour; requiring a staple there is refused. */
     @Test fun negative_requireStapledNeedsKslVerifier() {
         val custom = TrustConfig.Custom(CertificateVerifier { chain, _, _ -> VerifyResult.Accepted(chain) })
