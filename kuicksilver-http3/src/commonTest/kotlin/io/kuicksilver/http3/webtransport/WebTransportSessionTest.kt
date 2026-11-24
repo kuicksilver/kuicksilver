@@ -4,6 +4,7 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -687,6 +689,68 @@ class WebTransportSessionTest {
                 call.join()
                 assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resetCode(st) })
                 assertEquals(0, withContext(client.session.dispatcher) { client.session.wtClientSessions })
+            }
+        }
+
+    /** The client's WebTransport session count, read on the session's dispatcher. */
+    private suspend fun sessions(client: Http3Connection): Int = withContext(client.session.dispatcher) { client.session.wtClientSessions }
+
+    /**
+     * A caller cancelled as the session is counted (the count's withContext returns into a cancelled caller) takes it off
+     * the count again: a count left at one for good refuses the connection's next session without WebTransport flow control
+     * and lowers the limit with it (section 5.1).
+     */
+    @Test fun negative_aCallerCancelledAsItsSessionIsCountedLeavesTheCountAtZero() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                lateinit var call: kotlinx.coroutines.Job
+                client.session.wtClientStepForTest = { if (it == "counted") call.cancel() }
+                call = launch { client.webTransport(wtReq()) }
+                call.join()
+                client.session.wtClientStepForTest = null
+                assertEquals(0, sessions(client), "the cancelled setup's count is given back")
+            }
+        }
+
+    /**
+     * A caller cancelled as its session is handed to the watcher of its end (the setup's last withContext returns into a
+     * cancelled caller): the started session nobody got is closed (WT_CLOSE_SESSION, FIN), and it is taken off the count
+     * once, by that watcher, not also by the setup (a count below zero lifts the section 5.1 limit by one).
+     */
+    @Test fun negative_aCallerCancelledAsItsSessionIsHandedOverCountsItOffOnce() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                lateinit var call: kotlinx.coroutines.Job
+                val ended = CompletableDeferred<Unit>()
+                client.session.wtClientStepForTest = {
+                    when (it) {
+                        "owned" -> call.cancel()
+                        "ended" -> ended.complete(Unit)
+                    }
+                }
+                call = launch { client.webTransport(wtReq()) }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st)
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                call.join()
+                // the started session nobody got is closed: WT_CLOSE_SESSION and the client's FIN, then the server's FIN
+                val rest = withTimeout(5.seconds) { st.input.readBuffer().readByteArray() }
+                assertTrue(rest.isNotEmpty(), "the client's WT_CLOSE_SESSION capsule")
+                st.output.flushAndClose()
+                withTimeout(5.seconds) { ended.await() }
+                client.session.wtClientStepForTest = null
+                assertEquals(0, sessions(client), "the session is counted off exactly once")
             }
         }
 

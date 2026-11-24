@@ -207,6 +207,13 @@ internal class H3Session(
     }
 
     /**
+     * Test hook: runs on the dispatcher at the steps of a client's WebTransport setup that change [wtClientSessions] or its
+     * owner: "counted" (the session counted), "registered" (before the session starts), "owned" (its end watcher launched),
+     * and "ended" (that watcher took it off the count).
+     */
+    internal var wtClientStepForTest: (suspend (String) -> Unit)? = null
+
+    /**
      * Client: WebTransport sessions being opened or open on this connection: one without flow control (section 5.1), up
      * to [Http3Settings.webTransportMaxSessions] with it. Dispatcher only.
      */

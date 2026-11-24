@@ -282,6 +282,20 @@ internal class WtSessionImpl(
     }
 
     /**
+     * The client's setup failed or was cancelled after it made this session, without handing it to the caller. A session
+     * its end watcher took over ([closeConnect]) is closed as the application would close it (code 0: WT_CLOSE_SESSION, FIN,
+     * the peer's FIN awaited in the connection's scope), so the CONNECT ends both ways and the watcher counts it off; one
+     * not taken over only releases what it holds, and the setup resets its CONNECT stream.
+     */
+    internal suspend fun abandon(
+        cause: Throwable,
+        closeConnect: Boolean,
+    ) {
+        val info = WebTransportCloseInfo(0, "", cause)
+        if (closeConnect) h3.scope.launch { terminate(info, End.Locally) } else terminate(info, End.Over)
+    }
+
+    /**
      * The peer broke flow control: section 5 says it "MUST close the WebTransport session with a WT_FLOW_CONTROL_ERROR
      * error code", which, as an HTTP/3 code and no application code, ends the CONNECT stream with RESET_STREAM and
      * STOP_SENDING. Session dispatcher only.
@@ -758,24 +772,36 @@ internal suspend fun H3Session.webTransport(
     // transport parameter"; a server that also announces draft-02 gets a draft-02 CONNECT ([wtClientVersion])
     val (chosen, refusal) = wtClientVersion(this)
     val version = chosen ?: throw Http3Exception.Settings(refusal!!)
-    withContext(dispatcher) {
-        if (wtClientSessions > 0) {
-            // section 5.1: "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous
-            // WebTransport session"; with it, at most as many as our own limit allows on one connection
-            if (!WtFlow.enabled(this@webTransport, version)) {
-                throw WebTransportException.ConnectionFull(
-                    "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one",
-                )
+    // counted: set with the count, on the dispatcher, so a caller cancelled as that withContext returns gives it back;
+    // owned: set once the session's end watcher was launched, which counts it off from then on (exactly one side does)
+    var counted = false
+    var owned = false
+    try {
+        withContext(dispatcher) {
+            if (wtClientSessions > 0) {
+                // section 5.1: "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous
+                // WebTransport session"; with it, at most as many as our own limit allows on one connection
+                if (!WtFlow.enabled(this@webTransport, version)) {
+                    throw WebTransportException.ConnectionFull(
+                        "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one",
+                    )
+                }
+                if (wtClientSessions >= settings.webTransportMaxSessions) {
+                    throw WebTransportException.ConnectionFull(
+                        "this connection carries webTransportMaxSessions (${settings.webTransportMaxSessions}) WebTransport sessions",
+                    )
+                }
             }
-            if (wtClientSessions >= settings.webTransportMaxSessions) {
-                throw WebTransportException.ConnectionFull(
-                    "this connection carries webTransportMaxSessions (${settings.webTransportMaxSessions}) WebTransport sessions",
-                )
-            }
+            wtClientSessions++
+            counted = true
+            wtClientStepForTest?.invoke("counted")
         }
-        wtClientSessions++
+    } catch (e: Throwable) {
+        if (counted) withContext(NonCancellable + dispatcher) { wtClientSessions-- }
+        throw e
     }
     var made: Http3Stream? = null
+    var built: WtSessionImpl? = null // the session made of it, until the caller has it
     try {
         val fields =
             buildList {
@@ -803,26 +829,41 @@ internal suspend fun H3Session.webTransport(
                 }
             }
         val s = WtSessionImpl(this, stream, stream.headers, selected, version)
+        built = s
         withContext(dispatcher) {
             wt.register(stream.streamId, s)
+            wtClientStepForTest?.invoke("registered")
             s.start()
             scope.launch {
                 ended.await()
                 s.ended()
                 wtClientSessions--
+                wtClientStepForTest?.invoke("ended")
             }
+            owned = true
+            wtClientStepForTest?.invoke("owned")
         }
         made = null
         return s
     } catch (e: Throwable) {
+        // a session its end watcher owns is closed, and the watcher counts it off; one it does not own only lets go
+        built?.let { withContext(NonCancellable) { it.abandon(e, closeConnect = owned) } }
         withContext(NonCancellable + dispatcher) {
-            wtClientSessions--
+            if (!owned) wtClientSessions--
             made?.let {
-                if (e is CancellationException || e is WebTransportException.Timeout) {
-                    it.reset(Http3ErrorCode.REQUEST_CANCELLED)
-                    it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                // a CONNECT stream nobody got: REQUEST_CANCELLED for a cancellation or the deadline; an owned session's is
+                // left to abandon, which closes it
+                val code =
+                    when {
+                        owned -> null
+                        e is CancellationException || e is WebTransportException.Timeout -> Http3ErrorCode.REQUEST_CANCELLED
+                        else -> null
+                    }
+                if (code != null) {
+                    it.reset(code)
+                    it.stopSending(code)
                 }
-                wt.unregister(it.streamId)
+                if (!owned) wt.unregister(it.streamId) // an owned session's own end takes it off the router
             }
         }
         throw e
