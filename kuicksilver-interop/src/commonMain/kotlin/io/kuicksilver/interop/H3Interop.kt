@@ -1,9 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.interop
 
+import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
@@ -100,7 +101,7 @@ internal object H3InteropClient {
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf(Http3Endpoint.H3); serverName = first.host.takeUnless { it.contains(':') }; this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
         val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
         val remote = InetSocketAddress(first.host, first.port)
-        val endpoint = Http3Endpoint.bind(clientLocalAddress(remote.resolveAddress()), QuicEndpointConfig.Builder().build())
+        val endpoint = Http3Endpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().build())
         try {
             return withTimeout(600.seconds) {
                 val conn = endpoint.connect(remote, tls, quic)

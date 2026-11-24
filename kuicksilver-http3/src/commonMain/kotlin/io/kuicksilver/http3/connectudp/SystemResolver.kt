@@ -6,6 +6,7 @@ package io.kuicksilver.http3.connectudp
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.tls.KslNet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,7 +82,7 @@ internal object SystemResolver {
     }
 
     private fun blockingLookup(host: String): List<ByteArray> {
-        if (!KslNet.available()) return listOfNotNull(InetSocketAddress(host, 0).resolveAddress())
+        if (!KslNet.available()) return listOfNotNull(InetSocketAddress(host, 0).resolveAddressOrNull()) // throws on Native
         val v4 = KslNet.resolve(host, ipv6 = false)
         val v6 = KslNet.resolve(host, ipv6 = true)
         if (v4 == null && v6 == null) throw IllegalStateException("the lookup of the name failed")

@@ -119,6 +119,41 @@ class KtorDatagramIoTest {
         }
 
     /**
+     * A connect target whose lookup throws, as Ktor's `resolveAddress()` does on Kotlin/Native (a PosixException with a stale
+     * errno): `withLiteralHost` keeps the name as its KDoc says, and connect fails at once with
+     * [QuicException.ConnectionLost.NoViablePath] caused by an `IOException` naming the target, as on the JVM
+     * (UnresolvableTargetJvmTest). Red before: the PosixException ENOTCONN escaped both.
+     */
+    @Test fun negative_aConnectTargetWhoseLookupThrowsIsNoViablePath() =
+        runBlocking {
+            val real = addressLookup
+            addressLookup = {
+                throw io.ktor.utils.io.errors.PosixException
+                    .forErrno(platform.posix.ENOTCONN)
+            }
+            try {
+                val name = InetSocketAddress("unresolvable.test", 443)
+                assertSame(name, name.withLiteralHost())
+                assertEquals("unresolvable.test", name.withLiteralHost(444).hostname)
+                assertNull(name.resolveAddressOrNull())
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                try {
+                    val e =
+                        assertFailsWith<QuicException.ConnectionLost.NoViablePath> {
+                            withTimeout(5.seconds) { client.connect(name, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
+                        }
+                    val cause = e.cause
+                    assertTrue(cause is IOException, "the address error as the cause: $cause")
+                    assertTrue("unresolvable.test" in (cause.message ?: ""), "${cause.message}")
+                } finally {
+                    client.closeAndJoin()
+                }
+            } finally {
+                addressLookup = real
+            }
+        }
+
+    /**
      * Any other refusal of the accelerated socket (a `KslException`: limits, a sandbox) reaches the caller through
      * `refused` and ends in a lack of DF that is not lasting (the socket may open next time), with the refusal attached as
      * suppressed; a refused bind (an `IOException`) is thrown as it is.

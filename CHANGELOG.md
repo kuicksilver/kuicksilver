@@ -1644,6 +1644,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
+  `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every
+  platform. On the JVM its datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's `PosixException`
+  escaped, with a stale errno (Ktor's `resolveAddress()` throws there after `getaddrinfo` fails, where the JVM answers
+  null), and `withLiteralHost` threw it too instead of keeping the name as documented.
 - CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
   sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
   502 comes only when none opened (also when the other family lacked DF).

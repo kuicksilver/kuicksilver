@@ -36,6 +36,7 @@ import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
+import io.kuicksilver.quic.ipBytesNoDns
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.openDatagramIo
 import io.kuicksilver.quic.tokenStoreKey
@@ -559,9 +560,19 @@ internal class EndpointLoop private constructor(
     /**
      * The connect target as an IP literal, resolved once here: the socket reports peers as IP literals, Kotlin/Native's
      * InetSocketAddress compares strings, the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see
-     * [ipLiteral]).
+     * [ipLiteral]). A name that does not resolve fails here, the same on every platform:
+     * [QuicException.ConnectionLost.NoViablePath] caused by an `IOException` naming it (on the JVM its datagrams were lost
+     * until the handshake timeout; on Kotlin/Native the lookup's stale-errno `PosixException` escaped).
      */
-    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress = remote.withLiteralHost()
+    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress {
+        val r = remote.withLiteralHost()
+        if (r.ipBytesNoDns() == null) {
+            throw QuicException.ConnectionLost.NoViablePath(
+                kotlinx.io.IOException("the connect target $remote does not resolve to an IP address"),
+            )
+        }
+        return r
+    }
 
     private suspend fun connectResolved(
         remote: InetSocketAddress,

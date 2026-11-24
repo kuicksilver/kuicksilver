@@ -1,9 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.interop
 
+import io.kuicksilver.quic.resolveAddressOrNull
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.EarlyDataState
@@ -60,7 +61,7 @@ internal object HqInteropClient {
         val client = QuicClientConfig.Builder(tls).apply { this.quic = quic; earlyData = plan.earlyData }.build()
         val remote = InetSocketAddress(first.host, first.port)
         /* `server6` resolves to an IPv6 address: the local socket must be of that family; a loopback server, from loopback */
-        val endpoint = QuicEndpoint.bind(clientLocalAddress(remote.resolveAddress()), QuicEndpointConfig.Builder().build())
+        val endpoint = QuicEndpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().build())
         try {
             return withTimeout(600.seconds) {
                 if (plan.earlyData != EarlyDataState.Disabled) {

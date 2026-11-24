@@ -21,7 +21,8 @@ public interface QuicEndpoint : AutoCloseable {
      * Opens a connection; returns once the handshake completed. Failures are [QuicException.ConnectionLost]; cancellation is never
      * wrapped, and a cancelled call closes the connection it started. [QuicException.ConnectionLost.Internal] when 16 draws of a
      * connection ID all hit one the endpoint loop already routes (RFC 9000 section 10.3.2: an ID belongs to one connection; only
-     * likely with a short `connectionIdLength` and many connections).
+     * likely with a short `connectionIdLength` and many connections). A [remote] whose name does not resolve fails at once with
+     * [QuicException.ConnectionLost.NoViablePath], its cause a `kotlinx.io.IOException` naming it, on every platform.
      */
     public suspend fun connect(
         remote: InetSocketAddress,
