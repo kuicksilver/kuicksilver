@@ -16,6 +16,12 @@ cflags=(-std=c11 -O1 "-ffile-prefix-map=$root=." -fvisibility=hidden -Wall -Wext
 case "$kind:$(uname)" in
   jni:Darwin) JH="${JAVA_HOME:-$(/usr/libexec/java_home)}"; clang "${cflags[@]}" -DKSL_TEST_HOOKS_JNI -I"$JH/include" -I"$JH/include/darwin" -dynamiclib -install_name @rpath/libksl_test_hooks.dylib "$src" -o "$out/libksl_test_hooks.dylib"; echo "$out/libksl_test_hooks.dylib" ;;
   jni:*) JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; "${CC:-cc}" "${cflags[@]}" -fPIC -DKSL_TEST_HOOKS_JNI -I"$JH/include" -I"$JH/include/linux" -shared "$src" -o "$out/libksl_test_hooks.so"; echo "$out/libksl_test_hooks.so" ;;
-  macos-arm64:Darwin) clang "${cflags[@]}" -arch arm64 -mmacosx-version-min=11.0 -c "$src" -o "$out/ksl_test_hooks.o"; rm -f "$out/libksl_test_hooks.a"; ar qc "$out/libksl_test_hooks.a" "$out/ksl_test_hooks.o"; ranlib "$out/libksl_test_hooks.a"; echo "$out/libksl_test_hooks.a" ;;
+  macos-arm64:Darwin)
+    # archived with llvm-ar like every Apple archive (tools/openssl/build.sh: Xcode's ranlib leaves uninitialised padding in
+    # the index), found by tools/check/llvm-tool.sh
+    . "$root/tools/check/llvm-tool.sh"; ar=$(ksl_llvm_tool llvm-ar || true)
+    [ -n "$ar" ] || { echo "no llvm-ar (install the NDK pinned in gradle/toolchains.toml, or set LLVM_AR)" >&2; exit 2; }
+    clang "${cflags[@]}" -arch arm64 -mmacosx-version-min=11.0 -c "$src" -o "$out/ksl_test_hooks.o"; rm -f "$out/libksl_test_hooks.a"
+    ZERO_AR_DATE=1 "$ar" qc "$out/libksl_test_hooks.a" "$out/ksl_test_hooks.o"; "$ar" s "$out/libksl_test_hooks.a"; echo "$out/libksl_test_hooks.a" ;;
   *) echo "$kind needs a macOS host" >&2; exit 2 ;;
 esac

@@ -80,7 +80,7 @@ tasks.register<Exec>("buildTestHooksMacosArm64") {
     group = "native"; description = "Builds the macosArm64 tests' native hooks"
     onlyIf("the host is macOS") { testHooksMacHost }
     if (testHooksMacHost) dependsOn("opensslBuildMacosArm64")
-    inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
+    inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"), root.resolve("tools/check/llvm-tool.sh"))   // llvm-tool.sh: its llvm-ar
     outputs.dir(layout.buildDirectory.dir("test-hooks/macos-arm64"))
     commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "macos-arm64", layout.buildDirectory.dir("test-hooks/macos-arm64").get().asFile.path)
 }
