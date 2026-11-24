@@ -31,6 +31,7 @@ import java.nio.channels.ClosedChannelException
 import java.nio.channels.SelectableChannel
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
@@ -119,6 +120,12 @@ internal class KslNioSocket(
 
     /** Times a write answered 0 and the writer waited for the socket to become writable (tests). */
     internal val writeWaits = AtomicLong()
+
+    /**
+     * Writes of this socket's writer inside `SocketChannel.write` right now, 0 or 1 (tests): whether the writer is in a write
+     * of this socket, which sampling every thread's stack cannot tell from another socket's write in the process.
+     */
+    internal val writesInFlight = AtomicInteger()
 
     /** Bytes the kernel has taken from the writer ([bytesSent]): the progress of a drain. */
     internal val bytesWritten = AtomicLong()
@@ -257,6 +264,7 @@ internal class KslNioSocket(
                 var refused: Throwable? = null
                 sendFailures.send({ it === refused }) {
                     channel.read { buffer ->
+                        writesInFlight.incrementAndGet()
                         val n =
                             try {
                                 nio.write(buffer)
@@ -264,6 +272,8 @@ internal class KslNioSocket(
                                 // the system's verdict on the connection (a reset, a timeout), not this socket's own close
                                 if (e !is ClosedChannelException) refused = e
                                 throw e
+                            } finally {
+                                writesInFlight.decrementAndGet()
                             }
                         if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
                     }

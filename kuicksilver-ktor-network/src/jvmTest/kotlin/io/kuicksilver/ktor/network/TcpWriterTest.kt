@@ -373,7 +373,11 @@ class TcpWriterTest {
                 val released = withTimeoutOrNull(20.seconds) { raw.socketContext.join() }
                 assertTrue(released != null, "the TCP socket is released within the close bound although the peer never reads")
                 assertTrue(!(raw as KslNioSocket).isOpen, "and its descriptor is closed")
-                assertTrue(scope.async { threadsInSocketWrite() }.await() == 0, "no writer left in SocketChannel.write")
+                // this socket's writer, not every thread of the process: one sample of all stacks counts any socket's write
+                // in flight anywhere in the JVM (it failed once on a Windows 11 VM with this socket already released, its
+                // writer job complete), which says nothing about this one
+                assertTrue(raw.writeWaits.get() >= 1, "the writer under test is ours and waited for room")
+                assertEquals(0, raw.writesInFlight.get(), "no writer of this socket left in SocketChannel.write")
             } finally {
                 release.complete(Unit)
                 scope.cancel()
