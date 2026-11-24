@@ -116,7 +116,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      issuer's name, signed by nobody, with about 4,400 such points in the 100 KiB certificate list cost 27 ms of CPU per
      such CRL and 0.83 s against 32 of them (macos-arm64, `test_revocation.c` `revocation_crl_distribution_points`). The
      fix builds the names once per certificate and fails closed on more than 16 relative points when such a CRL is
-     scored). Upstream code: OpenSSL commit openssl/openssl@54e14955ef (pull request #33546), merged to master on
+     scored; `ksl` reports that refusal, `X509_V_ERR_UNSPECIFIED` in OpenSSL (internal_error), as
+     `X509_V_ERR_UNABLE_TO_GET_CRL`: unknown_ca, `VerifyReason.UnknownRevocationStatus`). Upstream code: OpenSSL commit openssl/openssl@54e14955ef (pull request #33546), merged to master on
      2026-11-18 and to openssl-4.1 as 14a9f9ad6e, verbatim. Owner decision 2026-11-25: dropped with the first 4.1.x
      release that contains 14a9f9ad6e (expected 4.1.1), and the pin moves to that release as soon as it ships.
   The rules for all eleven:

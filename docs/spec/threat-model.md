@@ -111,12 +111,15 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
   4.1.0 built the full name of each relative CRL distribution point of the certificate again for every CRL of its issuer
   with an issuingDistributionPoint (CVE-2026-121482), so an unsigned leaf under a configured issuer's name with about
   4,400 of them in the 100 KiB certificate list cost 27 ms of CPU per such CRL, 0.83 s against 32 (macos-arm64);
-  the carried patch 11 (ADR-0019, upstream 54e14955ef) builds them once per certificate and fails closed on more than 16.
+  the carried patch 11 (ADR-0019, upstream 54e14955ef) builds them once per certificate and fails closed on more than 16
+  relative distribution points, only when a CRL of the certificate's issuer with an issuingDistributionPoint is configured
+  (`VerifyReason.UnknownRevocationStatus`, unknown_ca: the peer's certificate is the cause, not an internal error).
 - **Not covered:** `Platform` off Linux Native, where the OS verifier decides: Apple and Windows apply their own revocation
   policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks
   revocation; `Custom` and `Tofu` (the application's); delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
 - **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`,
-  `revocation_crl_distribution_points` (`negative_crldp_flood`, `negative_crldp_relative_17`); `RevocationTest`
+  `revocation_crl_distribution_points` (`negative_crldp_flood`, `negative_crldp_flood_mixed`, `negative_crldp_relative_17`);
+  `RevocationTest.negative_crlDistributionPointsBeyondTheBoundFail`; `RevocationTest`
   (`negative_quicStapledRevokedFails`, `negative_tcpStapledRevokedFails`, `negative_quicRequiredStapleMissing`,
   `negative_quicMustStapleLeafWithoutStaple`, `negative_serverStaplesNoStaleOrForeignResponse`,
   `negative_staleCachedStapleIsNotResumed`, `negative_crlRevokedLeafFails`, `negative_expiredCrlFails`,

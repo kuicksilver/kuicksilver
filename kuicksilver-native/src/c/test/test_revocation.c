@@ -8,6 +8,8 @@
 #include <openssl/ocsp.h>
 #ifndef _WIN32
 #include <pthread.h>
+#else
+#include <windows.h>
 #endif
 
 #define RV "revocation/"
@@ -672,8 +674,9 @@ static X509 *dp_ca(EVP_PKEY *k) {
     return x;
 }
 /* A leaf of `ca` with `relative` distribution points CN=dp<i> (none names a CRL), with `interleave` a fullName one after every
-   fourth of them, and last, when `match` is set, a relative one CN=<match> (relative = 0: the fullName URI <match>). Signed by `signer`. */
-static X509 *dp_leaf(X509 *ca, EVP_PKEY *signer, long serial, int relative, int interleave, const char *match,
+   fourth of them, then `full` fullName ones (URIs naming no CRL), and last, when `match` is set, a relative one CN=<match>
+   (relative = 0: the fullName URI <match>). Its key is `signer`'s, and `signer` signs it. */
+static X509 *dp_leaf(X509 *ca, EVP_PKEY *signer, long serial, int relative, int interleave, int full, const char *match,
                      int match_relative) {
     X509 *x = X509_new();
     X509_set_version(x, X509_VERSION_3);
@@ -701,6 +704,12 @@ static X509 *dp_leaf(X509 *ca, EVP_PKEY *signer, long serial, int relative, int 
             dp->distpoint = dp_name(0, v);
             sk_DIST_POINT_push(dps, dp);
         }
+    }
+    for (int i = 0; i < full; i++) {
+        DIST_POINT *dp = DIST_POINT_new();
+        snprintf(v, sizeof v, "http://dp.invalid/f%d.crl", i);
+        dp->distpoint = dp_name(0, v);
+        sk_DIST_POINT_push(dps, dp);
     }
     if (match) {
         DIST_POINT *dp = DIST_POINT_new();
@@ -788,13 +797,27 @@ static ksl_ctx *dp_client(X509 *ca, X509_CRL **crls, int n) {
     free(l.buf);
     return c;
 }
+/* the process's CPU time in milliseconds: clock() on POSIX hosts; on Windows, where clock() is wall time, GetProcessTimes */
+static double dp_cpu_ms(void) {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+        return 0;
+    ULARGE_INTEGER k, u;
+    k.LowPart = kernel.dwLowDateTime, k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime, u.HighPart = user.dwHighDateTime;
+    return (double)(k.QuadPart + u.QuadPart) / 10000.0; /* 100 ns units */
+#else
+    return (double)clock() * 1000.0 / CLOCKS_PER_SEC;
+#endif
+}
 static int dp_verify(ksl_ctx *c, X509 *leaf, double *cpu_ms) {
     blob ch = dp_framed_cert(leaf);
     int err = -1;
-    clock_t t0 = clock();
+    double t0 = dp_cpu_ms();
     int rc = ksl_ctx_verify_chain(c, ch.buf, ch.len, "leaf.test", 0, &err);
     if (cpu_ms)
-        *cpu_ms = (double)(clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
+        *cpu_ms = dp_cpu_ms() - t0;
     free(ch.buf);
     return rc == KSL_OK ? X509_V_OK : err;
 }
@@ -811,7 +834,7 @@ static void test_crl_dp_work(void) {
         snprintf(idp, sizeof idp, "http://crl.invalid/%d.crl", i);
         crls[i] = dp_crl(ca, ck, i + 1, idp, 0, 0);
     }
-    X509 *evil = dp_leaf(ca, ak, 66, MANY, 0, NULL, 0);
+    X509 *evil = dp_leaf(ca, ak, 66, MANY, 0, 0, NULL, 0);
     int evil_len = i2d_X509(evil, NULL);
     CHECK(evil_len > 80000 && evil_len < 100 * 1024, "crldp: the peer's leaf fits a handshake's certificate list");
     ksl_ctx *one = dp_client(ca, crls, 1), *all = dp_client(ca, crls, CRLS);
@@ -827,22 +850,48 @@ static void test_crl_dp_work(void) {
     printf(
         "  %d-byte leaf, %d relative distribution points: %.1f ms CPU against 1 CRL, %.1f ms against %d (x509 %d, %d)\n",
         evil_len, MANY, t1, tn, CRLS, e1, en);
-    CHECK(e1 != X509_V_OK && en != X509_V_OK, "negative_crldp_flood: the unsigned leaf fails");
+    /* refused at the first CRL scored for it (patch 11's bound), reported as a CRL that cannot be used for it: the bound below
+       holds because of that refusal, not because the verification stopped early for another reason */
+    CHECK(e1 == X509_V_ERR_UNABLE_TO_GET_CRL && en == X509_V_ERR_UNABLE_TO_GET_CRL,
+          "negative_crldp_flood: the unsigned leaf fails at the bound on relative distribution points");
     CHECK(tn <= 4 * t1 + 25.0,
           "negative_crldp_flood: the work does not grow with (CRLs of the issuer) x (relative distribution points)");
+    /* within the bound: 16 relative distribution points (their names built once per certificate) and ~2,600 fullName ones
+       compared against every CRL; nothing matches, so the leaf is out of every CRL's scope */
+    enum { FULL = 2600 };
+    X509 *mixed = dp_leaf(ca, ak, 67, 16, 0, FULL, NULL, 0);
+    int mixed_len = i2d_X509(mixed, NULL);
+    CHECK(mixed_len > 80000 && mixed_len < 100 * 1024, "crldp: the mixed leaf fits a handshake's certificate list");
+    double m1 = 1e9, mn = 1e9;
+    int f1 = 0, fn = 0;
+    for (int round = 0; round < 3; round++) {
+        double t;
+        f1 = dp_verify(one, mixed, &t);
+        m1 = t < m1 ? t : m1;
+        fn = dp_verify(all, mixed, &t);
+        mn = t < mn ? t : mn;
+    }
+    printf(
+        "  %d-byte leaf, 16 relative and %d fullName distribution points: %.1f ms CPU against 1 CRL, %.1f ms against %d "
+        "(x509 %d, %d)\n",
+        mixed_len, FULL, m1, mn, CRLS, f1, fn);
+    CHECK(f1 == X509_V_ERR_DIFFERENT_CRL_SCOPE && fn == X509_V_ERR_DIFFERENT_CRL_SCOPE,
+          "negative_crldp_flood_mixed: the leaf is out of every CRL's scope");
+    CHECK(mn <= 4 * m1 + 25.0, "negative_crldp_flood_mixed: 16 relative names are built once, not once per CRL");
     ksl_ctx_free(one);
     ksl_ctx_free(all);
     X509_free(evil);
+    X509_free(mixed);
     for (int i = 0; i < CRLS; i++)
         X509_CRL_free(crls[i]);
     /* the names still match: CRL 1 covers CN=part-1 (relative) and revokes serial 2, CRL 2 covers the URI part-2 and revokes
        serial 5; a leaf names its CRL after 15 or 16 relative distribution points (fullName ones among them) */
     X509_CRL *parts[2] = {dp_crl(ca, ck, 1, "part-1", 1, 2), dp_crl(ca, ck, 2, "http://crl.invalid/part-2.crl", 0, 5)};
     ksl_ctx *c = dp_client(ca, parts, 2);
-    X509 *l2 = dp_leaf(ca, ck, 2, 15, 1, "part-1", 1), *l3 = dp_leaf(ca, ck, 3, 15, 1, "part-1", 1),
-         *l5 = dp_leaf(ca, ck, 5, 16, 1, "http://crl.invalid/part-2.crl", 0),
-         *l7 = dp_leaf(ca, ck, 7, 16, 1, "http://crl.invalid/part-2.crl", 0),
-         *l9 = dp_leaf(ca, ck, 9, 16, 1, "part-1", 1);
+    X509 *l2 = dp_leaf(ca, ck, 2, 15, 1, 0, "part-1", 1), *l3 = dp_leaf(ca, ck, 3, 15, 1, 0, "part-1", 1),
+         *l5 = dp_leaf(ca, ck, 5, 16, 1, 0, "http://crl.invalid/part-2.crl", 0),
+         *l7 = dp_leaf(ca, ck, 7, 16, 1, 0, "http://crl.invalid/part-2.crl", 0),
+         *l9 = dp_leaf(ca, ck, 9, 16, 1, 0, "part-1", 1);
     int e = dp_verify(c, l2, NULL);
     CHECK(e == X509_V_ERR_CERT_REVOKED, "negative_crldp_relative_revoked: 16th distribution point CN=part-1, revoked");
     if (e != X509_V_ERR_CERT_REVOKED)
@@ -857,11 +906,51 @@ static void test_crl_dp_work(void) {
     CHECK(e == X509_V_OK, "a leaf naming part-2 after 16 relative distribution points and not revoked passes");
     if (e != X509_V_OK)
         printf("  got x509=%d\n", e);
-    /* upstream's bound (MAX_DP_NAMES): a 17th relative distribution point fails the certificate (fail closed) */
+    /* upstream's bound (MAX_DP_NAMES): a 17th relative distribution point fails the certificate (fail closed), reported by ksl
+       as a configured CRL that cannot be used for it (OpenSSL's X509_V_ERR_UNSPECIFIED would be internal_error, ksl's fault) */
     e = dp_verify(c, l9, NULL);
-    CHECK(e == X509_V_ERR_UNSPECIFIED, "negative_crldp_relative_17: 17 relative distribution points fail closed");
-    if (e != X509_V_ERR_UNSPECIFIED)
+    CHECK(e == X509_V_ERR_UNABLE_TO_GET_CRL, "negative_crldp_relative_17: 17 relative distribution points fail closed");
+    if (e != X509_V_ERR_UNABLE_TO_GET_CRL)
         printf("  got x509=%d\n", e);
+    /* and in a handshake (TCP and QUIC): unknown_ca (48), as for any configured CRL that cannot be used for the certificate */
+    for (int quic = 0; quic <= 1; quic++) {
+        ksl_ctx *sc = ksl_ctx_new(KSL_SERVER), *cc = dp_client(ca, parts, 2);
+        ksl_ctx_set_alpn(sc, ALPN_H3, sizeof ALPN_H3);
+        ksl_ctx_set_alpn(cc, ALPN_H3, sizeof ALPN_H3);
+        ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL);
+        blob ch = dp_framed_cert(l9);
+        unsigned char *kd = NULL;
+        int kl = i2d_PrivateKey(ck, &kd);
+        CHECK(ksl_ctx_set_identity(sc, ch.buf, ch.len, kd, (size_t)kl) == KSL_OK, "crldp: server identity");
+        OPENSSL_free(kd);
+        free(ch.buf);
+        int mode = quic ? KSL_MODE_QUIC : KSL_MODE_TCP;
+        ksl_ssl *cs = ksl_ssl_new(cc, mode), *ss = ksl_ssl_new(sc, mode);
+        ksl_ssl_set(cs, KSL_SET_SNI, (const uint8_t *)"leaf.test", sizeof "leaf.test" - 1);
+        ksl_ssl_set(cs, KSL_SET_VERIFY_NAME, (const uint8_t *)"leaf.test", sizeof "leaf.test" - 1);
+        int rc;
+        if (quic) {
+            ksl_quic_set_transport_params(cs, TP, sizeof TP);
+            ksl_quic_set_transport_params(ss, TP, sizeof TP);
+            side a = {0}, b = {0};
+            rc = pump(cs, ss, &a, &b, 40, accept_all, NULL);
+        } else {
+            rc = tcp_pump(cs, ss);
+        }
+        int al = 0;
+        char m[256];
+        uint32_t code;
+        ksl_ssl_last_error(cs, &code, &al, m, sizeof m);
+        CHECK(rc == KSL_ERROR && (al & 0x1ff) == 48 && (al >> 16) == X509_V_ERR_UNABLE_TO_GET_CRL,
+              quic ? "negative_crldp_relative_17 over QUIC: unknown_ca (48), UNABLE_TO_GET_CRL"
+                   : "negative_crldp_relative_17 over TCP: unknown_ca (48), UNABLE_TO_GET_CRL");
+        if (!(rc == KSL_ERROR && (al & 0x1ff) == 48 && (al >> 16) == X509_V_ERR_UNABLE_TO_GET_CRL))
+            printf("  got rc=%d alert=%d x509=%d\n", rc, al & 0x1ff, al >> 16);
+        ksl_ssl_free(cs);
+        ksl_ssl_free(ss);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
     ksl_ctx_free(c);
     X509_free(l2);
     X509_free(l3);

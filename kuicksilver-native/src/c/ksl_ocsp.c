@@ -485,6 +485,31 @@ static int anchor_status(X509_STORE_CTX *x, X509 *anchor) {
     ERR_clear_error();
     return e;
 }
+/* Whether the failure being reported is the refusal of the carried patch 11 (CVE-2026-121482, ADR-0019; upstream x509_vfy.c
+   get_crldp_full_names): a certificate with more than 16 (MAX_DP_NAMES) nameRelativeToCRLIssuer distribution points, refused
+   as X509_V_ERR_UNSPECIFIED with X509_R_INVALID_DISTPOINT on the error queue once a CRL of its issuer with an
+   issuingDistributionPoint is scored. All three must hold (the code, the queued reason, the certificate's own count), so no
+   other UNSPECIFIED (an allocation failure in the same function included, which queues no such reason) is taken for it. */
+static int crl_dp_refusal(X509_STORE_CTX *x) {
+    if (X509_STORE_CTX_get_error(x) != X509_V_ERR_UNSPECIFIED ||
+        (X509_VERIFY_PARAM_get_flags(X509_STORE_CTX_get0_param(x)) & X509_V_FLAG_CRL_CHECK) == 0)
+        return 0;
+    unsigned long q = ERR_peek_last_error();
+    X509 *cur = X509_STORE_CTX_get_current_cert(x);
+    if (ERR_GET_LIB(q) != ERR_LIB_X509 || ERR_GET_REASON(q) != X509_R_INVALID_DISTPOINT || cur == NULL)
+        return 0;
+    ERR_set_mark();
+    CRL_DIST_POINTS *dps = X509_get_ext_d2i(cur, NID_crl_distribution_points, NULL, NULL);
+    ERR_pop_to_mark();
+    int relative = 0;
+    for (int i = 0; i < sk_DIST_POINT_num(dps); i++) {
+        DIST_POINT *dp = sk_DIST_POINT_value(dps, i);
+        if (dp->distpoint != NULL && dp->distpoint->type == 1)
+            relative++;
+    }
+    CRL_DIST_POINTS_free(dps);
+    return relative > 16;
+}
 static int crl_verify_cb(int ok, X509_STORE_CTX *x) {
     if (ok) {
         /* the success signal at the top of a path that ends in a trust anchor which is not self-signed */
@@ -499,6 +524,13 @@ static int crl_verify_cb(int ok, X509_STORE_CTX *x) {
         if (e == X509_V_OK)
             return ok;
         X509_STORE_CTX_set_error(x, e);
+        return 0;
+    }
+    /* the peer's certificate is the cause, not ksl (RFC 8446 section 6.2): reported as a configured CRL that cannot be used
+       for it, as for any other (UNABLE_TO_GET_CRL: unknown_ca, VerifyReason.UnknownRevocationStatus), fail closed */
+    if (crl_dp_refusal(x)) {
+        X509_STORE_CTX_set_error(x, X509_V_ERR_UNABLE_TO_GET_CRL);
+        ERR_clear_error();
         return 0;
     }
     if (X509_STORE_CTX_get_error(x) != X509_V_ERR_UNABLE_TO_GET_CRL)
