@@ -278,8 +278,9 @@ class GuideSamplesTest {
     fun webTransportSamples() =
         runBlocking {
             withTimeout(30.seconds) {
-                val q = QuicPair.open()
-                val (quicConnection, serverQuic) = q.connect()
+                // reset_stream_at on both sides, as Http3Endpoint turns it on with webTransport (draft-17 section 3.1)
+                val q = QuicPair.open(H3Fixtures.quic)
+                val (quicConnection, serverQuic) = q.connect(H3Fixtures.quic)
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
@@ -316,8 +317,9 @@ class GuideSamplesTest {
     fun webTransportEchoSample() =
         runBlocking {
             withTimeout(30.seconds) {
-                val q = QuicPair.open()
-                val (quicConnection, serverQuic) = q.connect()
+                // reset_stream_at on both sides, as Http3Endpoint turns it on with webTransport (draft-17 section 3.1)
+                val q = QuicPair.open(H3Fixtures.quic)
+                val (quicConnection, serverQuic) = q.connect(H3Fixtures.quic)
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
