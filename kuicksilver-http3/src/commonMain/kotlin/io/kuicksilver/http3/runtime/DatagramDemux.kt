@@ -355,6 +355,13 @@ internal class Http3StreamImpl(
     /** [job] reads this stream: it may finish what the peer sent when the connection is lost (`H3Session.drains`). */
     internal fun drains(job: Job): Job = session.drains(job)
 
+    /** Logs a capsule sent or ([parsed]) read on this stream (`H3Qlog.capsule`). */
+    internal fun qlogCapsule(
+        parsed: Boolean,
+        type: Long,
+        valueLength: Int,
+    ) = session.qlog { it.capsule(parsed, st.id, type, valueLength.toLong()) }
+
     private val capsulesInUse = AtomicBoolean(false)
 
     /** The connection's reason why HTTP/3 datagrams cannot be sent, or null when they can. */

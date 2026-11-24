@@ -166,6 +166,42 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * draft-ietf-quic-qlog-h3-events-14 section 6: every capsule sent or read on the CONNECT stream is `http:capsule_created`
+     * / `http:capsule_parsed`, by its type (WT_CLOSE_SESSION is 0x2843, an "unknown" capsule there) and lengths, never its
+     * value (the close reason stays out of the trace). The client's close shows at both ends.
+     */
+    @Test fun capsulesAreInTheQlogTrace() =
+        h3Test {
+            val sink =
+                io.kuicksilver.http3.runtime
+                    .MemoryQlogSink()
+            val traced =
+                quicConfig {
+                    resetStreamAt = true
+                    qlog = sink
+                }
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = traced, clientQuic = traced).useScoped { p ->
+                val (client, server) = sessions(p)
+                client.close(7, "a secret reason")
+                withTimeout(5.seconds) { server.closed.await() }
+
+                fun has(
+                    role: TlsRole,
+                    vararg parts: String,
+                ) = sink.trace(role).records.any { r -> parts.all { it in r } }
+                io.kuicksilver.http3.runtime.awaitCondition("the close capsule logged at both ends") {
+                    has(TlsRole.Client, "http:capsule_created", "\"capsule_type_value\":${WtCloseCapsule.TYPE}") &&
+                        has(TlsRole.Server, "http:capsule_parsed", "\"capsule_type_value\":${WtCloseCapsule.TYPE}")
+                }
+                assertTrue(sink.traces.none { t -> t.records.any { "a secret reason" in it } }, "the reason stays out of the trace")
+                for (t in sink.traces) {
+                    io.kuicksilver.http3.runtime.QlogSchema
+                        .check(t.records)
+                }
+            }
+        }
+
     @Test fun establishDraft16() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->

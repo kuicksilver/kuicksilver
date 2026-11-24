@@ -10,6 +10,7 @@ import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
+import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.quic.QlogRecorder
 
 /**
@@ -93,6 +94,29 @@ internal class H3Qlog(
         if (name == "unknown") sb.append(",\"stream_type_value\":").append(type)
         if (sessionId != null) sb.append(",\"session_id\":").append(sessionId)
         recorder.record("http:stream_type_set", sb.toString())
+    }
+
+    /**
+     * `http:capsule_created` or, with [parsed], `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6): a
+     * capsule of [type] with a value of [valueLength] bytes on [streamId]. Section 7.1's HTTPCapsuleDatagram for DATAGRAM,
+     * HTTPCapsuleUnknown (with `capsule_type_value`) for every other type, WebTransport's included; the value is never
+     * written (a WT_CLOSE_SESSION reason is application data). The events are those of h3-events-13 and later: -04, which
+     * the other HTTP/3 events follow, has none for capsules.
+     */
+    fun capsule(
+        parsed: Boolean,
+        streamId: Long,
+        type: Long,
+        valueLength: Long,
+    ) {
+        val raw = "\"raw\":{\"length\":${VarInt.size(type) + VarInt.size(valueLength) + valueLength},\"payload_length\":$valueLength}"
+        val capsule =
+            if (type == io.kuicksilver.http3.CapsuleProtocol.DATAGRAM) {
+                "{\"capsule_type\":\"datagram\",$raw}"
+            } else {
+                "{\"capsule_type\":\"unknown\",\"capsule_type_value\":$type,$raw}"
+            }
+        recorder.record(if (parsed) "http:capsule_parsed" else "http:capsule_created", "\"stream_id\":$streamId,\"capsule\":$capsule")
     }
 
     /** `http:frame_created`: [frame] (a qlog HTTPFrame object) of [payloadLength] bytes, written on [streamId]. */

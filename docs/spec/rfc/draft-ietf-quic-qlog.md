@@ -101,6 +101,12 @@ model 3.26).
   `runtime.H3QlogTest.qpackStateAndBlockedStreamsAreLogged`,
   `runtime.EarlyDataTest.storedSettingsAreLoggedAsRestored`,
   `webtransport.WebTransportSessionTest.webTransportStreamsAreInTheQlogTrace`
+- every capsule sent or read on an Extended CONNECT stream as `http:capsule_created` / `http:capsule_parsed`
+  (draft-ietf-quic-qlog-h3-events-14 section 6; -04, which the other events follow, has no capsule events): DATAGRAM as
+  `capsule_type` "datagram", every other type, WebTransport's WT_CLOSE_SESSION (0x2843) included, as "unknown" with
+  `capsule_type_value`, each with its `raw` lengths and never its value (a close reason is application data) (0.3.0;
+  before, a capsule showed only as the DATA frame carrying it, so a trace could not tell a browser's WT_CLOSE_SESSION) —
+  `webtransport.WebTransportSessionTest.capsulesAreInTheQlogTrace`
 - unknown, reserved, oversized and refused frames, a stream ending inside a frame — `runtime.H3QlogTest.unknownFramesAndStreamTypesAreLoggedByNumber`,
   `runtime.H3QlogTest.aHeadersFrameTooLargeIsLoggedWithoutFields`, `runtime.H3QlogTest.anErrorMidStreamLeavesAValidTrace`,
   `runtime.H3QlogTest.aStreamEndingInsideAFrameLeavesAValidTrace`

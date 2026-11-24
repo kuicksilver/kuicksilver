@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
+  capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
+  shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.
 - QUIC qlog: `transport:parameters_set` (quic-events-04 section 5.3) for our transport parameters and the peer's, on both
   roles, once the peer's arrive. It carries `max_datagram_frame_size`, `reset_stream_at` and `grease_quic_bit` as the
   unspecified fields the section allows. Before, a trace could not show what the peer sent, `reset_stream_at`
