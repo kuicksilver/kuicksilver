@@ -16,16 +16,34 @@ bak=$(mktemp -d); cp "$d/configure-target.txt" "$d/provenance.txt" "$bak/"
 restore() { cp "$bak/configure-target.txt" "$bak/provenance.txt" "$d/"; rm -rf "$bak"; }
 trap restore EXIT
 rc=0
-run() { "${G[@]}" -q -Pkuicksilver.openssl.prebuilt=true "$task" > "$bak/out.txt" 2>&1; }
+# Deterministic, and in the harder case: Gradle runs with a project cache directory of its own (--project-cache-dir), so
+# it has no execution history of the task, as in a fresh worktree. There Gradle deletes build/openssl/<target> as a stale
+# output before the task's own actions run; a check in those actions found it missing and built it instead of refusing
+# (it failed once that way, the first run in a fresh worktree; openssl.gradle.kts now refuses when the task graph is
+# ready). --rerun keeps an UP-TO-DATE verdict from skipping the task and --no-watch-fs makes Gradle read the files as the
+# test left them. Each case also checks that tools/openssl/build.sh did not run (it would restore the files from its
+# cache) and that the metadata and archives are byte for byte what the case set up.
+pcd=$(mktemp -d); trap 'restore; rm -rf "$pcd"' EXIT
+run() { "${G[@]}" -q --no-watch-fs --project-cache-dir "$pcd" -Pkuicksilver.openssl.prebuilt=true "$task" --rerun > "$bak/out.txt" 2>&1; }
+snap() { for f in configure-target.txt provenance.txt lib/libcrypto.a lib/libssl.a; do printf '%s %s\n' "$f" "$( [ -f "$d/$f" ] && shasum -a 256 < "$d/$f" | cut -c1-64 || echo none)"; done; }
 expect() { # <0|1> <what> [reason grep]
-  run; local got=$?; [ "$got" = 0 ] || got=1
-  if [ "$got" = "$1" ] && { [ -z "${3:-}" ] || grep -q "$3" "$bak/out.txt"; }; then echo "ok: $2"; else echo "FAIL: $2 (exit $got)"; tail -15 "$bak/out.txt" | sed 's/^/  | /'; rc=1; fi
+  local before after got why=""; before=$(snap)
+  run; got=$?; [ "$got" = 0 ] || got=1; after=$(snap)
+  [ "$got" = "$1" ] || why="exit $got"
+  [ -z "${3:-}" ] || grep -q "$3" "$bak/out.txt" || why="$why; no '$3' in the output"
+  ! grep -qE '^(cache hit|built) ' "$bak/out.txt" || why="$why; tools/openssl/build.sh ran"
+  [ "$before" = "$after" ] || why="$why; build/openssl/$t changed during the run"
+  if [ -z "$why" ]; then echo "ok: $2"; else echo "FAIL: $2 (${why#; })"; tail -15 "$bak/out.txt" | sed 's/^/  | /'; rc=1; fi
+}
+edit() { # <file> <sed program>: the case's edit of <file> from its backup, which must change it
+  sed "$2" "$bak/$1" > "$d/$1"
+  ! cmp -s "$bak/$1" "$d/$1" || { echo "FAIL: the edit '$2' does not change $1 (the case would test nothing)"; rc=1; }
 }
 expect 0 "the current build is reused"
-sed 's/ -Os / -O0 -g -fsanitize=address /' "$bak/configure-target.txt" > "$d/configure-target.txt"
+edit configure-target.txt 's/ -Os / -O0 -g -fsanitize=address /'
 expect 1 "negative: a build with other options is refused" "configure-target.txt says"
 case "$t" in macos-*|ios-*)   # an Apple build from before llvm-ar: its index is Xcode's ranlib's (no ksl-ar= word)
-  sed 's/ ksl-ar=llvm-ar//' "$bak/configure-target.txt" > "$d/configure-target.txt"
+  edit configure-target.txt 's/ ksl-ar=llvm-ar//'
   expect 1 "negative: an Apple build without the llvm-ar archiver is refused" "configure-target.txt says" ;;
 esac
 restore; bak=$(mktemp -d); cp "$d/configure-target.txt" "$d/provenance.txt" "$bak/"

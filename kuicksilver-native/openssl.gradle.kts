@@ -91,6 +91,14 @@ opensslTargets.forEach { t ->
         outputs.dir(root.resolve("build/openssl/$t"))
         if (prebuilt) {
             onlyIf("kuicksilver.openssl.prebuilt: build/openssl/$t is not current") { _ -> prebuiltState(t) != null }
+            // A stale build is refused once the task graph is known, before any task runs: by the time this task's own
+            // actions run, Gradle may already have deleted build/openssl/$t as a stale output (it does so on the first
+            // execution in a checkout without execution history, e.g. a fresh worktree), and the check would then see
+            // it missing and build it instead of refusing. doFirst stays as a second check.
+            val path = "${project.path}:opensslBuild${t.camel()}"
+            gradle.taskGraph.whenReady {
+                if (hasTask(path)) prebuiltState(t)?.takeIf { it != "missing" }?.let { throw GradleException("build/openssl/$t is stale ($it); delete it or drop -Pkuicksilver.openssl.prebuilt") }
+            }
             doFirst { prebuiltState(t)?.takeIf { it != "missing" }?.let { throw GradleException("build/openssl/$t is stale ($it); delete it or drop -Pkuicksilver.openssl.prebuilt") } }
         }
         environment("KSL_OPENSSL_PIN", pinFile.path)
