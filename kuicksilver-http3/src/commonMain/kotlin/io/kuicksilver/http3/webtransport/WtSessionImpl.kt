@@ -851,13 +851,14 @@ internal suspend fun H3Session.webTransport(
         withContext(NonCancellable + dispatcher) {
             if (!owned) wtClientSessions--
             made?.let {
-                // a CONNECT stream nobody got: REQUEST_CANCELLED for a cancellation or the deadline; an owned session's is
-                // left to abandon, which closes it
+                // a CONNECT stream nobody got: REQUEST_CANCELLED for a cancellation or the deadline, H3_INTERNAL_ERROR for a
+                // failure of ours (a session that did not start); one the ALPN check reset already, or an owned session's
+                // (abandon closes it), is left as it is
                 val code =
                     when {
-                        owned -> null
+                        owned || e is WebTransportException.Alpn -> null
                         e is CancellationException || e is WebTransportException.Timeout -> Http3ErrorCode.REQUEST_CANCELLED
-                        else -> null
+                        else -> Http3ErrorCode.INTERNAL_ERROR
                     }
                 if (code != null) {
                     it.reset(code)

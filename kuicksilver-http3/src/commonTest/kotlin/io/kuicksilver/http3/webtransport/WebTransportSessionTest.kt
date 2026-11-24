@@ -754,6 +754,31 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * A setup that fails after the CONNECT was answered, for a reason of its own (the session fails to start), resets the
+     * CONNECT stream with H3_INTERNAL_ERROR instead of leaving the server's session open, and takes it off the count.
+     */
+    @Test fun negative_aSessionThatFailsToStartResetsItsConnectStream() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                client.session.wtClientStepForTest = { if (it == "registered") throw IllegalStateException("the session did not start") }
+                val call = async { runCatching { client.webTransport(wtReq()) } }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st)
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                assertIs<IllegalStateException>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
+                client.session.wtClientStepForTest = null
+                assertEquals(Http3ErrorCode.INTERNAL_ERROR, withTimeout(5.seconds) { resetCode(st) })
+                assertEquals(0, sessions(client))
+            }
+        }
+
     /** Section 3.3: a `WT-Protocol` that is no Structured Field String is ignored, as if absent. */
     @Test fun malformedWtProtocolIsIgnored() =
         h3Test {
