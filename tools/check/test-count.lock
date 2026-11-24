@@ -5257,6 +5257,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.aCloseIsLoggedOnceAndEveryStateUntilTheTraceEnds
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.aSecondEndWhileClosingLogsNoSecondClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.anEndpointCloseEndsTheTraces
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.bothSidesLogTheirOwnAndThePeersTransportParameters
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.negative_aFrameThatFailsToFormatLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aSinkThatCannotOpenLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aTraceThatCannotWriteLeavesTheConnectionAlone

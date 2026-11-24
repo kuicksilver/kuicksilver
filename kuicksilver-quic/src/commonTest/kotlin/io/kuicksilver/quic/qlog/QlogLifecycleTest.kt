@@ -7,6 +7,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.endpoint.EndpointPair
@@ -92,6 +93,51 @@ class QlogLifecycleTest {
                 },
                 "the server's trace shows the CONNECTION_CLOSE it drained on",
             )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * quic-events-04 section 5.3, `transport:parameters_set`: each side logs its own transport parameters (owner local) and
+     * the peer's (owner remote), "two separate event instances", once the peer's arrive; the extensions it uses
+     * (`max_datagram_frame_size`, `reset_stream_at`) as the unspecified fields the section allows. The server's trace
+     * shows what the client asked for, and the other way round.
+     */
+    @Test fun bothSidesLogTheirOwnAndThePeersTransportParameters() {
+        val traces = Traces()
+        val client =
+            quicConfig {
+                qlog = traces
+                resetStreamAt = true
+                maxDatagramFrameSize = 1200
+            }
+        val server =
+            quicConfig {
+                qlog = traces
+                resetStreamAt = true
+                maxDatagramFrameSize = 0
+            }
+        val p = CorePair(clientQuic = client, serverQuic = server)
+        try {
+            assertTrue(p.handshake())
+            for (role in listOf(TlsRole.Client, TlsRole.Server)) {
+                val set =
+                    events(traces.of(role))
+                        .filter { it["name"] == "transport:parameters_set" }
+                        .map { it["data"] as Map<*, *> }
+                        .associateBy { it["owner"] }
+                assertEquals(setOf("local", "remote"), set.keys, "$role")
+                val fromClient = if (role == TlsRole.Client) set["local"]!! else set["remote"]!!
+                val fromServer = if (role == TlsRole.Client) set["remote"]!! else set["local"]!!
+                assertEquals(1200.0, fromClient["max_datagram_frame_size"], "$role")
+                assertEquals(null, fromServer["max_datagram_frame_size"], "$role: the server sent none")
+                assertEquals(true, fromClient["reset_stream_at"], "$role")
+                assertEquals(true, fromServer["reset_stream_at"], "$role")
+                assertEquals((QuicConfig.Default.initialConnectionWindow).toDouble(), fromServer["initial_max_data"], "$role")
+                assertTrue(fromServer["original_destination_connection_id"] is String, "$role: the server names the ODCID")
+                assertTrue(fromServer["stateless_reset_token"] is String, "$role: the server's token")
+            }
         } finally {
             p.close()
         }

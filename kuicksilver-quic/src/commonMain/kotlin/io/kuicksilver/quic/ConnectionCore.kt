@@ -689,6 +689,9 @@ public class ConnectionCore internal constructor(
     internal val receiver = PacketReceiver(this)
     internal val builder = PacketBuilder(this)
     internal var peerTp: TransportParameters? = null
+
+    /** The transport parameters we gave TLS last ([buildLocalTp]); logged with the peer's once those arrive (qlog). */
+    internal var localTp: TransportParameters? = null
     internal var peerGreaseQuicBit = false
     internal var tlsDirty = false
     internal var handshakeDoneReceived = false
@@ -939,7 +942,7 @@ public class ConnectionCore internal constructor(
             cids.adoptInitialLocalCid(localCid)
             // before the transport parameters: the server's stateless_reset_token is the token of its handshake ID
             if (role == TlsRole.Server) cids.adoptInitialPeerCid(remoteCid)
-            val tp = buildLocalTp()
+            val tp = buildLocalTp().also { localTp = it }
             handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
             handshake.session.setQuicVersion(startVersion.version)
             serverEarly?.let { enableServerEarlyData(it) }

@@ -53,6 +53,11 @@ Original row: draft-ietf-quic-qlog-*.
   `qlog.QlogLifecycleTest.aSecondEndWhileClosingLogsNoSecondClose`, `qlog.QlogFramesTest.aPacketSentWhileOneIsReceivedKeepsBothFrameLists`,
   `endpoint.StatelessResetTest.aStatelessResetEndsTheTraceAfterTheDrainingPeriod`,
   `qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts`
+- `transport:parameters_set` (quic-events-04 section 5.3) for our transport parameters (`owner` local) and the peer's
+  (`owner` remote), "two separate event instances", once the peer's are accepted, on both roles: connection IDs, the
+  stateless reset token, limits and timers, the preferred address; `max_datagram_frame_size`, `reset_stream_at` and
+  `grease_quic_bit` as the "unspecified fields" the section allows (0.3.0; before, no transport parameters, so a trace
+  could not show whether the peer sent `reset_stream_at`) — `qlog.QlogLifecycleTest.bothSidesLogTheirOwnAndThePeersTransportParameters`
 
 ## <a id="qlog-h3"></a>qlog HTTP/3 and QPACK events
 

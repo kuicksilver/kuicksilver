@@ -8,6 +8,7 @@ import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.tls.TlsRole
@@ -309,6 +310,80 @@ internal class QlogWriter(
         new: ConnectionState,
         now: TimeMark,
     ) = event(now, "connectivity:connection_state_updated", "\"old\":\"${stateName(old)}\",\"new\":\"${stateName(new)}\"")
+
+    /**
+     * `transport:parameters_set` (quic-events-04 section 5.3, Figure 11) for the transport parameters [tp] of one side: ours
+     * ([local]) or the peer's, "two separate event instances" when both are logged. The extensions we speak go as the
+     * "unspecified fields" the section allows: `max_datagram_frame_size` (RFC 9221), `reset_stream_at`
+     * (draft-ietf-quic-reliable-stream-reset) and `grease_quic_bit` (RFC 9287), each only when present.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal fun parametersSet(
+        local: Boolean,
+        tp: io.kuicksilver.quic.wire.TransportParameters,
+        now: TimeMark,
+    ) {
+        val sb = StringBuilder(512).append("\"owner\":\"").append(if (local) "local" else "remote").append('"')
+
+        fun num(
+            k: String,
+            v: Long,
+        ) = sb
+            .append(",\"")
+            .append(k)
+            .append("\":")
+            .append(v)
+
+        fun str(
+            k: String,
+            v: String,
+        ) = sb
+            .append(",\"")
+            .append(k)
+            .append("\":\"")
+            .append(v)
+            .append('"')
+
+        fun hex(b: ByteArray) = b.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        tp.originalDestinationConnectionId?.let { str("original_destination_connection_id", it.toString()) }
+        tp.initialSourceConnectionId?.let { str("initial_source_connection_id", it.toString()) }
+        tp.retrySourceConnectionId?.let { str("retry_source_connection_id", it.toString()) }
+        tp.statelessResetToken?.let { str("stateless_reset_token", hex(it)) }
+        if (tp.disableActiveMigration) sb.append(",\"disable_active_migration\":true")
+        num("max_idle_timeout", tp.maxIdleTimeoutMs)
+        num("max_udp_payload_size", tp.maxUdpPayloadSize)
+        num("ack_delay_exponent", tp.ackDelayExponent.toLong())
+        num("max_ack_delay", tp.maxAckDelayMs)
+        num("active_connection_id_limit", tp.activeConnectionIdLimit)
+        num("initial_max_data", tp.initialMaxData)
+        num("initial_max_stream_data_bidi_local", tp.initialMaxStreamDataBidiLocal)
+        num("initial_max_stream_data_bidi_remote", tp.initialMaxStreamDataBidiRemote)
+        num("initial_max_stream_data_uni", tp.initialMaxStreamDataUni)
+        num("initial_max_streams_bidi", tp.initialMaxStreamsBidi)
+        num("initial_max_streams_uni", tp.initialMaxStreamsUni)
+        if (tp.preferredAddressPresent) {
+            val v4 = tp.preferredIpv4
+            val v6 = tp.preferredIpv6
+            sb
+                .append(",\"preferred_address\":{\"ip_v4\":\"")
+                .append(v4?.ipLiteral() ?: "0.0.0.0")
+                .append("\",\"ip_v6\":\"")
+                .append(v6?.ipLiteral() ?: "::")
+                .append("\",\"port_v4\":")
+                .append(v4?.port ?: 0)
+                .append(",\"port_v6\":")
+                .append(v6?.port ?: 0)
+                .append(",\"connection_id\":\"")
+                .append(tp.preferredAddressCid?.toString() ?: "")
+                .append("\",\"stateless_reset_token\":\"")
+                .append(tp.preferredAddressToken?.let { hex(it) } ?: "")
+                .append("\"}")
+        }
+        if (tp.maxDatagramFrameSize > 0) num("max_datagram_frame_size", tp.maxDatagramFrameSize)
+        if (tp.resetStreamAt) sb.append(",\"reset_stream_at\":true")
+        if (tp.greaseQuicBit) sb.append(",\"grease_quic_bit\":true")
+        event(now, "transport:parameters_set", sb.toString())
+    }
 
     /** quic-events-04 section 8.3 Owner: "local" or "remote" (our [io.kuicksilver.quic.Initiator.Peer]). */
     private fun owner(i: io.kuicksilver.quic.Initiator): String = if (i == io.kuicksilver.quic.Initiator.Local) "local" else "remote"

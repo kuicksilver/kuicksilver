@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC qlog: `transport:parameters_set` (quic-events-04 section 5.3) for our transport parameters and the peer's, on both
+  roles, once the peer's arrive. It carries `max_datagram_frame_size`, `reset_stream_at` and `grease_quic_bit` as the
+  unspecified fields the section allows. Before, a trace could not show what the peer sent, `reset_stream_at`
+  included.
 - WebTransport (experimental): `WebTransportSendStream.reset(code, reliableOffset)` resets a stream but still delivers
   its first `reliableOffset` bytes to the peer's application, however many packets are lost. This is "abort send side"
   with an offset (draft-ietf-webtrans-overview section 4.3), carried by RESET_STREAM_AT with the stream's header plus
