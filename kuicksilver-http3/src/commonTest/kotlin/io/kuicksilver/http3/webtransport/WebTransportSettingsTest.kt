@@ -146,7 +146,7 @@ class WebTransportSettingsTest {
             }
         }
 
-    /** Section 3.1: SETTINGS_WT_ENABLED other than 0 or 1 is H3_SETTINGS_ERROR. */
+    /** draft-16 section 3.1: a WebTransport client takes a server's SETTINGS_WT_ENABLED other than 0 or 1 as H3_SETTINGS_ERROR. */
     @Test fun negative_wtEnabledAboveOneIsSettingsError() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->

@@ -70,14 +70,16 @@ internal enum class WtVersion {
          * version described in this document. For example, a client that supports only the version described in this
          * document does not send SETTINGS_WT_ENABLED, so the server selects that version". A client never assumes one: "A
          * client that supports only draft versions that the server does not support finds none of its codepoints in the
-         * server's SETTINGS, so it treats the server as not supporting WebTransport".
+         * server's SETTINGS, so it treats the server as not supporting WebTransport". A server without [webTransport] selects
+         * nothing.
          */
         fun common(
             peer: Map<Long, Long>,
             isServer: Boolean,
+            webTransport: Boolean = true,
         ): List<WtVersion> {
             val both = (offeredIn(peer) intersect ours(isServer)).sortedDescending()
-            return if (isServer && both.isEmpty()) listOf(Draft17) else both
+            return if (isServer && webTransport && both.isEmpty()) listOf(Draft17) else both
         }
     }
 }

@@ -15,6 +15,7 @@ import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.GET
 import io.kuicksilver.http3.runtime.RawPeer
@@ -159,6 +160,60 @@ class WtDraftVersionsTest {
             val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT17 to 2L, SettingsId.WT_ENABLED_DRAFT16 to 1L), WtTokens.H3)
             assertEquals("200", h[":status"])
             assertEquals(WtVersion.Draft16, session.getOrThrow().version)
+        }
+
+    /**
+     * draft-16 binds only clients too ("Clients MUST treat values greater than "1" as a connection error"): a server takes
+     * a client's draft-16 value of 2 as no version and no error, and selects from the rest of its SETTINGS.
+     */
+    @Test fun negative_serverIgnoresAClientsDraft16ValueAboveOne() =
+        h3Test {
+            val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT16 to 2L, SettingsId.WT_ENABLED_DRAFT17 to 1L), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft17, session.getOrThrow().version)
+        }
+
+    /**
+     * A client that sends draft-17's codepoint with 0 names no version (0 is the setting's default, "the server does not
+     * support WebTransport"), so section 7.1's last branch selects draft-17.
+     */
+    @Test fun clientWithDraft17SettingZeroGetsDraft17() =
+        h3Test {
+            val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT17 to 0L), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft17, session.getOrThrow().version)
+        }
+
+    /**
+     * A client without WebTransport does not interpret the WebTransport settings: RFC 9114 section 7.2.4, "Endpoints MUST
+     * ignore any settings with identifiers they do not understand". A server's `SETTINGS_WT_ENABLED` of 2, draft-17's or
+     * draft-16's, is no error for it.
+     */
+    @Test fun negative_aClientWithoutWebTransportIgnoresWtEnabledAboveOne() =
+        h3Test {
+            for (id in listOf(SettingsId.WT_ENABLED_DRAFT17, SettingsId.WT_ENABLED_DRAFT16)) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    RawPeer(s).openControl(listOf(id to 2L))
+                    val client = Http3Connection.client(c, http3Settings { })
+                    // applied without an error: the settings reach the application
+                    val ps = withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                    assertTrue(!ps.webTransport, "0x${id.toString(16)}")
+                    assertTrue(!client.closed.isCompleted, "0x${id.toString(16)}")
+                }
+            }
+        }
+
+    /** A server without WebTransport selects no version, not even section 7.1's draft-17 for a client that names none. */
+    @Test fun negative_aServerWithoutWebTransportSelectsNoVersion() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val server = Http3Connection.server(s, http3Settings { enableConnectProtocol = true })
+                RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                assertNull(server.session.highestCommonWtVersion())
+            }
         }
 
     /** draft-17 section 3.1: "Clients MUST treat values greater than "1" as a connection error of type H3_SETTINGS_ERROR". */
