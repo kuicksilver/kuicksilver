@@ -806,6 +806,128 @@ class H2RuntimeTest {
         }
 
     /**
+     * The class of Netty's 1d60263 (a graceful close that never completed when the last stream buffered behind a GOAWAY
+     * failed): requests whose HEADERS were still queued when a GOAWAY with the last stream of the one in flight arrived fail
+     * as not processed (RFC 9113 section 6.8), and the connection closes once the last stream is given back, whether that is
+     * the stream in flight or the last refused one, and whichever ends first.
+     */
+    @Test fun goAwayRefusingQueuedRequestsClosesOnceTheLastStreamIsReleased() =
+        runTest {
+            for (refusedLast in listOf(true, false)) {
+                val closes = TransportCloses()
+                val (srv, deferred) = raw(closes = closes)
+                srv.settings()
+                val client = deferred.await()
+                runCurrent()
+                srv.read()
+                val a = client.get("/a")
+                runCurrent()
+                assertEquals(listOf(a.id), srv.read().filterIsInstance<Frame.Headers>().map { it.streamId })
+                val b = client.get("/b")
+                val c = client.get("/c")
+                val closed = backgroundScope.async { client.awaitClosed() }
+                // the GOAWAY (last stream: a's) reaches the core before the writer wrote b's and c's HEADERS
+                client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(a.id, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+                runCurrent()
+                for (s in listOf(b, c)) {
+                    val e = assertFailsWith<Http2Exception> { s.response() }
+                    assertTrue(e.notProcessed, "a request never opened is not processed: $e")
+                }
+                assertFalse(client.isUsable)
+                b.release()
+                if (!refusedLast) c.release()
+                srv.write(srv.headers(a.id, listOf(":status" to "200"), endStream = true))
+                assertEquals(200, a.response().status)
+                a.release()
+                runCurrent()
+                if (refusedLast) {
+                    assertFalse(closed.isCompleted, "closed while the engine still holds the refused stream ${c.id}")
+                    c.release() // the last stream given back is the last refused one
+                    runCurrent()
+                }
+                assertTrue(closed.isCompleted, "the connection did not close after its last stream (refusedLast = $refusedLast)")
+                assertEquals(1, closes.hard + closes.graceful, "the transport closes once")
+                assertEquals(0, client.reservedStreams)
+                assertTrue(srv.read().none { it is Frame.Headers }, "HEADERS of a refused request went out")
+            }
+        }
+
+    /**
+     * The same with the last queued request cancelled by its caller (stream.cancel(), then its release) instead of refused:
+     * before the GOAWAY (it never went out: neither HEADERS nor RST_STREAM, RFC 9113 section 5.1) or after it (it had
+     * already failed as not processed), the connection still closes once the stream in flight ends.
+     */
+    @Test fun cancelledLastQueuedRequestDoesNotHoldTheCloseAfterAGoAway() =
+        runTest {
+            for (cancelFirst in listOf(true, false)) {
+                val closes = TransportCloses()
+                val (srv, deferred) = raw(closes = closes)
+                srv.settings()
+                val client = deferred.await()
+                runCurrent()
+                srv.read()
+                val a = client.get("/a")
+                runCurrent()
+                srv.read()
+                val b = client.get("/b")
+                val closed = backgroundScope.async { client.awaitClosed() }
+                if (cancelFirst) b.cancel()
+                client.rt.receiveWithoutDispatchForTest(FrameEncoder.goAway(Int.MAX_VALUE, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+                runCurrent()
+                if (!cancelFirst) b.cancel()
+                val e = assertFailsWith<Http2Exception> { b.response() }
+                // cancelled first: the caller's CANCEL; else the GOAWAY's refusal came first (not processed)
+                if (!cancelFirst) assertTrue(e.notProcessed, "$e")
+                b.release()
+                runCurrent()
+                assertFalse(closed.isCompleted, "closed under the stream in flight")
+                srv.write(srv.headers(a.id, listOf(":status" to "200"), endStream = true))
+                assertEquals(200, a.response().status)
+                a.release()
+                runCurrent()
+                assertTrue(closed.isCompleted, "the connection did not close after its last stream (cancelFirst = $cancelFirst)")
+                assertEquals(1, closes.hard + closes.graceful)
+                val wire = srv.read()
+                assertTrue(wire.none { it is Frame.Headers || (it is Frame.RstStream && it.streamId == b.id) }, "$wire")
+            }
+        }
+
+    /**
+     * The server side of the same class: requests the engine has not taken yet (queued in [H2ServerConnection.requests])
+     * when the server goes away gracefully, one of them reset by the client meanwhile, are still delivered and released,
+     * and the two-step GOAWAY (RFC 9113 section 6.8) ends with the connection closed once the last of them is released.
+     */
+    @Test fun serverGracefulGoAwayClosesAfterQueuedRequestsTheClientReset() =
+        runTest {
+            val (client, server, _) = pair()
+            runCurrent() // the server's SETTINGS: the client may open three streams
+            val a = client.get("/a")
+            val b = client.get("/b")
+            val c = client.get("/c")
+            runCurrent()
+            assertEquals(3, server.openRequests.value)
+            val serverClosed = backgroundScope.async { server.awaitClosed() }
+            val clientClosed = backgroundScope.async { client.awaitClosed() }
+            server.shutdown() // GOAWAY 2^31 - 1 and a PING, then GOAWAY with the last stream taken
+            c.cancel() // the client gives up the last one while it waits in the server's queue
+            c.release()
+            runCurrent()
+            assertFalse(serverClosed.isCompleted, "closed with requests nobody took")
+            val got = (1..3).map { assertNotNull(server.requests.tryReceive().getOrNull(), "a queued request was lost") }
+            assertEquals(listOf("/a", "/b", "/c"), got.map { it.path })
+            for (r in got.take(2)) r.respond(204, endStream = true)
+            assertEquals(204, a.response().status)
+            assertEquals(204, b.response().status)
+            a.release()
+            b.release()
+            for (r in got) r.release()
+            runCurrent()
+            assertEquals(0, server.openRequests.value)
+            assertTrue(serverClosed.isCompleted, "the server did not close after its last request")
+            assertTrue(clientClosed.isCompleted, "the client did not close after the server's GOAWAY")
+        }
+
+    /**
      * A GOAWAY on a connection without streams closes the core at once, under the lock, while its event may still wait
      * for another thread's dispatch: whoever then finds the connection unusable must also see the GOAWAY's code (the pool
      * reads HTTP_1_1_REQUIRED from it, RFC 9113 section 7; seen too early it was null and the call failed with "the

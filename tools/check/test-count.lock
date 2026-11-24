@@ -295,11 +295,13 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.aRes
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.anUndeliveredRequestOfAnEndedConnectionIsReleased
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.cancelSendsRstStreamCancel
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.cancelledHealthCheckOwnerGivesNoVerdict
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.cancelledLastQueuedRequestDoesNotHoldTheCloseAfterAGoAway
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.completeResponseThenErrorResetKeepsTheBody
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.completeResponseThenNoErrorResetKeepsTheResponse
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.concurrentHealthChecksShareOnePing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.firstRequestLeavesBeforeTheServerPreface
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.goAwayCodeIsKnownOnceTheConnectionIsUnusable
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.goAwayRefusingQueuedRequestsClosesOnceTheLastStreamIsReleased
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.goAwayStreamsAboveLastIdAreNotProcessed
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.healthCheckIsAnsweredOrTimesOut
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.http11RequiredStaysAfterALaterNoErrorGoAway
@@ -338,6 +340,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.prio
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.refusedStreamIsNotProcessed
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.releasedAfterCompleteResponseTheClientIsStoppedWithNoError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.requestAndResponseWithTrailers
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.serverGracefulGoAwayClosesAfterQueuedRequestsTheClientReset
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.serverStreamFailureReachesTheHandlerAndReleaseCounts
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.streamIdentifiersExhaustedRetireTheConnection
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.streamingBodyBackpressure
@@ -1691,6 +1694,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.d
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.failedHealthPingSparesStreamsInFlight
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.goAwayMovesNewRequestsToANewConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.goAwayRepeatAtTheRouteLimit
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.goAwayWithRequestsQueuedAboveTheStreamLimitClosesAndMovesThem
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.healthCheckBurstSharesOnePing
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.http11RequiredBeforeTheFirstRequest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.http11RequiredOnTheConnection
