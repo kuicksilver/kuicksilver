@@ -387,6 +387,7 @@ private suspend fun H3Session.exchange(
                 onUseless = { glitch(it) },
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
+                wtMisplacedCode = { wtMisplacedSignalCode() },
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
                 beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { insertsWatch(st) } },
                 // a response head is taken from the window only once the connection's header budget granted it (RFC 9114

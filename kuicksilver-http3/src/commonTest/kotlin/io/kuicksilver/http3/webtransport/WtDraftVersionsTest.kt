@@ -12,10 +12,15 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
+import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.runtime.GET
 import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.acceptBidi
 import io.kuicksilver.http3.runtime.h3Test
+import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.runtime.peerSawClose
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
@@ -23,6 +28,7 @@ import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -209,4 +215,37 @@ class WtDraftVersionsTest {
             }
         }
 
+    /**
+     * draft-17 section 4.3: WT_STREAM "in any other circumstances MUST be treated as a connection error of type
+     * H3_FRAME_UNEXPECTED" (draft-16 and draft-14: H3_FRAME_ERROR). The connection's version decides: the signal on the
+     * control stream, and inside a request stream after its HEADERS, of a draft-17 client and of a draft-16 one.
+     */
+    @Test fun negative_misplacedWtStreamSignalIsTheCodeOfTheConnectionsDraft() =
+        h3Test {
+            for ((setting, code) in listOf(
+                SettingsId.WT_ENABLED_DRAFT17 to Http3ErrorCode.FRAME_UNEXPECTED,
+                SettingsId.WT_ENABLED_DRAFT16 to Http3ErrorCode.FRAME_ERROR,
+            )) {
+                for (onControl in listOf(true, false)) {
+                    QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                        val (c, s) = q.connect(H3Fixtures.quic)
+                        val server = Http3Connection.server(s, wtOn)
+                        val raw = RawPeer(c)
+                        val control = raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, setting to 1L))
+                        // the SETTINGS are applied before the signal is read: the version is known by then
+                        withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                        val signal = VarInt.encode(FrameType.WT_STREAM) + VarInt.encode(0)
+                        // the request's body is read, so the frame after its HEADERS is
+                        if (!onControl) launch { runCatching { server.acceptRequest().body.readAllBytes() } }
+                        val st = if (onControl) control else c.openBidi()
+                        // the server may close the connection before our flush returns
+                        peerMayHaveClosed {
+                            st.output.writeFully(if (onControl) signal else raw.headers(st.id, GET) + signal)
+                            st.output.flush()
+                        }
+                        assertEquals(code, withTimeout(5.seconds) { peerSawClose(c) }, "0x${setting.toString(16)} control $onControl")
+                    }
+                }
+            }
+        }
 }

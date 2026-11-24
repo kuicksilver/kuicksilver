@@ -160,6 +160,46 @@ class FrameRulesTest {
         )
     }
 
+    /**
+     * draft-ietf-webtrans-http3-17 section 4.3: the signal anywhere but the first bytes of a bidirectional stream is
+     * H3_FRAME_UNEXPECTED on a draft-17 connection, on the control stream and inside a request stream alike; the first
+     * frame of a control stream stays RFC 9114's H3_MISSING_SETTINGS.
+     */
+    @Test fun negative_misplacedWtStreamTakesTheCodeOfTheDraft() {
+        val code = io.kuicksilver.http3.webtransport.WtVersion.Draft17.misplacedWtStreamCode
+        assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, code)
+        assertEquals(
+            Http3ErrorCode.FRAME_UNEXPECTED,
+            err {
+                FrameRules.checkControl(
+                    FrameType.WT_STREAM,
+                    first = false,
+                    isServer = true,
+                    webTransport = true,
+                    wtMisplacedCode = code,
+                )
+            },
+        )
+        assertEquals(
+            Http3ErrorCode.FRAME_UNEXPECTED,
+            err { FrameRules.checkRequest(FrameType.WT_STREAM, isServerSide = true, webTransport = true, wtMisplacedCode = code) },
+        )
+        assertEquals(
+            Http3ErrorCode.MISSING_SETTINGS,
+            err {
+                FrameRules.checkControl(
+                    FrameType.WT_STREAM,
+                    first = true,
+                    isServer = true,
+                    webTransport = true,
+                    wtMisplacedCode = code,
+                )
+            },
+        )
+        assertEquals(Http3ErrorCode.FRAME_ERROR, io.kuicksilver.http3.webtransport.WtVersion.Draft16.misplacedWtStreamCode)
+        assertEquals(Http3ErrorCode.FRAME_ERROR, io.kuicksilver.http3.webtransport.WtVersion.Draft14.misplacedWtStreamCode)
+    }
+
     @Test fun secondSettingsUnexpected() {
         assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, err { FrameRules.checkControl(FrameType.SETTINGS, first = false, isServer = true) })
     }

@@ -618,6 +618,14 @@ internal class H3Session(
      */
     fun highestCommonWtVersion(): WtVersion? = wtCommonVersions.firstOrNull()
 
+    /**
+     * The connection error for a misplaced `WT_STREAM` signal: the code of the connection's WebTransport draft
+     * ([WtVersion.misplacedWtStreamCode]; H3_FRAME_UNEXPECTED from draft-17 on, H3_FRAME_ERROR before). Before the peer's
+     * SETTINGS name it (a server may read a request stream first) it is draft-17's, the version a server selects when
+     * its client names none (draft-17 section 7.1) and the highest we speak.
+     */
+    fun wtMisplacedSignalCode(): Long = (highestCommonWtVersion() ?: WtVersion.Draft17).misplacedWtStreamCode
+
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.webtransport
 
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.frame.SettingsId
 
@@ -34,6 +35,13 @@ internal enum class WtVersion {
 
     /** The `:protocol` token a client sends to a peer of this version (section 3.2 from draft-15 on; `webtransport` before). */
     val protocolToken: String get() = if (this >= Draft16) WtTokens.H3 else WtTokens.LEGACY
+
+    /**
+     * The connection error for a `WT_STREAM` signal anywhere but the first bytes the initiator sends on a bidirectional
+     * stream: draft-17 section 4.3, "H3_FRAME_UNEXPECTED"; draft-14 and draft-16 section 4.3, "H3_FRAME_ERROR" (draft-02
+     * names none; it keeps the older code).
+     */
+    val misplacedWtStreamCode: Long get() = if (this >= Draft17) Http3ErrorCode.FRAME_UNEXPECTED else Http3ErrorCode.FRAME_ERROR
 
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */

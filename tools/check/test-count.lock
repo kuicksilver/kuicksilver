@@ -457,6 +457,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.goAwa
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.greaseIsSkipped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.h2FramesUnexpected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.maxPushIdProcessedOnServer
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.negative_misplacedWtStreamTakesTheCodeOfTheDraft
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.pushPromiseCodesByRole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.secondSettingsUnexpected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.settingsOnRequestUnexpected
@@ -1204,6 +1205,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersio
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.eachDraftServerGetsACONNECTOfItsDraft
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.negative_clientWithoutWtSettingAndTheOlderTokenIsMalformed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.negative_draft17SettingAboveOneFromTheServerIsSettingsError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.negative_misplacedWtStreamSignalIsTheCodeOfTheConnectionsDraft
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.negative_serverIgnoresAClientsDraft17ValueAboveOne
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.ourClientAndServerSelectDraft17
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtDraftVersionsTest.serverSelectsTheHighestDraftTheClientSends

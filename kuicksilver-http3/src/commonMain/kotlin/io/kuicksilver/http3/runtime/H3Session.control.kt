@@ -292,7 +292,7 @@ private suspend fun H3Session.readControl(st: QuicStream) {
         val len = st.input.readVarInt()
         val action =
             try {
-                FrameRules.checkControl(type, first, isServer, settings.webTransport)
+                FrameRules.checkControl(type, first, isServer, settings.webTransport, wtMisplacedSignalCode())
             } catch (e: H3ProtocolError) {
                 // a frame the control stream must not carry: what was parsed of it (its header) is in the trace
                 qlog { it.frameParsed(st.id, type, len, it.controlFrame(type, null)) }
