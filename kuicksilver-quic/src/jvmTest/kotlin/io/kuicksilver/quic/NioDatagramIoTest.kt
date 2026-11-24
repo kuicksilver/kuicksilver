@@ -181,8 +181,13 @@ class NioDatagramIoTest {
                     }
 
                     os.startsWith("windows") -> {
-                        assertTrue(dfComplete(bits), "DF on every half, probe or DO: $bits")
+                        // -1 here was ksl refusing the unbound SOCKET (getsockname: WSAEINVAL), DF left to the JDK's DO option
+                        assertTrue(dfComplete(bits), "DF on every half from ksl, probe or DO: $bits")
                         if (bits and DF_V4 != 0) assertEquals(3, a.dfModeForTest(4), "IP_MTU_DISCOVER = IP_PMTUDISC_PROBE")
+                        if (bits and DF_V6 != 0) assertEquals(3, a.dfModeForTest(6), "IPV6_MTU_DISCOVER = PROBE")
+                        // the JDK's option on Windows is IPV6_MTU_DISCOVER = DO on an AF_INET6 channel (WindowsSocketOptions.c),
+                        // true only in DO mode: probe mode reads false, so the JDK's DO mode was not added
+                        if (bits and DF_V6 != 0) assertEquals(if (jdk19) false else null, a.dontFragmentForTest(), "the JDK's DO not added")
                     }
                 }
                 assertFalse(a.capabilities.value.df)
@@ -199,6 +204,36 @@ class NioDatagramIoTest {
                 b.close()
             }
         }
+
+    /**
+     * [dfProbe] answers on the channel as [NioDatagramIo.open] hands it over: open and not bound yet, of either family. Windows'
+     * getsockname refuses an unbound socket (WSAEINVAL), which made ksl answer -1 there, so the JVM socket had DF only through
+     * the JDK's DO-mode option (JDK 19 and later) and none at all below.
+     */
+    @Test fun dfProbeAnswersOnAnUnboundChannel() {
+        assertTrue(
+            io.kuicksilver.native.KslLoader
+                .isAvailable(),
+            "the test hosts ship ksl",
+        )
+        for (family in listOf(java.net.StandardProtocolFamily.INET, java.net.StandardProtocolFamily.INET6)) {
+            val ch =
+                try {
+                    java.nio.channels.DatagramChannel
+                        .open(family)
+                } catch (_: UnsupportedOperationException) {
+                    continue // no IPv6 here
+                }
+            try {
+                assertEquals(null, ch.localAddress, "not bound")
+                val bits = dfProbe(ch)
+                assertTrue(dfComplete(bits), "$family: DF on every half of the unbound channel: $bits")
+                assertEquals(family == java.net.StandardProtocolFamily.INET6, bits and DF_INET6 != 0, "$family: $bits")
+            } finally {
+                ch.close()
+            }
+        }
+    }
 
     /**
      * The DF choice from the [dfProbe] bits: the JDK's `IP_DONTFRAGMENT` (DO on Linux and Windows, IP_DONTFRAG on Apple) only

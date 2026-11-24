@@ -1210,14 +1210,24 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     return (uint64_t)InterlockedCompareExchange64(&u->emsgsize, 0, 0);
 }
 
-/* as the KSL_UDP_DF branch of ksl_udp_open: DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the JDK's) */
+/* the address family of SOCKET s (AF_INET or AF_INET6), -1 when it is no IP socket. Read through SO_PROTOCOL_INFOW, which answers on
+   an unbound socket: getsockname fails there with WSAEINVAL ("The socket has not been bound to an address with bind"), and the
+   JDK's NioDatagramIo asks before it binds, so the JVM's portable socket got no DF from ksl on Windows at all */
+static int win_fd_family(SOCKET s) {
+    WSAPROTOCOL_INFOW pi;
+    int l = (int)sizeof pi;
+    memset(&pi, 0, sizeof pi);
+    if (getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *)&pi, &l) != 0)
+        return -1;
+    return pi.iAddressFamily == AF_INET || pi.iAddressFamily == AF_INET6 ? pi.iAddressFamily : -1;
+}
+/* as the KSL_UDP_DF branch of ksl_udp_open: DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the JDK's),
+   bound or not */
 int ksl_udp_fd_df_probe(int64_t fd) {
     SOCKET s = (SOCKET)(UINT_PTR)fd;
-    struct sockaddr_storage ss;
-    int l = (int)sizeof ss, yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
-    memset(&ss, 0, sizeof ss);
-    if (fd < 0 || (uint64_t)fd > (uint64_t)UINTPTR_MAX || getsockname(s, (struct sockaddr *)&ss, &l) != 0 ||
-        (ss.ss_family != AF_INET && ss.ss_family != AF_INET6))
+    int yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
+    int family = fd < 0 || (uint64_t)fd > (uint64_t)UINTPTR_MAX ? -1 : win_fd_family(s);
+    if (family < 0)
         return KSL_ERROR;
     /* DF always: IP_DONTFRAGMENT / IPV6_DONTFRAG first, as ksl_udp_open does; then PROBE where the system takes it (some Windows 11
        builds and older Windows refuse IP_MTU_DISCOVER: the DF bit alone then works as DO, a send above a cached path MTU refused) */
@@ -1227,7 +1237,7 @@ int ksl_udp_fd_df_probe(int64_t fd) {
         granted |= KSL_FD_DF_V4;
     else if (df4)
         granted |= KSL_FD_DF_V4_DO;
-    if (ss.ss_family == AF_INET6) {
+    if (family == AF_INET6) {
         granted |= KSL_FD_DF_INET6;
         int df6 = setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&yes, sizeof yes) == 0;
         if (setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0)

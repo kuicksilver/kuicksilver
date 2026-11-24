@@ -5835,6 +5835,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aRefusalFails
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.anIpv4BindTakesAfInetOnlyWithDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocksReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfChoicePerProbeOutcome
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfProbeAnswersOnAnUnboundChannel
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.emptyDatagramDoesNotStopReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.inetChannelOnlyWhereItGetsDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.loopbackSendReceive
