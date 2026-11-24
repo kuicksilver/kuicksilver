@@ -429,6 +429,8 @@ internal class Http3StreamImpl(
     override fun reset(code: Long) {
         resetSent = true
         st.reset(if (isClient) clientStreamCode(code) else code)
+        // the writer's pump ends too: nothing more goes out, and the exchange's end needs both directions over
+        (writer as? ResponseWriterImpl)?.sendSideReset()
         onReset()
     }
 

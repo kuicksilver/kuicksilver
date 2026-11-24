@@ -1704,6 +1704,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: resetting an Extended CONNECT stream (`Http3Stream.reset`) now ends its writer too. Before, the tunnel's
+  writer kept waiting for content, so the exchange never ended until the connection closed. A WebTransport client
+  session that ended because the server broke it (a malformed WT_CLOSE_SESSION, a capsule section 5.4 prohibits) kept
+  its slot in the connection's session count, so `webTransportMaxSessions` sessions failed that way blocked new ones on
+  that connection. The server side was not affected.
+
 - WebTransport: a peer's WT_CLOSE_SESSION that arrived with its CONNECTION_CLOSE (Firefox 160 sends both in one packet)
   is reported in `closed` with its code and reason, also when the application, or a Ktor route whose handler the
   connection's end cancelled, calls `close()` first. Once the connection is gone `close()` sends nothing and waits for

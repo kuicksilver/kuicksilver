@@ -1057,6 +1057,20 @@ internal class ResponseWriterImpl(
 
     /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
     @Volatile private var abandoned: Throwable? = null
+
+    /** The cause the channel is cancelled with once the stream's owner reset its send side ([sendSideReset]). */
+    private class SendSideReset : kotlinx.io.IOException("the stream's send side was reset")
+
+    /**
+     * The stream's owner reset its send side (`Http3Stream.reset`): the pump stops waiting for content that can no longer
+     * go out, so the exchange ends; it sends no reset of its own, which would carry another code (RFC 9000 section 19.4:
+     * the error code cannot change). A tunnel whose session ended with a reset (WebTransport's failed or flow-control end)
+     * left the pump waiting until the connection closed, and its exchange, with the connection's session slot, held.
+     */
+    internal fun sendSideReset() {
+        channel.cancel(SendSideReset())
+    }
+
     internal val pump: Job =
         session.scope.launch {
             val buf = ByteArray(CHUNK)
@@ -1094,7 +1108,9 @@ internal class ResponseWriterImpl(
                 // the application's content failed mid-body, a channel cancelled with a CancellationException included: the
                 // response is abandoned after partial processing, "it SHOULD abort its response stream with the error code
                 // H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1); never left without a FIN or a reset
-                if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                if (H3Session.transportCause(e) == null && channel.closedCause !is SendSideReset) {
+                    runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                }
                 abandoned = session.map(e)
                 channel.cancel(abandoned)
                 request?.done()
