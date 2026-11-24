@@ -21,11 +21,12 @@ A cell has the signature when it is kuicksilver[-native]_msquic/zerortt; the run
 cell with "Client sent too much data in 1-RTT packets"; the client's 1-RTT payload decoded from the client-side capture equals the
 size the runner reported; every client 1-RTT packet, coalesced or not, decodes and carries only frames of ALLOWED (no STREAM, no
 CRYPTO, no DATAGRAM: a re-sent request is never excused); in the first connection (the client port of the client's first
-datagram) the probes, lone short-header packets of PING and PADDING only in a datagram of at least 1200 bytes, grow, and every
-probe after the first follows (on the client-side capture) a server 1-RTT packet acknowledging the previous one; at least one
-probe was raised that way; and the client's 1-RTT payload without those raised probes stays within the budget (the run in
-which our ACK came too late for them). msquic's PTO probe is a lone PING+PADDING too (loss_detection.c, send.c), and so is a
-retried probe of the same size: neither grows after an ACK of the probe before it, so neither is subtracted. A probe that also
+datagram) at least one probe was raised: in every connection the probes, lone short-header packets of PING and PADDING only in
+a datagram of at least 1200 bytes, grow, and every probe after the first follows (on the client-side capture) a server 1-RTT
+packet acknowledging the previous one; and the client's 1-RTT payload without the first connection's raised probes stays within
+the budget (the run in which our ACK came too late for them). msquic's PTO probe is a lone PING+PADDING too (loss_detection.c,
+send.c), and so is a retried probe of the same size: neither grows after an ACK of the probe before it, so either, in any
+connection, keeps the cell red. A probe that also
 carries MAX_DATA or MAX_STREAM_DATA (seen with 1239 bytes in green runs) is no raised probe either: its bytes stay counted.
 
 Usage: msquic-probe-budget.py CELL_DIR          decodes the cell's sim/trace_node_left.pcap with tshark and the client's key log
@@ -42,9 +43,10 @@ import sys
 SERVER_PORT = "443"
 BUDGET = 5000  # 0.5 * FILENAMELEN * NUM_FILES of the runner's TestCaseZeroRTT
 PADDING, PING, ACK = 0x00, 0x01, 0x02
-# the frames the client's 1-RTT packets carry in every saved run of the cell: PADDING, PING, ACK, ACK_ECN, MAX_DATA,
-# MAX_STREAM_DATA, MAX_STREAMS (bidi, uni), CONNECTION_CLOSE (transport, application); anything else keeps the cell red
-ALLOWED = {0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x1C, 0x1D}
+# the frames the client's 1-RTT packets carry in the saved runs of the cell (PADDING, PING, ACK_ECN, MAX_DATA, MAX_STREAM_DATA,
+# the application CONNECTION_CLOSE) and their plain variants ACK and MAX_STREAMS; anything else keeps the cell red, a transport
+# CONNECTION_CLOSE (0x1c) too: msquic closing on a transport error found one on our side
+ALLOWED = {0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x1D}
 PAIRS = ("kuicksilver_msquic", "kuicksilver-native_msquic")
 PROBE_MIN = 1200  # UDP payload: a PMTU probe is larger than the base PLPMTU; a small PING+PADDING is no probe
 
@@ -69,11 +71,19 @@ def ack_ranges(largest, first, gaps, ranges):
     return out
 
 
+def pairs(node):
+    """The (key, value) pairs of a JSON object of tshark's (kept as a list of pairs: a packet repeats keys); a JSON array, which
+    tshark does not write inside a packet, is refused rather than read as pairs."""
+    if not all(isinstance(e, tuple) and len(e) == 2 and isinstance(e[0], str) for e in node):
+        raise ValueError("a JSON array inside a packet")
+    return node
+
+
 def values(node, key):
-    """Every value of key in tshark's JSON (kept as lists of pairs: a packet repeats keys), at any depth."""
+    """Every value of key in tshark's JSON, at any depth."""
     out = []
     if isinstance(node, list):
-        for k, v in node:
+        for k, v in pairs(node):
             if k == key: out.append(v)
             out += values(v, key) if isinstance(v, list) else []
     return out
@@ -88,7 +98,7 @@ def frames_of(layer):
     """The frames of one QUIC packet: (type, ACK ranges or None) per frame, in order."""
     out = []
     if not isinstance(layer, list): return out
-    for k, v in layer:
+    for k, v in pairs(layer):
         if k == "quic.frame" and isinstance(v, list):
             t = first(v, "quic.frame_type")
             if t is None: continue
@@ -107,10 +117,10 @@ def dissect(pcap, keys):
            "-T", "json", "-J", "frame udp quic"]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
     client, server, first_port = [], [], None
-    for pkt in json.loads(out, object_pairs_hook=lambda pairs: pairs):
+    for pkt in json.loads(out, object_pairs_hook=lambda kv: [tuple(e) for e in kv]):
         layers = first(pkt, "layers")
         n, sp, dp, length = (first(layers, k) for k in ("frame.number", "udp.srcport", "udp.dstport", "udp.length"))
-        quic = [v for k, v in layers if k == "quic"]
+        quic = [v for k, v in pairs(layers) if k == "quic"]
         short = [q for q in quic if first(q, "quic.header_form") == "0"]
         if sp == SERVER_PORT:
             acked = [r for q in short for t, a in frames_of(q) if a for r in a]
@@ -154,16 +164,15 @@ def analyse(d):
     total = sum(p["payload"] for p in packets)
     if total != d["reported"]: return None  # not the runner's count: no verdict on another one
     if any(not p["frames"] or not set(p["frames"]) <= ALLOWED for p in packets): return None  # data, or a packet we cannot read
-    port = d["first_port"]
-    mine = [(x, probe(x)) for x in d["client"] if x["port"] == port]
-    mine = [(x, pr) for x, pr in mine if pr]
     raised = []
-    for (px, (ppn, _)), (x, (_, payload)) in zip(mine, mine[1:]):
-        if x["udp"] <= px["udp"]: return None  # a retried probe or a PTO PING: no MTU raise
-        if not any(s["port"] == port and px["n"] < s["n"] < x["n"] and any(lo <= ppn <= hi for lo, hi in s["acked"]) for s in d["server"]):
-            return None  # msquic raises only after the previous probe was acknowledged
-        raised.append(payload)
-    if not raised: return None
+    for port in sorted({x["port"] for x in d["client"]}):  # every connection: its probes only grow, each after an ACK of the last
+        mine = [(x, pr) for x, pr in ((x, probe(x)) for x in d["client"] if x["port"] == port) if pr]
+        for (px, (ppn, _)), (x, (_, payload)) in zip(mine, mine[1:]):
+            if x["udp"] <= px["udp"]: return None  # a retried probe or a PTO PING: no MTU raise
+            if not any(s["port"] == port and px["n"] < s["n"] < x["n"] and any(lo <= ppn <= hi for lo, hi in s["acked"]) for s in d["server"]):
+                return None  # msquic raises only after the previous probe was acknowledged
+            if port == d["first_port"]: raised.append(payload)
+    if not raised: return None  # only the first connection's raise is the documented race
     rest = total - sum(raised)
     if rest > BUDGET: return None
     return (f"msquic's first connection raised its PMTU probe after our ACK of the one before ({'+'.join(map(str, raised))} bytes of "

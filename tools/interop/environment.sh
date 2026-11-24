@@ -167,9 +167,9 @@ prohibited_port_rebind() {
 # integration run 20261121-105505: 18 us apart, red; the run before: 0.4 ms apart, green; 9 of 10 reruns green). RFC 9000 section
 # 13.2.1 requires the ACK within max_ack_delay and allows it at once, which ngtcp2 and quic-go do as well.
 # tools/interop/msquic-probe-budget.py proves it from the client-side capture: the client's 1-RTT payload is the runner's count and
-# holds no STREAM, CRYPTO or other frame outside an allow-list (ACK, MAX_*, CONNECTION_CLOSE, PING, PADDING), the first connection's
-# probes grew only after our ACK of the one before, and without those raised probes the client stays within the budget. Prints
-# "<server>_<client> <case>" per cell.
+# holds no STREAM, CRYPTO or other frame outside an allow-list (ACK, MAX_*, the application CONNECTION_CLOSE, PING, PADDING), the
+# probes of every connection grew only after our ACK of the one before, the first connection's at least once, and without the first
+# connection's raised probes the client stays within the budget. Prints "<server>_<client> <case>" per cell.
 msquic_probe_budget() {
   local o cell
   while IFS= read -r o; do

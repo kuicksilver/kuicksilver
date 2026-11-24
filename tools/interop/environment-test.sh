@@ -128,6 +128,9 @@ check "probes: no ACK of the first probe before the second"        1 "" -- pytho
 check "probes: the ACK named another packet"                       1 "" -- python3 "$mp" --decoded "$(mvar otherack '(.server[] | select(.n == 44)).acked = [[244, 244]]')"
 check "probes: the ACK went to the other connection"               1 "" -- python3 "$mp" --decoded "$(mvar otherport '(.server[] | select(.n == 44)).port = "45038"')"
 check "probes: a retried probe of the same size (or a PTO PING)"   1 "" -- python3 "$mp" --decoded "$(mvar repeat "$p45.udp = 1252")"
+check "probes: a PTO PING of the same size in the second connection" 1 "" -- python3 "$mp" --decoded "$(mvar pto '(.client[] | select(.n == 123)).udp = 1220')"
+check "probes: a transport CONNECTION_CLOSE (0x1c) from msquic"    1 "" -- python3 "$mp" --decoded "$(mvar transportclose ".client += [$(dgram 200 '[28]' 30)] | .reported += 30")"
+check "probes:   its application close (0x1d) is fine"              0 "" -- python3 "$mp" --decoded "$(mvar appclose ".client += [$(dgram 200 '[29]' 30)] | .reported += 30")"
 check "probes: a raise only in the second connection"              1 "" -- python3 "$mp" --decoded "$(mvar second '.client |= map(select(.n != 45)) | .reported -= 1319')"
 check "probes: a raise only in the first connection"               0 "is 2745 of" -- python3 "$mp" --decoded "$(mvar firstonly '.client |= map(select(.n != 123)) | .reported -= 1239')"
 check "probes: the raised probe alone does not explain the excess" 1 "" -- python3 "$mp" --decoded "$(mvar notenough ".client += [$(dgram 200 '[3]' 1500)] | .reported += 1500")"
@@ -380,6 +383,12 @@ mk msquic-server/kuicksilver_msquic zerortt "Check of downloaded files succeeded
 mk msquic-server/kuicksilver_msquic resumption "Check of downloaded files succeeded."
 check "probes: a budget failure without the capture cannot be analysed" 2 "cannot analyse" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt"
 check "probes: no budget failure in the verdict"                   1 "" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/resumption"
+# a JSON array where tshark writes objects is refused, not read as key/value pairs (a stub tshark, no capture needed)
+mkdir -p "$tmp/stub" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client"
+printf '%s\n' '#!/bin/sh' "echo '[{\"_source\": {\"layers\": [\"frame.number\", \"1\"]}}]'" > "$tmp/stub/tshark"; chmod +x "$tmp/stub/tshark"
+: > "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim/trace_node_left.pcap"; echo k > "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client/keys.log"
+check "probes: a JSON array inside a packet cannot be analysed"   2 "a JSON array inside a packet" -- env PATH="$tmp/stub:$PATH" python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt"
+rm -rf "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client"
 
 # prohibited-port-rebind.py on cells: no prohibited port in the sim's rebinds is no verdict, one without the capture cannot be analysed
 mk ngtcp2-client/ngtcp2_kuicksilver rebind-addr "sim     | 11s:  rebinding: 193.167.0.229:18108 -> 193.167.0.155:745" "client exited with code 1"
