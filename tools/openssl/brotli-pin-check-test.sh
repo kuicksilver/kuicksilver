@@ -9,6 +9,8 @@ set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/ksl-brotli-pin-test.XXXXXX"); trap 'rm -rf "$tmp"' EXIT INT TERM HUP
 export GIT_CONFIG_NOSYSTEM=1 HOME="$tmp/home"; mkdir -p "$HOME"
+# git is a developer-tool shim on macOS: with the scratch home, it gets the developer directory named, never a guess
+if [ "$(uname -s)" = Darwin ] && [ -z "${DEVELOPER_DIR:-}" ] && d=$(/usr/bin/xcode-select -p 2>/dev/null); then export DEVELOPER_DIR="$d"; fi
 g() { git -C "$tmp/src" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c tag.gpgsign=false "$@"; }
 mkdir -p "$tmp/src/c/dec"; git init -q "$tmp/src"
 printf 'int decode(void) { return 1; }\n' > "$tmp/src/c/dec/decode.c"; printf '#!/bin/sh\necho ok\n' > "$tmp/src/build.sh"; chmod +x "$tmp/src/build.sh"

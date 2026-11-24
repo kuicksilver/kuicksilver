@@ -122,7 +122,7 @@ jobs:
       - name: 'lint: doc-refs and test-check negative controls'
         run: |
           rc=0
-          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
+          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
             bash "tools/check/$t-test.sh" || rc=1
           done
           exit $rc
@@ -691,6 +691,7 @@ jobs:
       - name: 'repro: double build (macos-arm64)'
         run: |
           bash tools/check/double-build.sh macos-arm64
+          bash tools/check/ar-diff-test.sh        # what double-build.sh prints for an archive that differs (fixtures)
           bash tools/check/native-flags-test.sh   # the builder's compiler and flags (docs/guide/building.md)
           bash tools/openssl/fetch-test.sh        # zlib and brotli verification (ADR-0025), on the tarballs fetched above
           bash tools/openssl/brotli-pin-check-test.sh   # the brotli pin-update check, against a local fixture repository
@@ -723,7 +724,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { xcode: 'true', openssl-cache: apple-native }
+        # ndk: the pinned NDK's llvm-ar archives the Apple OpenSSL and libksl.a (tools/openssl/build.sh)
+        with: { ndk: 'true', xcode: 'true', openssl-cache: apple-native }
       - name: 'native: macosArm64 tests'
         run: |
           . tools/ci/matrix.sh
@@ -1046,15 +1048,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, target: linux-x64 }
-          - { os: macos-26, target: macos-arm64 }
+          # ndk: the pinned NDK's llvm-ar archives the Apple OpenSSL (tools/openssl/build.sh); Linux needs none
+          - { os: ubuntu-24.04, target: linux-x64, ndk: 'false' }
+          - { os: macos-26, target: macos-arm64, ndk: 'true' }
     env:
       KSL_OPENSSL_PIN: gradle/openssl-next.toml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { openssl-cache: next, pin: gradle/openssl-next.toml }
+        with: { ndk: '${{ matrix.ndk }}', openssl-cache: next, pin: gradle/openssl-next.toml }
       - name: 'openssl-next: fetch and verify'
         run: bash tools/openssl/fetch.sh
       - name: 'openssl-next: build ${{ matrix.target }}'

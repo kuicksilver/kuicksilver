@@ -11,7 +11,9 @@ example to add hardening flags a distribution requires).
 
 **Before you start.** The tools the build needs are listed in [CONTRIBUTING.md, Building](../../CONTRIBUTING.md#building):
 a JDK, a C compiler, Docker for the Linux and Windows native code, the Android NDK for the AAR and, on macOS, Xcode for
-the Apple targets.
+the Apple targets. The NDK's `llvm-ar` writes the Apple builds' intermediate archives (`build/openssl/<target>`, which the
+double build compares): Xcode's `ranlib` leaves uninitialised bytes in an archive's index. The archives a klib ships are
+rewritten by the NDK's `llvm-objcopy` in any case, so this changes no published bytes.
 
 ## What the build makes
 

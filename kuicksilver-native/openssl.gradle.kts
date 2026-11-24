@@ -79,6 +79,11 @@ opensslTargets.forEach { t ->
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), fileTree(root.resolve("tools/openssl/brotli")), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
         inputs.files(root.resolve("tools/openssl/apply-patch.pl"), fileTree(root.resolve("tools/openssl/patches")))   // ADR-0019
+        inputs.files(root.resolve("tools/check/llvm-tool.sh"))   // finds the Apple targets' llvm-ar (tools/openssl/build.sh)
+        // ... from these, for the Apple targets: another llvm-ar is another archive index, so a change reruns the build
+        if (t.startsWith("macos-") || t.startsWith("ios-")) {
+            listOf("LLVM_AR", "ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT").forEach { inputs.property("env.$it", providers.environmentVariable(it).orElse("")) }
+        }
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own
@@ -86,6 +91,14 @@ opensslTargets.forEach { t ->
         outputs.dir(root.resolve("build/openssl/$t"))
         if (prebuilt) {
             onlyIf("kuicksilver.openssl.prebuilt: build/openssl/$t is not current") { _ -> prebuiltState(t) != null }
+            // A stale build is refused once the task graph is known, before any task runs: by the time this task's own
+            // actions run, Gradle may already have deleted build/openssl/$t as a stale output (it does so on the first
+            // execution in a checkout without execution history, e.g. a fresh worktree), and the check would then see
+            // it missing and build it instead of refusing. doFirst stays as a second check.
+            val path = "${project.path}:opensslBuild${t.camel()}"
+            gradle.taskGraph.whenReady {
+                if (hasTask(path)) prebuiltState(t)?.takeIf { it != "missing" }?.let { throw GradleException("build/openssl/$t is stale ($it); delete it or drop -Pkuicksilver.openssl.prebuilt") }
+            }
             doFirst { prebuiltState(t)?.takeIf { it != "missing" }?.let { throw GradleException("build/openssl/$t is stale ($it); delete it or drop -Pkuicksilver.openssl.prebuilt") } }
         }
         environment("KSL_OPENSSL_PIN", pinFile.path)

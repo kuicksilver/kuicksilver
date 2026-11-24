@@ -7,11 +7,17 @@
 #      LDFLAGS reach Configure as options after the project's own, in that order, and never through its environment
 #      (where Configure would put them in place of the target's flags); configure-target.txt, provenance.txt and
 #      --print-target name them; the cache key tells builds with and without them apart; Configure's own options, words
-#      that are not flags and %-escapes are refused before anything runs.
+#      that are not flags and %-escapes are refused before anything runs. The Apple targets get llvm-ar as AR and RANLIB
+#      (not Xcode's archiver, whose index is not reproducible), named in their target line (ksl-ar=llvm-ar), a path with a
+#      space reaches make as one without, another llvm-ar version is another cache key, and without one (release mode,
+#      no NDK) the build stops before Configure; the Docker Linux targets get GNU ar's deterministic mode.
 #   2. tools/build-ksl-a.sh and tools/build-jni.sh (macOS, on a copy of the tree): a CC wrapper records every compiler
 #      invocation: CC is the compiler, every project flag is still there and the builder's come after them (CPPFLAGS and
 #      CFLAGS after -Werror, LDFLAGS after the export list), a flag that cannot compile fails the build, LDFLAGS reach the
-#      linker (a link map is written) and the library still exports only its entry points.
+#      linker (a link map is written) and the library still exports only its entry points. libksl.a and the test hooks
+#      (tools/build-test-hooks.sh) build with failing ar, ranlib and libtool stubs first in PATH, which never run, their
+#      archives and build/openssl/macos-arm64's have llvm-ar's index and zeroed headers (tools/check/ar-diff.py
+#      --llvm-index), and without any llvm-ar both stop with a message.
 #   3. tools/check/double-build.sh (macOS) builds with the project's own compiler, flags and paths: with a CC that does not
 #      exist, flags that cannot compile, CCC_OVERRIDE_OPTIONS, CPATH, C_INCLUDE_PATH and SDKROOT (each shown to reach clang)
 #      and the other variables of tools/clean-build-env.sh in the environment, it still builds identical copies. The
@@ -132,6 +138,8 @@ check "openssl: without them Configure ends with the project's flags" "$([ "$(ta
 t1=$(portable < "$tmp/o1/linux-x64/configure-target.txt")
 check "openssl: configure-target.txt without them is unchanged" "$([ "$t1" = "linux-x86_64 -Os$pids" ] && echo 0 || echo 1)" "$t1"
 check "openssl: the carried patches applied to the stub tree" "$([ "${stubbed:-0}" -gt 0 ] || [ ${#patches[@]} = 0 ]; echo $?)" "stubs: ${stubbed:-none}"
+check "openssl: the Docker Linux targets archive in GNU ar's deterministic mode (ARFLAGS=qcD, RANLIB=ranlib -D)" \
+  "$([ "$(pos "$log.args" ARFLAGS=qcD)" -gt 0 ] && grep -qxF 'RANLIB=ranlib -D' "$log.env" && echo 0 || echo 1)" "$(grep -E '^(ARFLAGS|RANLIB)=' "$log.args" "$log.env")"
 
 rm -f "$log".*; out=$(ossl "$tmp/o2" CPPFLAGS="$F_CPP" CFLAGS="$F_C" LDFLAGS="$F_LD"); rc=$?
 check "openssl: builds with the builder's flags, not from the cache of a build without them" \
@@ -228,6 +236,38 @@ check "openssl: CC does not change Android's configure line" "$([ "$a1" = "$a0" 
 ndk="$tmp/fake-ndk"; mkdir -p "$ndk/toolchains/llvm/prebuilt/host/bin"
 rm -f "$log".*; out=$(OT=android-arm64 ossl "$tmp/o-android" ANDROID_NDK_ROOT="$ndk" CC=/opt/ksl/not-the-ndk-clang); rc=$?
 check "negative_androidIgnoresBuilderCc" "$([ -s "$log.args" ] && ! grep -q '^CC=' "$log.args" && echo 0 || echo 1)" "exit $rc: $(grep '^CC=' "$log.args" 2>/dev/null) $out"
+# the Apple targets archive with llvm-ar, never Xcode's ar/ranlib (whose index leaves uninitialised padding): Configure gets it
+# in its environment as AR and RANLIB, and the tool's version is part of the cache key (another llvm-ar, another build)
+far="$tmp/fake-llvm-ar"; mkdir -p "$far"
+fake_ar() { printf '#!/bin/sh\necho "LLVM (http://llvm.org/):"\necho "  LLVM version %s"\n' "$1" > "$far/llvm-ar"; chmod +x "$far/llvm-ar"; }
+fake_ar 1.0.0-ksl-a
+rm -f "$log".*; out=$(OT=macos-arm64 ossl "$tmp/o-ar1" LLVM_AR="$far/llvm-ar"); rc=$?
+check "openssl: an Apple target archives with llvm-ar (AR and RANLIB in Configure's environment)" \
+  "$([ $rc = 0 ] && grep -qxF "AR=$far/llvm-ar" "$log.env" && grep -qxF "RANLIB=$far/llvm-ar s" "$log.env" && echo 0 || echo 1)" \
+  "exit $rc: $(grep -E '^(AR|RANLIB)=' "$log.env" 2>/dev/null) $out"
+out=$(OT=macos-arm64 ossl "$tmp/o-ar2" LLVM_AR="$far/llvm-ar")
+check "openssl: the same llvm-ar again takes the cache" "$(grep -q '^cache hit' <<< "$out" && echo 0 || echo 1)" "$out"
+fake_ar 1.0.0-ksl-b; out=$(OT=macos-arm64 ossl "$tmp/o-ar3" LLVM_AR="$far/llvm-ar")
+check "negative_otherLlvmArVersionNotReusedFromCache" "$(grep -q '^built macos-arm64' <<< "$out" && echo 0 || echo 1)" "$out"
+rm -f "$log".*; out=$(OT=ios-arm64 ossl "$tmp/o-ar4" LLVM_AR="$far/llvm-ar"); rc=$?
+check "openssl: ... and so does iOS" "$([ $rc = 0 ] && grep -qxF "AR=$far/llvm-ar" "$log.env" && echo 0 || echo 1)" "exit $rc: $out"
+check "openssl: the Apple target line names the archiver (ksl-ar=llvm-ar), Linux's does not" \
+  "$(grep -q ' ksl-ar=llvm-ar$' "$tmp/o-ar1/macos-arm64/configure-target.txt" && [ "$(bash "$root/tools/openssl/build.sh" --print-target macos-arm64 | awk '{print $NF}')" = ksl-ar=llvm-ar ] && ! grep -q ksl-ar "$tmp/o1/linux-x64/configure-target.txt" && echo 0 || echo 1)" "$(cat "$tmp/o-ar1/macos-arm64/configure-target.txt")"
+# the runs without an llvm-ar use a scratch home: macOS's developer-tool shims (clang, cc, xcrun, git, python3, ar, ...)
+# are stubbed first in PATH, so one reached there fails the check (it logs) instead of possibly opening the "install the
+# command line developer tools" dialog, and the developer directory is passed on explicitly
+noshim="$tmp/no-shim"; nslog="$tmp/no-shim.log"; mkdir -p "$noshim"; rm -f "$nslog"
+for t in clang clang++ cc c++ gcc xcrun xcodebuild git python3 make ld ar ranlib libtool nm strip lipo otool; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 1\n' "$t" "$nslog" > "$noshim/$t"; chmod +x "$noshim/$t"
+done
+devdir=(); if [ "$(uname -s)" = Darwin ] && d=$(/usr/bin/xcode-select -p 2>/dev/null); then devdir=(DEVELOPER_DIR="${DEVELOPER_DIR:-$d}"); fi
+rm -f "$log".*; out=$(unset LLVM_AR ANDROID_NDK_ROOT ANDROID_NDK_HOME ANDROID_HOME ANDROID_SDK_ROOT; OT=macos-arm64 ossl "$tmp/o-ar5" HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$noshim:$stub:$PATH" ${devdir[@]+"${devdir[@]}"}); rc=$?
+check "negative_appleOpensslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$log.args" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
+# a tool path with a space: make gets a link without one, the cache key the tool itself
+mkdir -p "$tmp/sp ace"; cp "$far/llvm-ar" "$tmp/sp ace/llvm-ar"
+rm -f "$log".*; out=$(OT=macos-arm64 ossl "$tmp/o-ar6" LLVM_AR="$tmp/sp ace/llvm-ar"); rc=$?
+a6=$(sed -n 's/^AR=//p' "$log.env" 2>/dev/null)
+check "openssl: an llvm-ar path with a space reaches Configure as one without" "$([ $rc = 0 ] && [ -n "$a6" ] && [[ "$a6" != *" "* ]] && echo 0 || echo 1)" "exit $rc: AR=$a6 $out"
 
 # ------------------------------------------------------------------------------------------ tools/clean-build-env.sh
 # the variables the release, the double build and verify-release's rebuild clear: every one listed is unset, the list has
@@ -243,9 +283,9 @@ out=$( . "$root/tools/clean-build-env.sh"
   done )
 check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
 # the hosted jobs' guard: a value the workflow sets on purpose passes, anything else is named
-gfake="$tmp/guard-ndk"; mkdir -p "$gfake/toolchains/llvm/prebuilt/host/bin"; touch "$gfake"/toolchains/llvm/prebuilt/host/bin/llvm-{nm,objcopy,objdump,readelf}
+gfake="$tmp/guard-ndk"; mkdir -p "$gfake/toolchains/llvm/prebuilt/host/bin"; touch "$gfake"/toolchains/llvm/prebuilt/host/bin/llvm-{nm,objcopy,objdump,readelf,ar}
 g() { ( . "$root/tools/clean-build-env.sh"; for v in "${ksl_build_env_vars[@]}"; do unset "$v"; done; export "$@"; ksl_build_env_guard ); }
-out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_NM="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-nm" LLVM_OBJCOPY="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-objcopy")
+out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_NM="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-nm" LLVM_OBJCOPY="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-objcopy" LLVM_AR="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-ar")
 check "guard: the pinned NDK's LLVM tools (set by the setup action) pass" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
 out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_OBJCOPY=/opt/other/llvm-objcopy)
 check "negative_guardNamesForeignLlvmTool" "$([ "$out" = LLVM_OBJCOPY ] && echo 0 || echo 1)" "$out"
@@ -285,6 +325,30 @@ else
     local f="$1" prev=0 p; shift
     for w in "$@"; do p=$(pos "$f" "$w"); [ "$p" -gt "$prev" ] || return 1; prev=$p; done
   }
+
+  # the Apple archives are llvm-ar's, never Xcode's (whose index padding is uninitialised): with ar, ranlib and libtool
+  # stubs first in PATH that fail and log, libksl.a and the test hooks still build, and no stub ran; without any llvm-ar
+  # (release mode, a home without an SDK, no NDK named) the scripts stop and say so
+  xcode="$tmp/xcode-ar"; mkdir -p "$xcode"; xlog="$tmp/xcode-ar.log"; rm -f "$xlog"
+  for t in ar ranlib libtool; do printf '#!/bin/sh
+echo "%s $*" >> "%s"
+exit 1
+' "$t" "$xlog" > "$xcode/$t"; chmod +x "$xcode/$t"; done
+  out=$(PATH="$xcode:$PATH" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+  check "negative_libkslNeverUsesXcodeAr" "$([ $rc = 0 ] && [ ! -e "$xlog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$xlog" 2>/dev/null) $(tail -3 <<< "$out")"
+  out=$(PATH="$xcode:$PATH" bash "$tree/tools/build-test-hooks.sh" macos-arm64 "$tmp/hooks" 2>&1); rc=$?
+  check "negative_testHooksNeverUseXcodeAr" "$([ $rc = 0 ] && [ ! -e "$xlog" ] && [ -f "$tmp/hooks/libksl_test_hooks.a" ] && echo 0 || echo 1)" "exit $rc: $(cat "$xlog" 2>/dev/null) $out"
+  # ... and what they wrote is llvm-ar's (also when an Xcode archiver is called by its full path, which the stubs miss):
+  # a __.SYMDEF index, not Xcode's __.SYMDEF SORTED, and zeroed headers; likewise the OpenSSL archives build.sh made
+  for a in "$tree/build/openssl/macos-arm64/lib/libksl.a" "$tmp/hooks/libksl_test_hooks.a" "$O/lib/libcrypto.a" "$O/lib/libssl.a"; do
+    out=$(python3 -I "$root/tools/check/ar-diff.py" --llvm-index "$a" 2>&1); rc=$?
+    check "negative_xcodeIndexIn_$(basename "$a")" "$rc" "$out"
+  done
+  noar() { env -u LLVM_AR -u ANDROID_NDK_ROOT -u ANDROID_NDK_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$noshim:$xcode:$PATH" ${devdir[@]+"${devdir[@]}"} "$@" 2>&1; }
+  out=$(noar bash "$tree/tools/build-ksl-a.sh" macos-arm64); rc=$?
+  check "negative_libkslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$xlog" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
+  out=$(noar bash "$tree/tools/build-test-hooks.sh" macos-arm64 "$tmp/hooks-none"); rc=$?
+  check "negative_testHooksWithoutLlvmArFail" "$([ $rc = 2 ] && grep -q 'no llvm-ar' <<< "$out" && [ ! -e "$tmp/hooks-none/libksl_test_hooks.a" ] && [ ! -e "$xlog" ] && [ ! -e "$nslog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$nslog" 2>/dev/null) $out"
 
   rm -f "$cclog"
   out=$(CC="$wrap" CPPFLAGS="$F_CPP" CFLAGS="-DKSL_FLAGS_PROBE=1 -MD" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
@@ -342,14 +406,19 @@ else
   # the environment a builder may have: each of these reaches clang on its own (the controls show it), the double build
   # must ignore them all
   probe="$tmp/probe-include"; mkdir -p "$probe"; printf '#error ksl-env-probe\n' > "$probe/stdint.h"
-  for e in "CCC_OVERRIDE_OPTIONS=+-include/nonexistent/ksl-env-probe.h" "CPATH=$probe" "C_INCLUDE_PATH=$probe" "SDKROOT=/nonexistent/sdk"; do
-    out=$(env "$e" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+  # The controls compile with the toolchain's own clang, never the /usr/bin/clang shim, and SDKROOT names an empty
+  # directory, never a missing one: given an SDKROOT that does not exist, the shim asks xcodebuild for that SDK's clang,
+  # fails, and macOS opens the "install the command line developer tools" dialog. clang reads SDKROOT as its sysroot,
+  # and in an empty one the system headers are not found, which is what the control shows.
+  realclang=$(env -u SDKROOT -u TOOLCHAINS xcrun -f clang); emptysdk="$tmp/empty-sdk"; mkdir -p "$emptysdk"
+  for e in "CCC_OVERRIDE_OPTIONS=+-include/nonexistent/ksl-env-probe.h" "CPATH=$probe" "C_INCLUDE_PATH=$probe" "SDKROOT=$emptysdk"; do
+    out=$(env "$e" CC="$realclang" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
     check "control: ${e%%=*} reaches clang (a build-ksl-a.sh build fails because of it)" \
-      "$([ $rc != 0 ] && grep -qE 'ksl-env-probe|/nonexistent/sdk' <<< "$out" && echo 0 || echo 1)" "exit $rc"
+      "$([ $rc != 0 ] && grep -qE 'ksl-env-probe|.(stdint|stddef|stdio|string|stdlib)\.h. file not found' <<< "$out" && echo 0 || echo 1)" "exit $rc: $(grep -m2 error <<< "$out")"
   done
   out=$(CC=/nonexistent/cc CPPFLAGS="-include /nonexistent/ksl-flags-probe.h" CFLAGS="-include /nonexistent/ksl-flags-probe.h" \
     LDFLAGS="-Wl,-ksl-no-such-linker-flag" CCC_OVERRIDE_OPTIONS="+-include/nonexistent/ksl-env-probe.h" CPATH="$probe" \
-    C_INCLUDE_PATH="$probe" SDKROOT=/nonexistent/sdk LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
+    C_INCLUDE_PATH="$probe" SDKROOT="$emptysdk" LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
     OPT=-O0 MAKEFLAGS=-e KSL_OPENSSL_OUT=/nonexistent KSL_OPENSSL_PREFIXED=/nonexistent KSL_KEEP_DEBUG=1 \
     LD_RUN_PATH=/nonexistent/rpath TOOLCHAINS=com.ksl.nonexistent PERL5OPT=-MKslNoSuchModule PERL5LIB=/nonexistent \
     CROSS_SYSROOT=/nonexistent \

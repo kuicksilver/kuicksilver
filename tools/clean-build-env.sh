@@ -24,10 +24,13 @@
 #   the build scripts:    KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG
 #                         KSL_OPENSSL_BUILD_IMAGE (set by build-docker.sh inside the container only)
 # What selects a toolchain is left alone, as the release checks it against the pins: PATH, DEVELOPER_DIR, ANDROID_NDK_ROOT,
-# KONAN_DEPS, JAVA_HOME. tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
+# KONAN_DEPS, JAVA_HOME. ksl_clean_build_env also exports KSL_PINNED_NDK=1, so tools/check/llvm-tool.sh takes the LLVM
+# tools (llvm-ar, llvm-objcopy, ...) from the pinned NDK only, never from another NDK, PATH or Homebrew, and fails
+# without it; and it unsets an ANDROID_NDK_HOME that is not the pinned NDK (Gradle and the NDK's own scripts read it).
+# A caller that accepts toolchain drift (--allow-toolchain-drift) calls ksl_allow_toolchain_drift afterwards, which undoes both. tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
 ksl_build_env_vars=(
   CC CXX CPP AS LD AR RANLIB NM STRIP OBJCOPY CROSS_COMPILE RC WINDRES PERL HASHBANGPERL
-  LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF
+  LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF LLVM_AR
   CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS ASFLAGS ARFLAGS RCFLAGS OPT
   CCC_OVERRIDE_OPTIONS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH GCC_EXEC_PREFIX
   SDKROOT MACOSX_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET RC_DEBUG_OPTIONS SOURCE_DATE_EPOCH TOOLCHAINS
@@ -39,17 +42,29 @@ ksl_build_env_vars=(
   KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG KSL_OPENSSL_BUILD_IMAGE
 )
 ksl_clean_build_env() { # [note]
-  local v
+  local v pin
   for v in "${ksl_build_env_vars[@]}"; do
     if [ -n "${!v+x}" ]; then
       [ "${1:-}" != note ] || echo "     note: $v is ignored: the build uses the project's own compiler, flags and paths"
       unset "$v"
     fi
   done
+  export KSL_PINNED_NDK=1
+  pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gradle/toolchains.toml" 2>/dev/null || true)   # no pin file (a test fixture): no pin
+  if [ -n "${ANDROID_NDK_HOME:-}" ] && [ "$(sed -n 's/^Pkg.Revision *= *//p' "$ANDROID_NDK_HOME/source.properties" 2>/dev/null | tr -d '\r')" != "$pin" ]; then
+    [ "${1:-}" != note ] || echo "     note: ANDROID_NDK_HOME is ignored: it is not the pinned NDK $pin"
+    ksl_dropped_ndk_home="$ANDROID_NDK_HOME"; unset ANDROID_NDK_HOME
+  fi
+}
+ksl_allow_toolchain_drift() { # after ksl_clean_build_env, for a caller run with --allow-toolchain-drift (local-release.sh,
+  # verify-release.sh): the pinned-NDK mode is left again, so the LLVM tools come from whichever NDK is there (a
+  # difference is then expected, and the caller says so), and an ANDROID_NDK_HOME it dropped is back
+  unset KSL_PINNED_NDK
+  if [ -n "${ksl_dropped_ndk_home:-}" ]; then export ANDROID_NDK_HOME="$ksl_dropped_ndk_home"; unset ksl_dropped_ndk_home; fi
 }
 ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables above that are set, on one line (empty: none),
   # leaving out the values the workflow sets on purpose, which a build gives the same result with as without:
-  #   LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF naming the pinned NDK's own tool (.github/actions/setup writes them
+  #   LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF, LLVM_AR naming the pinned NDK's own tool (.github/actions/setup writes them
   #   to GITHUB_ENV; tools/check/llvm-tool.sh takes that tool from the NDK anyway), and an SDKROOT that is the selected
   #   Xcode's macOS SDK (the one clang uses without it). The runner images set none of the others.
   local v t ok out=""
@@ -57,12 +72,14 @@ ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables abo
     [ -n "${!v+x}" ] || continue
     ok=0
     case "$v" in
-      LLVM_NM|LLVM_OBJCOPY|LLVM_OBJDUMP|LLVM_READELF)
+      LLVM_NM|LLVM_OBJCOPY|LLVM_OBJDUMP|LLVM_READELF|LLVM_AR)
         t=$(printf '%s' "${v#LLVM_}" | tr '[:upper:]' '[:lower:]')
         if [ -n "${ANDROID_NDK_ROOT:-}" ]; then
           for c in "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-"$t"; do [ "${!v}" = "$c" ] && ok=1; done
         fi ;;
-      SDKROOT) [ -n "${!v}" ] && [ "${!v}" = "$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)" ] && ok=1 ;;
+      # xcrun without the SDKROOT under test: one that does not exist sends Apple's tool shims to xcodebuild, whose failure
+      # opens macOS's "install the command line developer tools" dialog
+      SDKROOT) [ -n "${!v}" ] && [ "${!v}" = "$(env -u SDKROOT -u TOOLCHAINS xcrun --sdk macosx --show-sdk-path 2>/dev/null)" ] && ok=1 ;;
     esac
     [ "$ok" = 1 ] || out="$out $v"
   done

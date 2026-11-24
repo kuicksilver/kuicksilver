@@ -22,7 +22,7 @@ By participating you agree to the
 | `curl`, `gpg`, `perl`, `shasum` | fetching and verifying the OpenSSL tarball, building OpenSSL |
 | A C compiler (clang or gcc) | the `ksl` shim and its C tests |
 | Docker (with `linux/amd64` and `linux/arm64`) | OpenSSL and `libksl` for Linux (manylinux2014, glibc 2.17) and Windows (mingw-w64), Linux test runs |
-| Android SDK with NDK r28+ (r27 works: the scripts pass the 16 KiB page flags) | the Android AAR; set `ANDROID_NDK_ROOT` or let the scripts pick the newest NDK in the SDK |
+| Android SDK with NDK r28+ (r27 works: the scripts pass the 16 KiB page flags) | the Android AAR, and the Apple targets' archives (its `llvm-ar` writes them, its `llvm-objcopy` prefixes OpenSSL's symbols); set `ANDROID_NDK_ROOT` or let the scripts pick the pinned NDK, else the newest, in the SDK |
 | macOS with Xcode | Apple targets (cinterop needs a Mac host) |
 | Python 3 | tools under `tools/` (symbol maps, QPACK tables, link and reference checks) |
 

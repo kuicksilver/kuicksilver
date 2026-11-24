@@ -402,12 +402,14 @@ elif [ -n "$rebuilt" ]; then
     compare_target "$t" "$rebuilt"
   done
 elif [ "$tag_ok" = 1 ]; then
-  for v in LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF; do   # tools/check/llvm-tool.sh would take them over the NDK's
+  for v in LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF LLVM_AR; do   # tools/check/llvm-tool.sh would take them over the NDK's
     [ -z "${!v:-}" ] || { echo "     note: $v=${!v} is ignored: the rebuild uses the pinned NDK's tool"; unset "$v"; }
   done
   # the variables that would change a native build (the compiler, flags, include paths, CCC_OVERRIDE_OPTIONS, ...): the
   # release was built without them (tools/clean-build-env.sh of this checkout)
   . "$root/tools/clean-build-env.sh"; ksl_clean_build_env note
+  # drift accepted: the LLVM tools may come from another NDK than the pin (a DIFF, not a FAIL; tools/clean-build-env.sh)
+  [ "$drift" = 0 ] || ksl_allow_toolchain_drift
   src="$work/src"; rm -rf "$src"; mkdir -p "$src"
   git -C "$repo" archive "v$version" tools gradle kuicksilver-native/src | tar -x -C "$src"
   ndk_pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$src/gradle/toolchains.toml" 2>/dev/null || true)

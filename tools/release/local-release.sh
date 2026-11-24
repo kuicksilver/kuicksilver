@@ -87,6 +87,8 @@ while [ $# -gt 0 ]; do case "$1" in
   *) [ -z "$version" ] || { echo "one version only" >&2; exit 2; }; version="$1" ;;
 esac; shift; done
 [ -n "$version" ] || { echo "usage: $0 <version> [--dry-run] [--resume] [--repro] (see --help)" >&2; exit 2; }
+# drift accepted: the LLVM tools may come from another NDK than the pinned one (tools/clean-build-env.sh)
+[ "$allow_drift" = 0 ] || ksl_allow_toolchain_drift
 
 # io.kuicksilver's grant of 2026-10-20: 7 releases, 100 MB and 2620 files per month (Sonatype's default is 1167 files, 78 MB)
 max_files="${KSL_CENTRAL_MAX_FILES:-2620}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-100000000}"

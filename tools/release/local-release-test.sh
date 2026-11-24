@@ -94,11 +94,12 @@ git checkout -q -b release/0.15.x main; tree_version 0.15.0 0.15.0; printf '    
 git checkout -q main
 
 pass=0; fail=0
+T_ENV=()   # VAR=value words for local-release.sh alone (not for t's git); see negative_releaseClearsBuildEnvironment
 t() { # <label> <ok|refuse>[:<pattern in the output>] <checkout target> <args...>
   local label="$1" exp="${2%%:*}" pat="" tgt="$3"; [ "$2" = "${2#*:}" ] || pat="${2#*:}"; shift 3
   git checkout -q $tgt || { echo "FAIL: checkout $tgt"; exit 2; }
   local out rc got verdict
-  out=$(bash tools/release/local-release.sh "$@" 2>&1); rc=$?
+  out=$( [ -z "${T_ENV[*]:-}" ] || export "${T_ENV[@]}"; bash tools/release/local-release.sh "$@" 2>&1); rc=$?
   got=$([ $rc = 0 ] && echo ok || echo refuse)
   verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
   [ $verdict = ok ] && pass=$((pass+1)) || fail=$((fail+1))
@@ -115,9 +116,12 @@ t "release/0.2.x, 0.2.1"                                 ok:push_branch=release/
 t "release/0.2.x, 0.2.2 without the version bump"        "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2
 t "release/0.2.x, 0.2.2-rc1 without the version bump"    "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2-rc1 --central-prerelease
 t "release/0.4.x, 0.4.0-rc1 (coordinates not checked)"   ok:push_branch=release/0.4.x   release/0.4.x 0.4.0-rc1 --central-prerelease
-# the environment that would change a native build is unset before anything else (tools/clean-build-env.sh)
-CCC_OVERRIDE_OPTIONS="+-include/nonexistent/probe.h" CPATH=/nonexistent SDKROOT=/nonexistent OPT=-O0 CFLAGS=-O0 \
+# the environment that would change a native build is unset before anything else (tools/clean-build-env.sh). It reaches
+# local-release.sh only (T_ENV), never t's git: with an SDKROOT that does not exist, macOS's /usr/bin tool shims (git among
+# them) ask xcodebuild for that SDK, fail, and open the "install the command line developer tools" dialog
+T_ENV=(CCC_OVERRIDE_OPTIONS="+-include/nonexistent/probe.h" CPATH=/nonexistent SDKROOT=/nonexistent OPT=-O0 CFLAGS=-O0)
 t "negative_releaseClearsBuildEnvironment"               "ok:note: CCC_OVERRIDE_OPTIONS is ignored" main 0.3.0
+T_ENV=()
 # a prerelease goes to Central only when asked for (its quota), never by default
 t "negative_prereleaseWithoutMode"                       "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1
 t "negative_prereleaseWithoutModeDryRun"                 "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1 --dry-run
