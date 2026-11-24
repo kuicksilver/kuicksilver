@@ -20,7 +20,10 @@ import kotlin.io.encoding.Base64
  * depends on the user name only. For SOCKS5 the password must have 1 to 255 bytes in UTF-8: RFC 1929 section 2 gives
  * PASSWD 1 to 255 octets (curl and Go's x/net/proxy send an empty one with PLEN 0, which the RFC does not allow), so a
  * SOCKS5 proxy configured with an empty password fails at once with [IllegalArgumentException] (the engine's creation
- * for its `proxy`, [ResolvedProxy.socks5] for a resolver's). An HTTP proxy takes an empty password (RFC 7617).
+ * for its `proxy`, [ResolvedProxy.socks5] for a resolver's). An HTTP proxy takes an empty password (RFC 7617), but not a
+ * user name with a colon nor control characters (0x00-0x1F, 0x7F) in either part: RFC 7617 section 2 makes such a
+ * user-id invalid and forbids control characters to the sender, so an HTTP, HTTPS or CONNECT-UDP proxy configured with
+ * them fails the same way ([ResolvedProxy.http], [ResolvedProxy.https], [ConnectUdpProxy], the engine's `proxy`).
  */
 @ExperimentalKuicksilverApi
 public class ProxyCredentials(
@@ -107,7 +110,7 @@ public class ResolvedProxy private constructor(
     init {
         require(host.isNotEmpty()) { "a proxy needs a host" }
         require(port in 1..0xffff) { "proxy port out of range: $port" }
-        if (kind == Kind.Socks5) credentials?.let { requireSocks5Password(it) }
+        credentials?.let { if (kind == Kind.Socks5) requireSocks5Password(it) else requireBasicCredentials(it) }
     }
 
     /** [ProxyType.HTTP] (with or without [tls][ResolvedProxy.tls]) or [ProxyType.SOCKS] (SOCKS5). */
@@ -148,7 +151,9 @@ public class ResolvedProxy private constructor(
     public companion object {
         /**
          * An HTTP proxy at [host]:[port], spoken to in plain TCP: its CONNECT and absolute-form requests, and [credentials]
-         * with them, cross the network in clear (RFC 7617 section 4); use [https] for a proxy that speaks TLS.
+         * with them, cross the network in clear (RFC 7617 section 4); use [https] for a proxy that speaks TLS. Fails with
+         * [IllegalArgumentException] for [credentials] that `Basic` cannot carry: a user name with a colon, or control
+         * characters in either part (RFC 7617 section 2).
          */
         public fun http(
             host: String,
@@ -175,7 +180,7 @@ public class ResolvedProxy private constructor(
          * SNI unless it is an IP address (RFC 6066 section 3), with `KuicksilverEngineConfig.proxyTls` (by default the
          * engine's own trust without the origin's pins and expected name); ALPN offers `http/1.1` only. A request to an
          * `https` origin runs the origin's TLS inside the tunnel (TLS in TLS), verified as without a proxy. [host] goes
-         * through the engine's `dns`.
+         * through the engine's `dns`. [credentials] are checked as for [http].
          */
         public fun https(
             host: String,
@@ -195,6 +200,22 @@ internal fun requireSocks5Password(credentials: ProxyCredentials) {
         "a SOCKS5 password has 1 to 255 bytes (RFC 1929 section 2: PASSWD is 1 to 255 octets); an empty one cannot be sent"
     }
 }
+
+/**
+ * Refuses [credentials] that RFC 7617 section 2 does not let a sender put into `Basic`: "a user-id containing a colon
+ * character is invalid" (the recipient splits user-pass at the first colon, so the proxy would read another user and
+ * password), and "The user-id and password MUST NOT contain any control characters" (CTL, RFC 5234 appendix B.1:
+ * 0x00-0x1F and 0x7F). The message never shows the credentials.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal fun requireBasicCredentials(credentials: ProxyCredentials) {
+    require(':' !in credentials.user) { "a user-id for HTTP Basic proxy authentication cannot contain a colon (RFC 7617 section 2)" }
+    require(credentials.user.none { isCtl(it) } && credentials.password.none { isCtl(it) }) {
+        "the user-id and password for HTTP Basic proxy authentication cannot contain control characters (RFC 7617 section 2)"
+    }
+}
+
+private fun isCtl(c: Char): Boolean = c < '\u0020' || c == '\u007f'
 
 /**
  * The engine's `proxy` as a [ResolvedProxy], null for `java.net.Proxy.NO_PROXY` (a direct connection). Credentials come from the proxy URL's user info (not on the JVM, whose

@@ -452,7 +452,8 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * proxy with a [proxyResolver] (`ResolvedProxy.https`) or the environment, and a plain proxy on port 443 with a
      * resolver's `ResolvedProxy.http`. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
      * [IllegalArgumentException]: RFC 1929 section 2 gives the password 1 to 255 octets (curl and Go send an empty one
-     * anyway, outside the protocol).
+     * anyway, outside the protocol). An HTTP `proxy` with a user name that contains a colon, or with control characters
+     * in either part, fails the same way: RFC 7617 section 2 does not let `Basic` carry them.
      */
     @ExperimentalKuicksilverApi
     public var proxyCredentials: ProxyCredentials? = null

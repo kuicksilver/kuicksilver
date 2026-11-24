@@ -2216,6 +2216,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.minimumHeadStartOnUnconfirmedNetwork
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_anH1WinnerTheCallerNeverGotIsHandedToOnLoser
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_hardDelayOutsideRfc8305BoundsIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.colonInASocks5UserNameIsAccepted
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_colonInUserIdOrControlCharactersAreRefusedForBasic
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_engineWithAnInvalidBasicUserIdFailsAtCreation
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.validBasicCredentialsAreAccepted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.anExpiredAnswerIsAskedAgainWhileTheOldCallIsStillListed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.cfAnswerPicked
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.concurrentLookupsShareOneCall

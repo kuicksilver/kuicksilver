@@ -2054,7 +2054,10 @@ tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experiment
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
 clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
-them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. `Basic` cannot carry a
+user name with a colon, nor control characters (0x00-0x1F, 0x7F) in either part (RFC 7617 section 2): credentials like that
+for an HTTP, `https://` or CONNECT-UDP proxy fail with `IllegalArgumentException` where the proxy is configured (the
+engine's creation for its `proxy`), before anything is sent; a SOCKS5 user name may contain a colon. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
 resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):

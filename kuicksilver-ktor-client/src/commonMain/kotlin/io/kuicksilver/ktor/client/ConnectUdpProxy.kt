@@ -18,7 +18,8 @@ import kotlin.io.encoding.Base64
  *   (`KuicksilverEngineConfig.proxyTls`, by default the engine's trust without what names the origin and without the client
  *   certificate, as an `https://` proxy over TCP; ADR-0023); a failed handshake with it is a [ProxyTlsException].
  * @property credentials sent to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT, never to the origin;
- *   null for none.
+ *   null for none. A user name with a colon, or control characters in either part, fail here with IllegalArgumentException
+ *   (RFC 7617 section 2).
  * @property applies whether a request's URL goes through the proxy; every `https` URL by default. A URL it does not apply to
  *   takes the engine's usual path (its HTTP/SOCKS proxy settings, Alt-Svc, the race).
  */
@@ -46,6 +47,7 @@ public class ConnectUdpProxy(
         port =
             if (p.isEmpty()) 443 else p.toIntOrNull()?.takeIf { it in 1..65535 } ?: throw IllegalArgumentException("bad proxy port in $a")
         require(host.isNotEmpty()) { "the proxy template's authority has no host: $a" }
+        credentials?.let { requireBasicCredentials(it) }
     }
 
     /** `Proxy-Authorization` for the tunnels' CONNECT, or null. */

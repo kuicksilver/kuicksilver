@@ -803,10 +803,13 @@ internal class ProxyRouting(
     private val noted = AtomicInt(0)
 
     init {
-        // a SOCKS5 `proxy` whose credentials RFC 1929 cannot carry fails the engine's creation, not each request
+        // a `proxy` whose credentials RFC 1929 (SOCKS5) or RFC 7617 (HTTP Basic) cannot carry fails the engine's
+        // creation, not each request
         val proxy = config.proxy
         if (proxy != null && proxy.type == ProxyType.SOCKS) {
             (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireSocks5Password(it) }
+        } else if (proxy != null && proxy.type == ProxyType.HTTP) {
+            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireBasicCredentials(it) }
         }
     }
 

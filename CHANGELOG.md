@@ -1047,6 +1047,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, proxy credentials (breaking strictness, RFC 7617 section 2): `ProxyCredentials` sent as
+  `Proxy-Authorization: Basic` (an HTTP or `https://` proxy, `ConnectUdpProxy`) with a colon in the user name, or with a
+  control character (0x00-0x1F, 0x7F) in the user name or password, now fail with `IllegalArgumentException` where the
+  proxy is configured (`ResolvedProxy.http`/`https`, `ConnectUdpProxy`, the engine's creation for its `proxy`) instead
+  of being sent: the proxy would split such a user-id at its colon and read another user and password. SOCKS5
+  credentials are unchanged (RFC 1929 has no such rule).
 - Ktor client, SOCKS5 (breaking strictness, RFC 1929 section 2 and RFC 1928 section 6): a proxy that answers the
   username/password subnegotiation with VER 5 (the SOCKS version) instead of X'01' now fails with `ProxyException`
   ("answered the authentication with version 5") before the CONNECT is sent; the compatibility shim that accepted it
