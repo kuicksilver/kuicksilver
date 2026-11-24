@@ -1050,7 +1050,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS, `HostName.normalize` (breaking strictness, RFC 9525, RFC 1123 section 2.1, RFC 1035 section 2.3.4, RFC 3696
   section 2): a reference identifier (the URL's host, `TlsConfig.serverName`, an expected name) is now an IP literal only
   in the strict form (IPv4 octets without leading zeros, IPv6 without a zone ID) and otherwise a DNS name of LDH labels of
-  1 to 63 octets, at most 253 octets, whose last label is not all digits. `010.0.0.1` (which `inet_aton` reads as
+  1 to 63 octets, at most 253 octets, whose last label is not all digits; brackets enclose an IPv6 literal only.
+  `010.0.0.1` (which `inet_aton` reads as
   8.0.0.1), `1.2.3`, `-a.example`, a 64-octet label or a 254-octet name now fail with `TlsException.Config`, as Go
   refuses them; before, the first was taken for an IP literal and the others for names. The certificate matcher shares
   that parser (its IPv6 groups take ASCII hex digits only).
