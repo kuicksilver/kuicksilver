@@ -385,12 +385,13 @@ experimental in 0.3.0:
   and the JVM (off unless the application enables it, e.g. `com.sun.net.ssl.checkRevocation`) a server that staples
   nothing is not checked at all; use `AnchoredCa` where that matters. `RequireStapled` needs `ksl`'s verifier and is
   refused with `Platform` off Linux, `Custom` and `Tofu` (`TlsException.Config`). `Off` is the way out for a server whose
-  must-staple certificate comes without its staple. A stapled OCSPResponse whose status is not `successful` (`tryLater`,
-  `internalError`, ...; Apache's mod_ssl staples a `tryLater` it makes up while its CA's responder is down) carries no status
+  must-staple certificate comes without its staple. A stapled OCSPResponse that only states an error (a defined error
+  status: `malformedRequest`, `internalError`, `tryLater`, `sigRequired` or `unauthorized`, no responseBytes, in DER;
+  Apache's mod_ssl staples a `tryLater` it makes up while its CA's responder is down) carries no status
   of the certificate (RFC 6960 sections 2.3, 4.2.1) and counts as no staple, as in Firefox: a normal certificate goes on
   under `StapledIfPresent`, while a must-staple certificate, and any certificate under `RequireStapled`, fails as without a
-  staple. A `successful` response that says revoked, does not verify, names another certificate or is stale, and a staple
-  that is no OCSPResponse at all, still fail the handshake on every trust path (RFC 6066 section 8). A
+  staple. A `successful` response that says revoked, does not verify, names another certificate or is stale, and any other
+  staple (not DER, an undefined status, an error status with responseBytes, no OCSPResponse at all), still fail the handshake on every trust path (RFC 6066 section 8). A
   session resumes only while the response its full handshake checked is fresh.
 - **CRLs (clients and servers).** `TrustConfig.AnchoredCa(roots, crls)` checks every certificate on the verified path
   against its issuer's CRL when one of `crls` is from that issuer (`CertificateRevocationList.parsePem` reads

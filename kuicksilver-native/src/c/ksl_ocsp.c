@@ -261,17 +261,30 @@ static X509 *issuer_among(X509 *candidate, STACK_OF(X509) * chain, X509 *leaf) {
     return NULL;
 }
 
-/* Whether the stapled [der] is a whole DER OCSPResponse whose responseStatus is not successful (tryLater, internalError,
-   malformedRequest, sigRequired, unauthorized): such a response has no responseBytes (RFC 6960 section 4.2.1) and so carries
-   no status of the certificate (section 2.3), and the client takes it for no staple, as Firefox does; Apache's mod_ssl, for
-   one, staples a tryLater it made up while its CA's responder is down. One that does not decode, has bytes after it or says
-   successful is an answer, and the checks decide it (an undecodable one fails them). */
+/* Whether the stapled [der] is an OCSPResponse that states an error and nothing else: its responseStatus one of the defined
+   error statuses (malformedRequest 1, internalError 2, tryLater 3, sigRequired 5, unauthorized 6; RFC 6960 section 4.2.1), no
+   responseBytes (the same section: such a response carries none), and DER (re-encoding it gives exactly its bytes, so no BER
+   length form, padding or trailing byte). Such a response carries no status of the certificate (section 2.3), and the client
+   takes it for no staple, as Firefox does; Apache's mod_ssl, for one, staples a tryLater it made up while its CA's responder is
+   down. Anything else - successful, an undefined status, responseBytes with an error status, not DER - is an answer, and the
+   checks decide it (all of those fail them). */
 static int no_answer(const uint8_t *der, size_t len) {
     if (der == NULL || len == 0 || len > LONG_MAX)
         return 0;
     const unsigned char *p = der;
     OCSP_RESPONSE *resp = d2i_OCSP_RESPONSE(NULL, &p, (long)len);
-    int r = resp != NULL && p == der + len && OCSP_response_status(resp) != OCSP_RESPONSE_STATUS_SUCCESSFUL;
+    int r = 0;
+    if (resp != NULL && p == der + len) {
+        int status = OCSP_response_status(resp);
+        unsigned char *again = NULL;
+        int n = i2d_OCSP_RESPONSE(resp, &again);
+        /* without responseBytes the DER OCSPResponse is SEQUENCE { ENUMERATED }: 30 03 0a 01 <status> */
+        r = (status == OCSP_RESPONSE_STATUS_MALFORMEDREQUEST || status == OCSP_RESPONSE_STATUS_INTERNALERROR ||
+             status == OCSP_RESPONSE_STATUS_TRYLATER || status == OCSP_RESPONSE_STATUS_SIGREQUIRED ||
+             status == OCSP_RESPONSE_STATUS_UNAUTHORIZED) &&
+            n == 5 && (size_t)n == len && memcmp(again, der, len) == 0;
+        OPENSSL_free(again);
+    }
     OCSP_RESPONSE_free(resp);
     ERR_clear_error();
     return r;

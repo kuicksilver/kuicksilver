@@ -566,6 +566,22 @@ static void test_no_answer(void) {
           "negative_undecodable_staple: not DER is not taken for no staple");
     CHECK(ksl_test_ocsp_no_answer(trailing, sizeof trailing) == 0, "negative_trailing_byte: not one OCSPResponse");
     CHECK(ksl_test_ocsp_no_answer(not_enumerated, sizeof not_enumerated) == 0, "negative_not_an_ocsp_response");
+    /* only the defined error statuses, without responseBytes (section 4.2.1), in DER (the re-encoding is the input) */
+    static const uint8_t with_bytes[] = {0x30, 0x15, 0x0a, 0x01, 0x03, 0xa0, 0x10, 0x30, 0x0e, 0x06, 0x09, 0x2b,
+                                         0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01, 0x01, 0x04, 0x01, 0x00},
+                         status4[] = {0x30, 0x03, 0x0a, 0x01, 0x04}, status99[] = {0x30, 0x03, 0x0a, 0x01, 0x63},
+                         indefinite[] = {0x30, 0x80, 0x0a, 0x01, 0x03, 0x00, 0x00},
+                         long_form[] = {0x30, 0x81, 0x03, 0x0a, 0x01, 0x03},
+                         enum_padded[] = {0x30, 0x04, 0x0a, 0x02, 0x00, 0x03},
+                         malformed_request[] = {0x30, 0x03, 0x0a, 0x01, 0x01};
+    CHECK(ksl_test_ocsp_no_answer(with_bytes, sizeof with_bytes) == 0,
+          "negative_error_status_with_response_bytes: an error status carries none (RFC 6960 section 4.2.1)");
+    CHECK(ksl_test_ocsp_no_answer(status4, sizeof status4) == 0, "negative_unused_status_4: not a defined status");
+    CHECK(ksl_test_ocsp_no_answer(status99, sizeof status99) == 0, "negative_undefined_status_99");
+    CHECK(ksl_test_ocsp_no_answer(indefinite, sizeof indefinite) == 0, "negative_ber_indefinite_length: not DER");
+    CHECK(ksl_test_ocsp_no_answer(long_form, sizeof long_form) == 0, "negative_non_minimal_length: not DER");
+    CHECK(ksl_test_ocsp_no_answer(enum_padded, sizeof enum_padded) == 0, "negative_non_minimal_enumerated: not DER");
+    CHECK(ksl_test_ocsp_no_answer(malformed_request, sizeof malformed_request) == 1, "malformedRequest is no answer");
     blob good = file_of("ocsp-good");
     CHECK(ksl_test_ocsp_no_answer(good.buf, good.len) == 0, "a successful response is an answer");
     int64_t until = 0;

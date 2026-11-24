@@ -31,9 +31,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * nextUpdate). RFC 6066 section 8: a client "MUST check the OCSP response and abort the handshake if the response is not
  * satisfactory with bad_certificate_status_response(113) alert", so under every policy but [Off] a stapled response that
  * says revoked ([VerifyReason.Revoked]) or fails a check ([VerifyReason.InvalidStatusResponse]) ends the handshake with
- * that alert. A stapled OCSPResponse whose responseStatus is not `successful` (`tryLater`, `internalError`, ...) carries no
- * status of the certificate (RFC 6960 sections 2.3 and 4.2.1) and counts as no staple, as in Firefox; one that does not decode
- * fails as not satisfactory. A certificate with the TLS feature extension `status_request` (RFC 7633, must-staple) needs a good stapled
+ * that alert. A stapled OCSPResponse that only states an error (a defined error status such as `tryLater` or `internalError`,
+ * no responseBytes, in DER) carries no status of the certificate (RFC 6960 sections 2.3 and 4.2.1) and counts as no staple, as
+ * in Firefox; any other staple that is no satisfactory successful response (not DER, an undefined status, an error status with
+ * responseBytes) fails as not satisfactory. A certificate with the TLS feature extension `status_request` (RFC 7633, must-staple) needs a good stapled
  * response under every policy but [Off], on every trust path, the platform's included: RFC 7633 section 4.3.3, a client
  * "MUST treat a certificate with a TLS feature extension as an invalid certificate if the features offered by the server do
  * not contain all features present in both the client's ClientHello message and the TLS feature extension", and section
