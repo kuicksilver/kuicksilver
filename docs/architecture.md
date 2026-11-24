@@ -190,8 +190,9 @@ listeners, `TcpListener.kt` (`TcpServer`, started by `startTcp`) holds the TCP/T
 implements RFC 9220), advertises `Alt-Svc`, and stops gracefully with GOAWAY. Neither engine sees `kuicksilver-quic`
 directly (ADR-0014).
 
-**Architecture Invariant:** a resource produced inside a `coroutineScope`/`withContext`/`withTimeout` block is kept in
-a variable outside it and released when the scope throws.
+**Architecture Invariant:** a resource produced inside a `coroutineScope`/`withContext`/`withTimeout(OrNull)` block (or
+an `async`/`select`) is recorded, as soon as it exists, where code outside the scope sees it (a variable or its owner),
+and that code releases it when the scope throws.
 
 ### `kuicksilver-testing`
 
