@@ -423,16 +423,19 @@ class ClientPoolTest {
                     assertEquals(HttpProtocolVersion.HTTP_1_1, client.get(url).also { assertEquals("ok", it.bodyAsText()) }.version)
                     assertEquals(1, h1.pool.idleCount, "the first request's connection is idle in the pool")
                     val data = HttpRequestBuilder().apply { url(url) }.build()
-                    coroutineScope {
-                        var caller: Job? = null
-                        h1.obtainBudgetForTest = { caller!!.cancel() }
-                        caller =
-                            launch(start = CoroutineStart.LAZY) {
-                                h1.open(data)
-                                error("the caller is cancelled before it gets the connection")
-                            }
-                        caller.start()
-                        caller.join()
+                    try {
+                        coroutineScope {
+                            var caller: Job? = null
+                            h1.obtainBudgetForTest = { caller!!.cancel() }
+                            caller =
+                                launch(start = CoroutineStart.LAZY) {
+                                    h1.open(data)
+                                    error("the caller is cancelled before it gets the connection")
+                                }
+                            caller.start()
+                            caller.join()
+                        }
+                    } finally {
                         h1.obtainBudgetForTest = null
                     }
                     assertEquals(1, h1.pool.liveCount, "one connection")
