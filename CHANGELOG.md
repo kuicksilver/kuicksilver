@@ -1705,6 +1705,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is reported in `closed` with its code and reason, also when the application, or a Ktor route whose handler the
   connection's end cancelled, calls `close()` first. Once the connection is gone `close()` sends nothing and waits for
   the session's end. Before, it completed `closed` with code 0 ahead of the peer's capsule.
+- WebTransport server: a client's STOP_SENDING on a session's CONNECT stream no longer counts as an abandoned request
+  (`awaitAbandoned`). Safari 27.2 sends it with its WT_CLOSE_SESSION and FIN in one packet. The Ktor engine cancelled
+  the route's handler on it, and the route then closed the session with code 0 ahead of Safari's capsule (code 7 and
+  "bye" in the manual check). Only the connection's end abandons such a request now; the session's `closed` reports
+  the client's close.
 
 - WebTransport server: `sec-webtransport-http3-draft: draft02`, the response field Chrome's draft-02 client needs, goes
   only to a session that runs draft-02 and whose client sent `sec-webtransport-http3-draft02: 1`. Before, any request

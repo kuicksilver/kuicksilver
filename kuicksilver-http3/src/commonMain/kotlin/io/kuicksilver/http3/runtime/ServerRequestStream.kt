@@ -589,7 +589,9 @@ internal class ServerRequestImpl(
      * aborting the stream with H3_REQUEST_CANCELLED"), or the connection is gone. An engine cancels the request's
      * handler then, so a cancelled long poll gives its stream back at once instead of when it would have answered. Never
      * returns for a request kept on a live connection, nor once the response was sent in full (a handler that answered
-     * and goes on with other work is not cancelled by a late STOP_SENDING or the connection's end).
+     * and goes on with other work is not cancelled by a late STOP_SENDING or the connection's end). A request accepted as
+     * a WebTransport session is abandoned only by the connection's end: a STOP_SENDING on its CONNECT stream belongs to
+     * the session's close (draft-ietf-webtrans-http3-17 section 6), which `closed` reports.
      */
     suspend fun awaitAbandoned() {
         abandonedBeforeTheFullResponse()
@@ -610,7 +612,11 @@ internal class ServerRequestImpl(
                         } catch (_: io.kuicksilver.quic.QuicException) {
                             null
                         }
-                    if (code != null) peerAbandoned.complete(Unit)
+                    // a WebTransport session's CONNECT stream: the client's STOP_SENDING is part of its close (Safari sends
+                    // WT_CLOSE_SESSION, FIN and STOP_SENDING together), which the session's own end reports (section 6); an
+                    // engine that cancelled the handler here made its route close the session with code 0 ahead of the
+                    // client's capsule. Only the connection's end abandons it
+                    if (code != null && wtSession == null) peerAbandoned.complete(Unit)
                 }
             val lost =
                 launch {

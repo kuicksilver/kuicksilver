@@ -12,6 +12,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.awaitAbandoned
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.VarInt
@@ -173,6 +174,46 @@ class WtDraftVersionsTest {
                         assertEquals(7L, info.code, "$d, connection closed behind: $closeConnection, cause ${info.cause}")
                         assertEquals("bye", info.reason, "$d, connection closed behind: $closeConnection")
                     }
+                }
+            }
+        }
+
+    /**
+     * Safari 27.2's close (draft-14; the server's qlog of 2026-11-25): WT_CLOSE_SESSION in a DATA frame, the CONNECT
+     * stream's FIN and STOP_SENDING (H3_NO_ERROR) for our side of it, in one packet, while the connection stays up. The
+     * server answers the STOP_SENDING with RESET_STREAM. The STOP_SENDING is part of the client's close, not an abandoned
+     * request ([awaitAbandoned], which the Ktor engine cancels a handler on, its route then closing the session with code
+     * 0): `closed` reports the client's code and reason, in every draft (before: code 0, no reason, in Safari's runs).
+     */
+    @Test fun negative_theClientsCloseCapsuleWinsOverItsStopSending() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val request = async { server.acceptRequest() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    val r = withTimeout(5.seconds) { request.await() }
+                    val session = r.acceptWebTransport()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    // as the Ktor engine does: a request the client abandoned cancels its handler, and the WebTransport route
+                    // then closes the session with code 0
+                    val engine =
+                        launch {
+                            r.awaitAbandoned()
+                            session.close(0)
+                        }
+                    // the capsule, the FIN and the STOP_SENDING reach the server back to back, as in Safari's one packet
+                    closeCapsuleThen(q, c, s, st) { st.stopSending(Http3ErrorCode.NO_ERROR) }
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(7L to "bye", info.code to info.reason, "$d, cause ${info.cause}")
+                    // the request was not abandoned by the client's close: only the connection's end would
+                    assertTrue(engine.isActive, "$d")
+                    engine.cancel()
                 }
             }
         }
