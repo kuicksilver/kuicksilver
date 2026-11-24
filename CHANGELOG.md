@@ -1389,9 +1389,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `["TLSv1.1", "TLSv1.2", "TLSv1.3"]` or `["TLSv1.2"]`, now fails the start with `TlsException.Config`. Unset, or
   `["TLSv1.3"]`, stays TLS 1.3 only.
 - RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
-  nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
-  no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
-  libssl support for it.
+  nonce, derived from the private key, the message digest and fresh random bytes. That is the hedged construction the
+  same section names against the side-channel and fault attacks deterministic ECDSA invites ("combining both randomness
+  and determinism"), as Go and BoringSSL sign, so the row is met (docs/spec/rfc/9325.md), not a deviation.
 - Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
   startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS

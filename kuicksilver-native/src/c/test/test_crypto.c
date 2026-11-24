@@ -59,6 +59,21 @@ void run_crypto(void) {
         CHECK(ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, sig, 0) == 0,
               "negative: an empty signature is a bad signature (0)");
     }
+    /* ecdsa_nonce_hedged: RFC 9325 section 4.2. OpenSSL's default ECDSA nonce, which libssl's handshake signatures use as well
+       (they pass no nonce-type parameter, as ksl_sign does), hashes fresh random bytes with the key and the digest ("combining
+       both randomness and determinism"), so one message signed twice gives two different signatures, both valid; RFC 6979
+       deterministic ECDSA would give the same one twice */
+    {
+        uint8_t s1[128], s2[128];
+        size_t l1 = sizeof s1, l2 = sizeof s2;
+        CHECK(ksl_sign(KSL_SIG_ECDSA_P256, key, kl, msg, sizeof msg, s1, &l1) == KSL_OK &&
+                  ksl_sign(KSL_SIG_ECDSA_P256, key, kl, msg, sizeof msg, s2, &l2) == KSL_OK &&
+                  (l1 != l2 || memcmp(s1, s2, l1) != 0),
+              "ecdsa_nonce_hedged: one message signed twice gives two signatures");
+        CHECK(ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, s1, l1) == 1 &&
+                  ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, s2, l2) == 1,
+              "ecdsa_nonce_hedged: both signatures verify");
+    }
     uint8_t spki_hash[32];
     size_t bl;
     uint8_t *b64 = read_file(TESTDATA "server.spki.sha256.b64", &bl);
