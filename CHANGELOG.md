@@ -1052,13 +1052,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
   unknown parameter, and `close<U+00A0>` set by the application is not the `close` option (the server adds its own).
 - TLS, `HostName.normalize` (breaking strictness, RFC 9525, RFC 1123 section 2.1, RFC 1035 section 2.3.4, RFC 3696
-  section 2): a reference identifier (the URL's host, `TlsConfig.serverName`, an expected name) is now an IP literal only
-  in the strict form (IPv4 octets without leading zeros, IPv6 without a zone ID) and otherwise a DNS name of LDH labels of
-  1 to 63 octets, at most 253 octets, whose last label is not all digits; brackets enclose an IPv6 literal only.
-  `010.0.0.1` (which `inet_aton` reads as
-  8.0.0.1), `1.2.3`, `-a.example`, a 64-octet label or a 254-octet name now fail with `TlsException.Config`, as Go
-  refuses them; before, the first was taken for an IP literal and the others for names. The certificate matcher shares
-  that parser (its IPv6 groups take ASCII hex digits only).
+  section 2, RFC 3986 section 3.2.2): a reference identifier (the URL's host, `TlsConfig.serverName`, an expected name,
+  an ECH `public_name`) that was accepted before now fails with `TlsException.Config` when it is an IPv4 literal with a
+  leading zero (`010.0.0.1`, which `inet_aton` reads as 8.0.0.1; before an IP literal), has a last label of digits only
+  (`1.2.3`, `a.123`) or of `0x` and hex digits (`a.0x1f`, the WHATWG URL standard reads both as an IPv4 address), has a
+  label over 63 octets or is over 253 octets, has a hyphen at the start or end of a label (`-a.example`), puts brackets
+  around anything but an IPv6 literal (`[1.2.3.4]`), or carries a Unicode space around it (only SP and HTAB are trimmed).
+  Go refuses these too. The underscore was refused before as well. The certificate matcher shares the IP-literal parser
+  (its IPv6 groups take ASCII hex digits only). An ECHConfig whose `public_name` breaks these rules is ignored as unusable
+  (RFC 9849 sections 4 and 6.1.7), where OpenSSL alone took an underscore, an empty `0x` last label and names up to 255
+  octets.
 - Ktor server, HTTP/1.1 request line (breaking strictness, RFC 9112 section 3): the method, request-target and version
   must be separated by exactly one SP, with nothing before or after them. A request line with HTAB, VT, FF or a bare CR
   as a separator, two spaces, or whitespace before the method or after the version now gets `400 Bad Request` and the

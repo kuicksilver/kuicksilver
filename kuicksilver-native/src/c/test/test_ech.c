@@ -762,6 +762,52 @@ static void test_list_check(void) {
         ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == wn && !memcmp(out, want, wn),
         "negative_ech_unusable_configs_ignored: another version, an IPv4 or 0x hex public_name, a trailing dot, a "
         "mandatory extension and an unknown KEM are dropped one by one (RFC 9849 sections 4, 4.2, 6.1.7), the rest kept");
+    /* the public_name must also be a name the client's reference identifiers take (HostName.normalize): LDH labels of 1 to 63
+       octets without a hyphen first or last, at most 253 octets, a last label neither all digits nor 0x hex (an empty 0x
+       too: the WHATWG URL standard reads it as a number); OpenSSL alone takes the underscore and some of the others */
+    static const char *const unusable_names[] = {"a_b.test", "-a.test", "a-.test",  "a.123", "a.0x",
+                                                 "a.0XfF",   "a..test", "a b.test", "a.t%st"};
+    for (size_t i = 0; i < sizeof unusable_names / sizeof unusable_names[0]; i++) {
+        uint8_t bad_name[160];
+        size_t bn = ech_config(bad_name, 0xfe0d, 0x0020, unusable_names[i], 0);
+        n = ech_list(list, 2, bad_name, bn, good, gl);
+        uint8_t only_good[160];
+        size_t og = ech_list(only_good, 1, good, gl);
+        CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == og &&
+                  !memcmp(out, only_good, og),
+              "negative_ech_public_name_not_ldh: dropped");
+        if (!(on == og))
+            printf("  public_name %s kept\n", unusable_names[i]);
+    }
+    {
+        char label64[80], long_name[300];
+        memset(label64, 'a', 64);
+        strcpy(label64 + 64, ".test");
+        uint8_t c64[160];
+        size_t c64l = ech_config(c64, 0xfe0d, 0x0020, label64, 0);
+        n = ech_list(list, 1, c64, c64l);
+        CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == 0,
+              "negative_ech_public_name_label_over_63_octets");
+        /* 254 octets in four labels: over the 253 of a name (RFC 1035 section 2.3.4) */
+        memset(long_name, 'a', 254);
+        long_name[63] = long_name[127] = long_name[191] = '.';
+        long_name[254] = 0;
+        uint8_t cl[400];
+        size_t cll = ech_config(cl, 0xfe0d, 0x0020, long_name, 0);
+        n = ech_list(list, 1, cl, cll);
+        CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == 0,
+              "negative_ech_public_name_over_253_octets");
+        long_name[253] = 0;
+        cll = ech_config(cl, 0xfe0d, 0x0020, long_name, 0);
+        n = ech_list(list, 1, cl, cll);
+        CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == n,
+              "a public_name of 253 octets, labels of 63, is kept");
+        uint8_t mixed[160];
+        size_t ml2 = ech_config(mixed, 0xfe0d, 0x0020, "Pub-1.Test0x", 0);
+        n = ech_list(list, 1, mixed, ml2);
+        CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == n,
+              "upper case, digits and inner hyphens are LDH, and a last label that only starts like 0x is no number");
+    }
     n = ech_list(list, 3, other_version, vl, ipv4, il, mandatory, ml);
     CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == 0,
           "negative_ech_no_usable_config: a list that parses with nothing usable: KSL_OK, 0 bytes");

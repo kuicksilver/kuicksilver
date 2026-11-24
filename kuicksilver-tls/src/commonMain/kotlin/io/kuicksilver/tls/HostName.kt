@@ -16,8 +16,9 @@ internal fun sniOf(config: TlsConfig): String? =
  * An IP literal is an IPv4 dotted quad of decimal octets without leading zeros or an IPv6 address (RFC 4291 section
  * 2.2), without a zone ID; anything else is a DNS name of LDH labels (RFC 1123 section 2.1, RFC 5890 section 2.3.1:
  * letters, digits and hyphens, no hyphen first or last), 1 to 63 octets each and at most 253 in all (RFC 1035 section
- * 2.3.4), whose last label is not all digits (RFC 3696 section 2: no top-level domain is, so `010.0.0.1` or `1.2.3` is a
- * malformed IPv4 literal, not a name). The same parser decides an IP-ID's address when a certificate is matched.
+ * 2.3.4), whose last label is not all digits nor `0x` with hex digits (RFC 3696 section 2: no top-level domain is; the
+ * WHATWG URL standard reads such a name as an IPv4 address, so `010.0.0.1`, `1.2.3` or `a.0x1f` is a malformed IPv4 literal,
+ * not a name). Only SP and HTAB around [normalize]'s input are dropped. The same parser decides an IP-ID's address when a certificate is matched.
  *
  * @property value the normalized form; two names are equal when their values are.
  * @property isIpLiteral true for an IPv4 or IPv6 literal, which is matched against iPAddress entries of the certificate
@@ -45,7 +46,8 @@ public class HostName private constructor(
          * contains (RFC 9525).
          */
         public fun normalize(input: String): HostName {
-            var s = input.trim()
+            // OWS only (RFC 9110 section 5.6.3): a Unicode space is not whitespace around a name, it is a character of it
+            var s = input.trim(' ', '\t')
             if (s.isEmpty()) throw TlsException.Config("empty host name")
             if (s.any { it.code >= 0x80 }) throw TlsException.Config("non-ASCII host name '$input': pass an A-label (punycode)")
             // brackets enclose an IPv6 literal only (RFC 3986 section 3.2.2: IP-literal = "[" IPv6address / IPvFuture "]")
@@ -68,7 +70,10 @@ public class HostName private constructor(
                 if (label.isEmpty() || label.length > 63 || label.first() == '-' || label.last() == '-') return false
                 if (!label.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }) return false
             }
-            return !labels.last().all { it in '0'..'9' }
+            // the WHATWG URL standard's "ends in a number": all digits, or "0x" and hex digits (an empty "0x" included)
+            val last = labels.last()
+            if (last.all { it in '0'..'9' }) return false
+            return !(last.startsWith("0x") && last.drop(2).all { it in '0'..'9' || it in 'a'..'f' })
         }
     }
 }

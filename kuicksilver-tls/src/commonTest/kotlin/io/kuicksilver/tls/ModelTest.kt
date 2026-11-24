@@ -171,6 +171,11 @@ class HostNameTest {
             "a b.example",
             "example.123",
             "[1.2.3.4]",
+            "a.0x1f",
+            "a.0X",
+            "0xff",
+            "\u00a0a.example",
+            "a.example\u2003",
             "[a.example]",
             "[]",
         )) {
@@ -191,6 +196,9 @@ class HostNameTest {
             "123abc.example",
             "1a.example",
             "example.c0m",
+            "a.0xg",
+            "a.x0",
+            " a.example\t",
             "localhost",
             "a",
         )) {
