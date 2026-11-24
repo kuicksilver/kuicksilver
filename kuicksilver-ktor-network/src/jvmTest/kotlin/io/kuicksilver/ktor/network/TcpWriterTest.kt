@@ -66,10 +66,19 @@ class TcpWriterTest {
 
     /** Threads running inside a JDK socket write right now (the spinning writer is always there; a suspended one never). */
 
-    private fun threadsInSocketWrite(): Int =
-        Thread.getAllStackTraces().count { (t, st) ->
-            t.state == Thread.State.RUNNABLE &&
-                st.take(8).any { it.className.startsWith("sun.nio.ch.") && it.methodName.startsWith("write") }
+    private fun threadsInSocketWrite(): Int = socketWriters().size
+
+    /** The threads [threadsInSocketWrite] counts, each as its name and top frames, for a failure message. */
+    private fun socketWriters(): List<String> =
+        Thread.getAllStackTraces().mapNotNull { (t, st) ->
+            val top = st.take(8)
+            if (t.state == Thread.State.RUNNABLE &&
+                top.any { it.className.startsWith("sun.nio.ch.") && it.methodName.startsWith("write") }
+            ) {
+                "${t.name}: " + top.joinToString(" < ") { "${it.className}.${it.methodName}" }
+            } else {
+                null
+            }
         }
 
     /** Samples until [written] has not moved for [quiet] samples in a row: the peer's window and our buffers are full. */
@@ -378,6 +387,21 @@ class TcpWriterTest {
                 // writer job complete), which says nothing about this one
                 assertTrue(raw.writeWaits.get() >= 1, "the writer under test is ours and waited for room")
                 assertEquals(0, raw.writesInFlight.get(), "no writer of this socket left in SocketChannel.write")
+                // the canary across the process, tolerant as the spin check: a leaked writer spinning in some write shows in
+                // most samples, another socket's write in flight in a few; the names and frames tell the two apart
+                var after = 0
+                val seen = LinkedHashSet<String>()
+                repeat(500) {
+                    val w = socketWriters()
+                    if (w.isNotEmpty()) {
+                        after++
+                        if (seen.size < 4) seen += w
+                    }
+                }
+                assertTrue(
+                    after <= spinSamplesAllowed,
+                    "after the close a thread was in a socket write in $after of 500 samples: ${seen.joinToString(" | ")}",
+                )
             } finally {
                 release.complete(Unit)
                 scope.cancel()
