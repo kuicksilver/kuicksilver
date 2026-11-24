@@ -6255,6 +6255,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.explicitSinkReceive
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.noSinkMeansNoLines
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.tcpConnectionLogsBothSides
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.ecdsaRoundTrip
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.ecdsaSignaturesOfEqualInputDiffer
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.hkdfRfc8448
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.lbKeyDerivedIsTheEncryptedLabel
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.lbKeyDuplicateOutlivesTheOriginal

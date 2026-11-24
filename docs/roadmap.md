@@ -138,7 +138,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - The Capsule Protocol on CONNECT streams (RFC 9297 §3).
 - HTTP/3 priorities exposed in the Ktor engines (RFC 9218) (done; the HTTP/2 server schedules its responses by them too).
 - PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
-- Clients: SOCKS5 (CONNECT; no GSSAPI method, see [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)) and system proxy
+- Clients: SOCKS5 (CONNECT; the GSSAPI method comes in 0.4.0, see [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)) and system proxy
   settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
 - `loops > 1` on macOS, iOS and Windows: one socket routed in process by connection ID (done; the benchmark of what it buys is still to come).
@@ -204,9 +204,15 @@ Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), pu
 draft-ietf-quic-multipath) moved from 0.3.0 to a 0.3.x release on 2026-11-18: experimental and off by default, but with
 every MUST and SHOULD of the RFC. It starts with the refactoring to one packet number space per path.
 
+### 0.4.0 (planned)
+
+- The GSSAPI method of SOCKS5, a MUST of [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi): where the platform has a GSS-API
+  (JGSS on the JVM, GSS.framework on Apple, SSPI on Windows, libgssapi on Linux); Android has none, so there it stays
+  unavailable, documented.
+
 ### After 0.3.0, until 1.0
 
-Fixes and hardening, and multipath QUIC in 0.3.x (above); no other new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
+Fixes and hardening, multipath QUIC in 0.3.x and the 0.4.0 items (above); no other new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
 
 ### After 1.0
 
@@ -233,8 +239,8 @@ Decided against, with the reason; a change of mind needs a new decision (an ADR,
 - **WebTransport over HTTP/2.** WebTransport is served over HTTP/3; where UDP is blocked, WebSocket (over HTTP/1.1 or
   HTTP/2) is the fallback a client already has, and a second WebTransport transport would double the surface for a
   rare case.
-- **SOCKS4, and the GSSAPI method of SOCKS5.** SOCKS4 has no IPv6, no host names (only the SOCKS4a extension) and no
-  authentication; GSSAPI would need a Kerberos stack on every platform ([RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)).
+- **SOCKS4.** It has no IPv6, no host names (only the SOCKS4a extension) and no authentication. (The GSSAPI method of
+  SOCKS5 is no longer here: it is planned for 0.4.0, see below.)
 - **TLS early data over TCP.** 0-RTT exists for QUIC and HTTP/3, where the replay protections of ADR-0015 apply
   (single-use tickets, a replay register, safe-method gating with 425); over TCP the gain is smaller and the same
   protections would have to be built a second time.

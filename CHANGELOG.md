@@ -541,7 +541,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ksl_key_lb_dup`, `ksl_key_lb_derive` and `ksl_key_ecb16` are additive under ABI 7. See docs/guide/quic.md, "Behind a load balancer".
 - Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
   standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
-  `reset_stream_at` codepoint, quiche's FIN handling, lenient HTTP/1.1 replies), each with its peers, the standard text, where it lives, its default, tests,
+  `reset_stream_at` codepoint, quiche's FIN handling), each with its peers, the standard text, where it lives, its default, tests,
   risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
@@ -1411,8 +1411,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `["TLSv1.3"]`, stays TLS 1.3 only.
 - RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
   nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
-  no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
-  libssl support for it.
+  no other. That is the hedged construction section 4.2 itself names against side-channel and fault attacks (Go and
+  BoringSSL sign the same way), so docs/spec/rfc/9325.md records it as met, not as a deviation.
 - Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
   startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
