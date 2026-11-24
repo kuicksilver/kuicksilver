@@ -106,7 +106,8 @@ public interface QuicConnection : AutoCloseable {
      * [sendDatagram] scheduled by RFC 9218 urgency: the datagram does not go ahead of stream data of strictly more urgent
      * streams ([priority]'s urgency is higher than theirs, or they are the HTTP/3 control and QPACK streams), while stream
      * data of the same or a lower urgency waits behind it. Datagrams still leave in the order they were queued. Without a
-     * priority (the overloads above) a datagram goes ahead of every stream. Implementations outside this library need not
+     * priority (the overloads above) a datagram goes ahead of every stream, except stream data a PTO probe resends (RFC 9002
+     * section 6.2.4). Implementations outside this library need not
      * override it: the default ignores [priority].
      */
     @ExperimentalKuicksilverApi

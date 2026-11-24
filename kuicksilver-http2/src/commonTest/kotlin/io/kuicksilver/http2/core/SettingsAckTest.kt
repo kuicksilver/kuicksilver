@@ -220,10 +220,10 @@ class SettingsAckTest {
     }
 
     /**
-     * Section 6.9.2: only "streams with active flow-control windows (that is, streams in the "open" or "half-closed
-     * (remote)" state)" move with SETTINGS_INITIAL_WINDOW_SIZE. A peer that adjusts every stream (nghttp2) may then credit
-     * a stream we finished sending on up to 2^31 - 1 by its own count: that is legal, and we ignore WINDOW_UPDATEs of such
-     * a stream instead of resetting it while its other direction is still in use.
+     * Section 6.9.2: "a receiver MUST adjust the size of all stream flow-control windows that it maintains", and we maintain
+     * the window of a stream we finished sending on (half-closed (local)) too, as nghttp2 and Go do. A peer that adjusts every
+     * stream (nghttp2) and then credits such a stream up to 2^31 - 1 by its own count stays within the maximum by ours as
+     * well: no reset of a stream whose other direction is still in use.
      */
     @Test
     fun negative_windowUpdateOnAStreamWeFinishedSendingOnIsNotAnError() {

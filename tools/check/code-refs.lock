@@ -18,10 +18,6 @@ kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt:125	if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78	// RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273	(old.resetStreamAt && !tp.resetStreamAt)
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:203	// a resent range never carries the FIN: one still in flight needs no copy, a lost one goes as an empty frame of
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:204	// its own. quiche's receiver takes the final size from a frame whose bytes it already read, drops the frame as a
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:205	// duplicate and never wakes the application for the FIN (interop run 20261015-170940, kuicksilver->quiche:handshakeloss)
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:206	out.fin = false
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43	private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:132	empty(RESET_STREAM_AT_LEGACY)
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:331	RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {
