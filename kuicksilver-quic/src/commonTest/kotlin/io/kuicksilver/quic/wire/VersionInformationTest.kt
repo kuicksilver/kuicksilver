@@ -95,6 +95,22 @@ class VersionInformationTest {
             VersionNegotiationValidator.clientCheck(v2, v1, TransportParameters(), intArrayOf(v1), both())
         }
 
+    /**
+     * RFC 9368 section 4: "Clients MUST NOT complete the handshake if they are reacting to a Version Negotiation packet and the
+     * Version Information is missing, but MAY do so otherwise." A server that upgraded our version (compatible negotiation) without
+     * version_information is refused, as ngtcp2 does: a server that upgrades implements RFC 9368, so it sends the parameter.
+     */
+    @Test fun negative_compatibleUpgradeWithoutVersionInformation() =
+        expect11 {
+            VersionNegotiationValidator.clientCheck(v1, v2, TransportParameters(), null, both())
+        }
+
+    /** Without an upgrade the MAY stays: a server that never upgrades (RFC 9000 only) may omit version_information. */
+    @Test fun missingVersionInformationWithoutUpgradeIsAccepted() {
+        VersionNegotiationValidator.clientCheck(v1, v1, TransportParameters(), null, both())
+        VersionNegotiationValidator.clientCheck(v2, v2, TransportParameters(), null, both())
+    }
+
     @Test fun validNegotiationPasses() {
         VersionNegotiationValidator.clientCheck(v1, v2, tp(v2, v2, v1), null, both())
         VersionNegotiationValidator.serverCheck(v1, v2, tp(v1, v1, v2))

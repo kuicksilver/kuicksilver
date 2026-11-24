@@ -402,6 +402,9 @@ internal object VersionNegotiationValidator {
         val av = server.availableVersions
         if (av == null) {
             if (receivedVnVersions != null) fail("server sent Version Negotiation but no version_information")
+            // section 4: a client "MAY" complete the handshake otherwise; a server that upgraded our version (compatible version
+            // negotiation, section 2.3) implements RFC 9368, so its missing version_information is refused (ngtcp2 does the same)
+            if (sentInitialVersion != currentVersion) fail("server upgraded the version without version_information")
             return
         }
         if (server.chosenVersion !=
