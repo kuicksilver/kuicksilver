@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — compatibility shims
 
-Date: 2026-11-13; as of 0.3.0 (unreleased). Status: living document, updated with each change it describes.
+Date: 2026-11-24; as of 0.3.0 (unreleased). Status: living document, updated with each change it describes.
 
 Every place where Kuicksilver departs from, or goes beyond, the standard it implements only so that a specific peer that
 lags behind or breaks the standard still works with it. The [RFC compliance summary](rfc-compliance.md) and its details
@@ -19,10 +19,10 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 
 | # | Shim | Peers | On by default | Kind |
 |---|---|---|---|---|
-| 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-16 |
+| 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-17 |
 | 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
-| 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | Safari (expected), any client announcing draft-02 and a newer draft | no (`webTransport`) | our reading of draft-16 §7.1 (borderline) |
-| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
+| 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | none verified (Safari was expected; removal waits for one Safari run) | no (`webTransport`) | beyond draft-17 §7.1 |
+| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | Google QUICHE (Chromium's QUIC) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
 | 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
@@ -31,36 +31,52 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 
 ## 1. WebTransport draft-02 and draft-14
 
-**What it does.** The wire format is draft-ietf-webtrans-http3-16, but a server with WebTransport also announces
+**What it does.** The wire format is draft-ietf-webtrans-http3-17, but a server with WebTransport also announces
 `SETTINGS_ENABLE_WEBTRANSPORT=1` (0x2b603742, draft-02 to -06) and `SETTINGS_WT_MAX_SESSIONS=1` (0x14e9cd29, draft-13 and
--14) next to `SETTINGS_WT_ENABLED=1`; a client announces draft-16 and draft-02. Either side recognises the older settings
-in the peer's SETTINGS, takes the `:protocol` token `webtransport` (draft-02 to -14) as well as `webtransport-h3`, and a
-client talking to a server without draft-16 sends `:protocol webtransport` with `sec-webtransport-http3-draft02: 1`. A
-draft-02 session has no `reset_stream_at` (its draft predates RESET_STREAM_AT), so its streams are reset with RESET_STREAM.
-`SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 is `H3_SETTINGS_ERROR`, as draft-02 §3.1 requires.
+-14) next to `SETTINGS_WT_ENABLED=1` of draft-17 (0x20b8933b) and draft-16 (0x2c7cf000); a client announces draft-17,
+draft-16 and draft-02. Either side recognises the older settings in the peer's SETTINGS, takes the `:protocol` token
+`webtransport` (draft-02 to -14) as well as `webtransport-h3`, and a client talking to a server without draft-16 or
+draft-17 sends `:protocol webtransport` with `sec-webtransport-http3-draft02: 1`. A draft-02 session has no
+`reset_stream_at` (its draft predates RESET_STREAM_AT), so its streams are reset with RESET_STREAM.
+`SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 is `H3_SETTINGS_ERROR`, as draft-02 §3.1 requires. Draft-16 is not part
+of this shim: it is an earlier draft of the same document, which webtransport-go and picoquic speak, announced under
+draft-17 §7.1's own rule.
 
 **Peers.** Chrome 155 and Firefox 158 speak draft-02 ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
-`ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari speaks draft-14 (second-hand, not run or verified here).
+`ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari, which shipped WebTransport in 26.4 (March 2026),
+speaks draft-14 (second-hand, not run or verified here). Independently: webtransport-go (2a2b547, 2026-11-09) announces
+draft-02's setting "for backwards compatibility with older clients" and `SETTINGS_WT_MAX_SESSIONS` because "Safari
+requires SETTINGS_WT_MAX_SESSIONS >= 1 (draft-ietf-webtrans-http3-14)" (`server.go`); picoquic h3zero (f506de8,
+2026-11-19) parses all three, "Chrome sends SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742) instead of WT_MAX_SESSIONS"
+(`picohttp/h3zero_common.c`). No public source found on 2026-11-24 says a browser ships draft-15 or later.
 
-**Standard text.** draft-16 §7.1: "An endpoint that supports multiple draft versions sends a SETTINGS_WT_ENABLED value
-for each supported version, as each version uses a different setting identifier. The highest version supported by both
-endpoints is selected." §3.1: "For draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with
-the draft-specific codepoint" (see also [the draft's details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)). Both
-older drafts predate `SETTINGS_WT_ENABLED` (draft-02 signals support with `SETTINGS_ENABLE_WEBTRANSPORT`, draft-14 with
-`SETTINGS_WT_MAX_SESSIONS`), so announcing them goes beyond what draft-16 describes, though in the spirit of its §7.1;
-the codepoints are those of the older drafts.
+**Standard text.** draft-17 §7.1: "Draft versions that introduce incompatible changes define distinct SETTINGS_WT_ENABLED
+codepoints. Both the client and the server MUST send SETTINGS_WT_ENABLED with the codepoint corresponding to their
+supported draft version. An endpoint that supports multiple draft versions sends SETTINGS_WT_ENABLED once for each
+distinct codepoint. The highest version supported by both endpoints is selected." §3.1: "For draft versions of
+WebTransport only, clients MUST also send SETTINGS_WT_ENABLED for each draft version they support" (see also [the
+draft's details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)). Both older drafts predate `SETTINGS_WT_ENABLED`
+(draft-02 signals support with `SETTINGS_ENABLE_WEBTRANSPORT`, draft-14 with `SETTINGS_WT_MAX_SESSIONS`), so announcing
+them goes beyond what draft-17 describes, though in the spirit of its §7.1; the codepoints are those of the older drafts.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13` (the versions,
-`offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
+**Justification (kept, hardening audit 2026-11-21, S1).** draft-ietf-webtrans-http3 §7.1 has endpoints announce every
+draft they support; Chrome and Firefox (draft-02) and Safari 26.4+ (draft-14) are the only WebTransport clients in the
+field; the whole feature is opt-in (`webTransport`), and draft-02 and draft-14 sessions run their own draft's rules in
+full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothing for these two drafts. Without the shim
+no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
+
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:15` (the versions,
+`offeredIn` at :55, `WtSettings.ours` at :201, `WtTokens.LEGACY` at :231),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:29` and :32 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:407` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:783` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:785` (the client's draft-02
 request field).
 
 **On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`
 (false by default), and on the client per `HttpClient.webTransport` call.
 
-**Tests.** `webtransport.WebTransportSettingsTest.serverAdvertisesAllWtCodepoints`, `.clientAdvertisesWtEnabled`,
+**Tests.** `webtransport.WtDraftVersionsTest.eachDraftClientIsServedInItsDraft`, `.eachDraftServerGetsACONNECTOfItsDraft`,
+`webtransport.WebTransportSettingsTest.serverAdvertisesAllWtCodepoints`, `.clientAdvertisesWtEnabled`,
 `.wtSettingsNotSentByDefault`, `.peerVersionIsTheHighestBothAnnounce`, `.negative_clientNeverPicksADraftItDidNotOffer`,
 `.negative_draft02SettingAboveOneIsSettingsError`, `webtransport.WebTransportSessionTest.establishLegacyTokenAccepted`,
 `.clientUsesLegacyTokenForDraft02Server`, `.draft02ClientWithoutResetStreamAtIsAccepted`;
@@ -68,8 +84,8 @@ request field).
 
 **Risk.** Low. A draft-02 session resets streams with RESET_STREAM, so a reset stream's header can be lost and the peer
 may not tie the reset to the session (robustness, not security). draft-02 has no WebTransport flow control: a draft-02
-session keeps its connection to itself, and another CONNECT on it is refused with `H3_REQUEST_REJECTED`. draft-14 and
-draft-16 sessions have it when both sides declare it.
+session keeps its connection to itself, and another CONNECT on it is refused with `H3_REQUEST_REJECTED`. draft-14,
+draft-16 and draft-17 sessions have it when both sides declare it.
 
 **draft-14 flow control (interop risk, conformant).** draft-14 §5.1 counts "Sending SETTINGS_WT_MAX_SESSIONS with a value
 greater than "1"" as declaring flow control, and its `SETTINGS_WT_INITIAL_*` default to 0 (§5.5). A draft-14 client
@@ -80,49 +96,67 @@ conform. Escape hatch: with all three `Http3Settings.webTransportInitialMax*` at
 connection carries one session, as before pooling. Not observed with a real Safari yet: a release-checklist item.
 
 **Removal.** draft-02 when Chrome and Firefox ship draft-15 or later (`SETTINGS_WT_ENABLED`, `webtransport-h3`) by
-default; draft-14 when Safari does. Of the three settings, 0x2c7cf000 is draft-16's own `SETTINGS_WT_ENABLED` (its IANA
-section); only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this shim.
+default; draft-14 when Safari does. Only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this shim;
+0x20b8933b (draft-17's IANA section) and 0x2c7cf000 (draft-16's) are `SETTINGS_WT_ENABLED` of the document itself.
 
 ## 2. The draft-02 response field
 
-**What it does.** A server that accepts a CONNECT carrying `sec-webtransport-http3-draft02` adds
-`sec-webtransport-http3-draft: draft02` to its 2xx.
+**What it does.** A server that accepts a CONNECT as a draft-02 session, whose client sent
+`sec-webtransport-http3-draft02: 1`, adds `sec-webtransport-http3-draft: draft02` to its 2xx. A session of draft-14,
+draft-16 or draft-17 never gets it, whatever the request carried (hardening audit S2: the field was added for the request
+field with any value, so a draft-16 session whose `webtransport-h3` CONNECT carried the field was answered with a draft-02
+marker; the audit's `== "1"` alone would still have marked that one, so the session's version is checked too).
 
-**Peers.** Chrome's draft-02 client refuses a 2xx without it.
+**Peers.** Chrome's draft-02 client refuses a 2xx without it (our `ChromeWebTransportTest`; neither webtransport-go nor
+picoquic sends it, and their Chrome interop was not checked).
 
-**Standard text.** None: draft-16 has no such field. RFC 9110 §5.1 lets a recipient ignore an unknown field, so the field
+**Standard text.** None: no draft defines the field. RFC 9110 §5.1 lets a recipient ignore an unknown field, so the field
 costs other clients nothing.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:788`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:184`.
+**Justification (kept, hardening audit 2026-11-21, S2).** It goes with shim 1: without it Chrome refuses the session.
 
-**On by default.** No, as shim 1; then always for a request with the draft-02 field.
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:797`; the name and
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:237`.
 
-**Tests.** `webtransport.WebTransportSessionTest.establishLegacyTokenAccepted` (checks the field);
+**On by default.** No, as shim 1; then always for a draft-02 session whose client sent the request field's value `1`.
+
+**Tests.** `webtransport.WebTransportSessionTest.establishLegacyTokenAccepted` (checks the field),
+`.negative_draft02ResponseFieldOnlyForADraft02Session`, `webtransport.WtDraftVersionsTest.eachDraftClientIsServedInItsDraft`;
 `ChromeWebTransportTest.chromeDraft02`, `.chromeWithDraft07EnabledFallsBackToDraft02`.
 
-**Risk.** None known: a fixed value, sent only to a client that asked in draft-02 form.
+**Risk.** None known: a fixed value, sent only to a client that asked in draft-02 form and runs draft-02.
 
 **Removal.** With draft-02 (shim 1).
 
 ## 3. Draft-02 session when a newer draft lacks `reset_stream_at`
 
-Borderline: within the draft's version selection, but a reading the draft does not state, made for one browser.
+Borderline: beyond the draft's version selection, made for one browser. The hardening audit (2026-11-21, S3) decided to
+remove it once one Safari 26.4 or later run confirms that Safari sends `reset_stream_at`; the removal is prepared and
+waits for that run (open item below).
 
-**What it does.** draft-14 and draft-16 need `reset_stream_at` on both sides. A client that announces draft-16 or
-draft-14 without the transport parameter but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request
-(`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`); its draft-16 or draft-14 CONNECT is refused (400 and
-`H3_MESSAGE_ERROR`). Our client does the same against such a server: it sends a draft-02 CONNECT.
+**What it does.** draft-14, draft-16 and draft-17 need `reset_stream_at` on both sides. Two behaviours are bundled:
+(a) a client that announces a newer draft without the transport parameter but also draft-02 gets a draft-02 session when
+its CONNECT is a draft-02 request (`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`); its newer-draft
+CONNECT is refused (400 and `H3_MESSAGE_ERROR`). Our client does the same against such a server: it sends a draft-02
+CONNECT. (b) A server runs draft-02 for any draft-02 request from a client that announces draft-02, even when a higher
+common version could run.
 
-**Peers.** Any client that announces a newer draft before it has RESET_STREAM_AT, and draft-02 as well. Safari is
-expected to be one in some versions (second-hand; not run or verified here).
+**Peers.** None verified. Safari was the expected one (second-hand), but WebKit bug 303152 (RESET_STREAM_AT sent and
+received, fixed 2025-12-02) and bug 305006 (2026-01-07) landed before Safari 26.4, the first release with WebTransport,
+so a shipping Safari most likely sends `reset_stream_at`. webtransport-go refuses to run without it
+(`EnableStreamResetPartialDelivery`, `server.go`, `client_conn.go`); picoquic has no such fallback.
 
-**Standard text.** draft-16 §7.1, "The highest version supported by both endpoints is selected", read as the highest
-version both can actually run; §3.1, "both the client and the server enable the extension by sending an empty
-reset_stream_at transport parameter" (as quoted in the draft's [details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)).
+**Standard text.** draft-17 §7.1 now spells out the server's selection: "If the client sends the codepoint in Section
+9.2, the server selects the version described in this document. Otherwise, if the client sends codepoints for draft
+versions that the server supports, the server selects the highest of those versions"; §3.1: "If the server receives ...
+transport parameters that do not have correct values for every required transport parameter, the server MUST treat all
+established and newly incoming WebTransport sessions as malformed". Both (a), which reads "the highest version
+supported by both endpoints" as the highest both can run, and (b), which lets the request's form pick the version, go
+beyond that text: draft-17 makes the shim a clearer departure than draft-16 did, and changes nothing in the audit's
+decision to remove it.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:93` (`wtClientVersion`)
-and :110 (`wtServerVersion`).
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:118` (`wtClientVersion`)
+and :135 (`wtServerVersion`).
 
 **On by default.** No, as shim 1.
 
@@ -134,7 +168,10 @@ and :110 (`wtServerVersion`).
 **Risk.** Low: the session runs draft-02 in every respect (shim 1's risk); a newer-draft session is never run without the
 transport parameter its §3.1 requires.
 
-**Removal.** With draft-02 (shim 1), or earlier once every client that announces a newer draft sends `reset_stream_at`.
+**Removal.** Decided (audit S3): pick the highest common version; if the transport cannot carry it, the session is
+malformed. It waits for one Safari 26.4+ run ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
+the Safari row) that shows its SETTINGS and transport parameters: Safari sends `reset_stream_at` (0x1d or
+0x17f7586d2cb571) → remove; it does not → keep, and name Safari here as the verified peer.
 
 ## 4. Pre-IANA `reset_stream_at` codepoint
 
@@ -142,14 +179,23 @@ transport parameter its §3.1 requires.
 0x17f7586d2cb571, the codepoint of earlier versions of the draft, and either one received enables RESET_STREAM_AT (a
 non-empty value of either is `TRANSPORT_PARAMETER_ERROR`).
 
-**Peers.** None verified. quic-go (2bb41ed) sends and accepts both codepoints, naming the old one draft-07's, so it
-works with 0x1d alone; Cloudflare quiche 4ebd213 implements neither codepoint; Chrome was not checked (no Chromium source
-here). Earlier notes named Chrome and quiche without evidence.
+**Peers.** Google QUICHE, Chromium's QUIC, knows only the old codepoint (hardening audit 2026-11-21, S4, from QUICHE's
+GitHub head 35cbd037 of 2026-11-05: `quiche/quic/core/crypto/transport_parameters.cc:104`, `kReliableStreamReset =
+0x17F7586D2CB571`, sent at :1112-1119 and parsed at :1521-1527; frame 0x24 in `quic_types.h:367`; off by default,
+`quic_config.cc:1062`, and turned on by the embedder; Chrome's own setting was not checked). With 0x1d alone a
+QUICHE-based peer never enables RESET_STREAM_AT, and WebTransport draft-14 and later to it fails §3.1. quic-go (df125bc)
+sends and accepts both codepoints (`internal/wire/transport_parameters.go:50`, :54, :211, :457-461); picoquic (f506de8)
+too, "Advertise both codepoints until peers that only know draft-07 are gone" (`picoquic/transport.c:483-488`, :946-954).
+Cloudflare quiche 4ebd213 implements neither codepoint; ngtcp2 does not implement RESET_STREAM_AT.
 
 **Standard text.** draft-ietf-quic-reliable-stream-reset-11 §3: "Support for receiving RESET_STREAM_AT frames is
 advertised by sending the reset_stream_at (0x1d) transport parameter (Section 7.4 of [RFC9000]) with an empty value." The
 old codepoint is not registered; RFC 9000 §7.4.2, "An endpoint MUST ignore transport parameters that it does not
-support", keeps it harmless to peers that do not know it.
+support", keeps it harmless to peers that do not know it. Draft-11 (September 2026, the latest on 2026-11-24, cited by
+WebTransport draft-17) keeps 0x1d and frame type 0x24.
+
+**Justification (kept, hardening audit 2026-11-21, S4).** Google QUICHE (Chromium) knows only 0x17f7586d2cb571; quic-go
+and picoquic announce and accept both; RFC 9000 §7.4.2 makes the extra codepoint inert for everyone else.
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43` (the
 codepoint), :132 (sent), :331 (accepted).
@@ -161,11 +207,11 @@ codepoint), :132 (sent), :331 (accepted).
 **Risk.** Low: nine more bytes in the transport parameters, and RESET_STREAM_AT frames (type 0x24) toward a peer that
 announced only the old codepoint, which must then read them as that draft's frame.
 
-**Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
-transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
-take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
-(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273`); quic-go ties its own removal to a
-new ticket format for the same reason.
+**Removal.** When Google QUICHE accepts 0x1d (and quic-go and picoquic, which keep both for the same reason, drop the old
+one). The removal must mind remembered transport parameters: a client that remembered `reset_stream_at` from a server
+that sent only the old codepoint would take that server's next 0-RTT acceptance for a lowered capability and close with
+PROTOCOL_VIOLATION (`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273`); quic-go ties its
+own removal to a new ticket format for the same reason.
 
 ## 6. A resent STREAM range never carries the FIN
 

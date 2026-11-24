@@ -1046,6 +1046,34 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- WebTransport (experimental) speaks draft-ietf-webtrans-http3-17 (November 2026), the highest version both sides speak
+  (draft-17 section 7.1), next to draft-16 (webtransport-go and picoquic), draft-14 (Safari) and draft-02 (Chrome,
+  Firefox). A server announces `SETTINGS_WT_ENABLED` of draft-17 (0x20b8933b) and draft-16 (0x2c7cf000),
+  `SETTINGS_WT_MAX_SESSIONS` (draft-14) and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02). A client announces draft-17,
+  draft-16 and draft-02, so two Kuicksilver endpoints speak draft-17. What draft-17 changed, each from this release:
+  - A server whose client announces no draft selects draft-17 and accepts its `webtransport-h3` CONNECT ("Otherwise,
+    the server selects the version described in this document"). Before, such a request was refused with 400. The
+    older `webtransport` token from such a client is still malformed.
+  - A client takes a draft-17 `SETTINGS_WT_ENABLED` above 1 from a server as `H3_SETTINGS_ERROR`. A server ignores
+    the value a client sends and reads only a 1 as a version (section 3.1).
+  - A `WT_STREAM` signal out of place closes a draft-17 connection with `H3_FRAME_UNEXPECTED` (section 4.3). Draft-16
+    and draft-14 keep `H3_FRAME_ERROR`.
+  - After 0-RTT, a client takes a draft-17 server's WebTransport settings as the resumed connection sends them (section
+    3.2: "a client MUST discard any values ... retained from a previous connection"). Before, it closed the connection
+    with `H3_SETTINGS_ERROR` when they were lowered or omitted, whether the client used WebTransport or not. A draft-16
+    or draft-14 server is still held to its earlier values.
+  - The client sends the draft-02 request field only on a draft-02 CONNECT.
+  - qlog names `SETTINGS_WT_ENABLED` for draft-17's codepoint; draft-16's goes by its number.
+
+  Capsule types, error codes, stream types and the other settings are the same in draft-17. The reset's reliable size
+  (the header, section 4.4) and the first WT_MAX_* floor (the initial SETTINGS value, sections 5.6.2 and 5.6.4) already
+  met draft-17's wording. RESET_STREAM_AT follows draft-ietf-quic-reliable-stream-reset-11, which keeps 0x1d and frame
+  0x24. `docs/spec/compat-shims.md` §1 to §4 have the hardening audit's verdicts:
+  - draft-02 and draft-14 kept;
+  - the draft-02 response field kept and narrowed;
+  - the draft-02 fallback without `reset_stream_at` to be removed after one Safari run;
+  - the pre-IANA `reset_stream_at` codepoint kept for Google QUICHE.
+
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
@@ -1653,6 +1681,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
+
+- WebTransport server: `sec-webtransport-http3-draft: draft02`, the response field Chrome's draft-02 client needs, goes
+  only to a session that runs draft-02 and whose client sent `sec-webtransport-http3-draft02: 1`. Before, any request
+  that carried the request field got it, with any value and in any draft. So a draft-16 session whose
+  `webtransport-h3` CONNECT carried the field was answered with a draft-02 marker.
 
 - QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
   `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every

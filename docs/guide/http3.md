@@ -488,23 +488,28 @@ closing the inner endpoint closes its tunnel.
 
 ## WebTransport (experimental)
 
-WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is experimental (`@ExperimentalKuicksilverApi`): sessions,
+WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17) is experimental (`@ExperimentalKuicksilverApi`): sessions,
 their streams and datagrams, close and drain. Both sides set `webTransport = true` in `http3Settings` (it needs
 `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off, and
-`Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it). Browsers do not
-speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
-accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client picks the token from the server's
-SETTINGS. A request with either token is `isWebTransport`; `acceptWebTransport` answers 200 once the client's SETTINGS
-arrived (ten seconds at most; without them, without a WebTransport setting of the client's own, without HTTP datagrams,
-or, for draft-14 and later, without `reset_stream_at` on both sides, the request is answered with 400, stopped with
-`H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the
-session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them; draft-02,
-which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The draft is the highest both sides
-announce (a client of ours announces draft-16 and draft-02). A peer that announces a newer draft without
-`reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request (`:protocol
-webtransport` with `sec-webtransport-http3-draft02: 1`, which our client then sends): this is our reading of section 7.1
-("the highest version supported by both endpoints" taken as the highest both can actually run), not something the
-draft says. Its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft, are refused.
+`Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it). Browsers and other libraries do not speak draft-17 yet, so
+a server also announces the SETTINGS of draft-16 (webtransport-go, picoquic), draft-14 (Safari) and draft-02 (Chrome,
+Firefox), and accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client announces draft-17,
+draft-16 and draft-02 and picks the token from the server's SETTINGS. The draft is the highest both sides announce
+(section 7.1), so two Kuicksilver endpoints speak draft-17; a server whose client announces none selects draft-17, as
+section 7.1 says, and then takes only `webtransport-h3`. A request with either token is `isWebTransport`;
+`acceptWebTransport` answers 200 once the client's SETTINGS arrived (ten seconds at most; without them, without HTTP
+datagrams, or, for draft-14 and later, without `reset_stream_at` on both sides, the request is answered with 400,
+stopped with `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond`
+refuses the session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them;
+draft-02, which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. A peer that announces a newer
+draft without `reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request
+(`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`, which our client then sends): this is our reading of
+section 7.1 ("the highest version supported by both endpoints" taken as the highest both can actually run), not
+something the draft says. Its draft-17, draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft,
+are refused. The drafts differ on the wire in little else: a `WT_STREAM` signal out of place closes a draft-17
+connection with `H3_FRAME_UNEXPECTED` (`H3_FRAME_ERROR` before), and after 0-RTT a client takes a draft-17 server's
+WebTransport settings as the new connection sends them, while it holds a draft-16 or draft-14 server to those it kept
+(their section 3.2).
 Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
 and later sends it, but that is not verified here ([interop](../spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
 ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
@@ -512,7 +517,7 @@ protocols in `WT-Available-Protocols` and the server picks one of `availableProt
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
 String is ignored).
 
-WebTransport flow control (draft-ietf-webtrans-http3-16 section 5) is on when both sides declare it in their SETTINGS,
+WebTransport flow control (draft-ietf-webtrans-http3-17 section 5) is on when both sides declare it in their SETTINGS,
 which `webTransport` does by default with `webTransportInitialMaxStreamsBidi`, `webTransportInitialMaxStreamsUni` and
 `webTransportInitialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
 limits; the receiver raises its own as the peer's streams end and as their bytes are consumed (WT_MAX_STREAMS,
@@ -528,7 +533,7 @@ input (read or not), and for a reset or stopped stream once its final size is kn
 reads give none.
 
 How this library's sender shares a session's data credit between the session's streams follows the session's RFC 9218
-priority (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data), the `incremental`
+priority (draft-17 section 3.4 recommends RFC 9218's scheduling for all of a session's data), the `incremental`
 parameter of its CONNECT stream, read again at every grant, so a PRIORITY_UPDATE takes effect at the next one:
 
 The mode is chosen per direction: each side shares the credit for its own sending by its own view of the CONNECT
