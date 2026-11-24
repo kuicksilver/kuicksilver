@@ -24,7 +24,9 @@
 #   the build scripts:    KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG
 #                         KSL_OPENSSL_BUILD_IMAGE (set by build-docker.sh inside the container only)
 # What selects a toolchain is left alone, as the release checks it against the pins: PATH, DEVELOPER_DIR, ANDROID_NDK_ROOT,
-# KONAN_DEPS, JAVA_HOME. tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
+# KONAN_DEPS, JAVA_HOME. ksl_clean_build_env also exports KSL_PINNED_NDK=1, so tools/check/llvm-tool.sh takes the LLVM
+# tools (llvm-ar, llvm-objcopy, ...) from the pinned NDK only, never from another NDK, PATH or Homebrew, and fails
+# without it; and it unsets an ANDROID_NDK_HOME that is not the pinned NDK (Gradle and the NDK's own scripts read it). tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
 ksl_build_env_vars=(
   CC CXX CPP AS LD AR RANLIB NM STRIP OBJCOPY CROSS_COMPILE RC WINDRES PERL HASHBANGPERL
   LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF LLVM_AR
@@ -39,13 +41,19 @@ ksl_build_env_vars=(
   KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG KSL_OPENSSL_BUILD_IMAGE
 )
 ksl_clean_build_env() { # [note]
-  local v
+  local v pin
   for v in "${ksl_build_env_vars[@]}"; do
     if [ -n "${!v+x}" ]; then
       [ "${1:-}" != note ] || echo "     note: $v is ignored: the build uses the project's own compiler, flags and paths"
       unset "$v"
     fi
   done
+  export KSL_PINNED_NDK=1
+  pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gradle/toolchains.toml" 2>/dev/null)
+  if [ -n "${ANDROID_NDK_HOME:-}" ] && [ "$(sed -n 's/^Pkg.Revision *= *//p' "$ANDROID_NDK_HOME/source.properties" 2>/dev/null | tr -d '\r')" != "$pin" ]; then
+    [ "${1:-}" != note ] || echo "     note: ANDROID_NDK_HOME is ignored: it is not the pinned NDK $pin"
+    unset ANDROID_NDK_HOME
+  fi
 }
 ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables above that are set, on one line (empty: none),
   # leaving out the values the workflow sets on purpose, which a build gives the same result with as without:

@@ -40,6 +40,9 @@ target="${1:?target}"
 case "$target" in android-*|ios-*) brotli_encoder=0 ;; *) brotli_encoder=1 ;; esac
 case "${KSL_BROTLI_ENCODER:-}" in "") ;; 0) brotli_encoder=0 ;; *) echo "KSL_BROTLI_ENCODER: 0 or unset" >&2; exit 2 ;; esac
 ksl_tag=""; [ "$brotli_encoder" = 1 ] || ksl_tag="ksl-brotli-encoder=0"
+# the Apple targets' archiver (llvm-ar, below): in the target line, so -Pkuicksilver.openssl.prebuilt refuses an archive
+# indexed by Xcode's ranlib, which an earlier build.sh made
+case "$target" in macos-*|ios-*) ksl_tag="${ksl_tag:+$ksl_tag }ksl-ar=llvm-ar" ;; esac
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
 # KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
 pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
@@ -123,7 +126,8 @@ fi
 unset CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS __CNF_CPPDEFINES __CNF_CPPINCLUDES __CNF_CPPFLAGS __CNF_CFLAGS __CNF_CXXFLAGS \
   __CNF_LDFLAGS __CNF_LDLIBS OPENSSL_LOCAL_CONFIG_DIR BUILDFILE CROSS_COMPILE
 export SOURCE_DATE_EPOCH=1759363200
-export ZERO_AR_DATE=1   # Apple ar ignores SOURCE_DATE_EPOCH; this zeroes archive member timestamps
+export ZERO_AR_DATE=1   # for Xcode's tools that read it (ld64's debug-map timestamps); the archives are llvm-ar's (Apple,
+                        # Android, Kotlin/Native), GNU ar's deterministic mode (Docker Linux) or mingw-w64's, all zeroed
 JOBS="${JOBS:-4}"       # keep the host responsive (owner request)
 
 case "$target" in
@@ -178,10 +182,20 @@ case "$target" in linux-x64|linux-arm64) ar_args=(ARFLAGS=qcD); export RANLIB="r
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
 if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $patch_id $ksl_tag" | portable; echo; exit 0; fi
+# make splits AR and RANLIB into words: a tool path with a space (a home directory or SDK with one) is linked into a temporary
+# directory without one. The cache key names the tool itself and its version.
+ar_id=""
+if [ -n "${AR:-}" ]; then
+  ar_id="$AR|$("$AR" --version 2>/dev/null | grep -m1 -i version || echo unknown)"
+  case "$AR" in
+    *[[:space:]]*) ksl_tools=$(mktemp -d); trap 'rm -rf "$ksl_tools"' EXIT; ln -s "$AR" "$ksl_tools/llvm-ar"
+      export AR="$ksl_tools/llvm-ar" RANLIB="$ksl_tools/llvm-ar s" ;;
+  esac
+fi
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
-ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder${AR:+|$AR|$("$AR" --version 2>/dev/null | grep -m1 -i version || echo unknown)}"
+ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder${ar_id:+|$ar_id}"
 key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}${patch_id:+|$patch_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
@@ -206,7 +220,7 @@ cd "$work"
   || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: the carried patches do not apply to OpenSSL $version" >&2; exit 1; }
 # the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
-./Configure "$cfg" ${ar_args[@]+"${ar_args[@]}"} $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
+./Configure "$cfg" ${ar_args[@]+"${ar_args[@]}"} $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+"CC=$CC"} >"$out/build/$target.configure.log" 2>&1
 # The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the
 # compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
 # no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer

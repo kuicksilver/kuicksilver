@@ -5,8 +5,9 @@
 # archives written here byte by byte, no compiler or archiver: two identical archives pass silently; a member whose bytes
 # differ is named with its offsets; a BSD __.SYMDEF that differs only past its last symbol name is called string-table
 # padding (the Xcode ranlib case), one that differs in a symbol name is not; a member only one archive has, a header
-# field (mtime), a GNU long name (the // table), and bytes between members are each reported; a file that is not an
-# archive, and a member that runs past the end, exit 2.
+# field (mtime), a GNU long name (the // table), a System V / GNU "/" index, and bytes between members are each
+# reported; the same padding rule holds for a __.SYMDEF_64; a file that is not an archive, a member that runs past the
+# end, and a BSD name length that is no number, exit 2 (never a traceback).
 # Usage: ar-diff-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,17 +27,18 @@ def bsd_member(name, body, mtime=0):
     out = hdr(f"#1/{nl}", len(data), mtime) + data
     return out + (b"\n" if len(data) & 1 else b"")
 
-def symdef(syms, pad):
-    """BSD 32-bit index: syms = [(name, member offset)], the string table padded with `pad`."""
+def symdef(syms, pad, w=4):
+    """BSD index (w=4: __.SYMDEF, w=8: __.SYMDEF_64): syms = [(name, member offset)], the string table padded with `pad`."""
+    f = "<I" if w == 4 else "<Q"
     strtab, ents = b"", b""
     for name, off in syms:
-        ents += struct.pack("<II", len(strtab), off)
+        ents += struct.pack(f, len(strtab)) + struct.pack(f, off)
         strtab += name.encode() + b"\0"
     strtab += pad
-    return struct.pack("<I", len(ents)) + ents + struct.pack("<I", len(strtab)) + strtab
+    return struct.pack(f, len(ents)) + ents + struct.pack(f, len(strtab)) + strtab
 
-def bsd(members, pad=b"\0\0\0\0", syms=(("_a", 0), ("_bb", 1)), mtime_b=0):
-    out = b"!<arch>\n" + bsd_member("__.SYMDEF SORTED", symdef(syms, pad))
+def bsd(members, pad=b"\0\0\0\0", syms=(("_a", 0), ("_bb", 1)), mtime_b=0, index="__.SYMDEF SORTED"):
+    out = b"!<arch>\n" + bsd_member(index, symdef(syms, pad, 8 if "_64" in index else 4))
     for name, body in members:
         out += bsd_member(name, body, mtime_b if name == "b.o" else 0)
     return out
@@ -52,14 +54,18 @@ w("pad.a", bsd(m, pad=b"\0\x1a\x88\x03"))
 w("sym.a", bsd(m, syms=(("_a", 0), ("_bc", 1))))
 w("extra.a", bsd(m + [("c.o", b"CC")]))
 w("mtime.a", bsd(m, mtime_b=1759363200))
+w("b64.a", bsd(m, index="__.SYMDEF_64")); w("b64pad.a", bsd(m, pad=b"\0\x01\x02\x03", index="__.SYMDEF_64"))
+w("b64sym.a", bsd(m, syms=(("_a", 0), ("_bc", 1)), index="__.SYMDEF_64"))
+w("badname.a", b"!<arch>\n" + hdr("#1/x", 4) + b"abcd")
 # System V / GNU: the // long-name table, /<offset> names, a trailing / on short names
-def gnu(body_long):
+def gnu(body_long, sym=b"\0\0\0\x01\0\0\0\x5c_xy\0"):
     names = b"a_very_long_member_name.o/\n"
-    out = b"!<arch>\n" + hdr("//", len(names)) + names + b"\n"   # 27 bytes: padded to an even offset
+    out = b"!<arch>\n" + hdr("/", len(sym)) + sym   # the System V index: a count, offsets, names
+    out += hdr("//", len(names)) + names + b"\n"   # 27 bytes: padded to an even offset
     out += hdr("short.o/", 4) + b"SSSS"
     out += hdr("/0", len(body_long)) + body_long
     return out
-w("gnu1.a", gnu(b"LLLL")); w("gnu2.a", gnu(b"LLxL"))
+w("gnu1.a", gnu(b"LLLL")); w("gnu2.a", gnu(b"LLxL")); w("gnu3.a", gnu(b"LLLL", sym=b"\0\0\0\x01\0\0\0\x5c_xz\0"))
 odd = lambda sep: b"!<arch>\n" + hdr("x.o/", 3) + b"XXX" + sep + hdr("y.o/", 2) + b"YY"
 w("odd1.a", odd(b"\n")); w("odd2.a", odd(b"\n\n"))
 w("notar.a", b"not an archive\n")
@@ -84,7 +90,13 @@ out=$(run base.a sym.a)
 if grep -q "archive index '__.SYMDEF SORTED'" <<< "$out" && ! grep -q padding <<< "$out"; then echo "PASS negative_indexSymbolNameNotPadding"; else echo "FAIL negative_indexSymbolNameNotPadding: $out"; rc=1; fi
 check "negative_extraMemberNamed" 1 "member 3 'c.o' \(2 bytes\): only in the second" base.a extra.a
 check "negative_headerFieldNamed" 1 "member 2 'b.o': header fields .*0 0 0 100644 vs 1759363200 0 0 100644" base.a mtime.a
-check "negative_gnuLongNameResolved" 1 "member 2 'a_very_long_member_name.o': 4 vs 4 bytes, 1 differ, offsets 2\.\.2" gnu1.a gnu2.a
+check "negative_gnuLongNameResolved" 1 "member 3 'a_very_long_member_name.o': 4 vs 4 bytes, 1 differ, offsets 2\.\.2" gnu1.a gnu2.a
+check "negative_gnuIndexNamed" 1 "member 0 archive index '/': 12 vs 12 bytes, 1 differ, offsets 10\.\.10" gnu1.a gnu3.a
+check "identical __.SYMDEF_64 archives: exit 0" 0 "" b64.a b64.a
+check "negative_index64PaddingCalledPadding" 1 "archive index '__.SYMDEF_64'.*3 differ.*string table's padding" b64.a b64pad.a
+out=$(run b64.a b64sym.a)
+if grep -q "archive index '__.SYMDEF_64'" <<< "$out" && ! grep -q padding <<< "$out"; then echo "PASS negative_index64SymbolNameNotPadding"; else echo "FAIL negative_index64SymbolNameNotPadding: $out"; rc=1; fi
+check "negative_badBsdNameLengthExit2" 2 "bad BSD name length '#1/x'" badname.a base.a
 check "negative_framingNamed" 1 "every member is identical: the archive framing differs" odd1.a odd2.a
 check "negative_notAnArchiveExit2" 2 "not an ar archive" base.a notar.a
 check "negative_truncatedMemberExit2" 2 "runs past the end" trunc.a base.a

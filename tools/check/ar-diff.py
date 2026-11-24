@@ -47,6 +47,8 @@ def members(path):
         if len(body) < size:
             raise Bad(f"{path}: member at offset {off} runs past the end")
         if raw.startswith("#1/"):   # BSD: the name is the first <len> bytes of the data
+            if not raw[3:].isdigit() or int(raw[3:]) > size:
+                raise Bad(f"{path}: bad BSD name length '{raw}' at offset {off}")
             n = int(raw[3:])
             name, body = body[:n].rstrip(b"\0").decode("latin-1"), body[n:]
         elif raw == "//":   # GNU: the long-name table

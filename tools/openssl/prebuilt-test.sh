@@ -4,7 +4,8 @@
 # Negative controls of -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts; security review 2026-10-14, finding 3): the current
 # build/openssl/<target> is reused; one whose configure-target.txt names other options (a sanitizer build), whose archive no
 # longer matches provenance.txt, that was built from another zlib or brotli tarball than gradle/compression-libs.toml pins,
-# or that has no provenance.txt is refused. Each case edits a copy of the metadata and puts the
+# that (an Apple target) was archived before tools/openssl/build.sh named llvm-ar in the target line, or that has no
+# provenance.txt is refused. Each case edits a copy of the metadata and puts the
 # original back. Usage: tools/openssl/prebuilt-test.sh [target] (default macos-arm64); KSL_GRADLE as in local-release.sh.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
@@ -23,6 +24,10 @@ expect() { # <0|1> <what> [reason grep]
 expect 0 "the current build is reused"
 sed 's/ -Os / -O0 -g -fsanitize=address /' "$bak/configure-target.txt" > "$d/configure-target.txt"
 expect 1 "negative: a build with other options is refused" "configure-target.txt says"
+case "$t" in macos-*|ios-*)   # an Apple build from before llvm-ar: its index is Xcode's ranlib's (no ksl-ar= word)
+  sed 's/ ksl-ar=llvm-ar//' "$bak/configure-target.txt" > "$d/configure-target.txt"
+  expect 1 "negative: an Apple build without the llvm-ar archiver is refused" "configure-target.txt says" ;;
+esac
 restore; bak=$(mktemp -d); cp "$d/configure-target.txt" "$d/provenance.txt" "$bak/"
 awk '$1 == "libcrypto.a" { $2 = "0000000000000000000000000000000000000000000000000000000000000000" } { print }' "$bak/provenance.txt" > "$d/provenance.txt"
 expect 1 "negative: an archive changed after its build is refused" "changed after it was built"

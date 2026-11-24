@@ -276,6 +276,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   JNI and Android libraries of a local build unstripped (with `CFLAGS=-g`, with their debug information); a release
   never sets it. `docs/guide/building.md` describes it;
   `tools/check/native-flags-test.sh` checks it in the gate's reproducibility step.
+- Building from source: the Apple builds (macOS, including the macos-arm64 and macos-x64 JNI libraries, and iOS) archive
+  OpenSSL, `libksl.a` and the test hooks with the NDK's `llvm-ar`, so they now need the NDK (or `LLVM_AR` naming an
+  `llvm-ar`) as well: Xcode's `ranlib` leaves uninitialised bytes in an archive's index, which made two builds of the
+  same `libcrypto.a` differ and the double build fail. The archiver is part of the OpenSSL target line (`ksl-ar=llvm-ar`),
+  so `-Pkuicksilver.openssl.prebuilt` refuses an older, Xcode-indexed build. The shipped klib archives are rewritten by
+  `llvm-objcopy` either way, so no published byte changes. A release, the double build and `verify-release.sh` take the
+  LLVM tools from the pinned NDK only (`KSL_PINNED_NDK`, `tools/check/llvm-tool.sh`) and fail without it, instead of
+  falling back to another NDK, `PATH` or Homebrew. The Docker Linux OpenSSL archives use GNU ar's deterministic mode
+  (`ar D`, `ranlib -D`): they held each build's timestamps. `tools/check/double-build.sh` names the archive members that
+  differ (`tools/check/ar-diff.py`).
 - QUIC and HTTP/3 servers pick their certificate per SNI name: `TlsConfig.sniSelector` works over QUIC as over TCP (RFC
   6066 section 3), and a Ktor `tlsConnector` with an `sniSelector` now serves HTTP/3 and sends `Alt-Svc` (it served
   HTTP/1.1 only, with a warning). The QUIC handshake pauses at the ClientHello (`DriveResult.WantSni`); the endpoint runs
