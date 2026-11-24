@@ -797,7 +797,8 @@ static ksl_ctx *dp_client(X509 *ca, X509_CRL **crls, int n) {
     free(l.buf);
     return c;
 }
-/* the process's CPU time in milliseconds: clock() on POSIX hosts; on Windows, where clock() is wall time, GetProcessTimes */
+/* the process's CPU time in milliseconds: clock() on POSIX hosts; on Windows, where clock() is wall time, GetProcessTimes,
+   whose resolution is the scheduler tick (about 15.6 ms): the cases here read 0 or one tick there, inside the +25 ms slack */
 static double dp_cpu_ms(void) {
 #ifdef _WIN32
     FILETIME created, exited, kernel, user;

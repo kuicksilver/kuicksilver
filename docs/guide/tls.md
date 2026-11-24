@@ -388,7 +388,8 @@ experimental in 0.3.0:
   not cover it (a distribution point it does not name, alert 46) fails with `VerifyReason.UnknownRevocationStatus` as
   well. So does a certificate with more than 16 relative CRL distribution points (nameRelativeToCRLIssuer) when a
   configured CRL of its issuer has an issuingDistributionPoint (alert 48): the bound of the bundled OpenSSL's fix for
-  CVE-2026-121482 (ADR-0019, patch 11), which keeps a peer from making the check cost CPU per configured CRL. So does a configured CRL whose issuer is neither among the roots nor on the path: with
+  CVE-2026-121482 (ADR-0019, patch 11), which keeps a peer from making the check cost CPU per configured CRL. So does
+  a configured CRL whose issuer is neither among the roots nor on the path: with
   `AnchoredCa(roots = [intermediate], crls = [the root's CRL, ...])` the intermediate's own status cannot be verified,
   and its certificates fail (fail closed; leave that CRL out, or anchor at the root); with the root among the roots too,
   the intermediate is checked against the root's CRL and fails when it is revoked. A certificate whose issuer has none
