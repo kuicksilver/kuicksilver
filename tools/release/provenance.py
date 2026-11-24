@@ -136,7 +136,7 @@ def main():
         # the patches carried on the OpenSSL tarball (ADR-0019), in the order build.sh applies them: file and pinned hash
         *[{"uri": f"file:{ossl[k]}", "digest": {"sha256": ossl[k + "_sha256"]},
            "annotations": {"appliedTo": tarball, "order": str(i + 1), "fileSha256": sha256(ossl[k])}}
-          for i, k in enumerate(["patch"] + [f"patch_{n}" for n in range(2, 11)]) if k in ossl],
+          for i, k in enumerate(["patch"] + [f"patch_{n}" for n in range(2, 12)]) if k in ossl],
         {"uri": "file:gradle/verification-metadata.xml", "digest": {"sha256": sha256("gradle/verification-metadata.xml")}},
         {"uri": "file:gradle/libs.versions.toml", "digest": {"sha256": sha256("gradle/libs.versions.toml")}},
     ]

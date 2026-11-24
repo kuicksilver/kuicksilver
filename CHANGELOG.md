@@ -3071,6 +3071,15 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- TLS, CRLs (`AnchoredCa(roots, crls)`): a peer's certificate can no longer make the CRL check cost CPU in proportion to
+  the configured CRLs times its distribution points (CVE-2026-121482). OpenSSL 4.1.0 built the full name of each relative
+  CRL distribution point again for every CRL of the certificate's issuer that has an issuingDistributionPoint, before any
+  signature on the path is checked, so an unsigned leaf under a configured issuer's name with about 4,400 of them (within
+  the 100 KiB certificate list bound) took 27 ms of CPU per such CRL, 0.83 s against 32 (macos-arm64). The bundled
+  OpenSSL carries an eleventh patch (`patch_11`, `openssl-4.1.0-crl-dp-dos.patch`; ADR-0019, pending the owner's
+  decision), upstream's fix verbatim (openssl/openssl@54e14955ef, on openssl-4.1 as openssl/openssl@14a9f9ad6e; dropped
+  with 4.1.1): the names are built once per certificate, and a certificate with more than 16 relative distribution points
+  fails verification when such a CRL of its issuer is configured (fail closed; no change without CRLs).
 - QUIC client: the server's Source Connection ID is fixed by its first Initial without exception (RFC 9000 section 7.2),
   and the peer's first connection ID is never replaced. Until now an Initial with nothing but ACK, PING and PADDING from
   the client's own DCID left the SCID open, so a later Initial from any other SCID, a forged one included (Initial keys

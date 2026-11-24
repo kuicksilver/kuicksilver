@@ -22,7 +22,7 @@
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256s, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
 # The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, then patch_2 /
-# patch_2_sha256 up to patch_10 / patch_10_sha256, each only with all the ones before it. Each file must have its pinned
+# patch_2_sha256 up to patch_11 / patch_11_sha256, each only with all the ones before it. Each file must have its pinned
 # SHA-256, and tools/openssl/apply-patch.pl applies them, in that order and exactly, to the copy of the verified tree the
 # build runs in; their hashes are part of the cache key, of the target line (tokens patch-sha256=<first 16 hex>,
 # patch-2-sha256=<...>, ...) and of provenance.txt (patch-sha256 <hash>, patch-2-sha256 <hash>, ...).
@@ -50,10 +50,10 @@ pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;;
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
 patch_files=(); patch_id=""; prov_patches=""
-# a key the loop below does not read would be a patch silently left out (patch_11, patch_1, Patch_2, patch2): refused
-unknown=$(sed -n 's/^\([A-Za-z0-9_]*[Pp][Aa][Tt][Cc][Hh][A-Za-z0-9_]*\) *=.*/\1/p' "$toml" | grep -Exv 'patch(_([2-9]|10))?(_sha256)?' || true)
-[ -z "$unknown" ] || { echo "$toml: unknown patch key(s): $(echo $unknown) (patch, patch_2 ... patch_10 and their _sha256)" >&2; exit 1; }
-for n in "" _2 _3 _4 _5 _6 _7 _8 _9 _10; do
+# a key the loop below does not read would be a patch silently left out (patch_12, patch_1, Patch_2, patch2): refused
+unknown=$(sed -n 's/^\([A-Za-z0-9_]*[Pp][Aa][Tt][Cc][Hh][A-Za-z0-9_]*\) *=.*/\1/p' "$toml" | grep -Exv 'patch(_([2-9]|1[01]))?(_sha256)?' || true)
+[ -z "$unknown" ] || { echo "$toml: unknown patch key(s): $(echo $unknown) (patch, patch_2 ... patch_11 and their _sha256)" >&2; exit 1; }
+for n in "" _2 _3 _4 _5 _6 _7 _8 _9 _10 _11; do
   pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$toml"); ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$toml")
   case "${pf:+f}${ps:+s}" in ""|fs) ;; *) echo "$toml: patch$n and patch${n}_sha256 go together" >&2; exit 1 ;; esac
   [ -n "$pf" ] || continue
