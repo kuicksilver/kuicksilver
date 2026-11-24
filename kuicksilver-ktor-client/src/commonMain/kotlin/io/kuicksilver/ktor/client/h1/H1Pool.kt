@@ -822,7 +822,13 @@ internal class H1Pool(
                                 }
                             }
                             waitingFor = io.kuicksilver.ktor.client.ConnectStage.PoolWait
-                            val got = acquireOrChange(key, signal, seen)
+                            // a connection the pool hands out is the request's at once, so obtain's catch below settles it
+                            // like any other: kept when the connect timeout fired as it came, else given back
+                            val got =
+                                acquireOrChange(key, signal, seen) {
+                                    conn = it
+                                    reused = true
+                                }
                             waitingFor = null
                             if (got === CHANGED) continue
                             if (got is H1Connection) {
@@ -979,22 +985,28 @@ internal class H1Pool(
     /**
      * [ConnectionPool.acquire] for [key] (an idle [H1Connection], or [PERMIT] to open one); with [signal], it gives up
      * with [CHANGED] as soon as the route's HTTP/2 state changes after [seen]. What the pool granted meanwhile is never
-     * lost: a grant that arrives with the change or a cancellation is handed back.
+     * lost: an idle connection goes to [taken] the moment the pool hands it out, so it is the caller's whatever ends the
+     * wait ([obtain] keeps one that came as its connect timeout fired, and gives back one that came as it was cancelled);
+     * a permit that came with a failure or a cancellation is given back here.
      */
     private suspend fun acquireOrChange(
         key: String,
         signal: StateFlow<Long>?,
         seen: Long?,
+        taken: (H1Connection) -> Unit,
     ): Any {
-        if (signal == null) return pool.acquire(key) ?: PERMIT
+        if (signal == null) return (pool.acquire(key)?.also(taken)) ?: PERMIT
         // the grant, kept outside the scope: a cancellation that reaches the scope before it ends (as its block returns
         // the grant, or while the watcher winds down) makes coroutineScope throw instead of returning it, which dropped an
         // idle connection taken from the pool, open and out of it for good. coroutineScope throws only once every child has
-        // ended, so the grant is final when the catch hands it back
+        // ended, so the grant is final when the catch looks at it
         var got: Any? = null
         try {
             return coroutineScope {
-                val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
+                val a =
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        got = pool.acquire(key)?.also(taken) ?: PERMIT
+                    }
                 if (got == null) {
                     val watcher =
                         launch {
@@ -1007,16 +1019,9 @@ internal class H1Pool(
                 got ?: CHANGED
             }
         } catch (e: Throwable) {
-            got?.let { giveBack(key, it) }
+            if (got === PERMIT) pool.releasePermit(key) // a connection went to taken: the caller's catch settles it
             throw e
         }
-    }
-
-    private fun giveBack(
-        key: String,
-        got: Any,
-    ) {
-        if (got is H1Connection) pool.release(got) else pool.releasePermit(key)
     }
 
     /**
