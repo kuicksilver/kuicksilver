@@ -21,7 +21,6 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 |---|---|---|---|---|
 | 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-17 |
 | 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
-| 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | none verified (Safari was expected; removal waits for one Safari run) | no (`webTransport`) | beyond draft-17 §7.1 |
 | 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | Google QUICHE (Chromium's QUIC) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
@@ -44,7 +43,8 @@ draft-17 §7.1's own rule.
 
 **Peers.** Chrome 155 and Firefox 158 speak draft-02 ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
 `ChromeWebTransportTest`, `tools/interop/wt-firefox-manual.sh`); Safari, which shipped WebTransport in 26.4 (March 2026),
-speaks draft-14 (second-hand, not run or verified here). Independently: webtransport-go (2a2b547, 2026-11-09) announces
+speaks draft-14 (Safari 27.2, 2026-11-25: `SETTINGS_WT_MAX_SESSIONS` and `:protocol webtransport`, no draft-02 setting;
+[interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). Independently: webtransport-go (2a2b547, 2026-11-09) announces
 draft-02's setting "for backwards compatibility with older clients" and `SETTINGS_WT_MAX_SESSIONS` because "Safari
 requires SETTINGS_WT_MAX_SESSIONS >= 1 (draft-ietf-webtrans-http3-14)" (`server.go`); picoquic h3zero (f506de8,
 2026-11-19) parses all three, "Chrome sends SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742) instead of WT_MAX_SESSIONS"
@@ -66,7 +66,7 @@ full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothin
 no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
 
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:15` (the versions,
-`offeredIn` at :55, `WtSettings.ours` at :203, `WtTokens.LEGACY` at :233),
+`offeredIn` at :55, `WtSettings.ours` at :190, `WtTokens.LEGACY` at :220),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:407` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:845` (the client's draft-02
@@ -76,6 +76,7 @@ request field).
 (false by default), and on the client per `HttpClient.webTransport` call.
 
 **Tests.** `webtransport.WtDraftVersionsTest.eachDraftClientIsServedInItsDraft`, `.eachDraftServerGetsACONNECTOfItsDraft`,
+`webtransport.WebTransportSessionTest.draft02SessionWithoutResetStreamAtResetsWithResetStream`,
 `webtransport.WebTransportSettingsTest.serverAdvertisesAllWtCodepoints`, `.clientAdvertisesWtEnabled`,
 `.wtSettingsNotSentByDefault`, `.peerVersionIsTheHighestBothAnnounce`, `.negative_clientNeverPicksADraftItDidNotOffer`,
 `.negative_draft02SettingAboveOneIsSettingsError`, `webtransport.WebTransportSessionTest.establishLegacyTokenAccepted`,
@@ -93,7 +94,9 @@ greater than "1"" as declaring flow control, and its `SETTINGS_WT_INITIAL_*` def
 open no stream and send no stream data until the client sends WT_MAX_STREAMS and WT_MAX_DATA; one that never does
 leaves our sends waiting (we send WT_STREAMS_BLOCKED and WT_DATA_BLOCKED once per limit). We cannot avoid this and
 conform. Escape hatch: with all three `Http3Settings.webTransportInitialMax*` at 0 we never declare flow control, and a
-connection carries one session, as before pooling. Not observed with a real Safari yet: a release-checklist item.
+connection carries one session, as before pooling. Safari 27.2 does not meet it: it sends `SETTINGS_WT_MAX_SESSIONS=1`
+with `SETTINGS_WT_INITIAL_MAX_DATA=8388608` and 100 streams each way, which declare flow control with credit (run of
+2026-11-25).
 
 **Removal.** draft-02 when Chrome and Firefox ship draft-15 or later (`SETTINGS_WT_ENABLED`, `webtransport-h3`) by
 default; draft-14 when Safari does. Only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this shim;
@@ -108,8 +111,7 @@ field with any value, so a draft-16 session whose `webtransport-h3` CONNECT carr
 marker; the audit's `== "1"` alone would still have marked that one, so the session's version is checked too). So a
 CONNECT carrying the draft-02 request field on a connection whose selected draft is newer gets no response field: in
 `webtransport-h3` form it runs that draft without the marker, and in draft-02 form (`webtransport`) it is malformed, as
-its token is not the selected draft's ([considered and not listed](#considered-and-not-listed)); only while shim 3 lasts
-does a draft-02 request from a client that also announces draft-02 run draft-02, and get the field.
+its token is not the selected draft's ([considered and not listed](#considered-and-not-listed)).
 
 **Peers.** Chrome's draft-02 client refuses a 2xx without it (our `ChromeWebTransportTest`; neither webtransport-go nor
 picoquic sends it, and their Chrome interop was not checked).
@@ -119,8 +121,8 @@ costs other clients nothing.
 
 **Justification (kept, hardening audit 2026-11-21, S2).** It goes with shim 1: without it Chrome refuses the session.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:801`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:239`.
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:793`; the name and
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:226`.
 
 **On by default.** No, as shim 1; then always for a draft-02 session whose client sent the request field's value `1`.
 
@@ -131,51 +133,6 @@ value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransp
 **Risk.** None known: a fixed value, sent only to a client that asked in draft-02 form and runs draft-02.
 
 **Removal.** With draft-02 (shim 1).
-
-## 3. Draft-02 session when a newer draft lacks `reset_stream_at`
-
-Borderline: beyond the draft's version selection, made for one browser. The hardening audit (2026-11-21, S3) decided to
-remove it once one Safari 26.4 or later run confirms that Safari sends `reset_stream_at`; the removal is prepared and
-waits for that run (open item below).
-
-**What it does.** draft-14, draft-16 and draft-17 need `reset_stream_at` on both sides. Two behaviours are bundled:
-(a) a client that announces a newer draft without the transport parameter but also draft-02 gets a draft-02 session when
-its CONNECT is a draft-02 request (`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`); its newer-draft
-CONNECT is refused (400 and `H3_MESSAGE_ERROR`). Our client does the same against such a server: it sends a draft-02
-CONNECT. (b) A server runs draft-02 for any draft-02 request from a client that announces draft-02, even when a higher
-common version could run.
-
-**Peers.** None verified. Safari was the expected one (second-hand), but WebKit bug 303152 (RESET_STREAM_AT sent and
-received, fixed 2025-12-02) and bug 305006 (2026-01-07) landed before Safari 26.4, the first release with WebTransport,
-so a shipping Safari most likely sends `reset_stream_at`. webtransport-go refuses to run without it
-(`EnableStreamResetPartialDelivery`, `server.go`, `client_conn.go`); picoquic has no such fallback.
-
-**Standard text.** draft-17 §7.1 now spells out the server's selection: "If the client sends the codepoint in Section
-9.2, the server selects the version described in this document. Otherwise, if the client sends codepoints for draft
-versions that the server supports, the server selects the highest of those versions"; §3.1: "If the server receives ...
-transport parameters that do not have correct values for every required transport parameter, the server MUST treat all
-established and newly incoming WebTransport sessions as malformed". Both (a), which reads "the highest version
-supported by both endpoints" as the highest both can run, and (b), which lets the request's form pick the version, go
-beyond that text: draft-17 makes the shim a clearer departure than draft-16 did, and changes nothing in the audit's
-decision to remove it.
-
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:120` (`wtClientVersion`)
-and :137 (`wtServerVersion`).
-
-**On by default.** No, as shim 1.
-
-**Tests.** `webtransport.WebTransportSessionTest.withoutResetStreamAtBothSidesFallBackToDraft02`,
-`.draft16And02ClientWithoutResetStreamAtIsAcceptedAsDraft02`,
-`.negative_draft16ConnectWithoutResetStreamAtIsMalformedEvenWithDraft02Offered`,
-`webtransport.WebTransportSettingsTest.draft14And02ServerWithoutResetStreamAtGetsADraft02Connect`.
-
-**Risk.** Low: the session runs draft-02 in every respect (shim 1's risk); a newer-draft session is never run without the
-transport parameter its §3.1 requires.
-
-**Removal.** Decided (audit S3): pick the highest common version; if the transport cannot carry it, the session is
-malformed. It waits for one Safari 26.4+ run ([interop.md](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23),
-the Safari row) that shows its SETTINGS and transport parameters: Safari sends `reset_stream_at` (0x1d or
-0x17f7586d2cb571) → remove; it does not → keep, and name Safari here as the verified peer.
 
 ## 4. Pre-IANA `reset_stream_at` codepoint
 
@@ -356,6 +313,21 @@ the data.
 
 ## Removed
 
+- **Draft-02 session when a newer draft lacks `reset_stream_at`** (shim 3, 0.3.0; its number is kept free). A client that
+  announced a newer WebTransport draft without the `reset_stream_at` transport parameter but also draft-02 got a draft-02
+  session when its CONNECT was a draft-02 request, and our client sent such a CONNECT to such a server; a draft-02 request
+  ran draft-02 even when a higher common version could run. That read draft-17 §7.1's "The highest version supported by
+  both endpoints is selected" as the highest both can run, and let the request's form pick the version, where §7.1
+  selects from the client's SETTINGS and §3.1 makes every session malformed when the transport parameters are missing.
+  It was kept for Safari (second-hand); hardening audit 2026-11-21 (S3) removed it on one Safari run that shows Safari
+  sends `reset_stream_at`. Safari 27.2 (macOS 26.7.2, 2026-11-25) sends it: the server's qlog records it among Safari's
+  transport parameters (`transport:parameters_set`, owner remote, with `max_datagram_frame_size` 65535), and Safari ran
+  every step of the page in a draft-14 session on a build without the fallback
+  ([interop](interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23), the Safari row). Now the highest
+  common version runs or nothing does —
+  `webtransport.WebTransportSessionTest.negative_withoutResetStreamAtBothSidesNoSessionIsOpened`,
+  `.negative_draft16And02ClientWithoutResetStreamAtIsMalformedInDraft02FormToo`,
+  `.negative_draft02FormConnectOnANewerDraftIsMalformed`.
 - **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number is kept free so the anchors of the others stay). The
   client processed an Initial with nothing but ACK, PING and PADDING whose SCID was the DCID it sends to without letting
   it fix the server's SCID, so that an msquic server, which sends from the client's DCID until its listener accepts the

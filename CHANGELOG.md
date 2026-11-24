@@ -1093,7 +1093,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   0x24. `docs/spec/compat-shims.md` §1 to §4 have the hardening audit's verdicts:
   - draft-02 and draft-14 kept;
   - the draft-02 response field kept and narrowed;
-  - the draft-02 fallback without `reset_stream_at` to be removed after one Safari run;
+  - the draft-02 fallback without `reset_stream_at` removed (below);
   - the pre-IANA `reset_stream_at` codepoint kept for Google QUICHE.
 
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
@@ -1709,6 +1709,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   session that ended because the server broke it (a malformed WT_CLOSE_SESSION, a capsule section 5.4 prohibits) kept
   its slot in the connection's session count, so `webTransportMaxSessions` sessions failed that way blocked new ones on
   that connection. The server side was not affected.
+
+- WebTransport no longer runs a draft-02 session when the selected draft lacks `reset_stream_at` (compatibility shim 3,
+  removed; hardening audit S3). Its one expected user, Safari, sends the parameter: Safari 27.2 ran its draft-14
+  session without the shim (`docs/spec/interop.md`). The draft-17 section 7.1 selection decides, and nothing else:
+  - A client that announced a newer draft without the transport parameter but also draft-02 got a draft-02 session for
+    a draft-02 request. It now gets 400 with `H3_MESSAGE_ERROR` (section 3.1).
+  - Our client no longer sends a draft-02 CONNECT to such a server; it throws `Http3Exception.Settings`.
+  - A draft-02-form CONNECT from a client whose selected draft is newer is now malformed, since its token is not the
+    selected draft's. Before, it ran draft-02.
 
 - WebTransport: a peer's WT_CLOSE_SESSION that arrived with its CONNECTION_CLOSE (Firefox 160 sends both in one packet)
   is reported in `closed` with its code and reason, also when the application, or a Ktor route whose handler the

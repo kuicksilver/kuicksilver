@@ -278,8 +278,6 @@ private suspend fun H3Session.handleArmedRequestStream(
             return
         }
         if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
-            val draft02 =
-                parsed.protocol.equals(WtTokens.LEGACY, ignoreCase = true) && parsed.regular[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
             // refused before the application: section 5.1 without flow control, section 5.2 (draft-14 section 5.2) over the
             // limit; the connection stays (draft-14: "The server MUST NOT close the connection if the client opens sessions
             // exceeding this limit")
@@ -290,12 +288,12 @@ private suspend fun H3Session.handleArmedRequestStream(
                 glitch("WebTransport sessions above the rate")
                 return
             }
-            if (!wtAdmits(draft02)) {
+            if (!wtAdmits()) {
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)
                 return
             }
-            wtSessionAdmitted(st.id, draft02)
+            wtSessionAdmitted(st.id)
         }
         val req = ServerRequestImpl(this, st, parsed)
         // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
@@ -402,9 +400,9 @@ internal fun H3Session.wtSessionEnded(
 }
 
 /**
- * Server: whether another WebTransport CONNECT ([draft02]: a draft-02 request) may join the sessions already on this
- * connection. The first always may (its acceptance checks the client's SETTINGS). Another one needs flow control on for
- * it and for every session already there, which the client's SETTINGS tell, so they are awaited first (bounded by
+ * Server: whether another WebTransport CONNECT may join the sessions already on this connection. The first always may (its
+ * acceptance checks the client's SETTINGS). Another one needs flow control on in the connection's draft (every session
+ * on it runs the draft section 7.1 selected, [wtServerVersion]), which the client's SETTINGS tell, so they are awaited first (bounded by
  * [H3Session.wtDeadline]; draft-17 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
  * client's SETTINGS have been received"); then: section 5.1, "A server that receives more than one session on an
  * underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a
@@ -413,15 +411,12 @@ internal fun H3Session.wtSessionEnded(
  * all of the CONNECT streams it is not willing to process with the H3_REQUEST_REJECTED status"). Session dispatcher only;
  * the caller records an admitted session before it suspends again.
  */
-internal suspend fun H3Session.wtAdmits(draft02: Boolean): Boolean {
+internal suspend fun H3Session.wtAdmits(): Boolean {
     if (wtSessions.isEmpty()) return true
     withinWtDeadline { awaitPeerSettings() } ?: return false
     if (wtSessions.isEmpty()) return true // the others ended meanwhile
-
-    fun flowControlled(d02: Boolean): Boolean = wtServerVersion(this, d02).first?.let { WtFlow.enabled(this, it) } == true
     return wtSessions.size < settings.webTransportMaxSessions &&
-        flowControlled(draft02) &&
-        wtSessions.values.all { flowControlled(it) }
+        wtServerVersion(this).first?.let { WtFlow.enabled(this, it) } == true
 }
 
 /**
@@ -755,12 +750,9 @@ internal class ServerRequestImpl(
         // the server selects the version described in this document"). The CONNECT must carry that version's token
         // (draft-17 and -16 section 3.2: ":protocol pseudo-header field MUST be set to webtransport-h3"; draft-02 and -14:
         // webtransport), compared without regard to case (RFC 9110 section 7.8); another is malformed. A
-        // client that announces a newer draft without its transport parameters but also draft-02 is served only when this
-        // CONNECT is a draft-02 request ([wtServerVersion]).
-        val draft02Request =
-            this@ServerRequestImpl.protocol.equals(WtTokens.LEGACY, ignoreCase = true) &&
-                this.headers[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
-        val (version, refusal) = wtServerVersion(session, draft02Request)
+        // client whose selected draft its transport parameters cannot carry is malformed, whatever the form of this
+        // CONNECT ([wtServerVersion])
+        val (version, refusal) = wtServerVersion(session)
         val missing =
             when {
                 ps == null -> {

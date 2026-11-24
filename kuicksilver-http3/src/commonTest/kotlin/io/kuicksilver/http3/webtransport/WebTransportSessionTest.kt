@@ -24,6 +24,7 @@ import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.qpack.DecodeResult
 import io.kuicksilver.http3.qpack.QpackDecoder
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.acceptBidi
 import io.kuicksilver.http3.runtime.awaitOutputStopped
@@ -228,7 +229,7 @@ class WebTransportSessionTest {
                 val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
-                raw.openControl(wtClientSettings)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L))
                 launch {
                     val r = server.acceptRequest()
                     assertTrue(r.isWebTransport)
@@ -543,60 +544,112 @@ class WebTransportSessionTest {
         }
 
     /**
-     * Both sides announce draft-16 and draft-02, and neither has `reset_stream_at`: draft-16 cannot run (section 3.1), so
-     * the session is draft-02, the highest version both can run, and its streams are reset with RESET_STREAM (draft-02
-     * predates RESET_STREAM_AT; section 4.4 binds draft-14 and later).
+     * Both sides announce draft-17, draft-16 and draft-02, and neither has `reset_stream_at`: draft-17 section 7.1 selects
+     * draft-17, which cannot run (section 3.1: "A client MUST NOT establish WebTransport sessions if ... the server's
+     * transport parameters do not have correct values for every required transport parameter"), so no session is opened;
+     * there is no fallback to draft-02 (hardening audit S3).
      */
-    @Test fun withoutResetStreamAtBothSidesFallBackToDraft02() =
+    @Test fun negative_withoutResetStreamAtBothSidesNoSessionIsOpened() =
         h3Test {
-            val frames = SentFrameTypes()
             H3Pair
-                .open(
-                    clientSettings = wtOn,
-                    serverSettings = wtOn,
-                    serverQuic = QuicConfig.Default,
-                    clientQuic = quicConfig { qlog = frames },
-                ).useScoped { p ->
-                    val (client, server) = sessions(p)
-                    assertEquals("1", server.headers[WtTokens.DRAFT02_REQUEST_FIELD])
-                    assertEquals(WtVersion.Draft02, (client as WtSessionImpl).version)
-                    assertEquals(WtVersion.Draft02, (server as WtSessionImpl).version)
-                    val out = client.openUni()
-                    out.output.writeFully("x".encodeToByteArray())
-                    out.output.flush()
-                    val st = withTimeout(5.seconds) { server.acceptUni() }
-                    out.reset(5)
-                    assertEquals(5L, causeOf<WebTransportException.StreamReset> { withTimeout(5.seconds) { st.input.readAllBytes() } }.code)
-                    assertTrue("reset_stream" in frames.types, "${frames.types}")
-                    assertFalse("reset_stream_at" in frames.types, "${frames.types}")
+                .open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = QuicConfig.Default, clientQuic = QuicConfig.Default)
+                .useScoped { p ->
+                    val e = assertFailsWith<Http3Exception.Settings> { p.client.webTransport(wtReq()) }
+                    assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
                 }
         }
 
     /**
-     * The same fallback seen from the server: a client of draft-16 and draft-02 without `reset_stream_at` whose CONNECT is a
-     * draft-02 request (`:protocol webtransport`, `sec-webtransport-http3-draft02: 1`) gets a draft-02 session.
+     * A draft-02 session without `reset_stream_at` (both sides announce draft-02 only, the draft of Chrome and Firefox): its streams are reset with RESET_STREAM (draft-02 predates RESET_STREAM_AT; section 4.4 binds draft-14 and
+     * later).
      */
-    @Test fun draft16And02ClientWithoutResetStreamAtIsAcceptedAsDraft02() =
+    @Test fun draft02SessionWithoutResetStreamAtResetsWithResetStream() =
+        h3Test {
+            val frames = SentFrameTypes()
+            val draft02Only = setOf(SettingsId.WT_ENABLED_DRAFT17, SettingsId.WT_ENABLED_DRAFT16, SettingsId.WT_MAX_SESSIONS_DRAFT14)
+            // both sides speak draft-02 only, as a browser of that draft and a server that took it
+            H3Session.createdForTest = { it.ourSettingsForTest = { l -> l.filter { (id, _) -> id !in draft02Only } } }
+            try {
+                H3Pair
+                    .open(
+                        clientSettings = wtOn,
+                        serverSettings = wtOn,
+                        serverQuic = QuicConfig.Default,
+                        clientQuic = quicConfig { qlog = frames },
+                    ).useScoped { p ->
+                        val (client, server) = sessions(p)
+                        assertEquals("1", server.headers[WtTokens.DRAFT02_REQUEST_FIELD])
+                        assertEquals(WtVersion.Draft02, (client as WtSessionImpl).version)
+                        assertEquals(WtVersion.Draft02, (server as WtSessionImpl).version)
+                        val out = client.openUni()
+                        out.output.writeFully("x".encodeToByteArray())
+                        out.output.flush()
+                        val st = withTimeout(5.seconds) { server.acceptUni() }
+                        out.reset(5)
+                        assertEquals(
+                            5L,
+                            causeOf<WebTransportException.StreamReset> { withTimeout(5.seconds) { st.input.readAllBytes() } }.code,
+                        )
+                        assertTrue("reset_stream" in frames.types, "${frames.types}")
+                        assertFalse("reset_stream_at" in frames.types, "${frames.types}")
+                    }
+            } finally {
+                H3Session.createdForTest = null
+            }
+        }
+
+    /**
+     * The server side: a client of draft-16 and draft-02 without `reset_stream_at` selects draft-16 (draft-17 section
+     * 7.1), which it cannot run, so even its draft-02 request (`:protocol webtransport`, `sec-webtransport-http3-draft02:
+     * 1`) is malformed (section 3.1: "the server MUST treat all established and newly incoming WebTransport sessions as
+     * malformed"): 400 and STOP_SENDING H3_MESSAGE_ERROR, no draft-02 session (hardening audit S3).
+     */
+    @Test fun negative_draft16And02ClientWithoutResetStreamAtIsMalformedInDraft02FormToo() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val (c, s) = q.connect(QuicConfig.Default)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
-                val accepted = async { server.acceptRequest().acceptWebTransport() }
                 val st = c.openBidi()
                 st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
                 st.output.flush()
-                assertEquals("200", readHeaders(st)[":status"])
-                assertEquals(WtVersion.Draft02, (withTimeout(5.seconds) { accepted.await() } as WtSessionImpl).version)
-                // announced by both, but not runnable on this connection
-                assertEquals(WtVersion.Draft16, server.session.highestCommonWtVersion())
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                assertTrue("reset_stream_at" in e.message.orEmpty(), e.message)
+                assertEquals("400", readHeaders(st)[":status"])
+                assertMessageErrorStop(st)
             }
         }
 
     /**
-     * The fallback holds only for a draft-02 request: a draft-16 CONNECT (`:protocol webtransport-h3`) from that client
-     * would be a draft-16 session without `reset_stream_at` (section 3.1), whose resets could not keep their header
+     * draft-17 section 7.1 selects the version from the client's SETTINGS, not from the form of its request: a client of
+     * draft-16 and draft-02 with `reset_stream_at` runs draft-16, whose token is `webtransport-h3` (section 3.2), so its
+     * CONNECT in draft-02 form is malformed: 400, no draft-02 marker, and no draft-02 session (hardening audit S3, the
+     * fallback's second half).
+     */
+    @Test fun negative_draft02FormConnectOnANewerDraftIsMalformed() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                assertTrue("Draft16" in e.message.orEmpty(), e.message)
+                val h = readHeaders(st)
+                assertEquals("400", h[":status"])
+                assertNull(h[WtTokens.DRAFT02_RESPONSE_FIELD])
+            }
+        }
+
+    /**
+     * A draft-16 CONNECT (`:protocol webtransport-h3`) from a client of draft-16 and draft-02 without `reset_stream_at`
+     * would be a draft-16 session without the transport parameter (section 3.1), whose resets could not keep their header
      * (section 4.4), so it is malformed: 400 and STOP_SENDING H3_MESSAGE_ERROR.
      */
     @Test fun negative_draft16ConnectWithoutResetStreamAtIsMalformedEvenWithDraft02Offered() =

@@ -110,37 +110,24 @@ internal fun wtTransportGap(
     }
 
 /**
- * The version a client's session on [h3] runs: the highest that both sides announce ([WtVersion.common]) and that the
- * connection's transport parameters can carry ([wtTransportGap]); null with the reason when none can. A server that
- * announces draft-16 without `reset_stream_at` but also draft-02 gets a draft-02 CONNECT (then a draft-02 request in
- * every respect: `:protocol webtransport` and `sec-webtransport-http3-draft02: 1`). This fallback is our reading of
- * section 7.1, "the highest version supported by both endpoints" taken as the highest both can actually run; the draft
- * does not say it. A server that announces only the newer draft is refused.
+ * The version a client's session on [h3] runs: the highest that both sides announce ([WtVersion.common]; draft-17 section
+ * 7.1, "The highest version supported by both endpoints is selected"); null with the reason when there is none or when
+ * the connection's transport parameters cannot carry it ([wtTransportGap]; section 3.1, "A client MUST NOT establish
+ * WebTransport sessions if ... the server's transport parameters do not have correct values for every required transport
+ * parameter"). There is no fallback to a lower common draft that could run.
  */
-internal fun wtClientVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> {
-    val common = h3.wtCommonVersions
-    if (common.isEmpty()) return null to NO_COMMON_VERSION
-    common.firstOrNull { wtTransportGap(h3, it) == null }?.let { return it to null }
-    return null to wtTransportGap(h3, common.first())
-}
+internal fun wtClientVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> = wtSelected(h3)
 
 /**
- * The version of the WebTransport request a server accepts on [h3]: draft-02 when the request is a draft-02 request
- * ([draft02Request]: `:protocol webtransport` and `sec-webtransport-http3-draft02: 1`) and both sides announce draft-02,
- * else the highest version both announce (section 7.1); null with the reason when the connection's transport parameters
- * cannot carry it (section 3.1: the request is then malformed). So a client that announces draft-16 or draft-14 without
- * `reset_stream_at` and also draft-02 is served only when its CONNECT is a draft-02 request (our reading of section 7.1,
- * as for [wtClientVersion]); its draft-16 or draft-14 CONNECT is refused, never run as a draft-16 session that broke
- * section 3.1 and could not reset as section 4.4 requires. A request in draft-02 form runs draft-02 even when a higher
- * common version could run, because the client asked for draft-02.
+ * The version of every WebTransport request a server accepts on [h3]: the one section 7.1 selects from the client's
+ * SETTINGS ([WtVersion.common]: the highest draft both speak, draft-17 when the client names none), whatever the form of
+ * the request; null with the reason when the connection's transport parameters cannot carry it (section 3.1: "the server
+ * MUST treat all established and newly incoming WebTransport sessions as malformed").
  */
-internal fun wtServerVersion(
-    h3: io.kuicksilver.http3.runtime.H3Session,
-    draft02Request: Boolean,
-): Pair<WtVersion?, String?> {
-    val common = h3.wtCommonVersions
-    if (common.isEmpty()) return null to NO_COMMON_VERSION
-    val v = if (draft02Request && WtVersion.Draft02 in common) WtVersion.Draft02 else common.first()
+internal fun wtServerVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> = wtSelected(h3)
+
+private fun wtSelected(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> {
+    val v = h3.wtCommonVersions.firstOrNull() ?: return null to NO_COMMON_VERSION
     return wtTransportGap(h3, v)?.let { null to it } ?: (v to null)
 }
 

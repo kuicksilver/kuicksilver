@@ -817,7 +817,7 @@ internal suspend fun H3Session.webTransport(
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
     // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
     // every required setting or if the server's transport parameters do not have correct values for every required
-    // transport parameter"; a server that also announces draft-02 gets a draft-02 CONNECT ([wtClientVersion])
+    // transport parameter" ([wtClientVersion])
     val (chosen, refusal) = wtClientVersion(this)
     val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     withContext(dispatcher) {

@@ -2542,18 +2542,15 @@ section 7.1 says, and then takes only `webtransport-h3`. A request with either t
 datagrams, or, for draft-14 and later, without `reset_stream_at` on both sides, the request is answered with 400,
 stopped with `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond`
 refuses the session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them;
-draft-02, which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. A peer that announces a newer
-draft without `reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request
-(`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`, which our client then sends): this is our reading of
-section 7.1 ("the highest version supported by both endpoints" taken as the highest both can actually run), not
-something the draft says. Its draft-17, draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft,
-are refused. The drafts differ on the wire in little else: a `WT_STREAM` signal out of place closes a draft-17
+draft-02, which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The selected draft runs or
+nothing does: a peer whose selected draft lacks `reset_stream_at` gets no session, even if it announces draft-02 too and
+whatever the form of its CONNECT. The drafts differ on the wire in little else: a `WT_STREAM` signal out of place closes a draft-17
 connection with `H3_FRAME_UNEXPECTED` (`H3_FRAME_ERROR` for draft-16 and older; draft-17's before the peer's SETTINGS
 name a draft), and after 0-RTT a client takes a draft-17 server's
 WebTransport settings as the new connection sends them, while it holds a draft-16 or draft-14 server to those it kept
 (their section 3.2).
-Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
-and later sends it, but that is not verified here ([interop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
+Interop note: Safari 27.2 speaks draft-14 and sends `reset_stream_at`, which draft-14 needs
+([interop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
 ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
 protocols in `WT-Available-Protocols` and the server picks one of `availableProtocols`; a choice the client did not
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
