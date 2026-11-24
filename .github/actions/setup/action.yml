@@ -38,7 +38,7 @@ runs:
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
         # and the mirror of Maven Central as the last repository (settings.gradle.kts)
         printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
-    - name: Gradle plugin class path (a dependency not found is asked for once more, past the cached miss)
+    - name: Gradle plugin class path (a dependency not found is asked for once more, a refused one after a pause)
       shell: bash
       run: |
         # Maven Central answers 404 for files it has now and then, also behind the Gradle Plugin Portal's redirect (runs
@@ -48,8 +48,9 @@ runs:
         # failed build too. `help` in the root build resolves what every Gradle step needs first: build-logic as the
         # included plugin build (its compile and runtime class paths, with the plugins' own dependencies) under the root's
         # gradle/verification-metadata.xml, in the daemon the later steps reuse. gradlew-retry.sh runs it once more with
-        # --refresh-dependencies after a dependency was not found, as $G does for every later Gradle step. Every job that
-        # uses this action runs Gradle.
+        # --refresh-dependencies after a dependency was not found, and up to three more times after doubling pauses when a
+        # repository answered 429 or 5xx (run 44892895905: four fuzz jobs refused here, also on the one retry it had then),
+        # as $G does for every later Gradle step. Every job that uses this action runs Gradle.
         KSL_GRADLE_RETRY_QUIET=1 bash tools/ci/gradlew-retry.sh --max-workers=2 -q help
     - name: Pinned Xcode
       if: inputs.xcode == 'true'
