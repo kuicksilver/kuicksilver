@@ -764,6 +764,15 @@ internal class ConnectionIdManager(
     /** Test hook: the retirement backlog counts as full (a peer that leaves our RETIRE_CONNECTION_ID frames unacknowledged). */
     var testRetireBacklogFull = false
 
+    private fun sameToken(
+        buf: PacketBuffer,
+        off: Int,
+        token: ByteArray,
+    ): Boolean {
+        for (i in token.indices) if (buf[off + i] != token[i]) return false
+        return true
+    }
+
     /** True when the frame was a repeat of a known sequence number (a glitch when it is not a retransmission). */
     fun onNewConnectionId(
         seq: Long,
@@ -777,20 +786,35 @@ internal class ConnectionIdManager(
             // RFC 9000 section 19.15: a peer that asked for zero-length connection IDs cannot issue more
             throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x18, "NEW_CONNECTION_ID from a zero-length-ID peer")
         }
-        val existing = peer.firstOrNull { it.seq == seq }
-        if (existing !=
-            null
-        ) {
-            if (!existing.cid.contentEquals(
-                    buf,
-                    off,
-                    len,
+        // RFC 9000 section 19.15: "If an endpoint receives a NEW_CONNECTION_ID frame that repeats a previously issued connection ID
+        // with a different Stateless Reset Token field value or a different Sequence Number field value, or if a sequence number is
+        // used for different connection IDs, the endpoint MAY treat that receipt as a connection error of type PROTOCOL_VIOLATION"
+        // (quic-go, picoquic). Checked against the active IDs, the handshake's included, before Retire Prior To removes any; only
+        // the same frame again ("MUST NOT be treated as a connection error") is a repeat
+        var existing: Peer? = null
+        for (i in peer.indices) {
+            val p = peer[i]
+            val sameCid = p.cid.contentEquals(buf, off, len)
+            if (p.seq == seq) {
+                if (!sameCid) throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x18, "NEW_CONNECTION_ID reuses a sequence number")
+                val t = p.token
+                if (t != null && !sameToken(buf, tokenOff, t)) {
+                    throw QuicWireException(
+                        TransportError.PROTOCOL_VIOLATION,
+                        0x18,
+                        "NEW_CONNECTION_ID repeats a sequence with another token",
+                    )
+                }
+                existing = p
+            } else if (sameCid) {
+                throw QuicWireException(
+                    TransportError.PROTOCOL_VIOLATION,
+                    0x18,
+                    "NEW_CONNECTION_ID repeats a connection ID under another sequence",
                 )
-            ) {
-                throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x18, "NEW_CONNECTION_ID reuses a sequence number")
             }
-            return true
         }
+        if (existing != null) return true
         if (retire > retirePriorTo) {
             retirePriorTo = retire
             val it = peer.iterator()

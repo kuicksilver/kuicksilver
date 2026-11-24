@@ -674,6 +674,9 @@ internal class PacketReceiver(
         c.tlsDirty = true
     }
 
+    /** Our sequence number of the Destination Connection ID of the packet being decoded (live or retired and still routing), or -1. */
+    internal fun packetDcidSeq(): Long = c.cids.localSeqOf(reader.buf, hv.dcidOff, hv.dcidLen)
+
     private fun headerStart(): Int = if (hv.type == PacketType.OneRtt) hv.dcidOff - 1 else hv.dcidOff - 6
 
     /**
