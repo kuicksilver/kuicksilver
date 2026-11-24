@@ -5666,7 +5666,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.c
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.incrementalAndNonIncrementalShareOneUrgency
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.incrementalRoundRobin
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.negative_lessUrgentStreamGetsNoShare
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.negative_nextRetransmitRefilesAStreamWhoseLossWasAcknowledged
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.negative_tunnelShareNeverPreemptsCriticalStreams
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.nextRetransmitTakesOnlyRetransmissionsInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.nonIncrementalByIdAscending
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.retransmissionsBeforeNewDataOnSameLevel
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.streamWithNewLossOrPriorityIsRefiled
