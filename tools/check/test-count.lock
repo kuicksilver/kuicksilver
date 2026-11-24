@@ -2933,6 +2933,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.Pe
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_requestedServerNoContextTakeoverMissingFails
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_serverDeclinesInvalidOffers
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_truncatedMessageFailsWhereZlibTellsTheBoundary
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_unicodeSpaceAroundNamesAndParametersIsNoOws
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_unrequestedClientMaxWindowBitsRejected
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.noContextTakeoverResetsDictionary
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.rfc7692Section72Examples

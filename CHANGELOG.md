@@ -1079,10 +1079,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   name, whitespace before the colon, no colon) now fails the response with `ParserException`, as Go's net/http and
   llhttp hold; Ktor's parser let bytes above 0x7F through.
 - Ktor client and server, WebSocket handshake (breaking strictness, RFC 6455 sections 4.1 and 4.2.1, RFC 9110 section
-  5.6.3): the values of `Upgrade`, `Sec-WebSocket-Accept`, `Sec-WebSocket-Protocol` and `Sec-WebSocket-Extensions` (client)
-  and of `Sec-WebSocket-Key` and `Sec-WebSocket-Version` (server) lose only SP and HTAB around them, no longer any Unicode
-  space: `Upgrade: <U+00A0>websocket` fails the client's handshake with `WebSocketException`, and
-  `Sec-WebSocket-Version: <U+00A0>13` gets 426 from the server, as x/net/websocket holds.
+  5.6.3, RFC 7692 section 7): the values of `Upgrade`, `Sec-WebSocket-Accept`, `Sec-WebSocket-Protocol` and
+  `Sec-WebSocket-Extensions` (client), of `Sec-WebSocket-Key` and `Sec-WebSocket-Version` (server), and the extension names
+  and `permessage-deflate` parameters both sides negotiate lose only SP and HTAB around them, no longer any Unicode space:
+  `Upgrade: <U+00A0>websocket` fails the client's handshake with `WebSocketException`, `Sec-WebSocket-Version: <U+00A0>13`
+  gets 426 from the server, and `<U+00A0>permessage-deflate` or `<U+00A0>server_no_context_takeover` is not that
+  extension or parameter (an offer with it is declined, an answer with it fails), as x/net/websocket holds.
 - Ktor client, proxy credentials (breaking strictness, RFC 7617 section 2): `ProxyCredentials` sent as
   `Proxy-Authorization: Basic` (an HTTP or `https://` proxy, `ConnectUdpProxy`) with a colon in the user name, or with a
   control character (0x00-0x1F, 0x7F) in the user name or password, now fail with `IllegalArgumentException` where the
