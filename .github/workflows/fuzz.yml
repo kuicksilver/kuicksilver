@@ -2,8 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Fuzzing campaign on GitHub-hosted runners: tools/fuzz/campaign.sh (CONTRIBUTING.md, "Fuzzing"), one runner per target.
 #
-#   prepare: target list, OpenSSL linux-x64 ── fuzz (one job per target, campaign.sh run --goal H --fork <cpus>) ── summary
-#                                                                                                              └─ corpus-cache
+#   prepare: target list, OpenSSL linux-x64 ──┬─ fuzz (one job per target, campaign.sh run --goal H --fork <cpus>) ── summary
+#   gradle-deps: the Gradle dependencies ─────┘                                                                └─ corpus-cache
+#
+# gradle-deps resolves, once, what the Gradle of every fuzz job needs (build-logic and the plugins in the setup action's
+# `help`, the jvmTest and Kotlin compiler class paths: classpath.init.gradle's resolveFuzzDependencies) and saves the
+# Gradle user home's dependency cache for this run (fuzz-gradle-deps-<run>-<attempt>); each fuzz job restores it before its
+# setup, so the matrix does not ask Maven Central for the same files at once (run 44892895905: four fuzz jobs refused with
+# 429 Too Many Requests in setup, also on the retry). setup-gradle then finds a Gradle user home already there and leaves
+# it to this cache (no restore, no save: also no Gradle user home entry per target). Without that entry (gradle-deps
+# failed, the restore missed or hung) a fuzz job resolves as before, through tools/ci/gradlew-retry.sh. Every file still
+# passes gradle/verification-metadata.xml when it is used; corpus-cache deletes the entry at the end of the run.
 #
 # Each fuzz job owns its runner, so campaign.sh runs without its laptop manners: nice 0, no gap between slices, and
 # libFuzzer/Jazzer fork mode with one worker per CPU on the job's one target (slices stay at the 20-minute maximum; every
@@ -101,8 +110,33 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  gradle-deps:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup   # its `help` resolves build-logic and the plugins, through gradlew-retry.sh
+      - name: 'fuzz: resolve the Gradle dependencies of every fuzz job'
+        run: |
+          # campaign.sh builds the jvmTest classes of every module with a Jazzer target in every fuzz job (snapshot_classpath)
+          tasks=$(awk '/^targets_table\(\) \{/ { t = 1; next } /^EOF/ { t = 0 } t && $2 == "jvm" { print ":" $3 ":resolveFuzzDependencies" }' tools/fuzz/campaign.sh | sort -u)
+          [ -n "$tasks" ] || { echo "::error::no jvm target in tools/fuzz/campaign.sh's table"; exit 1; }
+          # shellcheck disable=SC2086 # one task per word
+          bash tools/ci/gradlew-retry.sh --max-workers=2 -q -I tools/fuzz/classpath.init.gradle $tasks
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+            !~/.gradle/caches/modules-2/*.lock
+          key: fuzz-gradle-deps-${{ github.run_id }}-${{ github.run_attempt }}
+
   fuzz:
-    needs: prepare
+    needs: [prepare, gradle-deps]
+    # gradle-deps only saves downloads: without it the fuzz jobs still run, and resolve on their own
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +150,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      - name: 'fuzz: the Gradle dependencies gradle-deps resolved (before the setup, see the header)'
+        if: needs.gradle-deps.result == 'success'
+        timeout-minutes: 5
+        continue-on-error: true   # no entry, or a cache service that hangs: this job resolves on its own
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+            !~/.gradle/caches/modules-2/*.lock
+          key: fuzz-gradle-deps-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: ./.github/actions/setup
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
@@ -284,8 +329,9 @@ jobs:
 
   corpus-cache:
     # one corpus entry per target and ref: a cache entry cannot be overwritten, so every run saves a new key and this job
-    # deletes the older ones of this run's ref (branches only read main's entries, they never delete them)
-    needs: [prepare, fuzz]
+    # deletes the older ones of this run's ref (branches only read main's entries, they never delete them); and this run's
+    # Gradle dependency entry (gradle-deps), which no later run reads
+    needs: [prepare, gradle-deps, fuzz]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-24.04
     permissions: { actions: write }
@@ -303,3 +349,6 @@ jobs:
             for id in $old; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
             echo "$t: $(wc -w <<< "$old" | tr -d ' ') older entr(y/ies) deleted"
           done
+          deps=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "fuzz-gradle-deps-$GITHUB_RUN_ID-" --limit 100 --json id --jq '.[].id')
+          for id in $deps; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
+          echo "gradle-deps: $(wc -w <<< "$deps" | tr -d ' ') entr(y/ies) of run $GITHUB_RUN_ID deleted"

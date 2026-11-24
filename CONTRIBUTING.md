@@ -342,7 +342,9 @@ request without such tests is not merged. The tests run in the automated suites 
   target; default off, for a machine the campaign owns). On GitHub, `.github/workflows/fuzz.yml` (weekly, every target for 2 hours,
   and *Actions → fuzz → Run workflow*) gives every target its own runner for `hours_per_target` (`--fork` with one worker
   per CPU, `--nice 0`, `--gap 0`), keeps each grown corpus, pruned, in the Actions cache between runs (one entry per
-  target and branch: the `corpus-cache` job deletes the older ones). The repository's build caches (Gradle, Kotlin/Native,
+  target and branch: the `corpus-cache` job deletes the older ones). Its `gradle-deps` job downloads the Gradle
+  dependencies once and every fuzz job restores them, so the matrix does not ask Maven Central for them all at once
+  (it answers 429). The repository's build caches (Gradle, Kotlin/Native,
   OpenSSL) already exceed the default 10 GB, so the weekly corpora are evicted first; each pruned corpus is therefore
   also kept as the `fuzz-corpus-<target>` artifact for 90 days and restored from there when the cache has no entry (only
   from a fuzz run of this repository on `main`, and only its regular files). A finding fails the target's job, which
