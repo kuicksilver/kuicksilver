@@ -147,6 +147,43 @@ class H1ResponseHeadTest {
             assertFailsWith<ParserException> { exchange(wire, get) }
         }
 
+    /**
+     * `field-name = token` (RFC 9110 section 5.1), followed by the colon with no whitespace (RFC 9112 section 5.1): a name
+     * with obs-text, a delimiter, a control character or whitespace before the colon, an empty name and a line without a
+     * colon fail the response, as Go's net/http and llhttp hold. Before, Ktor's parser passed bytes above 0x7F in a name.
+     */
+    @Test fun negative_fieldNameMustBeAToken() =
+        runTest(timeout = 20.seconds) {
+            for (line in listOf(
+                "X-\u00e9: a",
+                "\u00e9: a",
+                "X\u00a0A: a",
+                "X A: a",
+                "X-A : a",
+                "X-A\t: a",
+                "X\"A: a",
+                "(X): a",
+                "X/A: a",
+                "X@A: a",
+                "X{A}: a",
+                ": a",
+                "X-A",
+            )) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\n$line\r\nContent-Length: 0\r\n\r\n") }
+                assertFailsWith<ParserException>(line) { exchange(wire, get) }
+            }
+        }
+
+    /** Every tchar (RFC 9110 section 5.6.2) is a field-name character. */
+    @Test fun everyTcharIsAFieldNameCharacter() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            val name = "!#$%&'*+-.^_`|~09azAZ"
+            server(wire) { send -> send("HTTP/1.1 200 OK\r\n$name: v\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") }
+            assertEquals("v", exchange(wire, get).headers[name])
+        }
+
     /** HTAB and obs-text (bytes above 0x7F) are field-value characters (RFC 9110 section 5.5) and pass. */
     @Test fun htabAndObsTextInFieldValuePass() =
         runTest(timeout = 20.seconds) {

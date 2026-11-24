@@ -2545,6 +2545,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConne
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.quietIdleConnectionIsReused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.strayBytesOnIdleConnectionAreNotReused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.unsolicitedResponseOnIdleConnectionIsNotReused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.everyTcharIsAFieldNameCharacter
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.headIsReadWhateverItsChunks
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.headUnderTheLimitIsRead
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.higherMinorVersionIsProcessedAsHttp11
@@ -2555,6 +2556,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseH
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_connectHeadCutBeforeTheEmptyLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_endlessInterimResponsesFail
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_endlessInterimResponsesToTheConnectFail
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_fieldNameMustBeAToken
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_foldRightAfterTheStatusLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_headCutBeforeTheEmptyLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_hugeResponseHeadFails

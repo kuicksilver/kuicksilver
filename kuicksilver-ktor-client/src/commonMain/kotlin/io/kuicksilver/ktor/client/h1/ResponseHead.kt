@@ -26,6 +26,10 @@ import kotlinx.io.readByteArray
  * (RFC 9110 section 5.5; a bare CR, RFC 9112 section 2.2). The reason phrase allows the same characters as a field value
  * (RFC 9112 section 4).
  *
+ * A field line's name must be a token (RFC 9110 section 5.1: `field-name = token`) followed by its colon, with no
+ * whitespace before it (RFC 9112 section 5.1), else [ParserException]: Ktor's parser passed bytes above 0x7F there, and Go's
+ * net/http and llhttp refuse them too.
+ *
  * An obs-fold (a field line that starts with SP or HTAB continues the one before) is replaced with one SP, as a user
  * agent MUST (RFC 9112 section 5.2); such a line right after the status line continues no field and fails with
  * [ParserException] (section 2.2 allows rejecting it). The status line is checked and normalized by [statusLineOf].
@@ -97,6 +101,7 @@ internal suspend fun readResponseHeadBytes(
                 }
 
                 else -> {
+                    checkFieldName(content)
                     field?.let { writeField(it) }
                     field = content
                 }
@@ -275,6 +280,21 @@ private fun ByteArray.trimOwsStart(): ByteArray {
     var start = 0
     while (start < size && isOws(this[start])) start++
     return copyOfRange(start, size)
+}
+
+/** Fails unless [line] starts with `field-name ":"`, the name a token (RFC 9110 sections 5.1 and 5.6.2). */
+private fun checkFieldName(line: ByteArray) {
+    var i = 0
+    while (i < line.size && isTcharByte(line[i])) i++
+    if (i == 0 || i == line.size || line[i] != ':'.code.toByte()) {
+        throw ParserException("A field line whose name is not a token followed by a colon (RFC 9110 section 5.1)")
+    }
+}
+
+/** tchar (RFC 9110 section 5.6.2) as a byte. */
+private fun isTcharByte(b: Byte): Boolean {
+    val c = b.toInt() and 0xFF
+    return c in 'a'.code..'z'.code || c in 'A'.code..'Z'.code || c in '0'.code..'9'.code || c.toChar() in "!#$%&'*+-.^_`|~"
 }
 
 /** A CTL other than HTAB (RFC 5234 appendix B.1): 0x00-0x08, 0x0A-0x1F, 0x7F. */

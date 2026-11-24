@@ -1047,6 +1047,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, HTTP/1.1 response head (breaking strictness, RFC 9110 section 5.1, RFC 9112 section 5.1): a field line
+  whose name is not a token followed directly by its colon (bytes above 0x7F, a delimiter such as `/` or `"`, an empty
+  name, whitespace before the colon, no colon) now fails the response with `ParserException`, as Go's net/http and
+  llhttp hold; Ktor's parser let bytes above 0x7F through.
 - Ktor client and server, WebSocket handshake (breaking strictness, RFC 6455 sections 4.1 and 4.2.1, RFC 9110 section
   5.6.3): the values of `Upgrade`, `Sec-WebSocket-Accept`, `Sec-WebSocket-Protocol` and `Sec-WebSocket-Extensions` (client)
   and of `Sec-WebSocket-Key` and `Sec-WebSocket-Version` (server) lose only SP and HTAB around them, no longer any Unicode
