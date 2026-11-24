@@ -2,7 +2,7 @@
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-http-cio ChunkedTransferEncoding.kt (decodeChunked, parseChunkSize), adapted: the trailer
-// section is read and discarded instead of failing with "Expected CR", a body that ends before its last chunk fails, and
+// section is read by the field-line grammar and discarded instead of failing with "Expected CR", a body that ends before its last chunk fails, and
 // the chunk-size line is parsed by the grammar of RFC 9112 section 7.1 (Ktor skipped a bare CR anywhere in it).
 // Kept identical with kuicksilver-ktor-client's h1/ChunkedBody.kt (the two engines share no module above ktor-network).
 package io.kuicksilver.ktor.server.h1
@@ -29,7 +29,9 @@ internal class MalformedChunkedBodyException(
 /**
  * Decodes the chunked transfer coding (RFC 9112 section 7.1) from [input] into [out], which is closed at the end. The
  * trailer section after the last chunk is read up to its empty line and discarded (section 7.1.2: a recipient MAY
- * discard the trailer fields); it is limited to [MAX_TRAILER_SECTION] bytes. A message that ends before its last chunk
+ * discard the trailer fields); it is limited to [MAX_TRAILER_SECTION] bytes, and each of its lines must be a field line
+ * (see [skipTrailerSection]): a bare LF ends one only with [allowBareLf], an obs-fold continues one only with
+ * [acceptObsFold]. A message that ends before its last chunk
  * is incomplete (section 8) and fails with [EOFException]; a body that breaks the grammar fails with
  * [MalformedChunkedBodyException]. [out] is closed with [readerFailure] of the failure, which its reader sees.
  * [onComplete] runs once the whole body has been read, before [out] is closed (its reader may act on the end at once).
@@ -38,13 +40,15 @@ internal suspend fun decodeChunkedBody(
     input: ByteReadChannel,
     out: ByteWriteChannel,
     readerFailure: (Throwable) -> Throwable = { it },
+    allowBareLf: Boolean = false,
+    acceptObsFold: Boolean = false,
     onComplete: () -> Unit = {},
 ) {
     try {
         while (true) {
             val chunkSize = parseChunkSize(input)
             if (chunkSize == 0L) {
-                skipTrailerSection(input)
+                skipTrailerSection(input, allowBareLf, acceptObsFold)
                 onComplete()
                 break
             }
@@ -66,31 +70,76 @@ private suspend fun skipCrLf(input: ByteReadChannel) {
     if (input.readByte() != LF) throw MalformedChunkedBodyException("Expected LF")
 }
 
-/** The trailer section: field lines up to an empty line (CRLF; a bare LF is accepted as for the header section, section 2.2). */
-private suspend fun skipTrailerSection(input: ByteReadChannel) {
+/**
+ * The trailer section, `*( field-line CRLF ) CRLF` (RFC 9112 section 7.1.2), read up to its empty line and discarded. Every
+ * line must be a field line as in the head (RFC 9110 section 5.1: `field-name = token` followed by its colon, no whitespace
+ * before it, RFC 9112 section 5.1; section 5.5: no control character but HTAB in the value), else
+ * [MalformedChunkedBodyException] (RFC 9112 section 2.2: octets that do not match the grammar are invalid; a server SHOULD
+ * answer 400), as Go's net/http and curl hold. A line ends with CRLF; a bare LF ends it too only with [allowBareLf] (section
+ * 2.2 MAY), and a bare CR is invalid (section 2.2 MUST). An obs-fold line (one that starts with SP or HTAB, section 5.2)
+ * continues the field line before it only with [acceptObsFold] (a user agent MUST replace an obs-fold in a response with
+ * SP; the trailers are discarded, so nothing is replaced), and is refused otherwise, as the server refuses it in a head.
+ */
+private suspend fun skipTrailerSection(
+    input: ByteReadChannel,
+    allowBareLf: Boolean,
+    acceptObsFold: Boolean,
+) {
     var total = 0
-    var lineLength = 0
+    val line = ByteArray(MAX_TRAILER_SECTION)
+    var length = 0
     var afterCr = false
+    var fieldBefore = false
     while (true) {
         val b = input.readByte()
         if (++total > MAX_TRAILER_SECTION) throw MalformedChunkedBodyException("Trailer section larger than $MAX_TRAILER_SECTION bytes")
         if (afterCr && b != LF) throw MalformedChunkedBodyException("Bare CR in the trailer section")
         when (b) {
             LF -> {
-                if (lineLength == 0) return
-                lineLength = 0
+                if (!afterCr && !allowBareLf) throw MalformedChunkedBodyException("Bare LF in the trailer section")
+                if (length == 0) return
+                checkTrailerLine(line, length, fieldBefore, acceptObsFold)
+                fieldBefore = true
+                length = 0
             }
 
             CR -> {}
 
             else -> {
-                lineLength++
+                line[length++] = b
             }
         }
         afterCr = b == CR
     }
 }
 
+/** Checks one trailer line ([line] up to [length], without its line end) for [skipTrailerSection]. */
+private fun checkTrailerLine(
+    line: ByteArray,
+    length: Int,
+    fieldBefore: Boolean,
+    acceptObsFold: Boolean,
+) {
+    var i = 0
+    if (line[0] == SP || line[0] == HTAB) {
+        if (!acceptObsFold) throw MalformedChunkedBodyException("Obsolete line folding (obs-fold) in the trailer section")
+        if (!fieldBefore) throw MalformedChunkedBodyException("A trailer line that starts with whitespace continues no field")
+    } else {
+        while (i < length && isTchar(line[i].toInt() and 0xff)) i++
+        if (i == 0 || i == length || line[i] != COLON) {
+            throw MalformedChunkedBodyException("A trailer line whose field name is not a token followed by a colon")
+        }
+        i++
+    }
+    for (k in i until length) {
+        val c = line[k].toInt() and 0xff
+        if ((c < 0x20 && c != 0x09) || c == 0x7f) throw MalformedChunkedBodyException("A control character in a trailer field value")
+    }
+}
+
+private const val SP = ' '.code.toByte()
+private const val HTAB = '\t'.code.toByte()
+private const val COLON = ':'.code.toByte()
 private const val CR = '\r'.code.toByte()
 private const val LF = '\n'.code.toByte()
 

@@ -817,7 +817,10 @@ internal class ResponseFraming private constructor(
     ) {
         when {
             chunked -> {
-                decodeChunkedBody(input, out)
+                // as in the head: a bare LF ends a trailer line (RFC 9112 section 2.2 MAY; the client is the last
+                // recipient, so no second parser can disagree), an obs-fold continues one (section 5.2: a user agent
+                // MUST replace it with SP; the trailers are discarded)
+                decodeChunkedBody(input, out, allowBareLf = true, acceptObsFold = true)
             }
 
             transferEncoding == null && contentLength >= 0 -> {

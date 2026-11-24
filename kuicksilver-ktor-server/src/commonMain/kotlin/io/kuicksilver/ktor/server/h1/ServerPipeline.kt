@@ -239,6 +239,7 @@ internal class RequestFraming private constructor(
                 input,
                 out,
                 readerFailure = { if (it is MalformedChunkedBodyException) MalformedRequestBody(it) else it },
+                allowBareLf = true,
                 onComplete = onComplete,
             )
         }

@@ -1047,6 +1047,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client and server, HTTP/1.1 chunked trailers (breaking strictness, RFC 9112 sections 7.1.2 and 2.2, RFC 9110
+  sections 5.1 and 5.5): each line of a trailer section must now be a field line (a token name right before its colon, no
+  control character but HTAB in the value). The server answers another line with 400 and closes the connection (and
+  refuses an obs-fold there, as in the head); the client fails the response body (an obs-fold still continues the line
+  before it, RFC 9112 section 5.2). Before, the lines were discarded unread, so a NUL, a line without a colon or a
+  non-token name passed; Go's net/http and curl refuse them.
 - Ktor client, HTTP/1.1 response head (breaking strictness, RFC 9110 section 5.1, RFC 9112 section 5.1): a field line
   whose name is not a token followed directly by its colon (bytes above 0x7F, a delimiter such as `/` or `"`, an empty
   name, whitespace before the colon, no colon) now fails the response with `ParserException`, as Go's net/http and

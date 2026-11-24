@@ -209,6 +209,30 @@ class ServerH1FramingTest {
         }
 
     /**
+     * A trailer section line outside the field-line grammar (RFC 9112 section 7.1.2, RFC 9110 section 5.1 and 5.5) gets 400
+     * and the connection closes (RFC 9112 section 2.2 SHOULD); the pipelined request behind it is not served. Before, such
+     * lines were skipped unread. Unit cases: `h1.ChunkedBodyTest`.
+     */
+    @Test fun negative_malformedTrailerLineGets400() =
+        serverTest {
+            plainServer { port ->
+                for (trailer in listOf("X-A: a\u0000b", "X-A", "X/A: 1", "X-A : 1", " folded")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                                    "5\r\nhello\r\n0\r\n$trailer\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "${trailer.replace("\u0000", "\\0")}: $resp")
+                    assertFalse(resp.endsWith("root"), "the request after the trailer was served: $resp")
+                }
+            }
+        }
+
+    /**
      * RFC 9112 section 2.2: a bare CR MUST be treated as invalid. The chunk-size parser skipped a CR anywhere in the line:
      * `1\r0` was read as 0x10 (a recipient that ends the line at the CR reads 1) and `\r\r\n` as the last chunk, so the
      * server answered `body=0123456789abcdef`. Unit cases of the line grammar: `h1.ChunkedBodyTest`.

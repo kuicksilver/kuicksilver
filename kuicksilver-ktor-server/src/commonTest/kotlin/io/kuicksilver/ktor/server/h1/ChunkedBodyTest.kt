@@ -15,18 +15,28 @@ import kotlin.test.assertFailsWith
 
 /** The chunk-size line grammar of RFC 9112 section 7.1, strictly: `1*HEXDIG [ chunk-ext ] CRLF`. */
 class ChunkedBodyTest {
-    private suspend fun decode(wire: String): String {
+    private suspend fun decode(
+        wire: String,
+        allowBareLf: Boolean = false,
+        acceptObsFold: Boolean = false,
+    ): String {
         val out = ByteChannel()
-        decodeChunkedBody(ByteReadChannel(wire.encodeToByteArray()), out)
+        decodeChunkedBody(ByteReadChannel(wire.encodeToByteArray()), out, allowBareLf = allowBareLf, acceptObsFold = acceptObsFold)
         return out.readBuffer().readByteArray().decodeToString()
     }
 
     private fun accepted(
         wire: String,
         body: String,
-    ) = runTest { assertEquals(body, decode(wire), wire.visible()) }
+        allowBareLf: Boolean = false,
+        acceptObsFold: Boolean = false,
+    ) = runTest { assertEquals(body, decode(wire, allowBareLf, acceptObsFold), wire.visible()) }
 
-    private fun rejected(wire: String) = runTest { assertFailsWith<IOException>(wire.visible()) { decode(wire) } }
+    private fun rejected(
+        wire: String,
+        allowBareLf: Boolean = false,
+        acceptObsFold: Boolean = false,
+    ) = runTest { assertFailsWith<IOException>(wire.visible()) { decode(wire, allowBareLf, acceptObsFold) } }
 
     private fun String.visible() = replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
 
@@ -147,5 +157,74 @@ class ChunkedBodyTest {
         rejected("5;" + "a".repeat(200) + "\r\nhello\r\n0\r\n\r\n")
         // The largest size that fits is a valid line; the body then ends inside that chunk.
         rejected("7FFFFFFFFFFFFFFF\r\nhello\r\n0\r\n\r\n")
+    }
+
+    /**
+     * The trailer section is `*( field-line CRLF )` (RFC 9112 section 7.1.2) with the head's field-line grammar (RFC 9110
+     * section 5.1: `field-name = token` right before the colon; section 5.5: no control character but HTAB in a value):
+     * valid lines are read and discarded.
+     */
+    @Test fun validTrailerFieldLinesAreDiscarded() {
+        accepted("5\r\nhello\r\n0\r\nX-Checksum: 1\r\nServer-Timing: x;dur=1\r\nX-B:\t two \r\nX-E:\r\n\r\n", "hello")
+        accepted("5\r\nhello\r\n0\r\n!#$%&'*+-.^_`|~9aZ: \u00e9\u0080\r\n\r\n", "hello")
+    }
+
+    /**
+     * A trailer line outside that grammar fails the body (RFC 9112 section 2.2: a server SHOULD answer octets that do not
+     * match the grammar with 400; a client fails the response), as Go's net/http and curl hold. Before, every line but
+     * one with a bare CR was skipped unread, so a NUL, a line without a colon or a non-token name passed.
+     */
+    @Test fun negative_malformedTrailerLinesAreRejected() {
+        for (line in listOf(
+            "X-A: a\u0000b",
+            "X-A: a\u0001b",
+            "X-A: a\u007fb",
+            "X-A: a\u000bb",
+            "X-A",
+            "X-A : 1",
+            "X-A\t: 1",
+            ": 1",
+            "X/A: 1",
+            "X\"A: 1",
+            "\u00e9: 1",
+            "X\u0001A: 1",
+            " X-A: 1",
+            "\tX-A: 1",
+        )) {
+            rejected("5\r\nhello\r\n0\r\n$line\r\n\r\n")
+            rejected("5\r\nhello\r\n0\r\nX-Ok: 1\r\n$line\r\n\r\n")
+        }
+    }
+
+    /**
+     * An obs-fold (a trailer line that starts with SP or HTAB) is refused unless [acceptObsFold] (the client: a user agent
+     * MUST replace an obs-fold in a response with SP, RFC 9112 section 5.2, and the trailers are discarded anyway); the
+     * server rejects it, as in its head. A fold with nothing before it continues no field and fails either way.
+     */
+    @Test fun negative_obsFoldInTrailersOnlyWhereAccepted() {
+        val folded = "5\r\nhello\r\n0\r\nX-A: a\r\n b\r\n\t c\r\n\r\n"
+        rejected(folded)
+        accepted(folded, "hello", acceptObsFold = true)
+        rejected("5\r\nhello\r\n0\r\n b\r\n\r\n", acceptObsFold = true)
+        rejected("5\r\nhello\r\n0\r\nX-A: a\r\n b\u0000\r\n\r\n", acceptObsFold = true)
+    }
+
+    /**
+     * A bare LF ends a trailer line only where [allowBareLf] (RFC 9112 section 2.2 MAY): the client always, the server
+     * with `h1AllowBareLf`. A bare CR is invalid either way.
+     */
+    @Test fun negative_bareLfInTrailersOnlyWhereAllowed() {
+        for (wire in listOf("5\r\nhello\r\n0\r\nX-A: 1\n\r\n", "5\r\nhello\r\n0\r\nX-A: 1\r\n\n", "5\r\nhello\r\n0\r\n\n")) {
+            rejected(wire)
+            accepted(wire, "hello", allowBareLf = true)
+        }
+        rejected("5\r\nhello\r\n0\r\nX-A: 1\rX\r\n\r\n", allowBareLf = true)
+    }
+
+    /** The trailer section is still bounded: [MAX_TRAILER_SECTION] bytes, valid lines or not. */
+    @Test fun negative_trailerSectionOverTheLimitIsRejected() {
+        val line = "X-Pad: " + "p".repeat(1_000) + "\r\n"
+        rejected("5\r\nhello\r\n0\r\n" + line.repeat(MAX_TRAILER_SECTION / line.length + 1) + "\r\n")
+        accepted("5\r\nhello\r\n0\r\n" + line.repeat(MAX_TRAILER_SECTION / line.length - 1) + "\r\n", "hello")
     }
 }
