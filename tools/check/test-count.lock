@@ -125,12 +125,13 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.dataT
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.droppedDataAfterAShrinkKeepsTheConnectionWindow
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.endStreamNeedsNoWindow
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.initialWindowChangeAdjustsOpenStreams
-kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.initialWindowChangeLeavesStreamsWeCannotSendOn
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.lastDataOfAHalfClosedStreamIsChargedAgain
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_clientDroppedRequestDataReturnsConnectionWindow
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_dataBeyondWindowIsFlowControlError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_droppedDataReturnsConnectionWindow
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_initialWindowChangeOverflowingAHalfClosedLocalStreamIsFlowControlError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_windowOverflowIsFlowControlError
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_windowOverflowOnAHalfClosedLocalStreamIsFlowControlError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.negative_windowUpdateOfZero
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.oneFrameAtATimePerStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.paddingIsCreditedBackAtOnce
@@ -143,6 +144,8 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.windo
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FlowControlTest.zeroWindowSenderBlocksWithoutBuffering
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.goAwayWithAnErrorClosesAtOnce
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.gracefulGoAwayFinishesWithoutAPingAnswer
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.negative_goAwayLastStreamIdOfTheWrongParityIsProtocolError
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.negative_goAwayRaisingTheLastStreamIdIsProtocolError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.negative_newStreamAfterGoAwayRefused
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.repeatedGracefulGoAwayKeepsTheTwoSteps
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.GoAwayTest.streamsAboveLastIdReportedUnprocessed
@@ -199,6 +202,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.negative
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.negative_maxFrameSizeOutOfRange
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.negative_serverWithdrawingExtendedConnectIsAProtocolError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.negative_settingsAckTimeoutIsSettingsTimeout
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.negative_unexpectedSettingsAckIsProtocolError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.ourSmallerSettingsTakeEffectWhenAcknowledged
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.peerHeaderListSizeHonouredWhenSending
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.SettingsTest.peerHeaderTableSizeZeroSentAsUpdate

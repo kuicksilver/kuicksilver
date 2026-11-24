@@ -336,16 +336,47 @@ class FlowControlTest {
         assertTrue(c.core.sendWindowConserved)
     }
 
+    /**
+     * Section 6.9.2: a change of SETTINGS_INITIAL_WINDOW_SIZE adjusts "all stream flow-control windows that it maintains", a
+     * half-closed (local) stream's too (nghttp2 and Go adjust every stream they hold); one that takes it past 2^31 - 1 is a
+     * connection error of type FLOW_CONTROL_ERROR. The stream's credit within bounds is accepted (the positive control).
+     */
     @Test
-    fun initialWindowChangeLeavesStreamsWeCannotSendOn() {
-        // section 6.9.2: only streams with an active send window (open, half-closed (remote)) move
+    fun negative_initialWindowChangeOverflowingAHalfClosedLocalStreamIsFlowControlError() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake()
         val id = c.core.openStream(GET, endStream = true) // half-closed (local): we send nothing more on it
         c.read()
-        c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE - 65_535))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 65_536))
+        c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE - 65_535)) // exactly 2^31 - 1
         assertEquals(false, c.core.isClosed)
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 65_536))
+        c.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR)
+    }
+
+    /**
+     * Section 6.9.1: "If a sender receives a WINDOW_UPDATE that causes a flow-control window to exceed this maximum, it MUST
+     * terminate either the stream or the connection", also on a stream we no longer send on (half-closed (local)), as nghttp2
+     * and Go do; a stream error, as for an open stream. A WINDOW_UPDATE for a stream already closed and gone is still ignored
+     * (section 5.1).
+     */
+    @Test
+    fun negative_windowOverflowOnAHalfClosedLocalStreamIsFlowControlError() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = true)
+        c.read()
+        c.send(FrameEncoder.windowUpdate(id, 1_000))
+        assertEquals(emptyList(), c.resets(), "an update within bounds is taken")
+        c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE))
+        c.assertStreamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR)
+        // a server's half-closed (local) stream after its whole response, the request body still coming
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1, endStream = false))
+        s.core.sendHeaders(1, OK, endStream = true)
+        s.read()
+        s.send(FrameEncoder.windowUpdate(1, Int.MAX_VALUE))
+        s.assertStreamError(1, Http2ErrorCode.FLOW_CONTROL_ERROR)
     }
 
     @Test
