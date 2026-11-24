@@ -8,6 +8,11 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; script="$here/local-matrix.sh"
 fails=0
+# a known Android SDK for every case, whatever the caller's shell has: the root build's local.properties is a fixture
+fx=$(mktemp -d); trap 'rm -rf "$fx"' EXIT
+mkdir -p "$fx/sdk" "$fx/C:/Android/sdk dir"
+unset ANDROID_HOME ANDROID_SDK_ROOT
+printf 'sdk.dir=%s\n' "$fx/sdk" > "$fx/sdk.properties"; export KSL_MATRIX_LOCAL_PROPERTIES="$fx/sdk.properties"
 t() { # <name> <expected exit> <expected listed steps, or a pattern of the refusal> -- <args...>
   local name="$1" want="$2" exp="$3" out rc got; shift 4
   out=$(bash "$script" --dry-run "$@" 2>&1); rc=$?
@@ -65,6 +70,24 @@ if grep -qx 'device of the current-API device steps: emulator-5556 (gate record:
 else echo "FAIL deviceSerialOverrideRecorded"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
 out=$(bash "$script" --dry-run --only 54 2>&1)
 if grep -q '^device of the current-API device steps: emulator-5554 ' <<< "$out"; then echo "ok   deviceSerialDefault"; else echo "FAIL deviceSerialDefault"; fails=$((fails + 1)); fi
+# compose-demo (steps 38 and 56) is a build of its own without local.properties: with ANDROID_HOME and ANDROID_SDK_ROOT
+# unset, the root build's sdk.dir becomes ANDROID_HOME (escapes undone); with no SDK at all such a step is refused early
+sdk_case() { # <name> <properties content, or - for no file> <expected exit> <expected line> <args...>
+  local name=$1 props=$2 want=$3 exp=$4 out rc; shift 4
+  if [ "$props" = - ]; then rm -f "$fx/case.properties"; else printf '%s\n' "$props" > "$fx/case.properties"; fi
+  out=$(KSL_MATRIX_LOCAL_PROPERTIES="$fx/case.properties" bash "$script" --dry-run "$@" 2>&1); rc=$?
+  if [ "$rc" = "$want" ] && grep -qF -- "$exp" <<< "$out" && { [ "$want" = 0 ] || ! grep -q '^preflight:\|^\[' <<< "$out"; }; then echo "ok   $name"
+  else echo "FAIL $name: exit $rc (want $want), want '$exp'"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
+}
+sdk_case sdkDirFromRootLocalProperties "sdk.dir=$fx/sdk" 0 "android sdk: $fx/sdk (sdk.dir of $fx/case.properties;" --only 38
+sdk_case sdkDirEscapedAndSpaced "  sdk.dir = ${fx//:/\\:}/C\\:/Android/sdk\\ dir" 0 "android sdk: $fx/C:/Android/sdk dir (" --only 38
+sdk_case sdkDirLastWins "$(printf 'sdk.dir=/nonexistent/one\nsdk.dir=%s' "$fx/sdk")" 0 "android sdk: $fx/sdk (" --only 56
+sdk_case noSdkButNoComposeStep - 0 "" --only 37
+sdk_case negative_noSdkComposeBuild - 2 "step 38 (sample: compose-demo (build, tests)) builds samples/compose-demo" --only 38
+sdk_case negative_noSdkComposeDevice "ndk.dir=/x" 2 "step 56 (android: compose demo migration" --only 56
+sdk_case negative_sdkDirNotADirectory "sdk.dir=/nonexistent/sdk" 2 "its sdk.dir '/nonexistent/sdk' is not a directory" --only 38
+out=$(ANDROID_HOME=/from/env KSL_MATRIX_LOCAL_PROPERTIES=/nonexistent bash "$script" --dry-run --only 38 2>&1); rc=$?
+if [ "$rc" = 0 ] && ! grep -q '^android sdk:' <<< "$out"; then echo "ok   androidHomeFromTheShellWins"; else echo "FAIL androidHomeFromTheShellWins: exit $rc"; fails=$((fails + 1)); fi
 # the counts in docs/process.md ("**77 steps**; ... which makes **82** (... a Chrome WebTransport run, 83)") against --dry-run
 doc="$here/../../docs/process.md"
 count() { bash "$script" --dry-run "$@" 2>&1 | grep -c '^\['; }

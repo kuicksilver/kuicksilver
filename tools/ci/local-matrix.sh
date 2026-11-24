@@ -420,6 +420,29 @@ if [ -n "$selection" ]; then
   cnt=$(picked | wc -l | tr -d ' ')
   echo "selection: --${selection%%=*} ${selection#*=}: $([ "$cnt" = 1 ] && echo step || echo steps) $(picked_ranges), $cnt of $total; a partial run, never a gate (its record: build/ci/gate/<commit>.partial)"
 fi
+# The compose-demo sample is a Gradle build of its own (-p samples/compose-demo) and has no local.properties, so the Android
+# Gradle plugin finds the SDK there only through ANDROID_HOME or ANDROID_SDK_ROOT: a shell without them failed its steps
+# with "SDK location not found" (two matrix runs). When both are unset, the sdk.dir of the root build's local.properties
+# is exported as ANDROID_HOME (read only; nothing is written into the sample); a run that selects a compose-demo step with
+# no SDK either way is refused here, before the preflight and step 1. KSL_MATRIX_LOCAL_PROPERTIES: another file (the test's).
+sdk=""; sdk_props=${KSL_MATRIX_LOCAL_PROPERTIES:-local.properties}
+if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ] && [ -f "$sdk_props" ]; then
+  # a properties value: the last sdk.dir, its escapes undone (C\:\\Android\\sdk on Windows)
+  sdk=$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' "$sdk_props" | tail -1 | tr -d '\r' | sed 's/\\\(.\)/\1/g')
+  if [ -n "$sdk" ] && [ -d "$sdk" ]; then
+    export ANDROID_HOME="$sdk"
+    echo "android sdk: $sdk (sdk.dir of $sdk_props; ANDROID_HOME and ANDROID_SDK_ROOT are unset)"
+  fi
+fi
+if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
+  for k in $(picked); do
+    case "${names[k]}" in
+      *compose-demo*|*"compose demo"*)
+        echo "local matrix: refused before step 1: step $k (${names[k]}) builds samples/compose-demo, which has no local.properties, and no Android SDK is known: set ANDROID_HOME, or sdk.dir in $sdk_props$([ -z "$sdk" ] || echo " (its sdk.dir '$sdk' is not a directory)")" >&2
+        exit 2 ;;
+    esac
+  done
+fi
 pre_wanted=" "; for k in $(picked); do pre_wanted="$pre_wanted${pres[k]} "; done
 # the module scope of the old-platform steps, computed once when one is selected: printed here, logged by the steps and
 # written into the gate record, so a pass that tested no module says so
