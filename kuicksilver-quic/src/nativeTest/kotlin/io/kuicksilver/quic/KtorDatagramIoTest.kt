@@ -80,6 +80,111 @@ class KtorDatagramIoTest {
         }
 
     /**
+     * What Ktor's `resolveAddress()` really does on Kotlin/Native for a name that does not resolve: it throws, a
+     * `PosixException` built from `errno` after `getaddrinfo` failed (`getaddrinfo` reports through its return code, so that
+     * errno is stale: the iOS simulator said ENOTCONN for `no-such-host.invalid`). That is the address error too, an
+     * `IOException` naming the address, for the client socket and for the server's bind, not the stale errno. Red before:
+     * the PosixException escaped `KslDatagramIo.open` as it was.
+     */
+    @Test fun negative_aBindAddressWhoseResolverThrowsIsAnAddressError() =
+        runBlocking {
+            val real = KslDatagramIo.addressResolver
+            val stale =
+                io.ktor.utils.io.errors.PosixException
+                    .forErrno(platform.posix.ENOTCONN)
+            KslDatagramIo.addressResolver = { throw stale }
+            try {
+                val seen = ArrayList<Throwable>()
+                assertNull(KslDatagramIo.open(InetSocketAddress("unresolvable.test", 0), refused = { seen += it }))
+                val r = seen.singleOrNull()
+                assertTrue(r is IOException && r !is QuicException, "refused gets the address error: $seen")
+                assertTrue("unresolvable.test" in (r.message ?: ""), "${r.message}")
+                assertSame(stale, r.cause, "the resolver's failure kept as the cause")
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("unresolvable.test", 0)).close() }
+                assertTrue(e !is QuicException, "an address error, not no DF: $e")
+                val server =
+                    quicEndpointConfig {
+                        server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                        crypto = NullCryptoProvider
+                        logger = KuicksilverLogger.None
+                    }
+                val s =
+                    runCatching { QuicEndpoint.bind(InetSocketAddress("unresolvable.test", 0), server).closeAndJoin() }
+                        .exceptionOrNull()
+                assertTrue(s is IOException && s !is QuicException, "the server's bind: the address error, got $s")
+                assertTrue("unresolvable.test" in (s.message ?: ""), "${s.message}")
+            } finally {
+                KslDatagramIo.addressResolver = real
+            }
+        }
+
+    /**
+     * A connect target whose lookup throws, as Ktor's `resolveAddress()` does on Kotlin/Native (a PosixException with a stale
+     * errno): `withLiteralHost` keeps the name as its KDoc says, and connect fails at once with
+     * [QuicException.ConnectionLost.NoViablePath] caused by an `IOException` naming the target, as on the JVM
+     * (UnresolvableTargetJvmTest). Red before: the PosixException ENOTCONN escaped both.
+     */
+    @Test fun negative_aConnectTargetWhoseLookupThrowsIsNoViablePath() =
+        runBlocking {
+            val real = addressLookup
+            val stale =
+                io.ktor.utils.io.errors.PosixException
+                    .forErrno(platform.posix.ENOTCONN)
+            // only the target's lookup throws: the bind address goes through the same lookup (KslDatagramIo.addressResolver)
+            addressLookup = { if (it.hostname == "unresolvable.test") throw stale else real(it) }
+            try {
+                val name = InetSocketAddress("unresolvable.test", 443)
+                assertSame(name, name.withLiteralHost())
+                assertEquals("unresolvable.test", name.withLiteralHost(444).hostname)
+                assertNull(name.resolveAddressOrNull())
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                try {
+                    val e =
+                        assertFailsWith<QuicException.ConnectionLost.NoViablePath> {
+                            withTimeout(5.seconds) { client.connect(name, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
+                        }
+                    val cause = e.cause
+                    assertTrue(cause is IOException, "the address error as the cause: $cause")
+                    assertTrue("unresolvable.test" in (cause.message ?: ""), "${cause.message}")
+                    assertSame(stale, cause.cause, "the resolver's failure kept as the cause")
+                } finally {
+                    client.closeAndJoin()
+                }
+            } finally {
+                addressLookup = real
+            }
+        }
+
+    /**
+     * A closing endpoint answers [QuicException.EndpointClosing] whatever the target, a name that could not be resolved
+     * included. Red before: NoViablePath, the target checked before the endpoint.
+     */
+    @Test fun negative_aClosingEndpointIsEndpointClosingEvenForAnUnresolvableTarget() =
+        runBlocking {
+            val real = addressLookup
+            addressLookup = {
+                if (it.hostname ==
+                    "unresolvable.test"
+                ) {
+                    throw io.ktor.utils.io.errors.PosixException
+                        .forErrno(platform.posix.ENOTCONN)
+                } else {
+                    real(it)
+                }
+            }
+            try {
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                client.close()
+                assertFailsWith<QuicException.EndpointClosing> {
+                    client.connect(InetSocketAddress("unresolvable.test", 443), QuicClientConfig.Builder(CoreFixtures.client()).build())
+                }
+                client.closeAndJoin()
+            } finally {
+                addressLookup = real
+            }
+        }
+
+    /**
      * Any other refusal of the accelerated socket (a `KslException`: limits, a sandbox) reaches the caller through
      * `refused` and ends in a lack of DF that is not lasting (the socket may open next time), with the refusal attached as
      * suppressed; a refused bind (an `IOException`) is thrown as it is.

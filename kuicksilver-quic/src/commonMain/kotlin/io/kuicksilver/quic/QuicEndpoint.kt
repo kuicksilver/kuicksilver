@@ -21,7 +21,12 @@ public interface QuicEndpoint : AutoCloseable {
      * Opens a connection; returns once the handshake completed. Failures are [QuicException.ConnectionLost]; cancellation is never
      * wrapped, and a cancelled call closes the connection it started. [QuicException.ConnectionLost.Internal] when 16 draws of a
      * connection ID all hit one the endpoint loop already routes (RFC 9000 section 10.3.2: an ID belongs to one connection; only
-     * likely with a short `connectionIdLength` and many connections).
+     * likely with a short `connectionIdLength` and many connections). A [remote] given as a host name is looked up here with the
+     * system resolver, whatever the endpoint's `DatagramIo` (a custom one or a CONNECT-UDP tunnel's included); one that could not
+     * be resolved fails at once with [QuicException.ConnectionLost.NoViablePath], its cause a `kotlinx.io.IOException` naming it
+     * (the resolver's failure as that one's cause), on every platform. A tunnel's endpoint therefore connects to an IP literal or
+     * to the placeholder its `UdpTunnel.remoteAddress` documents (192.0.2.0/24), never to the target's name.
+     * [QuicException.EndpointClosing] once the endpoint is closing, whatever [remote] is.
      */
     public suspend fun connect(
         remote: InetSocketAddress,

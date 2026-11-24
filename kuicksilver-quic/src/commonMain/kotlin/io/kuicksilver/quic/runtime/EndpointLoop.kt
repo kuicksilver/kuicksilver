@@ -31,12 +31,15 @@ import io.kuicksilver.quic.Releaser
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.addressLookup
 import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
+import io.kuicksilver.quic.ipBytesNoDns
 import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.ipText
 import io.kuicksilver.quic.openDatagramIo
 import io.kuicksilver.quic.tokenStoreKey
 import io.kuicksilver.quic.withLiteralHost
@@ -559,9 +562,30 @@ internal class EndpointLoop private constructor(
     /**
      * The connect target as an IP literal, resolved once here: the socket reports peers as IP literals, Kotlin/Native's
      * InetSocketAddress compares strings, the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see
-     * [ipLiteral]).
+     * [ipLiteral]). A closing endpoint says so first ([QuicException.EndpointClosing], checked again on the loop), whatever
+     * the target. A name that could not be resolved fails here, the same on every platform:
+     * [QuicException.ConnectionLost.NoViablePath] caused by an `IOException` naming it, with the resolver's failure as its
+     * cause (on the JVM an unresolved name's datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's
+     * stale-errno `PosixException` escaped). Resolution may fail transiently (EAI_AGAIN): a later connect may succeed.
      */
-    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress = remote.withLiteralHost()
+    private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress {
+        if (closing || shuttingDown) throw QuicException.EndpointClosing()
+        if (remote.ipBytesNoDns() != null) return remote.withLiteralHost()
+        val bytes =
+            try {
+                addressLookup(remote)
+            } catch (e: Exception) {
+                throw unresolvable(remote, e)
+            } ?: throw unresolvable(remote, null)
+        return InetSocketAddress(ipText(bytes), remote.port)
+    }
+
+    private fun unresolvable(
+        remote: InetSocketAddress,
+        cause: Throwable?,
+    ) = QuicException.ConnectionLost.NoViablePath(
+        kotlinx.io.IOException("the connect target $remote could not be resolved to an IP address", cause),
+    )
 
     private suspend fun connectResolved(
         remote: InetSocketAddress,

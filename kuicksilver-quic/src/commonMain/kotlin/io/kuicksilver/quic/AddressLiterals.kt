@@ -35,9 +35,30 @@ public fun ipLiteralOf(bytes: ByteArray): String = ipText(bytes)
 @InternalKuicksilverApi
 public fun InetSocketAddress.withLiteralHost(port: Int = this.port): InetSocketAddress {
     if (ipBytesNoDns() != null) return InetSocketAddress(ipLiteral(), port)
-    val resolved = resolveAddress() ?: return if (port == this.port) this else InetSocketAddress(hostname, port)
+    val resolved = resolveAddressOrNull() ?: return if (port == this.port) this else InetSocketAddress(hostname, port)
     return InetSocketAddress(ipText(resolved), port)
 }
+
+/**
+ * Ktor's `resolveAddress()` with a name that does not resolve as null on every platform. On the JVM and Android it answers
+ * null for an unresolved address; on Kotlin/Native it throws instead, a `PosixException` built from `errno` after
+ * `getaddrinfo` failed, whose errno is stale (`getaddrinfo` reports through its return code: the iOS simulator said ENOTCONN).
+ */
+@InternalKuicksilverApi
+public fun InetSocketAddress.resolveAddressOrNull(): ByteArray? =
+    try {
+        addressLookup(this)
+    } catch (_: Exception) {
+        null
+    }
+
+/**
+ * The lookup behind [resolveAddressOrNull], the endpoint loop's connect target and [KslDatagramIo]'s bind address: Ktor's
+ * `resolveAddress()`, which throws on Kotlin/Native for a name that does not resolve. A test replaces it (no DNS answer is
+ * certain); volatile, since the loops read it on their own threads.
+ */
+@kotlin.concurrent.Volatile
+internal var addressLookup: (InetSocketAddress) -> ByteArray? = { it.resolveAddress() }
 
 /**
  * The raw IPv4 (4) or IPv6 (16) address bytes, or null when the address is a host name. Never a resolver call: the endpoint

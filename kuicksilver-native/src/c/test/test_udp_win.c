@@ -577,6 +577,42 @@ void run_udp_win(void) {
         CHECK(ksl_udp_df_bit_for_test((int)s4) == 1, "IP_DONTFRAGMENT set");
         closesocket(s4);
     }
+    /* udp_win_fd_df_probe_unbound_dual: the JDK's dual-stack channel as NioDatagramIo hands it over, AF_INET6 and not bound yet
+       (getsockname refuses an unbound socket with WSAEINVAL: ksl answered KSL_ERROR and the JVM socket fell back to the JDK's
+       DO-mode option, or had no DF at all below JDK 19); then the same on a bound one */
+    for (int bound = 0; bound <= 1; bound++) {
+        SOCKET s6 = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (s6 == INVALID_SOCKET) {
+            printf("udp(win): no IPv6 socket, fd_df_probe on AF_INET6 skipped\n");
+            break;
+        }
+        DWORD off = 0;
+        CHECK(setsockopt(s6, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&off, sizeof off) == 0,
+              "dual-stack, as the JDK's");
+        if (bound) {
+            struct sockaddr_in6 any6;
+            memset(&any6, 0, sizeof any6);
+            any6.sin6_family = AF_INET6;
+            CHECK(bind(s6, (struct sockaddr *)&any6, sizeof any6) == 0, "bound to [::]:0");
+        }
+        int g = ksl_udp_fd_df_probe((int64_t)s6);
+        printf("udp(win): ksl_udp_fd_df_probe on an %s AF_INET6 socket granted %d\n", bound ? "bound" : "unbound", g);
+        CHECK(g >= 0, "an AF_INET6 socket, bound or not: not KSL_ERROR");
+        CHECK((g & KSL_FD_DF_INET6) != 0, "AF_INET6: both halves");
+        CHECK((g & (KSL_FD_DF_V4 | KSL_FD_DF_V4_DO)) != 0, "the v4-mapped half has DF");
+        CHECK((g & (KSL_FD_DF_V6 | KSL_FD_DF_V6_DO)) != 0, "the IPv6 half has DF");
+        CHECK(ksl_udp_df_bit_for_test((int)s6) == 1, "IP_DONTFRAGMENT set on the v4-mapped half");
+        closesocket(s6);
+    }
+    /* udp_win_fd_df_probe_not_ip: a socket of another family is no IP socket, KSL_ERROR (AF_UNIX: Windows 10 1803 and later) */
+    {
+        SOCKET su = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (su != INVALID_SOCKET) {
+            CHECK(ksl_udp_fd_df_probe((int64_t)su) == KSL_ERROR, "AF_UNIX: KSL_ERROR");
+            closesocket(su);
+        } else
+            printf("udp(win): no AF_UNIX socket, the not-IP case skipped\n");
+    }
     /* udp_win_truncated_datagram_dropped: 1400 bytes into a 1000-byte slot are dropped, not truncated */
     {
         uint8_t *bufs[1];

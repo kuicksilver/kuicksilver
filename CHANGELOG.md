@@ -1644,6 +1644,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
+  `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every
+  platform. On the JVM its datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's `PosixException`
+  escaped, with a stale errno (Ktor's `resolveAddress()` throws there after `getaddrinfo` fails, where the JVM answers
+  null), and `withLiteralHost` threw it too instead of keeping the name as documented.
 - CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
   sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
   502 comes only when none opened (also when the other family lacked DF).
@@ -3107,7 +3112,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   `DatagramIo.open` and `QuicEndpoint.bind` throw the new `QuicException.DontFragmentUnavailable` (its `family`, the new
   `IpFamily`, null for the whole socket: the JVM without `ksl` below JDK 19, Android or a system refusing both DF modes, the
   Kotlin/Native portable `ktor-network` socket, which used to send without DF, while a port in use there is still the
-  accelerated socket's refused bind, an `IOException`; an accelerated socket without DF is not
+  accelerated socket's refused bind, an `IOException`, as is a bind address that does not resolve (naming it, not the
+  stale errno `ktor-network` reports after `getaddrinfo` fails); an accelerated socket without DF is not
   used either, while one whose system refuses probe mode now gets DO mode, `KslUdpSocket.DF_DO`). On a socket with no DF
   for one address family (a dual-stack socket's IPv4 or IPv6 half, IPv6 on an AF_INET socket), datagrams to that family
   are not sent: that path closes, or on the active path the connection ends with a CONNECTION_CLOSE of NO_VIABLE_PATH
