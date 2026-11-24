@@ -242,6 +242,7 @@ step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   done
   bash tools/ci/race-repeat-test.sh || rc=1
   bash tools/ci/gradlew-retry-test.sh || rc=1
+  bash tools/ci/interop-host-test.sh || rc=1
   bash tools/ci/sentinel-slow-test.sh || rc=1
   bash tools/ci/android-connected-check-test.sh || rc=1
   exit $rc'

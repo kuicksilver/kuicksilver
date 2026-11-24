@@ -137,10 +137,11 @@ jobs:
           else echo "race-repeat: no base commit, nothing listed"; fi
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
-      - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'
+      - name: 'lint: interop peer-image check, environment rules and the tshark install retries (stubs, fixtures)'
         run: |
           bash tools/interop/peer-images-test.sh
           bash tools/interop/environment-test.sh
+          bash tools/ci/interop-host-test.sh
       - name: 'lint: reliability report (fixtures)'
         run: bash tools/report/reliability-test.sh
       - name: 'check: local-matrix step selection'
