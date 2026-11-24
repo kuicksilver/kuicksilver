@@ -170,6 +170,9 @@ class HostNameTest {
             "a_b.example",
             "a b.example",
             "example.123",
+            "[1.2.3.4]",
+            "[a.example]",
+            "[]",
         )) {
             assertFailsWith<TlsException.Config>(name) { HostName.normalize(name) }
         }

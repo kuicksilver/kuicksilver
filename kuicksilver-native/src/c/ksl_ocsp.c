@@ -237,8 +237,13 @@ static int must_staple(X509 *leaf) {
 
 /* The certificate of the peer's presented chain that issued [leaf]: it names the leaf's issuer and its key verifies the leaf's
    signature, so a certificate that only takes the issuer's name (whose key would sign any response) is never used. NULL when
-   none did (the leaf sent alone, or its issuer left out). */
+   none did (the leaf sent alone, or its issuer left out) and for a self-issued leaf. */
 static X509 *presented_issuer(SSL *ssl, X509 *leaf) {
+    /* a self-issued leaf has no issuer but itself, which would sign its own "good" response: like an anchored leaf, none */
+    if (X509_check_issued(leaf, leaf) == X509_V_OK) {
+        ERR_clear_error();
+        return NULL;
+    }
     STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
     for (int i = 0; chain && i < sk_X509_num(chain); i++) {
         X509 *c = sk_X509_value(chain, i);

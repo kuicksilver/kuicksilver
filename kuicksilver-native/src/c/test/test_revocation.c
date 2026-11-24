@@ -212,13 +212,14 @@ static int tcp_pump(ksl_ssl *c, ksl_ssl *s) {
     }
     return KSL_WANT_READ;
 }
-static int server_leaf_only; /* the server sends its leaf without rv-mid */
+static int server_leaf_only;                 /* the server sends its leaf without rv-mid */
+static const char *server_second = "rv-mid"; /* the certificate the server sends after its leaf */
 static ksl_ctx *rv_server(const char *leaf, int tls12) {
     ksl_ctx *c = ksl_ctx_new(KSL_SERVER);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
     char name[128];
     snprintf(name, sizeof name, "%s", leaf);
-    blob ch = server_leaf_only ? framed(1, name) : framed(2, name, "rv-mid");
+    blob ch = server_leaf_only ? framed(1, name) : framed(2, name, server_second);
     char kp[128];
     snprintf(kp, sizeof kp, RV "%s", leaf);
     size_t kl;
@@ -398,6 +399,14 @@ static void stapling_over(int mode, int tls12, const char *what) {
     EXPECT_FAIL(alone_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_must_staple_without_issuer");
     hs alone = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
     EXPECT_PASS(alone, 0xff, "pause path, leaf alone: an uncheckable staple of a leaf that requires none passes");
+    /* the server sends the leaf and, instead of its issuer, the root (which issued rv-mid, not the leaf): no presented
+       certificate signed the leaf, so the must-staple leaf's staple cannot be checked and it fails */
+    server_leaf_only = 0;
+    server_second = "rv-root";
+    hs wrong_issuer = {
+        "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(wrong_issuer, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_issuer_not_presented");
+    server_second = "rv-mid";
     server_leaf_only = 0;
     /* a response whose certID names another issuer key than the presented issuer's: refused on the pause path too */
     hs paused_mismatch = {"rv-leaf", NULL, "ocsp-other-issuer-key", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
