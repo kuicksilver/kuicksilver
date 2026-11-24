@@ -402,7 +402,7 @@ internal class KslContext private constructor(
                 val mode = verifyModeFor(config)
                 Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, mode)
                 // every client but RevocationPolicy.Off asks for a stapled OCSP response and checks it (RFC 6066 section 8), on
-                // the pause path too (against the presented issuer, ksl_ocsp.c), so a must-staple leaf needs its staple whoever
+                // the pause path too (against the verifier's or the presented issuer, ksl_ocsp.c), so a must-staple leaf needs its staple whoever
                 // decides trust (RFC 7633 sections 4.2.3.1, 4.3.3); requiring a staple for every leaf stays ksl's verifier's
                 if (mode == KslConst.VERIFY_OPENSSL || mode == KslConst.VERIFY_PAUSE) {
                     if (mode == KslConst.VERIFY_PAUSE && config.revocation == RevocationPolicy.RequireStapled) {

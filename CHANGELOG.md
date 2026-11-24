@@ -3122,11 +3122,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - TLS client, must-staple on every trust path (breaking strictness, RFC 7633 sections 4.2.3.1 and 4.3.3, RFC 6066 section
   8): under every `RevocationPolicy` but `Off` the client now sends `status_request` and checks the stapled OCSP response
   on every trust path, not only where `ksl` verifies the chain: under `TrustConfig.Platform` on the JVM, Android, Apple and
-  Windows, `Custom` and `Tofu` too, once that verifier said yes, against the presented certificate whose key signed the
-  leaf. A certificate whose TLS feature extension lists `status_request` (must-staple) now fails there without a good
+  Windows, `Custom` and `Tofu` too, once that verifier said yes, against the issuer of the path it accepted (the platform's
+  path, with an issuer it may have fetched), else the presented certificate whose key signed the leaf; a certificate that
+  only copies the issuer's name and key identifier, or carries the leaf's own key, is never taken for the issuer. A certificate whose TLS feature extension lists `status_request` (must-staple) now fails there without a good
   staple (`VerifyReason.UnknownRevocationStatus`, alert 113), and a staple that says revoked or does not verify fails as
   on the `ksl` path (`Revoked`, `InvalidStatusResponse`). `RevocationPolicy.Off` turns both off. The ClientHello on those
-  paths now carries `status_request`.
+  paths now carries `status_request`. Availability: a server that staples a stale or made-up response (Apache's "tryLater"
+  during a responder outage) now fails on those paths too; `RevocationPolicy.Off` is the way out for it.
 - QUIC client: the server's Source Connection ID is fixed by its first Initial without exception (RFC 9000 section 7.2),
   and the peer's first connection ID is never replaced. Until now an Initial with nothing but ACK, PING and PADDING from
   the client's own DCID left the SCID open, so a later Initial from any other SCID, a forged one included (Initial keys

@@ -230,6 +230,12 @@ extern "C" {
                                       CertificateEntry's extensions; larger: not stapled there). Sent only when it is for the leaf the handshake presents (the issuer: the
                                       certificate of the configured chain that issued it), verifies, and is inside its validity interval
                                       at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
+#define KSL_SET_ISSUER_CANDIDATE 7 /* client, before KSL_WANT_VERIFY is resumed (ABI 7, additive): a DER certificate the caller's verifier
+                                      put right above the leaf in the path it built (the platform's issuer, perhaps fetched by AIA), the
+                                      first candidate for the issuer a stapled OCSP response is checked against on the pause path; it is
+                                      used only when it named the leaf's issuer, its key verifies the leaf's signature and that key is not
+                                      the leaf's own, as every presented candidate (KSL_OPT_REVOCATION). KSL_E_BAD_ARG on a server or for
+                                      anything but one DER certificate */
 #define KSL_SET_ECH_CONFIG_LIST 15 /* client, before the handshake starts, once (ABI 7, additive): an ECHConfigList (RFC 9849
                                       section 4, the value of an HTTPS record's ech parameter, RFC 9848) in binary. Only its usable
                                       ECHConfigs are kept (ksl_ech_config_list_check); the ClientHello then carries ECH with one of them:

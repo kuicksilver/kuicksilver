@@ -214,12 +214,16 @@ static int tcp_pump(ksl_ssl *c, ksl_ssl *s) {
 }
 static int server_leaf_only;                 /* the server sends its leaf without rv-mid */
 static const char *server_second = "rv-mid"; /* the certificate the server sends after its leaf */
+static const char *server_third = NULL;      /* a third certificate after it, or NULL */
+static const char *client_candidate = NULL; /* the client's KSL_SET_ISSUER_CANDIDATE (its verifier's issuer), or NULL */
 static ksl_ctx *rv_server(const char *leaf, int tls12) {
     ksl_ctx *c = ksl_ctx_new(KSL_SERVER);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
     char name[128];
     snprintf(name, sizeof name, "%s", leaf);
-    blob ch = server_leaf_only ? framed(1, name) : framed(2, name, server_second);
+    blob ch = server_leaf_only ? framed(1, name)
+              : server_third   ? framed(3, name, server_second, server_third)
+                               : framed(2, name, server_second);
     char kp[128];
     snprintf(kp, sizeof kp, RV "%s", leaf);
     size_t kl;
@@ -266,6 +270,11 @@ static hs_out handshake_with(hs *x, const char *crl) {
     ksl_ssl *c = ksl_ssl_new(cc, x->mode), *s = ksl_ssl_new(sc, x->mode);
     ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1);
     ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    if (client_candidate) {
+        blob b = file_of(client_candidate);
+        CHECK(ksl_ssl_set(c, KSL_SET_ISSUER_CANDIDATE, b.buf, b.len) == KSL_OK, "client takes the issuer candidate");
+        free(b.buf);
+    }
     if (x->staple) {
         blob b = file_of(x->staple);
         CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len) == KSL_OK, "server takes the response");
@@ -403,9 +412,38 @@ static void stapling_over(int mode, int tls12, const char *what) {
     EXPECT_FAIL(alone_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_must_staple_without_issuer");
     hs alone = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
     EXPECT_PASS(alone, 0xff, "pause path, leaf alone: an uncheckable staple of a leaf that requires none passes");
+    /* the leaf alone, but the client's verifier built its path through rv-mid (an AIA fetch, a platform store) and handed
+       it over (KSL_SET_ISSUER_CANDIDATE): the staple is checked against it, so a must-staple leaf passes with its staple and
+       a revoked one fails; an issuer candidate that did not issue the leaf is not taken */
+    /* (an OpenSSL server staples only a response it can check against its own chain, so these are forced) */
+    client_candidate = "rv-mid";
+    hs cand_must = {"rv-leaf-must-staple", NULL, "ocsp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                    KSL_VERIFY_PAUSE};
+    EXPECT_PASS(cand_must, KSL_OCSP_GOOD,
+                "pause path, leaf alone, the verifier's issuer: the must-staple staple is checked");
+    hs cand_good = {"rv-leaf", NULL, "ocsp-good", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(cand_good, KSL_OCSP_GOOD, "pause path, leaf alone, the verifier's issuer: a staple is checked");
+    hs alone_revoked = {"rv-leaf-revoked", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                        KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_revoked, X509_V_ERR_CERT_REVOKED, "negative_paused_candidate_revoked");
+    client_candidate = "rv-imp-mid";
+    hs alone_imp = {"rv-leaf-must-staple", NULL, "ocsp-imp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                    KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_imp, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_impostor_candidate");
+    client_candidate = NULL;
     /* the server sends the leaf and, instead of its issuer, the root (which issued rv-mid, not the leaf): no presented
        certificate signed the leaf, so the must-staple leaf's staple cannot be checked and it fails */
     server_leaf_only = 0;
+    /* an impostor of rv-mid (its name and key identifier, another key) with a "good" staple it signed: X509_check_issued
+       takes it, the leaf's signature does not, so there is no issuer and the must-staple leaf fails. With the impostor
+       ahead of rv-mid in the chain, rv-mid is found, and the impostor's staple fails against it */
+    server_second = "rv-imp-mid";
+    hs impostor = {"rv-leaf-must-staple", NULL, "ocsp-imp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                   KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(impostor, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_impostor_issuer");
+    server_third = "rv-mid";
+    EXPECT_FAIL(impostor, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_paused_impostor_before_the_issuer");
+    server_third = NULL;
     server_second = "rv-root";
     hs wrong_issuer = {"rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
                        KSL_VERIFY_PAUSE};
@@ -447,6 +485,41 @@ static int staple_with_responder_ids(const char *named) {
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
     return rc;
+}
+
+/* issuer_among (ksl_ocsp.c), the issuer of the pause path's staple check: the candidate the verifier gave, else the first
+   presented certificate that issued the leaf (its name, its key verifying the leaf's signature, a key other than the leaf's) */
+static int pick(const char *candidate, int n, const char *a, const char *b, const char *c) {
+    blob ch = n == 1 ? framed(1, a) : n == 2 ? framed(2, a, b) : framed(3, a, b, c);
+    blob cand = candidate ? framed(1, candidate) : (blob){0};
+    int r = ksl_test_presented_issuer(ch.buf, ch.len, cand.buf, cand.len);
+    free(ch.buf);
+    free(cand.buf);
+    return r;
+}
+static void test_issuer_among(void) {
+    SECTION("revocation_issuer_among");
+    CHECK(pick(NULL, 2, "rv-leaf", "rv-mid", NULL) == 1, "the presented issuer");
+    CHECK(pick(NULL, 2, "rv-leaf", "rv-imp-mid", NULL) == -1,
+          "negative_impostor: the issuer's name and key identifier, another key: no issuer");
+    CHECK(pick(NULL, 3, "rv-leaf", "rv-imp-mid", "rv-mid") == 2,
+          "negative_impostor_first: the real issuer behind an impostor");
+    CHECK(pick(NULL, 3, "rv-leaf", "rv-root", "rv-mid") == 2,
+          "a certificate that did not issue the leaf is passed over");
+    CHECK(pick(NULL, 1, "rv-leaf", NULL, NULL) == -1, "the leaf alone: no issuer");
+    CHECK(
+        pick(NULL, 2, "rv-selfname-leaf", "rv-selfname-ca", NULL) == 1,
+        "a leaf named like its CA, without key identifiers or keyUsage, has that CA for its issuer (its staple is checked)");
+    CHECK(pick(NULL, 1, "rv-self", NULL, NULL) == -1,
+          "negative_self_signed: a self-signed leaf is no issuer of itself");
+    CHECK(pick(NULL, 2, "rv-self", "rv-self", NULL) == -1,
+          "negative_self_signed_twice: nor a second copy of it (the same key)");
+    CHECK(pick("rv-mid", 1, "rv-leaf", NULL, NULL) == 0, "the verifier's issuer for a leaf sent alone");
+    CHECK(pick("rv-imp-mid", 2, "rv-leaf", "rv-mid", NULL) == 1,
+          "negative_impostor_candidate: passed over for the presented issuer");
+    CHECK(pick("rv-root", 1, "rv-leaf", NULL, NULL) == -1, "negative_candidate_not_the_issuer");
+    CHECK(pick("rv-self", 1, "rv-self", NULL, NULL) == -1, "negative_candidate_with_the_leafs_key");
+    END();
 }
 
 static void test_stapling(void) {
@@ -736,6 +809,7 @@ static void test_staple_cache(void) {
 void run_revocation(void) {
 #ifndef OPENSSL_NO_OCSP
     test_ocsp_check();
+    test_issuer_among();
     test_stapling();
     test_staple_cache();
 #else

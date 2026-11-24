@@ -101,7 +101,8 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 - **Mitigations (0.3.0):** every client but `RevocationPolicy.Off` asks for a staple. Where `ksl` verifies the chain
   (`AnchoredCa`, `Platform` on Linux Native) the stapled OCSP response is checked by RFC 6960 §3.2 against the issuer the
   verifier trusted; on the pause path (`Platform` elsewhere, `Custom`, `Tofu`), after that verifier's yes, against the
-  presented certificate whose key signed the leaf (one that only takes the issuer's name signs nothing for it) (certID, signature, the issuer's key or a
+  issuer of the path it accepted, else the presented certificate whose key signed the leaf (one that only copies the
+  issuer's name and key identifier signs nothing for it, nor does the leaf's own key) (certID, signature, the issuer's key or a
   delegated responder with id-kp-OCSPSigning signed by that key, thisUpdate/nextUpdate with 5 minutes of skew): revoked,
   forged, foreign, unauthorized or stale fails with bad_certificate_status_response. Stripping the staple is the soft-fail
   window of the default `StapledIfPresent` (RFC 9325 §7.5 describes soft-fail as common practice); `RequireStapled` and
@@ -112,8 +113,11 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 - **Not covered:** stripping the staple of a certificate that is not must-staple on the pause path (the soft-fail window, as
   above): `Platform` off Linux Native, where beyond the staple the OS verifier decides (Apple and Windows apply their own
   revocation policy, while on Android, its blocklist only, and the JVM, off unless the application enables it, nothing
-  more checks revocation), and `Custom` and `Tofu`; a staple for a leaf sent without its issuer on the pause path (not
-  checked; a must-staple leaf sent so fails); delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
+  more checks revocation), and `Custom` and `Tofu`; a staple for a leaf with no issuer on the pause path (self-signed, or
+  neither sent nor in the verifier's path: not checked; a must-staple leaf fails). Availability, not covered either: a
+  server that staples an unsatisfactory response (stale, or a "tryLater" its web server made up during a responder outage)
+  is refused on every path, since a received staple must be checked (RFC 6066 §8); `RevocationPolicy.Off` is the way out
+  for it; delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
 - **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`; `RevocationTest`
   (`negative_quicStapledRevokedFails`, `negative_tcpStapledRevokedFails`, `negative_quicRequiredStapleMissing`,
   `negative_quicMustStapleLeafWithoutStaple`, `negative_serverStaplesNoStaleOrForeignResponse`,

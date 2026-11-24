@@ -19,8 +19,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * every trust path: where `ksl`'s own verifier checks the chain ([TrustConfig.AnchoredCa], and [TrustConfig.Platform] on
  * Linux Native, also inside [TrustConfig.Pinned] and [TrustConfig.ExpectedName]) against the issuer that verifier trusted;
  * where another verifier decides trust ([TrustConfig.Platform] on the JVM, Android, Apple and Windows, a
- * [TrustConfig.Custom], a [TrustConfig.Tofu]) against the presented certificate whose key signed the leaf, after that
- * verifier said yes (a leaf sent without its issuer is then not checked, unless it is must-staple: it fails). The platform
+ * [TrustConfig.Custom], a [TrustConfig.Tofu]), after that verifier said yes, against the certificate above the leaf in the
+ * chain it accepted (the path the platform built, perhaps with an issuer it fetched), else the presented certificate that issued
+ * the leaf; either only when its key verifies the leaf's signature and is not the leaf's own key. A leaf with no such issuer is
+ * not checked, unless it is must-staple: it fails. The platform
  * verifier keeps its own revocation behaviour on top. [RequireStapled] stays limited to `ksl`'s verifier and is refused
  * elsewhere.
  *

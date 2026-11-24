@@ -195,6 +195,13 @@ public object KslConst {
     /** Server, before the first drive: the DER OCSP response stapled when it is for the leaf sent and fresh (additive in ABI 7). */
     public const val SET_OCSP_RESPONSE: Int = 6
 
+    /**
+     * Client, before a paused verification is resumed: the DER certificate the caller's verifier put above the leaf in the path
+     * it built, the first issuer candidate for the stapled OCSP response's check (used only when it issued the leaf; additive
+     * in ABI 7).
+     */
+    public const val SET_ISSUER_CANDIDATE: Int = 7
+
     public const val CHAIN_PRESENTED: Int = 0
     public const val CHAIN_VALIDATED: Int = 1
 

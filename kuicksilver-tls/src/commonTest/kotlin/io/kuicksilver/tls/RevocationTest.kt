@@ -401,6 +401,30 @@ class RevocationTest {
         }
     }
 
+    /**
+     * The certificate above the leaf in the chain the verifier accepted goes to `ksl` as the issuer candidate of the staple check
+     * (`KSL_SET_ISSUER_CANDIDATE`, cases in C `revocation_stapling` and `revocation_issuer_among`): the real issuer passes the
+     * must-staple leaf's staple, and an impostor of it (its name and key identifier, another key) is passed over for the
+     * presented issuer, so the handshake neither breaks nor trusts the impostor's key.
+     */
+    @Test fun verifiersIssuerIsHandedToTheStapleCheck() {
+        val stapled =
+            server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey, OcspStapling(RevocationCerts.ocspMustStaple))
+        for (second in listOf(RevocationCerts.rvMid, RevocationCerts.rvImpMid)) {
+            val p =
+                Pump(KslQuicCrypto.newSession(client(trust = pausedTrusts.first())), KslQuicCrypto.newSession(stapled)).also {
+                    it.c.setTransportParameters(Fixtures.tp)
+                    it.s.setTransportParameters(Fixtures.tp)
+                }
+            p.run(onVerify = { VerifyResult.Accepted(listOf(it.chain.first(), Certificate(second))) })
+            try {
+                assertTrue(p.cs.done && p.ss.done, "${p.cs.last}")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     /** A platform or application verifier keeps its own revocation behaviour; requiring a staple there is refused. */
     @Test fun negative_requireStapledNeedsKslVerifier() {
         val custom = TrustConfig.Custom(CertificateVerifier { chain, _, _ -> VerifyResult.Accepted(chain) })

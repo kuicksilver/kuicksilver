@@ -377,13 +377,18 @@ experimental in 0.3.0:
   that is itself the trust anchor (no issuer to check a response against). Every policy but `Off` sends `status_request`
   and checks a stapled response on every trust path: where `ksl` verifies the chain (`AnchoredCa`, and `Platform` on Linux
   Native, also inside `Pinned` and `ExpectedName`) against the issuer it trusted; under `Platform` elsewhere, `Custom` and
-  `Tofu`, once that verifier said yes, against the presented certificate whose key signed the leaf (a staple for a leaf
-  sent without its issuer is not checked, and a must-staple leaf sent so fails). On top of that, under `Platform` the OS
+  `Tofu`, once that verifier said yes, against the issuer of the path it accepted (the platform's own path, with an issuer
+  it may have fetched itself), else the presented certificate whose key signed the leaf; a certificate that only copies the
+  issuer's name never counts. A leaf with no such issuer (a self-signed one, say) has its staple left unchecked, and a
+  must-staple one fails. On top of that, under `Platform` the OS
   verifier applies its own policy: Apple and Windows check revocation themselves, while on Android (its blocklist only)
   and the JVM (off unless the application enables it, e.g. `com.sun.net.ssl.checkRevocation`) a server that staples
   nothing is not checked at all; use `AnchoredCa` where that matters. `RequireStapled` needs `ksl`'s verifier and is
   refused with `Platform` off Linux, `Custom` and `Tofu` (`TlsException.Config`). `Off` is the way out for a server whose
-  must-staple certificate comes without its staple. A
+  must-staple certificate comes without its staple. Outage risk: a server that staples a response that does not verify or
+  is stale (Apache's mod_ssl, for one, can staple a "tryLater" response it made up while its CA's responder is down) now
+  fails the handshake on every trust path, not only where `ksl` verifies, because a received staple must be checked (RFC
+  6066 section 8); the way out for such a server until it staples properly again is `RevocationPolicy.Off` for it. A
   session resumes only while the response its full handshake checked is fresh.
 - **CRLs (clients and servers).** `TrustConfig.AnchoredCa(roots, crls)` checks every certificate on the verified path
   against its issuer's CRL when one of `crls` is from that issuer (`CertificateRevocationList.parsePem` reads

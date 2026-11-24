@@ -6406,6 +6406,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.quicStapledGood
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.tcpStapledGoodPasses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.tls13StaplesUpTo65527Bytes
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.updateReplacesTheStapledResponse
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.verifiersIssuerIsHandedToTheStapleCheck
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.rfc9001AppendixA
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.rfc9369AppendixA
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.unknownVersionRejected

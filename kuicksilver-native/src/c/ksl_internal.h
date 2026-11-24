@@ -127,6 +127,9 @@ struct ksl_ssl {
     int test_ech_reused;
 #endif
     STACK_OF(X509) * presented_chain, *validated_chain;
+    /* client, pause path: the certificate the caller's verifier put above the leaf in the path it built (KSL_SET_ISSUER_CANDIDATE),
+       the first issuer candidate of the staple check (ksl_ocsp.c); NULL for none */
+    X509 *issuer_candidate;
     /* 0-RTT (server): context stamped into tickets, the transport's verdict, whether the resumed ticket's context matched */
     uint8_t early_ctx[64];
     size_t early_ctx_len;
@@ -193,6 +196,11 @@ struct ksl_ssl {
 
 /* Epoch seconds for the ticket checks (ksl_ctx.c); test builds can move it to age tickets without waiting. */
 int64_t ksl_ticket_now(void);
+#ifdef KSL_TEST
+/* ksl_ocsp.c: the issuer presented_issuer picks for the leaf of [chain] (framed DER, leaf first) among [candidate] (framed, one
+   certificate, may be NULL) and the chain: 0 for the candidate, i >= 1 for the chain's i-th certificate, -1 for none */
+int ksl_test_presented_issuer(const uint8_t *chain, size_t chain_len, const uint8_t *candidate, size_t candidate_len);
+#endif
 #ifdef KSL_TEST
 extern int64_t ksl_test_ticket_clock_skew;
 extern int

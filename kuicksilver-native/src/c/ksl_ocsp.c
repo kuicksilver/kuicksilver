@@ -235,27 +235,52 @@ static int must_staple(X509 *leaf) {
     return found;
 }
 
-/* The certificate of the peer's presented chain that issued [leaf]: it names the leaf's issuer and its key verifies the leaf's
-   signature, so a certificate that only takes the issuer's name (whose key would sign any response) is never used. NULL when
-   none did (the leaf sent alone, or its issuer left out) and for a self-issued leaf. */
-static X509 *presented_issuer(SSL *ssl, X509 *leaf) {
-    /* a self-issued leaf has no issuer but itself, which would sign its own "good" response: like an anchored leaf, none */
-    if (X509_check_issued(leaf, leaf) == X509_V_OK) {
-        ERR_clear_error();
-        return NULL;
-    }
-    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+/* Whether [c] issued [leaf]: it names the leaf's issuer (X509_check_issued: name, AKID, keyUsage), its key verifies the leaf's
+   signature, and that key is not the leaf's own (a self-signed leaf, or another certificate of the same key, would sign its own
+   "good" response). A certificate that only takes the issuer's name and key identifier fails the signature. */
+static int issued_by(X509 *c, X509 *leaf) {
+    EVP_PKEY *key = X509_get0_pubkey(c), *own = X509_get0_pubkey(leaf);
+    int r = c != leaf && key != NULL && own != NULL && EVP_PKEY_eq(key, own) != 1 &&
+            X509_check_issued(c, leaf) == X509_V_OK && X509_verify(leaf, key) == 1;
+    ERR_clear_error();
+    return r;
+}
+
+/* The issuer of [leaf] a staple is checked against on the pause path: [candidate] (the certificate above the leaf in the path
+   the caller's verifier built, KSL_SET_ISSUER_CANDIDATE) when it issued the leaf, else the first certificate of the presented
+   [chain] that did (issued_by). NULL when none did (the leaf sent alone and no candidate, its issuer left out, a self-signed
+   leaf). */
+static X509 *issuer_among(X509 *candidate, STACK_OF(X509) * chain, X509 *leaf) {
+    if (candidate != NULL && issued_by(candidate, leaf))
+        return candidate;
     for (int i = 0; chain && i < sk_X509_num(chain); i++) {
         X509 *c = sk_X509_value(chain, i);
-        EVP_PKEY *key = X509_get0_pubkey(c);
-        if (c != leaf && key != NULL && X509_check_issued(c, leaf) == X509_V_OK && X509_verify(leaf, key) == 1) {
-            ERR_clear_error();
+        if (issued_by(c, leaf))
             return c;
-        }
     }
-    ERR_clear_error();
     return NULL;
 }
+
+#ifdef KSL_TEST
+int ksl_test_presented_issuer(const uint8_t *chain, size_t chain_len, const uint8_t *candidate, size_t candidate_len) {
+    STACK_OF(X509) *sk = NULL, *cand = NULL;
+    int r = -1;
+    if (ksl_parse_chain(chain, chain_len, &sk) && sk_X509_num(sk) >= 1 &&
+        (candidate == NULL || (ksl_parse_chain(candidate, candidate_len, &cand) && sk_X509_num(cand) == 1))) {
+        X509 *leaf = sk_X509_value(sk, 0), *c = cand ? sk_X509_value(cand, 0) : NULL;
+        X509 *got = issuer_among(c, sk, leaf);
+        if (got != NULL && got == c)
+            r = 0;
+        for (int i = 1; got != NULL && r < 0 && i < sk_X509_num(sk); i++)
+            if (sk_X509_value(sk, i) == got)
+                r = i;
+    }
+    sk_X509_pop_free(sk, X509_free);
+    sk_X509_pop_free(cand, X509_free);
+    ERR_clear_error();
+    return r;
+}
+#endif
 
 /* A client's status callback (OpenSSL tls_process_initial_server_flight: after the server's Finished in TLS 1.3, after
    ServerHelloDone in TLS 1.2, so after the chain was verified, by ksl_cert_verify_cb or, on the pause path, by the caller's
@@ -263,8 +288,8 @@ static X509 *presented_issuer(SSL *ssl, X509 *leaf) {
    message MUST check the OCSP response and abort the handshake if the response is not satisfactory with
    bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL sends 113; generic alerts do not apply to it).
    The issuer the response is checked against: where ksl's own verifier ran (KSL_VERIFY_OPENSSL), the one it trusted; on the
-   pause path (KSL_VERIFY_PAUSE: the platform's verifier, an application's, TOFU), the presented certificate that issued the leaf
-   (presented_issuer), since the caller's verifier said yes to that chain and only the leaf's real issuer, or a responder it
+   pause path (KSL_VERIFY_PAUSE: the platform's verifier, an application's, TOFU), the certificate above the leaf in the path that
+   verifier built (KSL_SET_ISSUER_CANDIDATE) or else the presented certificate that issued the leaf (issuer_among), since the caller's verifier said yes to that chain and only the leaf's real issuer, or a responder it
    delegated, can sign a response for it. A leaf with no such issuer (a trust anchor itself, or sent without its issuer) is not
    checked, unless a stapled response is required (KSL_REVOCATION_REQUIRE_STAPLED, a must-staple leaf), which then fails
    (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). RFC 7633 section 4.3.3: a client "MUST treat a
@@ -293,7 +318,7 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
         leaf = SSL_get0_peer_certificate(ssl);
         if (leaf == NULL)
             return 1;
-        issuer = presented_issuer(ssl, leaf);
+        issuer = issuer_among(s->issuer_candidate, SSL_get_peer_cert_chain(ssl), leaf);
     } else {
         return 1; /* KSL_VERIFY_NONE: nothing is verified, tests only */
     }
