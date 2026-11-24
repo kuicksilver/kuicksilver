@@ -8,7 +8,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 fails=0
 # case_run <name> <expected exit> <expected update runs> <expected sleeps> <plan, one word per apt-get update: ppa | noppa |
-# fail | ppa-install-fails>
+# fail | ppa-install-fails | acfail (apt-cache policy fails)>
 case_run() {
   local name=$1 want_rc=$2 want_updates=$3 want_sleeps=$4
   shift 4
@@ -47,6 +47,7 @@ S
   cat > "$dir/bin/apt-cache" <<'S'
 #!/usr/bin/env bash
 case $(cat "$T/step") in
+  acfail) echo "E: the package cache is broken" >&2; exit 100 ;;
   ppa|ppa-install-fails) c=4.6.1-1~ubuntu24.04.0~ppa1 ;;
   *) c=4.2.2-1.1build3 ;;
 esac
@@ -86,6 +87,8 @@ case_run "the PPA answers: one update, one install, no pause" 0 1 "" ppa
 case_run "negative_aPpaIndexNotFetchedNeverInstallsUbuntus42 (update exits 0, candidate 4.2.2)" 0 3 "30 60" noppa noppa ppa
 case_run "an install that exits 100 (a .deb answered 503) is tried again" 0 2 "30" ppa-install-fails ppa
 case_run "an update that fails is tried again" 0 2 "30" fail ppa
+case_run "an apt-cache policy that fails is tried again, not a silent exit" 0 2 "30" acfail ppa
+case_run "negative_anAptCacheThatKeepsFailingFailsClearly" 1 5 "30 60 120 240" acfail acfail acfail acfail acfail
 case_run "negative_aPpaThatStaysDownFailsClearlyAfterFiveAttempts" 1 5 "30 60 120 240" noppa noppa noppa noppa noppa
 case_run "negative_installFailuresToTheEndFailClearly" 1 5 "30 60 120 240" ppa-install-fails ppa-install-fails ppa-install-fails ppa-install-fails ppa-install-fails
 [ "$fails" -eq 0 ] || { echo "$fails case(s) failed"; exit 1; }

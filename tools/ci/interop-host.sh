@@ -59,8 +59,9 @@ case "${1:-}" in
       why=""
       if ! apt_get update -q; then
         why="apt-get update failed"
+      elif ! cand=$(apt-cache policy tshark | awk '$1 == "Candidate:" { print $2 }'); then
+        why="apt-cache policy tshark failed"   # under set -e this would end the script without a word
       else
-        cand=$(apt-cache policy tshark | awk '$1 == "Candidate:" { print $2 }')
         cv=${cand#*:}; cv=${cv%%-*}   # the upstream version of [epoch:]upstream[-revision]
         if [ -z "$cand" ] || [ "$cand" = "(none)" ] || [ "$(printf '%s\n4.5.0\n' "$cv" | sort -V | head -1)" != 4.5.0 ]; then
           why="the tshark candidate is ${cand:-none}, not 4.5.0 or later: the PPA's index was not fetched"
