@@ -159,6 +159,25 @@ prohibited_port_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/ngtcp2_*/rebind-addr/*' -o -path '*/ngtcp2_*/rebind-port/*' \) 2>/dev/null | sort)
 }
 
+# zerortt cells of our server with the msquic client failed only on the runner's 1-RTT budget (5000 bytes over both connections),
+# taken by msquic's own DPLPMTUD probes: PING+PADDING datagrams of 1228/1260 bytes after the handshake and, once one is
+# acknowledged, a larger one (1340). The first connection only fetches the ticket and closes on it, and it sends its 1340-byte probe
+# only when our HANDSHAKE_DONE packet already acknowledges the 1260-byte one, which depends on whether msquic's Finished and that
+# probe reach our server in one receive batch (0.3.0 integration run 20261121-105505: 18 us apart, red; the run before: 0.4 ms
+# apart, green; 9 of 10 reruns green). Acknowledging in the next packet sent is RFC 9000 section 13.2.1, as ngtcp2 and quic-go do.
+# tools/interop/msquic-probe-budget.py proves it from the client-side capture: the client's 1-RTT payload is the runner's count, every
+# larger probe followed our ACK of the one before, and without the probes the client stays within the budget. Prints
+# "<server>_<client> <case>" per cell.
+msquic_probe_budget() {
+  local o cell
+  while IFS= read -r o; do
+    grep -q "Client sent too much data in 1-RTT packets" "$o" || continue
+    cell=$(dirname "$o")
+    python3 "$interop_tools/msquic-probe-budget.py" "$cell" > /dev/null || continue
+    cell=${cell#"$1"/}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/kuicksilver_msquic/zerortt/*' -o -path '*/kuicksilver-native_msquic/zerortt/*' \) 2>/dev/null | sort)
+}
+
 # The reason environment_cells gives for a prohibited_port_rebind cell.
 prohibited_port_why='the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send until it idled out, no crash (prohibited-port-rebind.py)'
 
@@ -173,6 +192,7 @@ environment_rerun_cells() {
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
     closing_challenge "$1" | sed 's/$/ the rebind landed just after the client closed: the server challenged the new path before the close arrived, and the closing client could not answer (closing-challenge.py)/'
+    msquic_probe_budget "$1" | sed 's/$/ msquic'"'"'s own PMTU probes took the runner'"'"'s 1-RTT budget: its larger probe followed our ACK of the one before, and without the probes the client stayed within 5000 bytes (msquic-probe-budget.py)/'
   } | sort -u -k1,2
 }
 

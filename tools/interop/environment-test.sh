@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, closing-challenge.py,
-# clienthello-lost.py, prohibited-port-rebind.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
+# clienthello-lost.py, prohibited-port-rebind.py, msquic-probe-budget.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
@@ -14,6 +14,8 @@
 # closing, e.g. the quinn-client/quinn_kuicksilver/rebind-addr cell of CI run 40645584772.
 # KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
 # build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
+# KSL_INTEROP_PROBE_CELL a zerortt cell of our server whose msquic client's PMTU probes took the runner's 1-RTT budget, e.g. the red
+# sixth of the ten reruns of 2026-11-24, whose decoded summary is the fixture.
 # KSL_INTEROP_PORT_CELL a cell of the ngtcp2 server whose client the sim rebound to a port that server drops, e.g. the release/0.2.x
 # run 40563746089 artifact interop-jvm-ngtcp2/20261027-192322/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr.
 # Usage: environment-test.sh
@@ -102,6 +104,31 @@ check "close: two server packets on the new path (10.2.2: one)"    1 "" -- pytho
 check "close: the client closed with an error code"                1 "" -- python3 "$cr" --decoded "$(cvar error "$cli.close_codes = [10]")"
 check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
+
+# msquic-probe-budget.py: msquic's own PMTU probes took the runner's 1-RTT budget of our server's zerortt cell (0.3.0 integration,
+# the sixth of ten reruns with the image of run 20261121-105505; decoded with --dump): probes of 1252 and 1332 bytes in the first connection,
+# the second after our HANDSHAKE_DONE packet acknowledged the first, 1220 and 1252 in the second connection; 5303 bytes, 299 without them
+mp="$here/msquic-probe-budget.py"; fm="$td/msquic-probe-budget-zerortt.json"
+mvar() { jq "$2" "$fm" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+data='{"n": 200, "port": "45038", "udp": 1252, "short_only": true, "pn": 300, "frames": [2, 8]}'
+check "probes: rerun 6, msquic's probes took the budget"                0 "without them 299 of the runner's 5000" -- python3 "$mp" --decoded "$fm"
+check "probes: the native image's cell alike"                      0 "" -- python3 "$mp" --decoded "$(mvar native '.pair = "kuicksilver-native_msquic"')"
+check "probes: 4702 bytes of data besides the probes (5001 left)"  1 "" -- python3 "$mp" --decoded "$(mvar excess ".client += [$data | .payload = 4702] | .reported += 4702")"
+check "probes:   4701 bytes of data (5000 left) stay within"       0 "without them 5000 of" -- python3 "$mp" --decoded "$(mvar within ".client += [$data | .payload = 4701] | .reported += 4701")"
+check "probes: a small PING+PADDING is no probe"                   1 "" -- python3 "$mp" --decoded "$(mvar small ".client += [$data | .udp = 1100 | .frames = [0, 1] | .payload = 4800] | .reported += 4800")"
+check "probes: a probe that carries data is no probe"              1 "" -- python3 "$mp" --decoded "$(mvar probedata '(.client[] | select(.n == 64 or .n == 123)) |= (.frames = [0, 1, 8] | .payload = 2400) | .reported += 2354')"
+check "probes: no ACK of the first probe before the second"        1 "" -- python3 "$mp" --decoded "$(mvar noack '(.server[] | select(.n == 44)).n = 46')"
+check "probes: the ACK named another packet"                       1 "" -- python3 "$mp" --decoded "$(mvar otherack '(.server[] | select(.n == 44)).acked = [[244, 244]]')"
+check "probes: the ACK went to the other connection"               1 "" -- python3 "$mp" --decoded "$(mvar otherport '(.server[] | select(.n == 44)).port = "45038"')"
+check "probes: a repeated probe of the same size"                  1 "" -- python3 "$mp" --decoded "$(mvar repeat '(.client[] | select(.n == 45)).udp = 1252')"
+check "probes: no probe was raised after an ACK"                   1 "" -- python3 "$mp" --decoded "$(mvar noraise '.client |= map(select(.n != 45 and .n != 123)) | .reported -= 2558')"
+check "probes: not the runner's count"                             1 "" -- python3 "$mp" --decoded "$(mvar count '.reported = 5302')"
+check "probes: a peer other than the msquic client"                1 "" -- python3 "$mp" --decoded "$(mvar peer '.pair = "kuicksilver_quic-go"')"
+check "probes: msquic's server, our client"                        1 "" -- python3 "$mp" --decoded "$(mvar role '.pair = "msquic_kuicksilver"')"
+check "probes: another case"                                       1 "" -- python3 "$mp" --decoded "$(mvar case '.case = "resumption"')"
+check "probes: the runner failed the cell on something else"       1 "" -- python3 "$mp" --decoded "$(mvar verdict '.too_much = false')"
+check "probes: the downloaded files were not checked"              1 "" -- python3 "$mp" --decoded "$(mvar nofiles '.download_checked = false')"
+check "probes: a malformed summary cannot be analysed"             2 "cannot analyse" -- python3 "$mp" --decoded "$(mvar broken 'del(.server)')"
 
 # closing-challenge.py: the rebind landed after the client's CONNECTION_CLOSE left, before its last packets arrived (CI run
 # 40571281407, quiche->kuicksilver:rebind-addr, the JVM image; decoded with --dump): the server challenged the new path, the
@@ -339,6 +366,11 @@ check "challenge: no unanswered challenge in the verdict"      1 "" -- python3 "
 # both roles on purpose (closing-rebind.py): our own server's cell is analysed too (here: no captures), not refused by role
 mk msquic-server/kuicksilver-native_msquic rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: our server's cell is analysed as well"           2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-server/kuicksilver-native_msquic/rebind-port"
+# msquic-probe-budget.py on cells: only the budget verdict is analysed, never without the client-side capture and key log
+mk msquic-server/kuicksilver_msquic zerortt "Check of downloaded files succeeded." "0-RTT size: 10700" "1-RTT size: 5503" "Client sent too much data in 1-RTT packets."
+mk msquic-server/kuicksilver_msquic resumption "Check of downloaded files succeeded."
+check "probes: a budget failure without the capture cannot be analysed" 2 "cannot analyse" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt"
+check "probes: no budget failure in the verdict"                   1 "" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/resumption"
 
 # prohibited-port-rebind.py on cells: no prohibited port in the sim's rebinds is no verdict, one without the capture cannot be analysed
 mk ngtcp2-client/ngtcp2_kuicksilver rebind-addr "sim     | 11s:  rebinding: 193.167.0.229:18108 -> 193.167.0.155:745" "client exited with code 1"
@@ -570,6 +602,11 @@ if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlo
   cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real lost cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the peer client's ClientHello never reached our server" -- environment_cells "$res"
   check "real lost cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cl' --dump '$cell' | jq -e --slurpfile f '$fl' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_PROBE_CELL:-}" ]; then   # the real rerun-6 cell: client-side pcap and key log through tshark
+  cell=${KSL_INTEROP_PROBE_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real probe cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") msquic's own PMTU probes took the runner's 1-RTT budget" -- environment_cells "$res"
+  check "real probe cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$mp' --dump '$cell' | jq -e --slurpfile f '$fm' '. == \$f[0]' > /dev/null"
 fi
 if [ -n "${KSL_INTEROP_PORT_CELL:-}" ]; then   # the real release/0.2.x cell: pcap through tshark, the ngtcp2 server's log
   cell=${KSL_INTEROP_PORT_CELL%/}; res=$(dirname "$(dirname "$cell")")
