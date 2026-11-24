@@ -165,20 +165,32 @@ public suspend fun DatagramIo.Companion.open(
     local: InetSocketAddress,
     interfaceIndex: Int,
     prefer: IoPreference = IoPreference.Accelerated,
-): DatagramIo =
-    withContext(Dispatchers.IO) {
-        // the socket's own family: a wildcard address opens a dual-stack IPv6 socket, where only IPV6_BOUND_IF applies (to both families)
-        var refused: Throwable? = null
-        val accelerated =
-            if (prefer ==
-                IoPreference.Accelerated
-            ) {
-                KslDatagramIo.open(local, refused = { refused = it }) { fd -> bindToInterface(fd, interfaceIndex, isIpv6Socket(fd)) }
-            } else {
-                null
-            }
-        accelerated ?: openPortableDatagramIo(local, refused)
+): DatagramIo {
+    // the socket, kept outside withContext: a caller cancelled as it returns (the result dispatched back is then dropped)
+    // would leave the socket open with nobody to close it
+    var made: DatagramIo? = null
+    try {
+        return withContext(Dispatchers.IO) {
+            // the socket's own family: a wildcard address opens a dual-stack IPv6 socket, where only IPV6_BOUND_IF applies (to both families)
+            var refused: Throwable? = null
+            val accelerated =
+                if (prefer ==
+                    IoPreference.Accelerated
+                ) {
+                    KslDatagramIo.open(
+                        local,
+                        refused = { refused = it },
+                    ) { fd -> bindToInterface(fd, interfaceIndex, isIpv6Socket(fd)) }
+                } else {
+                    null
+                }
+            (accelerated ?: openPortableDatagramIo(local, refused)).also { made = it }
+        }
+    } catch (e: Throwable) {
+        made?.close()
+        throw e
     }
+}
 
 /** True for an AF_INET6 socket (`getsockname`). */
 internal fun isIpv6Socket(fd: Int): Boolean =
