@@ -7,6 +7,7 @@ package io.kuicksilver.http3.webtransport
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.frame.SettingsId
@@ -16,6 +17,7 @@ import io.kuicksilver.http3.runtime.acceptBidi
 import io.kuicksilver.http3.runtime.awaitCondition
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
+import io.kuicksilver.http3.runtime.peerStopped
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
@@ -25,6 +27,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertNotNull
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -122,6 +125,77 @@ class WtFailedEndTest {
                         }
                     }
                 }
+            }
+        }
+
+    /**
+     * A peer that never answers: after our close (or the session's failure) its FIN does not come, nor the RESET_STREAM
+     * that RFC 9000 section 3.5 requires in answer to our STOP_SENDING (here every datagram of it is lost from then on).
+     * The session's exchange must still end within a bound, two of its close timeouts, so the count goes back to 0: on
+     * the server for a local close and a failed session, on the client for a local close.
+     */
+    @Test fun negative_aPeerThatIgnoresOurStopSendingStillGivesTheSlotBack() =
+        h3Test {
+            for (failed in listOf(false, true)) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.WT_ENABLED_DRAFT17 to 1L))
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, WtTokens.H3))
+                    st.output.flush()
+                    readHeaders(st)
+                    val session = withTimeout(5.seconds) { accepted.await() } as WtSessionImpl
+                    session.closeTimeout = 200.milliseconds
+                    val clientAddr = c.paths.first().localAddress
+                    if (failed) {
+                        // the breaking capsule goes out first, then the client falls silent (the server may stop the stream
+                        // with H3_MESSAGE_ERROR, a malformed session, before our flush returns; nothing else is tolerated)
+                        peerStopped(Http3ErrorCode.MESSAGE_ERROR) {
+                            st.output.writeFully(RawPeer.dataFrame(breaking(flowControl = false)))
+                            st.output.flush()
+                        }
+                        withTimeout(5.seconds) { session.closed.await() }
+                        q.net.drop = { from, _, _ -> from == clientAddr }
+                    } else {
+                        q.net.drop = { from, _, _ -> from == clientAddr }
+                        session.close(7, "bye")
+                    }
+                    awaitCondition("failed $failed: the server's session count back to 0") {
+                        withContext(server.session.dispatcher) { server.session.wtSessions.isEmpty() }
+                    }
+                    kotlin.test.assertFalse(server.closed.isCompleted, "failed $failed: the connection is still up")
+                    q.net.drop = null
+                }
+            }
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(
+                    listOf(
+                        SettingsId.ENABLE_CONNECT_PROTOCOL to 1L,
+                        SettingsId.H3_DATAGRAM to 1L,
+                        SettingsId.WT_ENABLED_DRAFT17 to 1L,
+                    ),
+                )
+                val client = Http3Connection.client(c, wtOn)
+                val opening = async { client.webTransport(wtReq()) }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st)
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                val session = withTimeout(5.seconds) { opening.await() } as WtSessionImpl
+                session.closeTimeout = 200.milliseconds
+                val serverAddr = s.paths.first().localAddress
+                q.net.drop = { from, _, _ -> from == serverAddr }
+                session.close(7, "bye")
+                awaitCondition("the client's session count back to 0") {
+                    withContext(client.session.dispatcher) { client.session.wtClientSessions == 0 }
+                }
+                kotlin.test.assertFalse(client.closed.isCompleted, "the connection is still up")
+                q.net.drop = null
             }
         }
 }
