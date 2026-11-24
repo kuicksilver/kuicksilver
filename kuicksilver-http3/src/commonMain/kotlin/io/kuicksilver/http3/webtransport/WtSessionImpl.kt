@@ -785,9 +785,12 @@ internal suspend fun H3Session.webTransport(
             }
         val ended = CompletableDeferred<Unit>()
         val req = r.toBuilder().apply { headers = Http3Headers(fields) }.build()
-        // the answer has a deadline too; a CONNECT still unanswered then is reset by the cancellation (REQUEST_CANCELLED)
+        // the answer has a deadline too; a CONNECT still unanswered then is reset by the cancellation (REQUEST_CANCELLED).
+        // The stream is kept as connect returns it, inside the deadline's scope: a cancellation that reaches that scope
+        // before it ends makes it throw instead of returning the stream, and one the deadline cancelled just after connect
+        // returned is dropped by it; the catch below resets it either way
         val stream =
-            withinWtDeadline { connect(req, version.protocolToken, ended) }
+            withinWtDeadline { connect(req, version.protocolToken, ended).also { made = it } }
                 ?: throw WebTransportException.Timeout("no answer to the WebTransport CONNECT within $wtDeadline")
         made = stream
         // a WT-Protocol that is no valid Structured Field String is ignored, as if absent (section 3.3)
@@ -815,7 +818,7 @@ internal suspend fun H3Session.webTransport(
         withContext(NonCancellable + dispatcher) {
             wtClientSessions--
             made?.let {
-                if (e is CancellationException) {
+                if (e is CancellationException || e is WebTransportException.Timeout) {
                     it.reset(Http3ErrorCode.REQUEST_CANCELLED)
                     it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
                 }

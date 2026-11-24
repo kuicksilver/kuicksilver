@@ -645,6 +645,51 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * A caller cancelled as the CONNECT's answer arrives (the deadline's wait ends with the session in hand, while its timer
+     * winds down) resets the CONNECT stream instead of leaving the session's stream open with no one to end it.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aCallerCancelledAsTheConnectIsAnsweredResetsTheStream() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val armed = kotlin.concurrent.atomics.AtomicInt(0)
+                val timerEnding = CompletableDeferred<Unit>()
+                val gate = CompletableDeferred<Unit>()
+                client.session.wtTimer = {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        // the CONNECT's timer, cancelled once the answer won: its end holds the deadline's scope open
+                        if (armed.load() == 1) {
+                            withContext(kotlinx.coroutines.NonCancellable) {
+                                timerEnding.complete(Unit)
+                                gate.await()
+                            }
+                        }
+                    }
+                }
+                val call = async { client.webTransport(wtReq()) }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st)
+                armed.store(1)
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                withTimeout(5.seconds) { timerEnding.await() }
+                call.cancel()
+                gate.complete(Unit)
+                call.join()
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resetCode(st) })
+                assertEquals(0, withContext(client.session.dispatcher) { client.session.wtClientSessions })
+            }
+        }
+
     /** Section 3.3: a `WT-Protocol` that is no Structured Field String is ignored, as if absent. */
     @Test fun malformedWtProtocolIsIgnored() =
         h3Test {
