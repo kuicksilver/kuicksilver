@@ -418,9 +418,17 @@ internal class KslDatagramIo private constructor(
                 refused(Unavailable("the accelerated UDP socket is unavailable in this process ($unsupported)", permanent = true))
                 return null
             }
+            // the address itself fails, as it would for the portable socket: an address error, not a refusal of ksl. Ktor's
+            // resolveAddress() answers null on the JVM but throws on Kotlin/Native: a PosixException built from errno after
+            // getaddrinfo failed, whose errno is stale (getaddrinfo reports through its return code; the iOS simulator said
+            // ENOTCONN), kept only as the cause
             val ip =
-                addressResolver(local) ?: run {
-                    // the address itself fails, as it would for the portable socket: an address error, not a refusal of ksl
+                try {
+                    addressResolver(local)
+                } catch (e: Exception) {
+                    refused(kotlinx.io.IOException("the bind address $local does not resolve to an IP address", e))
+                    return null
+                } ?: run {
                     refused(kotlinx.io.IOException("the bind address $local does not resolve to an IP address"))
                     return null
                 }
@@ -500,7 +508,10 @@ internal class KslDatagramIo private constructor(
         /** Why the accelerated socket cannot work in this process ([KslUdpSocket.unsupportedReason]); a test replaces it. */
         internal var unsupportedReason: () -> String? = { KslUdpSocket.unsupportedReason }
 
-        /** The bind address's IP bytes, null when it does not resolve; a test replaces it (no DNS answer is certain). */
+        /**
+         * The bind address's IP bytes, null when it does not resolve (the JVM); on Kotlin/Native a name that does not resolve
+         * throws instead ([open] takes either as the address error). A test replaces it (no DNS answer is certain).
+         */
         internal var addressResolver: (InetSocketAddress) -> ByteArray? = { it.resolveAddress() }
 
         /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */

@@ -80,6 +80,45 @@ class KtorDatagramIoTest {
         }
 
     /**
+     * What Ktor's `resolveAddress()` really does on Kotlin/Native for a name that does not resolve: it throws, a
+     * `PosixException` built from `errno` after `getaddrinfo` failed (`getaddrinfo` reports through its return code, so that
+     * errno is stale: the iOS simulator said ENOTCONN for `no-such-host.invalid`). That is the address error too, an
+     * `IOException` naming the address, for the client socket and for the server's bind, not the stale errno. Red before:
+     * the PosixException escaped `KslDatagramIo.open` as it was.
+     */
+    @Test fun negative_aBindAddressWhoseResolverThrowsIsAnAddressError() =
+        runBlocking {
+            val real = KslDatagramIo.addressResolver
+            val stale =
+                io.ktor.utils.io.errors.PosixException
+                    .forErrno(platform.posix.ENOTCONN)
+            KslDatagramIo.addressResolver = { throw stale }
+            try {
+                val seen = ArrayList<Throwable>()
+                assertNull(KslDatagramIo.open(InetSocketAddress("unresolvable.test", 0), refused = { seen += it }))
+                val r = seen.singleOrNull()
+                assertTrue(r is IOException && r !is QuicException, "refused gets the address error: $seen")
+                assertTrue("unresolvable.test" in (r.message ?: ""), "${r.message}")
+                assertSame(stale, r.cause, "the resolver's failure kept as the cause")
+                val e = assertFailsWith<IOException> { DatagramIo.open(InetSocketAddress("unresolvable.test", 0)).close() }
+                assertTrue(e !is QuicException, "an address error, not no DF: $e")
+                val server =
+                    quicEndpointConfig {
+                        server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                        crypto = NullCryptoProvider
+                        logger = KuicksilverLogger.None
+                    }
+                val s =
+                    runCatching { QuicEndpoint.bind(InetSocketAddress("unresolvable.test", 0), server).closeAndJoin() }
+                        .exceptionOrNull()
+                assertTrue(s is IOException && s !is QuicException, "the server's bind: the address error, got $s")
+                assertTrue("unresolvable.test" in (s.message ?: ""), "${s.message}")
+            } finally {
+                KslDatagramIo.addressResolver = real
+            }
+        }
+
+    /**
      * Any other refusal of the accelerated socket (a `KslException`: limits, a sandbox) reaches the caller through
      * `refused` and ends in a lack of DF that is not lasting (the socket may open next time), with the refusal attached as
      * suppressed; a refused bind (an `IOException`) is thrown as it is.
