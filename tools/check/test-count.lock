@@ -4824,6 +4824,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.st
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.theMoveToThePreferredAddressKeepsTheSearchsWaitForData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.userMigrationAbandonsPendingPreferredProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PreferredAddressTest.withoutAnIdleTimeoutAnIdIsKeptForTheFallback
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeContentTest.probeCarriesTheRetransmissionBeforeDatagrams
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeContentTest.probesResendDataBehindPingOnlyPackets
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeSpacesTest.aHandshakePtoAlsoProbesApplicationDataInFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PtoProbeSpacesTest.aRejectionDropsTheProbeOwedForTheZeroRttFlight

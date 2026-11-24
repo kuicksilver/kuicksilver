@@ -1237,15 +1237,17 @@ internal class StreamManager(
 
     /**
      * Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent,
-     * or when the next stream is not more urgent than [below] (a datagram's urgency: [urgencyOf] below it).
+     * or when the next stream is not more urgent than [below] (a datagram's urgency: [urgencyOf] below it). With [retransmitOnly]
+     * only streams with bytes queued for retransmission are taken, in scheduling order ([StreamScheduler.nextRetransmit]).
      */
     fun writeStreamFrame(
         w: WireWriter,
         frames: SentFrames,
         below: Int = Int.MAX_VALUE,
+        retransmitOnly: Boolean = false,
     ): Boolean {
         while (true) {
-            val s = scheduler.next() ?: return false
+            val s = (if (retransmitOnly) scheduler.nextRetransmit() else scheduler.next()) ?: return false
             // only streams more urgent than [below] (a datagram's urgency, DatagramSender.nextUrgency): the stream stays scheduled
             if (below != Int.MAX_VALUE && urgencyOf(s) >= below) return false
             val limit = sendLimit[s.id]!!

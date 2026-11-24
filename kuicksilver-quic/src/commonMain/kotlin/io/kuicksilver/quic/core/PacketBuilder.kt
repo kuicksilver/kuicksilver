@@ -888,9 +888,8 @@ internal class PacketBuilder(
                     ackEliciting =
                         true
                 }
-                if (c.probePending[space.ordinal] >
-                    0
-                ) {
+                val probe = c.probePending[space.ordinal] > 0
+                if (probe) {
                     if (!ackEliciting) {
                         FrameEncoder.ping(w)
                         frames.flags = frames.flags or SentFrames.PING
@@ -1023,6 +1022,10 @@ internal class PacketBuilder(
                         }
                     }
                     if (writeControlFrames(w, frames)) ackEliciting = true
+                    // a PTO probe carries the stream data of the packets it took over (requeueForProbe) ahead of any DATAGRAM: RFC 9002
+                    // section 6.2.4 lets a probe send "Previously sent data", which a DATAGRAM, never retransmitted (RFC 9221 section
+                    // 5.2), would otherwise crowd out of the one or two packets a PTO allows
+                    if (probe) while (w.remaining > 8 && c.streams.writeStreamFrame(w, frames, retransmitOnly = true)) ackEliciting = true
                     // a datagram with an urgency (DatagramSender.nextUrgency) lets strictly more urgent stream data go first
                     // (RFC 9218 section 10 as WebTransport applies it to datagrams, draft-ietf-webtrans-http3-16 section 3.4)
                     c.datagramSender?.takeIf { it.hasPending() }?.nextUrgency()?.let { u ->
@@ -1046,7 +1049,7 @@ internal class PacketBuilder(
                                     true
                             }
                         }
-                    } // RFC 9221: datagrams before stream data, inside the congestion window
+                    } // RFC 9221: outside a PTO probe, datagrams before stream data, inside the congestion window
                     if (c.testInjectDatagramBytes > 0 &&
                         w.remaining > c.testInjectDatagramBytes + 4
                     ) {
