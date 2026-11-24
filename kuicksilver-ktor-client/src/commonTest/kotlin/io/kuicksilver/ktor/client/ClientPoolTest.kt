@@ -444,6 +444,43 @@ class ClientPoolTest {
             }
         }
 
+    /**
+     * A QUIC attempt whose connect returned as its caller is cancelled (the race lost, the connect timeout) closes the
+     * connection it made: the attempt's context ends cancelled, nobody receives the connection, and it stayed open until
+     * the engine closed.
+     */
+    @Test fun negative_aQuicConnectionMadeAsItsAttemptIsCancelledIsClosed() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val h3 = (client.engine as KuicksilverEngine).h3
+                    val made = CompletableDeferred<io.kuicksilver.http3.Http3Connection>()
+                    h3.attemptConnectedForTest = { c ->
+                        made.complete(c)
+                        kotlinx.coroutines.awaitCancellation() // the attempt is cancelled before its context ends
+                    }
+                    val conn =
+                        try {
+                            coroutineScope {
+                                val call = launch { client.get("https://127.0.0.1:$port/") }
+                                val c = made.await()
+                                call.cancel()
+                                call.join()
+                                c
+                            }
+                        } finally {
+                            h3.attemptConnectedForTest = null
+                        }
+                    withTimeout(10.seconds) { conn.quic.closed.await() }
+                    assertTrue(h3.connectionsForTest().none { it === conn }, "the connection is not in the pool")
+                    assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     private companion object {
         /** Rounds of [negative_connectionWhoseTransportEndedIsNotReused]: the window it probes is a few dispatches long. */
         const val ROUNDS = 30
