@@ -80,8 +80,10 @@ opensslTargets.forEach { t ->
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), fileTree(root.resolve("tools/openssl/brotli")), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
         inputs.files(root.resolve("tools/openssl/apply-patch.pl"), fileTree(root.resolve("tools/openssl/patches")))   // ADR-0019
         inputs.files(root.resolve("tools/check/llvm-tool.sh"))   // finds the Apple targets' llvm-ar (tools/openssl/build.sh)
-        // ... from these: another llvm-ar is another archive index, so a change reruns the build
-        listOf("LLVM_AR", "ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT").forEach { inputs.property("env.$it", providers.environmentVariable(it).orElse("")) }
+        // ... from these, for the Apple targets: another llvm-ar is another archive index, so a change reruns the build
+        if (t.startsWith("macos-") || t.startsWith("ios-")) {
+            listOf("LLVM_AR", "ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT").forEach { inputs.property("env.$it", providers.environmentVariable(it).orElse("")) }
+        }
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own

@@ -6,7 +6,8 @@
 # there; with KSL_PINNED_NDK=1 (what tools/clean-build-env.sh sets for a release, the double build and verify-release's
 # rebuild) only the NDK pinned in gradle/toolchains.toml is, from ANDROID_NDK_ROOT, ANDROID_NDK_HOME or an SDK, and
 # another NDK, LLVM_AR, PATH and Homebrew are not: without the pinned NDK it fails and says so. ksl_clean_build_env sets
-# KSL_PINNED_NDK=1 and unsets an ANDROID_NDK_HOME that is not the pinned NDK, keeping one that is.
+# KSL_PINNED_NDK=1 and unsets an ANDROID_NDK_HOME that is not the pinned NDK, keeping one that is; ksl_allow_toolchain_drift
+# undoes both, and local-release.sh and verify-release.sh call it (with --allow-toolchain-drift only) before they build.
 # Usage: llvm-tool-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; root="$(cd "$here/../.." && pwd)"
@@ -42,6 +43,28 @@ mv "$sdk/ndk/$pin" "$tmp/pinned-aside"
 check "default: without the pinned NDK, the SDK's newest" "$N" 0
 check "negative_pinnedWithoutPinnedNdkFails" "no llvm-ar of the pinned NDK $pin" 1 KSL_PINNED_NDK=1 ANDROID_NDK_HOME="$tmp/other-ndk" LLVM_AR="$tmp/path/llvm-ar"
 check "pinned: the pinned NDK elsewhere, named by ANDROID_NDK_HOME" "$tmp/pinned-aside/" 0 KSL_PINNED_NDK=1 ANDROID_NDK_HOME="$tmp/pinned-aside"
+# --allow-toolchain-drift: local-release.sh and verify-release.sh leave the pinned mode after ksl_clean_build_env with their
+# own line, run here as each script has it: with the flag set, an NDK that is not the pinned one (27.0.1, the only one
+# there) serves; without it, the same environment fails. The line must come after ksl_clean_build_env and before the
+# script's first LLVM tool or build.
+drifted() { # <script> <flag value>: ksl_clean_build_env, then the script's drift line; prints ksl_llvm_tool's answer
+  local line flag
+  line=$(grep -m1 -E '^ *\[ "\$[a-z_]+" = 0 \] \|\| ksl_allow_toolchain_drift$' "$1" | sed 's/^ *//')
+  flag=$(sed -n 's/^\[ "\$\([a-z_]*\)".*/\1/p' <<< "$line")
+  [ -n "$line" ] || { echo "no drift line"; return; }
+  env -i HOME="$tmp/home" PATH="$tmp/path:/usr/bin:/bin" ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '
+    . "$1"; ksl_clean_build_env; . "$2"; eval "$3=$4"; eval "$5"; ksl_llvm_tool llvm-ar 2>&1; echo "exit $?"' _ \
+    "$root/tools/clean-build-env.sh" "$here/llvm-tool.sh" "$flag" "$2" "$line"
+}
+for s in tools/release/local-release.sh tools/verify/verify-release.sh; do
+  n=$(basename "$s" .sh); out=$(drifted "$root/$s" 1)
+  if grep -qxF "$O" <<< "$out" && [ "$(tail -1 <<< "$out")" = "exit 0" ]; then echo "PASS $n --allow-toolchain-drift: another NDK's llvm-ar"; else echo "FAIL $n --allow-toolchain-drift: another NDK's llvm-ar: $out"; rc=1; fi
+  out=$(drifted "$root/$s" 0)
+  if grep -q "no llvm-ar of the pinned NDK" <<< "$out" && [ "$(tail -1 <<< "$out")" = "exit 1" ]; then echo "PASS negative_${n}WithoutDriftRefusesOtherNdk"; else echo "FAIL negative_${n}WithoutDriftRefusesOtherNdk: $out"; rc=1; fi
+  c=$(grep -n -m1 'ksl_clean_build_env' "$root/$s" | cut -d: -f1); d=$(grep -n -m1 '|| ksl_allow_toolchain_drift$' "$root/$s" | cut -d: -f1)
+  u=$(grep -n -m1 -E 'ksl_llvm_tool |tools/openssl/build.sh"|^step ' "$root/$s" | cut -d: -f1)
+  if [ -n "$d" ] && [ "$c" -lt "$d" ] && { [ -z "$u" ] || [ "$d" -lt "$u" ]; }; then echo "PASS $n: the drift line between ksl_clean_build_env and the first build"; else echo "FAIL $n: drift line at ${d:-none}, clean at $c, first use at ${u:-none}"; rc=1; fi
+done
 mv "$tmp/pinned-aside" "$sdk/ndk/$pin"
 # ksl_clean_build_env: release mode on, a foreign ANDROID_NDK_HOME dropped, the pinned one kept
 cl() { env -i HOME="$tmp/home" PATH=/usr/bin:/bin "$@" bash -c '. "$1"; ksl_clean_build_env; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh"; }
@@ -49,5 +72,7 @@ out=$(cl ANDROID_NDK_HOME="$tmp/other-ndk")
 if [ "$out" = "1 unset" ]; then echo "PASS negative_cleanEnvDropsForeignNdkHome"; else echo "FAIL negative_cleanEnvDropsForeignNdkHome: $out"; rc=1; fi
 out=$(cl ANDROID_NDK_HOME="$sdk/ndk/$pin")
 if [ "$out" = "1 $sdk/ndk/$pin" ]; then echo "PASS clean env: keeps the pinned ANDROID_NDK_HOME"; else echo "FAIL clean env: keeps the pinned ANDROID_NDK_HOME: $out"; rc=1; fi
+out=$(env -i HOME="$tmp/home" PATH=/usr/bin:/bin ANDROID_NDK_HOME="$tmp/other-ndk" bash -c '. "$1"; ksl_clean_build_env; ksl_allow_toolchain_drift; echo "${KSL_PINNED_NDK:-unset} ${ANDROID_NDK_HOME:-unset}"' _ "$root/tools/clean-build-env.sh")
+if [ "$out" = "unset $tmp/other-ndk" ]; then echo "PASS clean env: ksl_allow_toolchain_drift undoes the pinned mode and the dropped ANDROID_NDK_HOME"; else echo "FAIL ksl_allow_toolchain_drift: $out"; rc=1; fi
 [ $rc = 0 ] && echo "llvm-tool: all controls passed"
 exit $rc

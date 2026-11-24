@@ -7,7 +7,8 @@
 # padding (the Xcode ranlib case), one that differs in a symbol name is not; a member only one archive has, a header
 # field (mtime), a GNU long name (the // table), a System V / GNU "/" index, and bytes between members are each
 # reported; the same padding rule holds for a __.SYMDEF_64; a file that is not an archive, a member that runs past the
-# end, and a BSD name length that is no number, exit 2 (never a traceback).
+# end, and a BSD name length that is no number, exit 2 (never a traceback). --llvm-index passes llvm-ar's __.SYMDEF and
+# __.SYMDEF_64 with zeroed headers and refuses Xcode's __.SYMDEF SORTED, a member with an mtime, and a non-archive.
 # Usage: ar-diff-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +57,7 @@ w("extra.a", bsd(m + [("c.o", b"CC")]))
 w("mtime.a", bsd(m, mtime_b=1759363200))
 w("b64.a", bsd(m, index="__.SYMDEF_64")); w("b64pad.a", bsd(m, pad=b"\0\x01\x02\x03", index="__.SYMDEF_64"))
 w("b64sym.a", bsd(m, syms=(("_a", 0), ("_bc", 1)), index="__.SYMDEF_64"))
+w("llvm.a", bsd(m, index="__.SYMDEF")); w("llvmtime.a", bsd(m, index="__.SYMDEF", mtime_b=1759363200))
 w("badname.a", b"!<arch>\n" + hdr("#1/x", 4) + b"abcd")
 # System V / GNU: the // long-name table, /<offset> names, a trailing / on short names
 def gnu(body_long, sym=b"\0\0\0\x01\0\0\0\x5c_xy\0"):
@@ -100,5 +102,14 @@ check "negative_badBsdNameLengthExit2" 2 "bad BSD name length '#1/x'" badname.a 
 check "negative_framingNamed" 1 "every member is identical: the archive framing differs" odd1.a odd2.a
 check "negative_notAnArchiveExit2" 2 "not an ar archive" base.a notar.a
 check "negative_truncatedMemberExit2" 2 "runs past the end" trunc.a base.a
+li() { python3 -I "$here/ar-diff.py" --llvm-index "$@" 2>&1; }
+lcheck() { # <name> <expected exit> <pattern or empty> <archive>...
+  local name="$1" code="$2" pat="$3" out c; shift 3; out=$(li "${@/#/$tmp/}"); c=$?
+  if [ "$c" = "$code" ] && { [ -z "$pat" ] && [ -z "$out" ] || [ -n "$pat" ] && grep -qE -- "$pat" <<< "$out"; }; then echo "PASS $name"; else echo "FAIL $name: exit $c: $out"; rc=1; fi
+}
+lcheck "--llvm-index: llvm-ar's __.SYMDEF and __.SYMDEF_64 pass" 0 "" llvm.a b64.a
+lcheck "negative_llvmIndexRefusesXcodeSorted" 1 "first member '__.SYMDEF SORTED', not llvm-ar's" llvm.a base.a
+lcheck "negative_llvmIndexRefusesMemberMtime" 1 "1 member header\(s\) with a nonzero mtime.*'b.o' 1759363200" llvmtime.a
+lcheck "negative_llvmIndexNotAnArchiveExit2" 2 "not an ar archive" notar.a
 [ $rc = 0 ] && echo "ar-diff: all controls passed"
 exit $rc

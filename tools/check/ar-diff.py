@@ -9,6 +9,9 @@ whether the differing bytes lie past the last symbol name the index refers to, i
 no reader looks at: the trace of an archiver that writes uninitialised memory there (Xcode's ranlib and libtool, why
 tools/openssl/build.sh archives the Apple targets with llvm-ar).
 Usage: ar-diff.py <a.a> <b.a>   exit 0 identical, 1 different (printed), 2 not two readable archives.
+       ar-diff.py --llvm-index <x.a>...   each archive's index is llvm-ar's, not Xcode's: its first member is __.SYMDEF or
+                                          __.SYMDEF_64 (Xcode's ranlib writes __.SYMDEF SORTED) and every member header
+                                          has mtime, uid and gid 0; exit 0 yes, 1 no (printed), 2 not readable.
 Formats: BSD (#1/<len> names after the header) and System V / GNU (the // name table, /<offset> names)."""
 import struct
 import sys
@@ -91,9 +94,29 @@ def bsd_index_unused(name, body):
         return None
 
 
+def llvm_index(paths):
+    bad = []
+    for p in paths:
+        ms = members(p)
+        if not ms or ms[0][0] not in ("__.SYMDEF", "__.SYMDEF_64"):
+            bad.append(f"{p}: first member '{ms[0][0] if ms else '(none)'}', not llvm-ar's __.SYMDEF index")
+        nz = [(n, f) for n, f, _ in ms if f[:3] != ["0", "0", "0"]]
+        if nz:
+            bad.append(f"{p}: {len(nz)} member header(s) with a nonzero mtime, uid or gid, e.g. '{nz[0][0]}' {' '.join(nz[0][1])}")
+    for b in bad:
+        print(f"     {b}")
+    return 1 if bad else 0
+
+
 def main(argv):
+    if len(argv) >= 3 and argv[1] == "--llvm-index":
+        try:
+            return llvm_index(argv[2:])
+        except Bad as e:
+            print(f"ar-diff: {e}", file=sys.stderr)
+            return 2
     if len(argv) != 3:
-        print(__doc__.strip().splitlines()[-2], file=sys.stderr)
+        print("usage: ar-diff.py <a.a> <b.a> | --llvm-index <x.a>...", file=sys.stderr)
         return 2
     try:
         a, b = members(argv[1]), members(argv[2])

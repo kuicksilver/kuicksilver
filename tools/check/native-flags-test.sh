@@ -15,8 +15,9 @@
 #      invocation: CC is the compiler, every project flag is still there and the builder's come after them (CPPFLAGS and
 #      CFLAGS after -Werror, LDFLAGS after the export list), a flag that cannot compile fails the build, LDFLAGS reach the
 #      linker (a link map is written) and the library still exports only its entry points. libksl.a and the test hooks
-#      (tools/build-test-hooks.sh) build with failing ar, ranlib and libtool stubs first in PATH, which never run, and
-#      without any llvm-ar both stop with a message.
+#      (tools/build-test-hooks.sh) build with failing ar, ranlib and libtool stubs first in PATH, which never run, their
+#      archives and build/openssl/macos-arm64's have llvm-ar's index and zeroed headers (tools/check/ar-diff.py
+#      --llvm-index), and without any llvm-ar both stop with a message.
 #   3. tools/check/double-build.sh (macOS) builds with the project's own compiler, flags and paths: with a CC that does not
 #      exist, flags that cannot compile, CCC_OVERRIDE_OPTIONS, CPATH, C_INCLUDE_PATH and SDKROOT (each shown to reach clang)
 #      and the other variables of tools/clean-build-env.sh in the environment, it still builds identical copies. The
@@ -329,6 +330,12 @@ exit 1
   check "negative_libkslNeverUsesXcodeAr" "$([ $rc = 0 ] && [ ! -e "$xlog" ] && echo 0 || echo 1)" "exit $rc: $(cat "$xlog" 2>/dev/null) $(tail -3 <<< "$out")"
   out=$(PATH="$xcode:$PATH" bash "$tree/tools/build-test-hooks.sh" macos-arm64 "$tmp/hooks" 2>&1); rc=$?
   check "negative_testHooksNeverUseXcodeAr" "$([ $rc = 0 ] && [ ! -e "$xlog" ] && [ -f "$tmp/hooks/libksl_test_hooks.a" ] && echo 0 || echo 1)" "exit $rc: $(cat "$xlog" 2>/dev/null) $out"
+  # ... and what they wrote is llvm-ar's (also when an Xcode archiver is called by its full path, which the stubs miss):
+  # a __.SYMDEF index, not Xcode's __.SYMDEF SORTED, and zeroed headers; likewise the OpenSSL archives build.sh made
+  for a in "$tree/build/openssl/macos-arm64/lib/libksl.a" "$tmp/hooks/libksl_test_hooks.a" "$O/lib/libcrypto.a" "$O/lib/libssl.a"; do
+    out=$(python3 -I "$root/tools/check/ar-diff.py" --llvm-index "$a" 2>&1); rc=$?
+    check "negative_xcodeIndexIn_$(basename "$a")" "$rc" "$out"
+  done
   noar() { env -u LLVM_AR -u ANDROID_NDK_ROOT -u ANDROID_NDK_HOME -u ANDROID_HOME -u ANDROID_SDK_ROOT HOME="$tmp/no-sdk" KSL_PINNED_NDK=1 PATH="$xcode:$PATH" "$@" 2>&1; }
   out=$(noar bash "$tree/tools/build-ksl-a.sh" macos-arm64); rc=$?
   check "negative_libkslWithoutLlvmArFails" "$([ $rc = 2 ] && grep -q 'no llvm-ar for macos-arm64' <<< "$out" && [ ! -e "$xlog" ] && echo 0 || echo 1)" "exit $rc: $out"
