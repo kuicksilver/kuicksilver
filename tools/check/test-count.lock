@@ -5793,7 +5793,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VarIntTest.valueAbove2P
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.chooseVersionFallsBackToOriginal
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.chooseVersionServerPreferenceFirst
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.chosenVersionZeroRejected
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.missingVersionInformationAfterVnIsError
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.missingVersionInformationAfterVnToV1IsTakenAsV1Only
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.missingVersionInformationWithoutUpgradeIsAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_availableVersionZeroRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_clientChosenVersionMismatchesInitial
@@ -5801,6 +5801,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_compatibleUpgradeWithoutVersionInformation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_downgradeAfterVersionNegotiation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_emptyAvailableVersionsAfterVnRejected
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_missingVersionInformationAfterVnToV2IsError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.negative_serverChosenVersionMismatchesPacketVersion
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.validNegotiationPasses
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.versionInformationLengthNotMultipleOf4Rejected

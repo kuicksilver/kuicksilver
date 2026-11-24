@@ -18,6 +18,6 @@ kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt:125	if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78	// RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273	(old.resetStreamAt && !tp.resetStreamAt)
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43	private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:132	empty(RESET_STREAM_AT_LEGACY)
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:331	RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:44	private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:133	empty(RESET_STREAM_AT_LEGACY)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:332	RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {

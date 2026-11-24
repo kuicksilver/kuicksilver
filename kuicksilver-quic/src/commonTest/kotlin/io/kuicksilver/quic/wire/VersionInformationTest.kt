@@ -90,9 +90,26 @@ class VersionInformationTest {
             VersionNegotiationValidator.clientCheck(v2, v1, tp(v1, v1, v2), intArrayOf(v1), both())
         }
 
-    @Test fun missingVersionInformationAfterVnIsError() =
+    /**
+     * RFC 9368 section 8: a client "starting a QUIC version 1 connection in response to a received Version Negotiation packet"
+     * whose server sent no version_information "SHALL proceed as if the server's transport parameters contained a
+     * version_information transport parameter with a Chosen Version set to 0x00000001 and an Available Version list containing
+     * exactly one version set to 0x00000001" (ngtcp2 does): a client that started with v2 still reaches a v1-only server.
+     */
+    @Test fun missingVersionInformationAfterVnToV1IsTakenAsV1Only() {
+        VersionNegotiationValidator.clientCheck(v2, v1, TransportParameters(), intArrayOf(v1), both())
+    }
+
+    /** The substitution is for version 1 only; after a Version Negotiation to any other version the parameter is required. */
+    @Test fun negative_missingVersionInformationAfterVnToV2IsError() =
         expect11 {
-            VersionNegotiationValidator.clientCheck(v2, v1, TransportParameters(), intArrayOf(v1), both())
+            VersionNegotiationValidator.clientCheck(
+                v1,
+                v2,
+                TransportParameters(),
+                intArrayOf(v2),
+                listOf(VersionProfile.V2, VersionProfile.V1),
+            )
         }
 
     /**

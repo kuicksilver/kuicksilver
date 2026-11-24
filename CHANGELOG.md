@@ -1681,6 +1681,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client: after a Version Negotiation packet moved it to QUIC version 1, a server without `version_information` failed
+  the handshake with VERSION_NEGOTIATION_ERROR, so a client that started with v2 (`QuicConfig.versions`) could not reach a
+  server that knows only v1. RFC 9368 section 8: the client "SHALL proceed as if" the server had sent Chosen Version 1 and
+  Available Versions [1], and now does (as ngtcp2); after a Version Negotiation to another version the parameter is still
+  required.
 - QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
   `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every
   platform. On the JVM its datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's `PosixException`

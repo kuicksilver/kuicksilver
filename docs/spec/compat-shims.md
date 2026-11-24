@@ -154,8 +154,8 @@ advertised by sending the reset_stream_at (0x1d) transport parameter (Section 7.
 old codepoint is not registered; RFC 9000 §7.4.2, "An endpoint MUST ignore transport parameters that it does not
 support", keeps it harmless to peers that do not know it.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43` (the
-codepoint), :132 (sent), :331 (accepted).
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:44` (the
+codepoint), :133 (sent), :332 (accepted).
 
 **On by default.** No: `QuicConfig.resetStreamAt` is false by default; WebTransport turns it on (server and client).
 
