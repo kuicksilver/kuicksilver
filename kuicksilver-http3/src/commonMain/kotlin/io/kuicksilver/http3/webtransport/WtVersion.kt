@@ -7,8 +7,9 @@ import io.kuicksilver.http3.frame.SettingsId
 
 /**
  * The WebTransport over HTTP/3 drafts this library recognises in a peer's SETTINGS, oldest first. The wire format is
- * draft-ietf-webtrans-http3-16; the older codepoints are advertised and accepted because browsers still speak them
- * (Chrome and Firefox draft-02, Safari draft-14). Every codepoint that changes between drafts lives here.
+ * draft-ietf-webtrans-http3-17; draft-16 is spoken for the libraries that have not moved yet (webtransport-go, picoquic),
+ * and the older codepoints are advertised and accepted because browsers still speak them (Chrome and Firefox draft-02,
+ * Safari draft-14). Every codepoint and rule that changes between drafts lives here.
  */
 internal enum class WtVersion {
     /** `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02 to -06), `:protocol webtransport` with `sec-webtransport-http3-draft02: 1`. */
@@ -17,8 +18,11 @@ internal enum class WtVersion {
     /** `SETTINGS_WT_MAX_SESSIONS` (draft-13, -14), `:protocol webtransport`. */
     Draft14,
 
-    /** `SETTINGS_WT_ENABLED` (draft-15, -16), `:protocol webtransport-h3`. */
+    /** `SETTINGS_WT_ENABLED` 0x2c7cf000 (draft-15, -16), `:protocol webtransport-h3`. */
     Draft16,
+
+    /** `SETTINGS_WT_ENABLED` 0x20b8933b (draft-17 section 9.2), `:protocol webtransport-h3`. */
+    Draft17,
     ;
 
     /**
@@ -28,37 +32,50 @@ internal enum class WtVersion {
      */
     val needsResetStreamAt: Boolean get() = this != Draft02
 
-    /** The `:protocol` token a client sends to a peer of this version (draft-16 section 3.2; `webtransport` before -15). */
-    val protocolToken: String get() = if (this == Draft16) WtTokens.H3 else WtTokens.LEGACY
+    /** The `:protocol` token a client sends to a peer of this version (section 3.2 from draft-15 on; `webtransport` before). */
+    val protocolToken: String get() = if (this >= Draft16) WtTokens.H3 else WtTokens.LEGACY
 
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */
         fun of(settings: Map<Long, Long>): WtVersion? = offeredIn(settings).maxOrNull()
 
-        /** Every version the peer's [settings] announce. */
+        /**
+         * Every version the peer's [settings] announce. A draft-17 `SETTINGS_WT_ENABLED` counts only as 1: a client takes
+         * any other value from a server as a connection error, and a server ignores it from a client (draft-17 section
+         * 3.1, "a server MUST ignore it"; section 7.1 reads the codepoints a client sends as its versions).
+         */
         fun offeredIn(settings: Map<Long, Long>): Set<WtVersion> =
             buildSet {
-                if (settings[SettingsId.WT_ENABLED] == 1L) add(Draft16)
+                if (settings[SettingsId.WT_ENABLED_DRAFT17] == 1L) add(Draft17)
+                if (settings[SettingsId.WT_ENABLED_DRAFT16] == 1L) add(Draft16)
                 if ((settings[SettingsId.WT_MAX_SESSIONS_DRAFT14] ?: 0L) > 0L) add(Draft14)
                 if ((settings[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) != 0L) add(Draft02)
             }
 
-        /** The versions we announce ([WtSettings.ours]): a server every one, a client draft-16 and draft-02. */
-        fun ours(isServer: Boolean): Set<WtVersion> = if (isServer) entries.toSet() else setOf(Draft16, Draft02)
+        /** The versions we announce ([WtSettings.ours]): a server every one, a client draft-17, draft-16 and draft-02. */
+        fun ours(isServer: Boolean): Set<WtVersion> = if (isServer) entries.toSet() else setOf(Draft17, Draft16, Draft02)
 
         /**
-         * The versions both sides announce, highest first: draft-16 section 7.1, "The highest version supported by both
-         * endpoints is selected". A version only the peer announces is never chosen.
+         * The versions a session on this connection may run, highest first: those both sides announce (draft-17 section
+         * 7.1, "The highest version supported by both endpoints is selected"; a version only the peer announces is never
+         * chosen). A server whose client announces none selects draft-17: section 7.1, "Otherwise, the server selects the
+         * version described in this document. For example, a client that supports only the version described in this
+         * document does not send SETTINGS_WT_ENABLED, so the server selects that version". A client never assumes one: "A
+         * client that supports only draft versions that the server does not support finds none of its codepoints in the
+         * server's SETTINGS, so it treats the server as not supporting WebTransport".
          */
         fun common(
             peer: Map<Long, Long>,
             isServer: Boolean,
-        ): List<WtVersion> = (offeredIn(peer) intersect ours(isServer)).sortedDescending()
+        ): List<WtVersion> {
+            val both = (offeredIn(peer) intersect ours(isServer)).sortedDescending()
+            return if (isServer && both.isEmpty()) listOf(Draft17) else both
+        }
     }
 }
 
 /**
- * Why the peer of [h3] cannot carry a WebTransport session of [version] by its transport parameters (draft-16 and draft-14
+ * Why the peer of [h3] cannot carry a WebTransport session of [version] by its transport parameters (draft-14 to -17
  * section 3.1: `max_datagram_frame_size` above 0 and, from draft-14 on, `reset_stream_at`, both on both sides), or null
  * when it can. The peer's SETTINGS are checked by the callers.
  */
@@ -118,10 +135,10 @@ internal fun wtServerVersion(
 }
 
 private const val NO_COMMON_VERSION =
-    "the peer announces no WebTransport draft we speak (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
-        "draft-02 SETTINGS_ENABLE_WEBTRANSPORT)"
+    "the peer announces no WebTransport draft we speak (SETTINGS_WT_ENABLED of draft-17 or draft-16, draft-14 " +
+        "SETTINGS_WT_MAX_SESSIONS or draft-02 SETTINGS_ENABLE_WEBTRANSPORT)"
 
-/** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-16 section 3.1); identifiers in [SettingsId]. */
+/** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-17 section 3.1); identifiers in [SettingsId]. */
 internal object WtSettings {
     /**
      * The codepoints this library interprets; the peer's are taken out of `Http3PeerSettings.unknown`. The flow-control
@@ -131,7 +148,8 @@ internal object WtSettings {
      */
     val ALL: Set<Long> =
         setOf(
-            SettingsId.WT_ENABLED,
+            SettingsId.WT_ENABLED_DRAFT17,
+            SettingsId.WT_ENABLED_DRAFT16,
             SettingsId.WT_MAX_SESSIONS_DRAFT14,
             SettingsId.ENABLE_WEBTRANSPORT_DRAFT02,
             SettingsId.WT_INITIAL_MAX_STREAMS_UNI,
@@ -140,8 +158,10 @@ internal object WtSettings {
         )
 
     /**
-     * What we advertise. A server announces every version so each browser finds its own; a client announces draft-16 and
-     * draft-02. Both send their non-zero initial flow-control limits (section 5.5), which declare WebTransport flow
+     * What we advertise. A server announces every version so each browser and library finds its own; a client announces
+     * draft-17, draft-16 and draft-02 (draft-17 section 3.1: "For draft versions of WebTransport only, clients MUST also
+     * send SETTINGS_WT_ENABLED for each draft version they support"; section 7.1: "An endpoint that supports multiple draft
+     * versions sends SETTINGS_WT_ENABLED once for each distinct codepoint"). Both send their non-zero initial flow-control limits (section 5.5), which declare WebTransport flow
      * control (section 5.1), and a server tells draft-14 clients how many sessions it takes at once
      * (`SETTINGS_WT_MAX_SESSIONS`, [Http3Settings.webTransportMaxSessions] with flow control, else 1: draft-14 section
      * 5.1 counts a value above 1 as declaring flow control).
@@ -158,7 +178,8 @@ internal object WtSettings {
                         if (settings.webTransportFlowControl) settings.webTransportMaxSessions.toLong() else 1L,
                 )
             }
-            add(SettingsId.WT_ENABLED to 1L)
+            add(SettingsId.WT_ENABLED_DRAFT16 to 1L)
+            add(SettingsId.WT_ENABLED_DRAFT17 to 1L)
             if (settings.webTransportInitialMaxStreamsUni != 0L) {
                 add(SettingsId.WT_INITIAL_MAX_STREAMS_UNI to settings.webTransportInitialMaxStreamsUni)
             }
@@ -171,7 +192,7 @@ internal object WtSettings {
 
 /** `:protocol` tokens of a WebTransport Extended CONNECT. */
 internal object WtTokens {
-    /** draft-15 and later (section 3.2). */
+    /** draft-15 and later (section 3.2), draft-17 included. */
     const val H3: String = "webtransport-h3"
 
     /** draft-02 to -14, still sent by every browser. */

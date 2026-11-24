@@ -309,7 +309,11 @@ internal class H3Qlog(
          */
         val TOKEN_VALUES: Set<String> = setOf(":method", ":scheme", ":status", ":protocol")
 
-        /** The settings' names in their IANA registries (as quiche's qlog writes them); others go by their number. */
+        /**
+         * The settings' names in their IANA registries (as quiche's qlog writes them); others go by their number. A name is
+         * a JSON key of `http:parameters_set`, so it names one codepoint: `SETTINGS_WT_ENABLED` is draft-17's (its section
+         * 9.2), and draft-16's 0x2c7cf000 goes by its number.
+         */
         val SETTING_NAMES: Map<Long, String> =
             mapOf(
                 SettingsId.QPACK_MAX_TABLE_CAPACITY to "QPACK_MAX_TABLE_CAPACITY",
@@ -317,7 +321,7 @@ internal class H3Qlog(
                 SettingsId.QPACK_BLOCKED_STREAMS to "QPACK_BLOCKED_STREAMS",
                 SettingsId.ENABLE_CONNECT_PROTOCOL to "SETTINGS_ENABLE_CONNECT_PROTOCOL",
                 SettingsId.H3_DATAGRAM to "H3_DATAGRAM",
-                SettingsId.WT_ENABLED to "SETTINGS_WT_ENABLED",
+                SettingsId.WT_ENABLED_DRAFT17 to "SETTINGS_WT_ENABLED",
                 SettingsId.WT_MAX_SESSIONS_DRAFT14 to "SETTINGS_WT_MAX_SESSIONS",
                 SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to "SETTINGS_ENABLE_WEBTRANSPORT",
                 SettingsId.WT_INITIAL_MAX_STREAMS_UNI to "SETTINGS_WT_INITIAL_MAX_STREAMS_UNI",

@@ -47,7 +47,8 @@ public class Http3Settings private constructor(
     @property:ExperimentalKuicksilverApi
     public val earlyData: Http3EarlyDataPolicy,
     /**
-     * Speak WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16): advertise its SETTINGS and route WebTransport streams to
+     * Speak WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17, and the drafts browsers and other libraries still
+     * speak: -16, -14, -02): advertise its SETTINGS and route WebTransport streams to
      * sessions. Needs [enableConnectProtocol][Http3Settings.enableConnectProtocol] and [h3Datagram][Http3Settings.h3Datagram].
      */
     @property:ExperimentalKuicksilverApi
@@ -132,10 +133,11 @@ public class Http3Settings private constructor(
         public var earlyData: Http3EarlyDataPolicy = Http3EarlyDataPolicy.WaitForHandshake()
 
         /**
-         * WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16); false by default. A server advertises
-         * `SETTINGS_WT_ENABLED`, `SETTINGS_WT_MAX_SESSIONS` (draft-14: [webTransportMaxSessions] with flow control, else 1)
-         * and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02), so browsers that still speak the older drafts find theirs; a client
-         * advertises the first and the last. Both add the non-zero `SETTINGS_WT_INITIAL_*` values that declare WebTransport
+         * WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17); false by default. A server advertises
+         * `SETTINGS_WT_ENABLED` of draft-17 and of draft-16, `SETTINGS_WT_MAX_SESSIONS` (draft-14:
+         * [webTransportMaxSessions] with flow control, else 1) and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02), so browsers
+         * and libraries that still speak the older drafts find theirs; a client advertises all but draft-14's. The highest
+         * version both sides speak is used (draft-17 section 7.1). Both add the non-zero `SETTINGS_WT_INITIAL_*` values that declare WebTransport
          * flow control (section 5), which lets several sessions share a connection. [build]
          * refuses it without [enableConnectProtocol] and [h3Datagram]: sessions are Extended CONNECT requests and carry
          * HTTP datagrams.
@@ -338,7 +340,8 @@ public class Http3PeerSettings internal constructor(
     /** Settings this library does not interpret (GREASE included); the WebTransport ones are interpreted, see [webTransport][Http3PeerSettings.webTransport]. */
     public val unknown: Map<Long, Long>,
     /**
-     * The peer speaks WebTransport over HTTP/3: it sent `SETTINGS_WT_ENABLED=1` (draft-15 and later), a non-zero
+     * The peer speaks WebTransport over HTTP/3: it sent `SETTINGS_WT_ENABLED=1` (draft-17's 0x20b8933b or draft-15 and
+     * -16's 0x2c7cf000), a non-zero
      * `SETTINGS_WT_MAX_SESSIONS` (draft-13, -14) or `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02).
      */
     @property:ExperimentalKuicksilverApi

@@ -15,8 +15,15 @@ internal object SettingsId {
     const val ENABLE_CONNECT_PROTOCOL: Long = 0x8
     const val H3_DATAGRAM: Long = 0x33
 
-    /** `SETTINGS_WT_ENABLED` (WebTransport draft-15 and later): 0 or 1, anything else is H3_SETTINGS_ERROR. */
-    const val WT_ENABLED: Long = 0x2c7cf000
+    /**
+     * `SETTINGS_WT_ENABLED` of WebTransport draft-17 (its section 9.2): 0 or 1. A client takes any other value from a server
+     * as H3_SETTINGS_ERROR; a server ignores the value a client sends, but for a 1, which names draft-17 among the drafts
+     * the client supports (draft-17 sections 3.1, 7.1). Checked in `applyPeerSettings`, which knows our role.
+     */
+    const val WT_ENABLED_DRAFT17: Long = 0x20b8933b
+
+    /** `SETTINGS_WT_ENABLED` of WebTransport draft-15 and -16: 0 or 1, anything else is H3_SETTINGS_ERROR. */
+    const val WT_ENABLED_DRAFT16: Long = 0x2c7cf000
 
     /** `SETTINGS_WT_MAX_SESSIONS` of WebTransport draft-13 and -14: how many sessions the server accepts at once. */
     const val WT_MAX_SESSIONS_DRAFT14: Long = 0x14e9cd29
@@ -73,7 +80,7 @@ internal object SettingsCodec {
             p += VarInt.encodedLength(payload[p])
             if (id in SettingsId.H2_RESERVED) throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "HTTP/2 setting 0x${id.toString(16)}")
             if (id in out) throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "duplicate setting 0x${id.toString(16)}")
-            if ((id == SettingsId.ENABLE_CONNECT_PROTOCOL || id == SettingsId.H3_DATAGRAM || id == SettingsId.WT_ENABLED) &&
+            if ((id == SettingsId.ENABLE_CONNECT_PROTOCOL || id == SettingsId.H3_DATAGRAM || id == SettingsId.WT_ENABLED_DRAFT16) &&
                 v > 1
             ) {
                 throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "setting 0x${id.toString(16)} must be 0 or 1")

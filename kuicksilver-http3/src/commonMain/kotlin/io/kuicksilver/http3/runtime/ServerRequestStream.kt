@@ -33,6 +33,7 @@ import io.kuicksilver.http3.webtransport.WtFlow
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
+import io.kuicksilver.http3.webtransport.WtVersion
 import io.kuicksilver.http3.webtransport.wtServerVersion
 import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
@@ -728,7 +729,10 @@ internal class ServerRequestImpl(
         )
     }
 
-    /** `acceptWebTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 7.1). */
+    /** This CONNECT's `:protocol` is draft-15 and later's `webtransport-h3` (in any case, [WtTokens.isWebTransport]). */
+    private fun wtProtocolIsH3(): Boolean = protocol.equals(WtTokens.H3, ignoreCase = true)
+
+    /** `acceptWebTransport` (draft-ietf-webtrans-http3-17 sections 3.2, 3.3, 7.1). */
     suspend fun acceptWebTransport(
         headers: Http3Headers,
         protocol: String?,
@@ -741,10 +745,12 @@ internal class ServerRequestImpl(
         // section 3.1: "If the server receives SETTINGS that do not have correct values for every required setting, or
         // transport parameters that do not have correct values for every required transport parameter, the server MUST treat
         // all established and newly incoming WebTransport sessions as malformed"; a session is established only here, once
-        // the client's SETTINGS arrived, so none was before. The client's own WebTransport setting is required too: "For
-        // draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with the draft-specific codepoint"
-        // (draft-14: SETTINGS_WT_MAX_SESSIONS above 0, draft-02: SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send)
-        // A client that announces a newer draft without its transport parameters but also draft-02 is served only when this
+        // the client's SETTINGS arrived, so none was before. The version is the one section 7.1 selects from the client's
+        // codepoints (draft-17 and -16 SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS above 0, draft-02
+        // SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send): the highest, or draft-17 when it sent none ("Otherwise,
+        // the server selects the version described in this document"), whose token is webtransport-h3; the older token
+        // from such a client asks for a draft whose own setting it did not send (draft-02 and draft-14 section 3.1). A
+        // client that announces a newer draft without its transport parameters but also draft-02 is served only when this
         // CONNECT is a draft-02 request ([wtServerVersion]).
         val draft02Request =
             this@ServerRequestImpl.protocol.equals(WtTokens.LEGACY, ignoreCase = true) &&
@@ -756,9 +762,9 @@ internal class ServerRequestImpl(
                     "no SETTINGS from the client within ${session.wtDeadline}"
                 }
 
-                session.highestCommonWtVersion() == null -> {
-                    "the client sent no WebTransport setting (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
-                        "draft-02 SETTINGS_ENABLE_WEBTRANSPORT), which WebTransport needs"
+                WtVersion.offeredIn(session.wtPeerSettings).isEmpty() && !wtProtocolIsH3() -> {
+                    "the client sent no WebTransport setting, so the version is draft-17 (draft-ietf-webtrans-http3-17 " +
+                        "section 7.1), whose :protocol is ${WtTokens.H3}, not '${this@ServerRequestImpl.protocol}'"
                 }
 
                 !ps.h3Datagram -> {

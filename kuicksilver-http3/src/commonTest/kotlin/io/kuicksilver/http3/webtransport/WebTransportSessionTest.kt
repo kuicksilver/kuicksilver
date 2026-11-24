@@ -450,7 +450,7 @@ class WebTransportSessionTest {
                 val (c, s) = q.connect(H3Fixtures.quic)
                 val server = Http3Connection.server(s, wtOn)
                 val raw = RawPeer(c)
-                raw.openControl(listOf(SettingsId.WT_ENABLED to 1L))
+                raw.openControl(listOf(SettingsId.WT_ENABLED_DRAFT16 to 1L))
                 val st = c.openBidi()
                 st.output.writeFully(raw.wtConnect(st))
                 st.output.flush()
@@ -473,7 +473,7 @@ class WebTransportSessionTest {
                     listOf(
                         SettingsId.ENABLE_CONNECT_PROTOCOL to 1L,
                         SettingsId.H3_DATAGRAM to 1L,
-                        SettingsId.WT_ENABLED to 1L,
+                        SettingsId.WT_ENABLED_DRAFT16 to 1L,
                     ),
                 )
                 val client = Http3Connection.client(c, wtOn)
@@ -564,14 +564,14 @@ class WebTransportSessionTest {
      */
     @Test fun negative_acceptWithoutClientResetStreamAtIsMalformed() =
         h3Test {
-            for (version in listOf(SettingsId.WT_ENABLED, SettingsId.WT_MAX_SESSIONS_DRAFT14)) {
+            for (version in listOf(SettingsId.WT_ENABLED_DRAFT16, SettingsId.WT_MAX_SESSIONS_DRAFT14)) {
                 QuicPair.open(H3Fixtures.quic).useScoped { q ->
                     val (c, s) = q.connect(QuicConfig.Default)
                     val server = Http3Connection.server(s, wtOn)
                     val raw = RawPeer(c)
                     raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, version to 1L))
                     val st = c.openBidi()
-                    st.output.writeFully(raw.wtConnect(st, if (version == SettingsId.WT_ENABLED) WtTokens.H3 else WtTokens.LEGACY))
+                    st.output.writeFully(raw.wtConnect(st, if (version == SettingsId.WT_ENABLED_DRAFT16) WtTokens.H3 else WtTokens.LEGACY))
                     st.output.flush()
                     val r = withTimeout(5.seconds) { server.acceptRequest() }
                     val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
@@ -598,28 +598,6 @@ class WebTransportSessionTest {
                 st.output.writeFully(raw.wtConnect(st, WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1"))
                 st.output.flush()
                 assertEquals("200", readHeaders(st)[":status"])
-            }
-        }
-
-    /**
-     * Sections 3.1, 7.1 (and draft-02 section 3.1, draft-14 section 3.1): a client must announce its WebTransport version
-     * with its own setting; a client that sent none makes the session malformed.
-     */
-    @Test fun negative_acceptWithoutClientWtSettingIsMalformed() =
-        h3Test {
-            QuicPair.open(H3Fixtures.quic).useScoped { q ->
-                val (c, s) = q.connect(H3Fixtures.quic)
-                val server = Http3Connection.server(s, wtOn)
-                val raw = RawPeer(c)
-                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
-                val st = c.openBidi()
-                st.output.writeFully(raw.wtConnect(st))
-                st.output.flush()
-                val r = withTimeout(5.seconds) { server.acceptRequest() }
-                val e = assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
-                assertTrue("SETTINGS_WT_ENABLED" in e.message.orEmpty(), e.message)
-                assertEquals("400", readHeaders(st)[":status"])
-                assertMessageErrorStop(st)
             }
         }
 

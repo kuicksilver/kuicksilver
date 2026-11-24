@@ -78,7 +78,7 @@ internal suspend fun peerSettingsOf(q: QuicConnection): Map<Long, Long> {
 class WebTransportSettingsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    /** draft-ietf-webtrans-http3-16 section 3.1 and the codepoints browsers still use (draft-02, draft-14). */
+    /** draft-ietf-webtrans-http3-17 sections 3.1, 7.1, draft-16 for webtransport-go and picoquic, and the codepoints browsers still use (draft-02, draft-14). */
     @Test fun serverAdvertisesAllWtCodepoints() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->
@@ -87,7 +87,8 @@ class WebTransportSettingsTest {
                 val m = peerSettingsOf(c)
                 assertEquals(1L, m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02])
                 assertEquals(4L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
-                assertEquals(1L, m[SettingsId.WT_ENABLED])
+                assertEquals(1L, m[SettingsId.WT_ENABLED_DRAFT16])
+                assertEquals(1L, m[SettingsId.WT_ENABLED_DRAFT17])
                 assertEquals(1L, m[SettingsId.ENABLE_CONNECT_PROTOCOL])
                 assertEquals(1L, m[SettingsId.H3_DATAGRAM])
                 // WebTransport flow control declared with the default limits (section 5.5)
@@ -109,6 +110,10 @@ class WebTransportSettingsTest {
             }
         }
 
+    /**
+     * draft-17 section 3.1: "For draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED for each
+     * draft version they support": draft-17, draft-16 and draft-02; never the draft-14 we do not offer.
+     */
     @Test fun clientAdvertisesWtEnabled() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->
@@ -117,8 +122,10 @@ class WebTransportSettingsTest {
                 raw.openControl()
                 Http3Connection.client(c, wtOn)
                 val m = peerSettingsOf(s)
-                assertEquals(1L, m[SettingsId.WT_ENABLED])
+                assertEquals(1L, m[SettingsId.WT_ENABLED_DRAFT17])
+                assertEquals(1L, m[SettingsId.WT_ENABLED_DRAFT16])
                 assertEquals(1L, m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02])
+                assertNull(m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
             }
         }
 
@@ -128,7 +135,12 @@ class WebTransportSettingsTest {
                 val (c, s) = q.connect(H3Fixtures.quic)
                 Http3Connection.server(s, http3Settings { enableConnectProtocol = true })
                 val m = peerSettingsOf(c)
-                for (k in listOf(SettingsId.WT_ENABLED, SettingsId.WT_MAX_SESSIONS_DRAFT14, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02)) {
+                for (k in listOf(
+                    SettingsId.WT_ENABLED_DRAFT17,
+                    SettingsId.WT_ENABLED_DRAFT16,
+                    SettingsId.WT_MAX_SESSIONS_DRAFT14,
+                    SettingsId.ENABLE_WEBTRANSPORT_DRAFT02,
+                )) {
                     assertNull(m[k], "0x${k.toString(16)}")
                 }
             }
@@ -140,7 +152,7 @@ class WebTransportSettingsTest {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val (c, s) = q.connect(H3Fixtures.quic)
                 val raw = RawPeer(s)
-                raw.openControl(listOf(SettingsId.WT_ENABLED to 2L))
+                raw.openControl(listOf(SettingsId.WT_ENABLED_DRAFT16 to 2L))
                 runCatching { Http3Connection.client(c, wtOn) } // may already fail with the error it sent
                 assertEquals(Http3ErrorCode.SETTINGS_ERROR, withTimeout(5.seconds) { peerSawClose(s) })
             }

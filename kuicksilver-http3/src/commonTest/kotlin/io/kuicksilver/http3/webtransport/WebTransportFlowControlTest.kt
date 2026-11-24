@@ -1219,7 +1219,7 @@ class WebTransportFlowControlTest {
     @Test fun negative_resumedSettingsThatLowerFlowControlAreIncompatible() {
         val stored =
             mapOf(
-                SettingsId.WT_ENABLED to 1L,
+                SettingsId.WT_ENABLED_DRAFT16 to 1L,
                 SettingsId.WT_INITIAL_MAX_DATA to 1000L,
                 SettingsId.WT_INITIAL_MAX_STREAMS_BIDI to 10L,
             )

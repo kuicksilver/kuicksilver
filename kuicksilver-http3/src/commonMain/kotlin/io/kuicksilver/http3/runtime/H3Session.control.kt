@@ -402,9 +402,15 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     // value other than 0 or 1 one (checked by the codec). HTTP/3 Datagrams are QUIC DATAGRAM frames (section 2.1), which
     // RFC 9221 section 3 forbids sending to such a peer, so none is sent ([DatagramDemux.unsupported])
     // draft-ietf-webtrans-http3-02 section 3.1: "an endpoint that receives a value other than "0" or "1" MUST close the
-    // connection with the H3_SETTINGS_ERROR error code" (SETTINGS_WT_ENABLED is checked by the codec for every draft)
+    // connection with the H3_SETTINGS_ERROR error code" (draft-16's SETTINGS_WT_ENABLED is checked by the codec)
     if (settings.webTransport && (m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) > 1L) {
         throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
+    }
+    // draft-ietf-webtrans-http3-17 section 3.1: "Clients MUST treat values greater than "1" as a connection error of type
+    // H3_SETTINGS_ERROR"; "SETTINGS_WT_ENABLED has no meaning when sent by a client; a server MUST ignore it" (a server
+    // reads only a 1 as a version, section 7.1: [WtVersion.offeredIn])
+    if (!isServer && (m[SettingsId.WT_ENABLED_DRAFT17] ?: 0L) > 1L) {
+        throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_WT_ENABLED (draft-17) must be 0 or 1")
     }
     if (!isServer) {
         // RFC 9114 section 7.2.4.2: after an accepted 0-RTT, SETTINGS that lower or omit what the client relied on are

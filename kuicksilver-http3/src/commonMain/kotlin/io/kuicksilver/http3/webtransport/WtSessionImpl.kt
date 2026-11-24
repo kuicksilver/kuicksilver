@@ -750,7 +750,9 @@ internal suspend fun H3Session.webTransport(
         withinWtDeadline { awaitPeerSettings() }
             ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtDeadline")
     if (highestCommonWtVersion() == null) {
-        throw Http3Exception.Settings("the server does not offer WebTransport in a draft we speak (draft-16 or draft-02) in its SETTINGS")
+        throw Http3Exception.Settings(
+            "the server does not offer WebTransport in a draft we speak (draft-17, draft-16 or draft-02) in its SETTINGS",
+        )
     }
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
     // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
@@ -780,7 +782,7 @@ internal suspend fun H3Session.webTransport(
         val fields =
             buildList {
                 addAll(r.headers.fields)
-                if (version != WtVersion.Draft16) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
+                if (version == WtVersion.Draft02) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
                 if (protocols.isNotEmpty()) add(WtProtocols.AVAILABLE_FIELD to WtProtocols.formatList(protocols))
             }
         val ended = CompletableDeferred<Unit>()
