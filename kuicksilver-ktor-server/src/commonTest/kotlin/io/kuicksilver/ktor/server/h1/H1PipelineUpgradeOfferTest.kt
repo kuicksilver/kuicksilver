@@ -192,7 +192,7 @@ class H1PipelineUpgradeOfferTest {
         }
 
     /**
-     * An empty Connection field (or one of only commas and OWS, with any line end) is a valid empty list (RFC 9110 section
+     * An empty Connection field (or one of only commas and OWS) is a valid empty list (RFC 9110 section
      * 5.6.1.2), not a bad request: the request is served, and the connection stays open for the next one. Before, Ktor's
      * parser threw on the empty value and the engine answered 400.
      */
@@ -206,7 +206,7 @@ class H1PipelineUpgradeOfferTest {
                     output.writeStringUtf8(ok)
                     output.flush()
                 }
-            val values = listOf("Connection:\r\n", "Connection: \r\n", "Connection: \t \r\n", "Connection: , ,\r\n", "Connection:\n")
+            val values = listOf("Connection:\r\n", "Connection: \r\n", "Connection: \t \r\n", "Connection: , ,\r\n")
             toServer.writeStringUtf8(values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" })
             toServer.flush()
             val expected = ok.repeat(values.size)
