@@ -11,7 +11,8 @@ example to add hardening flags a distribution requires).
 
 **Before you start.** The tools the build needs are listed in [CONTRIBUTING.md, Building](../../CONTRIBUTING.md#building):
 a JDK, a C compiler, Docker for the Linux and Windows native code, the Android NDK for the AAR and, on macOS, Xcode for
-the Apple targets.
+the Apple targets (with the NDK's `llvm-ar`, which writes their archives: Xcode's `ranlib` leaves uninitialised bytes in an
+archive's index, so its archives are not reproducible).
 
 ## What the build makes
 

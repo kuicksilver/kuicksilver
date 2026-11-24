@@ -8,7 +8,7 @@
 #   targets: macos-arm64 ios-arm64 ios-sim-arm64 android-arm64 android-x86_64 android-arm
 #            linux-x64 linux-arm64 mingw-x64 linux-x64-kn linux-arm64-kn
 # Env: KSL_OPENSSL_PIN=<pin profile> (default gradle/openssl.toml; gradle/openssl-next.toml builds the 4.x of the CI job openssl-next),
-#      ANDROID_NDK_ROOT (android), KONAN_SYSROOT (-kn targets), CC override, OPT (default -Os),
+#      ANDROID_NDK_ROOT (android; also where the Apple targets' llvm-ar comes from), KONAN_SYSROOT (-kn targets), CC override, OPT (default -Os),
 #      KSL_OPENSSL_FRESH=1  never take the cache: configure and compile from the source fetch.sh just verified (release),
 #      CPPFLAGS, CFLAGS, LDFLAGS  the builder's flags, added after the project's (below)
 # The builder's CPPFLAGS, CFLAGS and LDFLAGS: OpenSSL's Configure would read them from the environment and use them in
@@ -155,6 +155,20 @@ case "$target" in
     extra="--target=$triple --sysroot=$tc/$triple/sysroot --gcc-toolchain=$tc -U_FORTIFY_SOURCE -fuse-ld=lld" ;;
   *) echo "unknown target $target" >&2; exit 2 ;;
 esac
+# The Apple targets archive with LLVM's llvm-ar (tools/check/llvm-tool.sh: the pinned NDK's when installed), never Xcode's
+# ar/ranlib: Apple's index writer (cctools libtool, which ranlib and `ar s` run) leaves the padding at the end of the
+# __.SYMDEF string table uninitialised, so the same members get a different archive from one run to the next (a stale
+# pointer's low bytes, ASLR-dependent; 7 bytes in libcrypto.a of 4.1.0) and the double build fails (tools/check/double-build.sh).
+# llvm-ar writes a BSD __.SYMDEF index for Mach-O members, zero-padded, timestamps and ids zeroed by default (deterministic
+# mode). Passed to Configure through the environment, so OpenSSL's Makefile and tools/openssl/compression.mk use it for every
+# archive step; the tool and its version are part of the cache key below.
+case "$target" in
+  macos-*|ios-*)
+    . "$root/tools/check/llvm-tool.sh"
+    llvm_ar=$(ksl_llvm_tool llvm-ar || true)
+    [ -n "$llvm_ar" ] || [ "$print_only" = 1 ] || { echo "no llvm-ar for $target (install the NDK pinned in gradle/toolchains.toml, or set LLVM_AR)" >&2; exit 2; }
+    export AR="$llvm_ar" RANLIB="$llvm_ar s" ;;
+esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
@@ -162,7 +176,7 @@ if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $patc
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
-ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder"
+ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder${AR:+|$AR|$("$AR" --version 2>/dev/null | grep -m1 -i version || echo unknown)}"
 key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}${patch_id:+|$patch_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"

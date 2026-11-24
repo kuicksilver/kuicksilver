@@ -27,7 +27,7 @@
 # KONAN_DEPS, JAVA_HOME. tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
 ksl_build_env_vars=(
   CC CXX CPP AS LD AR RANLIB NM STRIP OBJCOPY CROSS_COMPILE RC WINDRES PERL HASHBANGPERL
-  LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF
+  LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF LLVM_AR
   CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS ASFLAGS ARFLAGS RCFLAGS OPT
   CCC_OVERRIDE_OPTIONS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH COMPILER_PATH GCC_EXEC_PREFIX
   SDKROOT MACOSX_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET RC_DEBUG_OPTIONS SOURCE_DATE_EPOCH TOOLCHAINS
@@ -49,7 +49,7 @@ ksl_clean_build_env() { # [note]
 }
 ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables above that are set, on one line (empty: none),
   # leaving out the values the workflow sets on purpose, which a build gives the same result with as without:
-  #   LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF naming the pinned NDK's own tool (.github/actions/setup writes them
+  #   LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF, LLVM_AR naming the pinned NDK's own tool (.github/actions/setup writes them
   #   to GITHUB_ENV; tools/check/llvm-tool.sh takes that tool from the NDK anyway), and an SDKROOT that is the selected
   #   Xcode's macOS SDK (the one clang uses without it). The runner images set none of the others.
   local v t ok out=""
@@ -57,7 +57,7 @@ ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables abo
     [ -n "${!v+x}" ] || continue
     ok=0
     case "$v" in
-      LLVM_NM|LLVM_OBJCOPY|LLVM_OBJDUMP|LLVM_READELF)
+      LLVM_NM|LLVM_OBJCOPY|LLVM_OBJDUMP|LLVM_READELF|LLVM_AR)
         t=$(printf '%s' "${v#LLVM_}" | tr '[:upper:]' '[:lower:]')
         if [ -n "${ANDROID_NDK_ROOT:-}" ]; then
           for c in "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-"$t"; do [ "${!v}" = "$c" ] && ok=1; done

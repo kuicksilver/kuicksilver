@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Sourced by the check and prefix scripts: ksl_llvm_tool <llvm-nm|llvm-objcopy|llvm-objdump|llvm-readelf> prints the path of
-# that tool, or nothing. Order (review I1: CI runners have no ~/Library/Android/sdk):
-#   1. the explicit variable (LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF);
+# Sourced by the check, prefix and build scripts: ksl_llvm_tool <llvm-nm|llvm-objcopy|llvm-objdump|llvm-readelf|llvm-ar>
+# prints the path of that tool, or nothing (llvm-ar: the Apple targets' archiver, tools/openssl/build.sh and
+# tools/build-ksl-a.sh). Order (review I1: CI runners have no ~/Library/Android/sdk):
+#   1. the explicit variable (LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF, LLVM_AR);
 #   2. the NDK in ANDROID_NDK_ROOT / ANDROID_NDK_HOME (CI installs the pinned one, gradle/toolchains.toml);
 #   3. an SDK's ndk/<pinned version>, then its newest ndk/ (ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk, ~/Android/Sdk);
 #   4. PATH, then /usr/lib/llvm-*/bin (Ubuntu) and Homebrew's llvm.

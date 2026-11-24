@@ -723,7 +723,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { xcode: 'true', openssl-cache: apple-native }
+        # ndk: the pinned NDK's llvm-ar archives the Apple OpenSSL and libksl.a (tools/openssl/build.sh)
+        with: { ndk: 'true', xcode: 'true', openssl-cache: apple-native }
       - name: 'native: macosArm64 tests'
         run: |
           . tools/ci/matrix.sh

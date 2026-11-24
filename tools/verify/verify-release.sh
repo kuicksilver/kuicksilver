@@ -402,7 +402,7 @@ elif [ -n "$rebuilt" ]; then
     compare_target "$t" "$rebuilt"
   done
 elif [ "$tag_ok" = 1 ]; then
-  for v in LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF; do   # tools/check/llvm-tool.sh would take them over the NDK's
+  for v in LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF LLVM_AR; do   # tools/check/llvm-tool.sh would take them over the NDK's
     [ -z "${!v:-}" ] || { echo "     note: $v=${!v} is ignored: the rebuild uses the pinned NDK's tool"; unset "$v"; }
   done
   # the variables that would change a native build (the compiler, flags, include paths, CCC_OVERRIDE_OPTIONS, ...): the

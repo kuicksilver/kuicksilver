@@ -14,14 +14,21 @@ host_cc="${CC:-clang}"; read -r -a user_cflags <<< "${CPPFLAGS:-} ${CFLAGS:-}"  
 case "$host_cc" in *[*?[]*) echo "CC='$host_cc': a glob character is refused (CC is split into words, not quoted)" >&2; exit 2 ;; esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "build OpenSSL for $target first" >&2; exit 2; }
 kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"; llvm=$( (ls -d "$kdeps"/llvm-*-essentials-* "$kdeps"/llvm-*-dev-* 2>/dev/null || true) | sort -V | tail -1)   # essentials on macOS hosts, dev on Linux x64 hosts
+# Apple targets: LLVM's llvm-ar, as tools/openssl/build.sh archives OpenSSL with (Xcode's ar/ranlib leave uninitialised
+# padding in the archive index, so two runs differ); tools/check/llvm-tool.sh finds it (the pinned NDK's when installed)
+apple_ar=""
+case "$target" in
+  macos-*|ios-*) . "$root/tools/check/llvm-tool.sh"; apple_ar=$(ksl_llvm_tool llvm-ar || true)
+    [ -n "$apple_ar" ] || { echo "no llvm-ar for $target (install the NDK pinned in gradle/toolchains.toml, or set LLVM_AR)" >&2; exit 2; } ;;
+esac
 case "$target" in
   linux-x64-kn)   triple=x86_64-unknown-linux-gnu;  tc=$(ls -d "$kdeps"/$triple-gcc-8.3.0-glibc-* | head -1); CC="$llvm/bin/clang --target=$triple --sysroot=$tc/$triple/sysroot --gcc-toolchain=$tc -U_FORTIFY_SOURCE"; AR="$llvm/bin/llvm-ar" ;;
   linux-arm64-kn) triple=aarch64-unknown-linux-gnu; tc=$(ls -d "$kdeps"/$triple-gcc-8.3.0-glibc-* | head -1); CC="$llvm/bin/clang --target=$triple --sysroot=$tc/$triple/sysroot --gcc-toolchain=$tc -U_FORTIFY_SOURCE"; AR="$llvm/bin/llvm-ar" ;;
   mingw-x64)      sysroot=$(ls -d "$kdeps"/msys2-mingw-w64-x86_64-* | head -1); CC="$llvm/bin/clang --target=x86_64-w64-windows-gnu --sysroot=$sysroot -D_WIN32_WINNT=0x0A00"; AR="$llvm/bin/llvm-ar" ;;
-  macos-arm64)    CC="$host_cc -arch arm64 -mmacosx-version-min=11.0"; AR=ar ;;
-  macos-x64)      CC="$host_cc -arch x86_64 -mmacosx-version-min=11.0"; AR=ar ;;
-  ios-arm64)      CC="$(xcrun -sdk iphoneos -f clang) -isysroot $(xcrun -sdk iphoneos --show-sdk-path) -arch arm64 -mios-version-min=15.0"; AR=ar ;;
-  ios-sim-arm64)  CC="$(xcrun -sdk iphonesimulator -f clang) -isysroot $(xcrun -sdk iphonesimulator --show-sdk-path) -arch arm64 -mios-simulator-version-min=15.0"; AR=ar ;;
+  macos-arm64)    CC="$host_cc -arch arm64 -mmacosx-version-min=11.0"; AR="$apple_ar" ;;
+  macos-x64)      CC="$host_cc -arch x86_64 -mmacosx-version-min=11.0"; AR="$apple_ar" ;;
+  ios-arm64)      CC="$(xcrun -sdk iphoneos -f clang) -isysroot $(xcrun -sdk iphoneos --show-sdk-path) -arch arm64 -mios-version-min=15.0"; AR="$apple_ar" ;;
+  ios-sim-arm64)  CC="$(xcrun -sdk iphonesimulator -f clang) -isysroot $(xcrun -sdk iphonesimulator --show-sdk-path) -arch arm64 -mios-simulator-version-min=15.0"; AR="$apple_ar" ;;
   *) echo "unsupported $target" >&2; exit 2 ;;
 esac
 work="$root/build/ksl/$target"; rm -rf "$work"; mkdir -p "$work"

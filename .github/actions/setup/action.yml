@@ -6,7 +6,7 @@ name: kuicksilver setup
 description: JDK 21, Gradle, and the pinned NDK / Xcode / Kotlin/Native / OpenSSL cache a job asks for
 inputs:
   ndk:
-    description: install the NDK pinned in gradle/toolchains.toml and export ANDROID_NDK_ROOT and LLVM_* (llvm-objcopy, llvm-nm, ...)
+    description: install the NDK pinned in gradle/toolchains.toml and export ANDROID_NDK_ROOT and LLVM_* (llvm-objcopy, llvm-nm, llvm-ar, ...)
     default: 'false'
   xcode:
     description: select the Xcode pinned in gradle/toolchains.toml (macOS)
@@ -75,7 +75,7 @@ runs:
         [ "$rev" = "$pin" ] || { echo "::error::NDK at $ndk is $rev, pinned $pin"; exit 1; }
         bin=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin)
         { echo "ANDROID_NDK_ROOT=$ndk"; echo "ANDROID_NDK_HOME=$ndk"
-          for t in nm objcopy objdump readelf; do echo "LLVM_$(echo "$t" | tr '[:lower:]' '[:upper:]')=$bin/llvm-$t"; done; } >> "$GITHUB_ENV"
+          for t in nm objcopy objdump readelf ar; do echo "LLVM_$(echo "$t" | tr '[:lower:]' '[:upper:]')=$bin/llvm-$t"; done; } >> "$GITHUB_ENV"
         echo "NDK $rev at $ndk"
     - name: Kotlin/Native toolchain cache
       if: inputs.konan != ''

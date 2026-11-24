@@ -7,7 +7,8 @@
 #      LDFLAGS reach Configure as options after the project's own, in that order, and never through its environment
 #      (where Configure would put them in place of the target's flags); configure-target.txt, provenance.txt and
 #      --print-target name them; the cache key tells builds with and without them apart; Configure's own options, words
-#      that are not flags and %-escapes are refused before anything runs.
+#      that are not flags and %-escapes are refused before anything runs. The Apple targets get llvm-ar as AR and RANLIB
+#      (not Xcode's archiver, whose index is not reproducible), and another llvm-ar version is another cache key.
 #   2. tools/build-ksl-a.sh and tools/build-jni.sh (macOS, on a copy of the tree): a CC wrapper records every compiler
 #      invocation: CC is the compiler, every project flag is still there and the builder's come after them (CPPFLAGS and
 #      CFLAGS after -Werror, LDFLAGS after the export list), a flag that cannot compile fails the build, LDFLAGS reach the
@@ -228,6 +229,21 @@ check "openssl: CC does not change Android's configure line" "$([ "$a1" = "$a0" 
 ndk="$tmp/fake-ndk"; mkdir -p "$ndk/toolchains/llvm/prebuilt/host/bin"
 rm -f "$log".*; out=$(OT=android-arm64 ossl "$tmp/o-android" ANDROID_NDK_ROOT="$ndk" CC=/opt/ksl/not-the-ndk-clang); rc=$?
 check "negative_androidIgnoresBuilderCc" "$([ -s "$log.args" ] && ! grep -q '^CC=' "$log.args" && echo 0 || echo 1)" "exit $rc: $(grep '^CC=' "$log.args" 2>/dev/null) $out"
+# the Apple targets archive with llvm-ar, never Xcode's ar/ranlib (whose index leaves uninitialised padding): Configure gets it
+# in its environment as AR and RANLIB, and the tool's version is part of the cache key (another llvm-ar, another build)
+far="$tmp/fake-llvm-ar"; mkdir -p "$far"
+fake_ar() { printf '#!/bin/sh\necho "LLVM (http://llvm.org/):"\necho "  LLVM version %s"\n' "$1" > "$far/llvm-ar"; chmod +x "$far/llvm-ar"; }
+fake_ar 1.0.0-ksl-a
+rm -f "$log".*; out=$(OT=macos-arm64 ossl "$tmp/o-ar1" LLVM_AR="$far/llvm-ar"); rc=$?
+check "openssl: an Apple target archives with llvm-ar (AR and RANLIB in Configure's environment)" \
+  "$([ $rc = 0 ] && grep -qxF "AR=$far/llvm-ar" "$log.env" && grep -qxF "RANLIB=$far/llvm-ar s" "$log.env" && echo 0 || echo 1)" \
+  "exit $rc: $(grep -E '^(AR|RANLIB)=' "$log.env" 2>/dev/null) $out"
+out=$(OT=macos-arm64 ossl "$tmp/o-ar2" LLVM_AR="$far/llvm-ar")
+check "openssl: the same llvm-ar again takes the cache" "$(grep -q '^cache hit' <<< "$out" && echo 0 || echo 1)" "$out"
+fake_ar 1.0.0-ksl-b; out=$(OT=macos-arm64 ossl "$tmp/o-ar3" LLVM_AR="$far/llvm-ar")
+check "negative_otherLlvmArVersionNotReusedFromCache" "$(grep -q '^built macos-arm64' <<< "$out" && echo 0 || echo 1)" "$out"
+rm -f "$log".*; out=$(OT=ios-arm64 ossl "$tmp/o-ar4" LLVM_AR="$far/llvm-ar"); rc=$?
+check "openssl: ... and so does iOS" "$([ $rc = 0 ] && grep -qxF "AR=$far/llvm-ar" "$log.env" && echo 0 || echo 1)" "exit $rc: $out"
 
 # ------------------------------------------------------------------------------------------ tools/clean-build-env.sh
 # the variables the release, the double build and verify-release's rebuild clear: every one listed is unset, the list has
@@ -243,9 +259,9 @@ out=$( . "$root/tools/clean-build-env.sh"
   done )
 check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
 # the hosted jobs' guard: a value the workflow sets on purpose passes, anything else is named
-gfake="$tmp/guard-ndk"; mkdir -p "$gfake/toolchains/llvm/prebuilt/host/bin"; touch "$gfake"/toolchains/llvm/prebuilt/host/bin/llvm-{nm,objcopy,objdump,readelf}
+gfake="$tmp/guard-ndk"; mkdir -p "$gfake/toolchains/llvm/prebuilt/host/bin"; touch "$gfake"/toolchains/llvm/prebuilt/host/bin/llvm-{nm,objcopy,objdump,readelf,ar}
 g() { ( . "$root/tools/clean-build-env.sh"; for v in "${ksl_build_env_vars[@]}"; do unset "$v"; done; export "$@"; ksl_build_env_guard ); }
-out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_NM="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-nm" LLVM_OBJCOPY="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-objcopy")
+out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_NM="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-nm" LLVM_OBJCOPY="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-objcopy" LLVM_AR="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-ar")
 check "guard: the pinned NDK's LLVM tools (set by the setup action) pass" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
 out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_OBJCOPY=/opt/other/llvm-objcopy)
 check "negative_guardNamesForeignLlvmTool" "$([ "$out" = LLVM_OBJCOPY ] && echo 0 || echo 1)" "$out"
