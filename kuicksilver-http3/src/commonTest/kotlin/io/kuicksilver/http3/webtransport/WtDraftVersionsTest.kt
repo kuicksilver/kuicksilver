@@ -219,6 +219,40 @@ class WtDraftVersionsTest {
         }
 
     /**
+     * draft-17 and -16 section 6: a session "is terminated when ... the CONNECT stream is closed, either cleanly or
+     * abruptly, on either side", and then the endpoint "MUST reset the send side and abort reading on the receive side of
+     * all ... streams associated with the session ... using the WT_SESSION_GONE error code". A client's STOP_SENDING alone
+     * (no capsule, no FIN) makes our transport reset our side of the CONNECT stream, which closes it abruptly: the
+     * session ends as ended by the peer, with code 0 and no reason, and its streams are reset with WT_SESSION_GONE, in
+     * every draft. Before, it never ended.
+     */
+    @Test fun negative_aStopSendingAloneOnTheConnectStreamEndsTheSession() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    val session = withTimeout(5.seconds) { accepted.await() }
+                    val wt = c.wtBidi(st.id, "x".encodeToByteArray(), fin = false)
+                    val serverSide = withTimeout(5.seconds) { session.acceptBidi() }
+                    st.stopSending(Http3ErrorCode.NO_ERROR)
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(0L to "", info.code to info.reason, "$d")
+                    assertEquals(null, info.cause, "$d: ended by the peer")
+                    assertEquals(Http3ErrorCode.WT_SESSION_GONE, resetCode(wt), "$d")
+                    assertTrue(serverSide.streamId == wt.id, "$d")
+                }
+            }
+        }
+
+    /**
      * The application closes the session (or its route's handler is cancelled, which closes it with code 0) after the
      * connection ended but before the capsule reader handled the client's WT_CLOSE_SESSION, which came with the connection's
      * close (as Firefox sends it): nothing can be sent any more, so the local close must not win; `closed` reports the

@@ -139,6 +139,12 @@ Original row: draft-ietf-webtrans-http3-16 §4.4, §4.5, §4.7, §6 (session); d
 - the Capsule Protocol on the CONNECT stream (`WT_CLOSE_SESSION` terminal, ≤ 4 + 1024 bytes; `WT_DRAIN_SESSION` empty; the flow-control capsules read with flow control on, [flow-control row](#s5-flow-control), and skipped without it; other types skipped)
 - the session's streams are reset and stopped with `WT_SESSION_GONE`
 - a cancelled `close()` still ends the session completely (the CONNECT is ended in the connection's scope)
+- §6 "the CONNECT stream is closed, either cleanly or abruptly, on either side": the peer's STOP_SENDING for our side of
+  it (which our transport answers with RESET_STREAM) ends the session; the capsule reader gets one second for what the
+  peer sent before (Safari's WT_CLOSE_SESSION and FIN come in the same packet), else the session ends as ended by the
+  peer with code 0, its streams reset with WT_SESSION_GONE
+  (`webtransport.WtDraftVersionsTest.negative_aStopSendingAloneOnTheConnectStreamEndsTheSession`,
+  `.negative_theClientsCloseCapsuleWinsOverItsStopSending`)
 - a `close()` after the connection ended sends nothing and leaves the session's end to the connection's: the peer's
   WT_CLOSE_SESSION that came with its CONNECTION_CLOSE (Firefox 160 sends both in one packet) is still read and reported,
   where the local close used to report code 0, also for a Ktor route whose handler the connection's end cancelled

@@ -355,6 +355,9 @@ internal class Http3StreamImpl(
     /** [job] reads this stream: it may finish what the peer sent when the connection is lost (`H3Session.drains`). */
     internal fun drains(job: Job): Job = session.drains(job)
 
+    /** The QUIC stream this HTTP/3 stream is on (a WebTransport session watches its CONNECT stream's STOP_SENDING). */
+    internal val quicStream: QuicStream get() = st
+
     /** Logs a capsule sent or ([parsed]) read on this stream (`H3Qlog.capsule`). */
     internal fun qlogCapsule(
         parsed: Boolean,

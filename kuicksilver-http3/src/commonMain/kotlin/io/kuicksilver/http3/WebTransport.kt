@@ -93,7 +93,8 @@ public interface WebTransportSession {
      * FIN answered, which ends the CONNECT stream both ways; a peer that does not answer within five seconds is stopped
      * with STOP_SENDING WT_SESSION_GONE. Writing the capsule waits at most five seconds for the peer's flow-control
      * credit, after which the CONNECT stream is reset instead. Cancelling the call stops only its wait. Calling it on a
-     * closed session does nothing.
+     * closed session does nothing; once the connection is gone nothing can be sent, and it waits for the session's end,
+     * which the peer's last capsule decides (a WT_CLOSE_SESSION that came with the connection's close is reported).
      */
     public suspend fun close(
         code: Long = 0,

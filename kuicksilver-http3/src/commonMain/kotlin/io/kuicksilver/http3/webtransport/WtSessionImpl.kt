@@ -37,6 +37,7 @@ import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -196,6 +197,9 @@ internal class WtSessionImpl(
      */
     @Volatile private var connectionEnd: DisposableHandle? = null
 
+    /** The CONNECT stream's end that a local close started ([terminate]); close() waits for it, cancellably. */
+    @Volatile private var localEnd: Job? = null
+
     /** The peer's FIN was read (session dispatcher only). */
     private var peerFinished = false
     override val drainRequested: StateFlow<Boolean> get() = drainFlow
@@ -216,6 +220,7 @@ internal class WtSessionImpl(
         // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
         // CONNECTION_CLOSE (Firefox) still ends the session with its code
         watchers += h3.drains(h3.scope.launch { readCapsules() })
+        watchers += h3.scope.launch { watchConnectStopped() }
         if (flow != null) {
             watchers +=
                 h3.scope.launch {
@@ -358,6 +363,8 @@ internal class WtSessionImpl(
     private suspend fun terminate(
         info: WebTransportCloseInfo,
         end: End,
+        /** A local close waits for the CONNECT stream's end here; [close] waits outside its non-cancellable part instead. */
+        awaitLocalEnd: Boolean = true,
     ): Boolean {
         if (!closedInfo.complete(info)) return false
         connectionEnd?.dispose()
@@ -413,8 +420,31 @@ internal class WtSessionImpl(
                     }
                 }
             }
-        if (end == End.Locally) connectEnd?.join()
+        localEnd = connectEnd
+        if (end == End.Locally && awaitLocalEnd) connectEnd?.join()
         return true
+    }
+
+    /**
+     * The peer stopped our side of the CONNECT stream (STOP_SENDING): our transport resets it, so the stream is "closed ...
+     * abruptly" and the session terminated (draft-17 and -16 section 6). What the peer sent before still decides first:
+     * Safari's WT_CLOSE_SESSION and FIN come in the same packet as its STOP_SENDING, and the capsule reader gets
+     * [STOP_GRACE] to read them. Without them the session ends as ended by the peer, code 0 and no reason, and its streams
+     * are reset with WT_SESSION_GONE ([terminate]).
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun watchConnectStopped() {
+        val st = (stream as? io.kuicksilver.http3.runtime.Http3StreamImpl)?.quicStream ?: return
+        val code =
+            try {
+                st.awaitSendStopped()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null // the connection's end: the session ends through connectionEnd
+            } ?: return
+        if (withTimeoutOrNull(STOP_GRACE) { closedInfo.await() } != null) return
+        terminate(WebTransportCloseInfo(0, "", null), End.ByPeer)
     }
 
     /**
@@ -718,11 +748,11 @@ internal class WtSessionImpl(
                 if (h3.closed.isCompleted || h3.quic.closed.isCompleted) {
                     false
                 } else {
-                    terminate(WebTransportCloseInfo(c, r, null), End.Locally)
-                    true
+                    terminate(WebTransportCloseInfo(c, r, null), End.Locally, awaitLocalEnd = false)
                 }
             }
-        if (!local) closedInfo.await()
+        // cancellable: cancelling close() stops only this wait, the CONNECT is ended all the same
+        if (local) localEnd?.join() else closedInfo.await()
     }
 
     override fun toString(): String = "WebTransportSession($sessionId, protocol=$protocol)"
@@ -755,6 +785,12 @@ internal class WtSessionImpl(
 
         /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
         val CLOSE_TIMEOUT: Duration = 5.seconds
+
+        /**
+         * How long a session whose peer stopped our side of the CONNECT stream waits for what the peer sent before (its
+         * WT_CLOSE_SESSION and FIN, which Safari sends in the same packet) before it ends as ended by the peer.
+         */
+        val STOP_GRACE: Duration = 1.seconds
 
         /** QUIC's default `maxSendBuffer`, for a transport that does not tell its own. */
         const val DEFAULT_SEND_BUFFER: Long = 4_194_304

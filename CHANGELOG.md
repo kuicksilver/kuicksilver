@@ -1713,6 +1713,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the route's handler on it, and the route then closed the session with code 0 ahead of Safari's capsule (code 7 and
   "bye" in the manual check). Only the connection's end abandons such a request now; the session's `closed` reports
   the client's close.
+- WebTransport: a session whose peer stops our side of its CONNECT stream (STOP_SENDING) ends, as draft-17 section 6
+  asks of a CONNECT stream closed abruptly. What the peer sent before decides first, as Safari's WT_CLOSE_SESSION and
+  FIN in the same packet do; it gets one second. Otherwise the session ends as ended by the peer, with code 0, and its
+  streams are reset with WT_SESSION_GONE. A cancelled `close()` again stops only its wait.
 
 - WebTransport server: `sec-webtransport-http3-draft: draft02`, the response field Chrome's draft-02 client needs, goes
   only to a session that runs draft-02 and whose client sent `sec-webtransport-http3-draft02: 1`. Before, any request
