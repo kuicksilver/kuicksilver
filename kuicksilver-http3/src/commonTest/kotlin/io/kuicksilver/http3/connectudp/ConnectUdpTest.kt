@@ -1128,8 +1128,9 @@ class ConnectUdpTest {
                         targetFilter = UdpTargetFilter.AllowAll,
                         resolver = UdpProxyResolver { host -> if (host == "dual.example") listOf(v4, v6) else listOf(v4) },
                         socketFactory = { a ->
-                            tried += a.hostname
-                            if (':' in a.hostname) f(a) else throw IllegalStateException("injected: no IPv4 socket")
+                            // ipLiteral, not hostname: on the JVM that is getHostName(), a reverse lookup of the wildcard
+                            tried += a.ipLiteral()
+                            if (':' in a.ipLiteral()) f(a) else throw IllegalStateException("injected: no IPv4 socket")
                         },
                     )
                 }
@@ -1155,7 +1156,8 @@ class ConnectUdpTest {
                 rig { f ->
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.AllowAll,
-                        socketFactory = { a -> if (':' in a.hostname) f(a) else NoDfFor(f(a), IpFamily.V6) },
+                        // ipLiteral, not hostname: on the JVM that is getHostName(), a reverse lookup of the wildcard
+                        socketFactory = { a -> if (':' in a.ipLiteral()) f(a) else NoDfFor(f(a), IpFamily.V6) },
                     )
                 }
             rig.use { r ->

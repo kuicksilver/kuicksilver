@@ -39,7 +39,7 @@ python3 tools/check/test-discovery.py                        # every @Test can r
 python3 tools/check/test-bytecode.py                         # the same in the compiled JVM test classes (after compileTestKotlinJvm)
 python3 tools/check/test-count.py                            # every test is listed in test-count.lock; --update in the same commit
 python3 tools/check/test-sleeps.py                           # sleeps in tests only go down (test-sleeps.lock); --update lowers it
-python3 tools/check/env-apis.py                              # no host-name lookup in library code (counted in env-apis.allow)
+python3 tools/check/env-apis.py                              # no host-name lookup in library or test code (counted in env-apis.allow)
 python3 tools/check/rfc-tests.py                             # the tests a ✅ RFC section names exist, and it names one
 bash tools/check/commit-msg.sh --range main..HEAD            # a conventional type in every commit subject of the branch; cited hashes in its history
 ```

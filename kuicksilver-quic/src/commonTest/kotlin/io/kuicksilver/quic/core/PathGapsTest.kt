@@ -14,6 +14,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.endpoint.EndpointPair
+import io.kuicksilver.quic.ipLiteral
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -481,7 +482,7 @@ class PathGapsTest {
         p.use { _ ->
             val s = serverOf(p)
             val a = s.paths.active
-            val moved = InetSocketAddress(a.remote.hostname, a.remote.port + 7)
+            val moved = InetSocketAddress(a.remote.ipLiteral(), a.remote.port + 7)
             s.largestNonProbingPn = 100
             s.onPathPacket(a.socket, a.remote, 3000, nonProbing = false, datagramBytes = 1200)
             assertEquals(100, s.largestNonProbingPn, "a probing packet")
@@ -1046,7 +1047,7 @@ class PathGapsTest {
             assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, srv.state)
             assertFalse(srv.cids.hasSparePeerForTest, "no spare ID of the client's")
             val id = srv.remoteCid
-            val moved = InetSocketAddress(p.clientAddr.hostname, p.clientAddr.port + 2)
+            val moved = InetSocketAddress(p.clientAddr.ipLiteral(), p.clientAddr.port + 2)
             val sid = c.openStream(true)
             c.writeStream(sid, ByteArray(100), 0, 100, false)
             p.batch.clear()
