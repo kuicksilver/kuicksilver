@@ -51,7 +51,11 @@ internal object FrameDecoder {
 
             FrameType.ACK, FrameType.ACK_ECN, FrameType.CRYPTO -> I or H or O
 
-            FrameType.NEW_TOKEN, FrameType.PATH_RESPONSE, FrameType.HANDSHAKE_DONE -> O
+            // RFC 9000 section 12.5: "it is not possible to send the following frames in 0-RTT packets ...: ACK, CRYPTO,
+            // HANDSHAKE_DONE, NEW_TOKEN, PATH_RESPONSE, and RETIRE_CONNECTION_ID. A server MAY treat receipt of these frames in 0-RTT
+            // packets as a connection error of type PROTOCOL_VIOLATION", as ngtcp2, quic-go and picoquic do (the section 12.4 table
+            // marks RETIRE_CONNECTION_ID __01; the section 12.5 list is the narrower rule)
+            FrameType.NEW_TOKEN, FrameType.PATH_RESPONSE, FrameType.HANDSHAKE_DONE, FrameType.RETIRE_CONNECTION_ID -> O
 
             in FrameType.STREAM..0x0fL,
             FrameType.RESET_STREAM,
@@ -66,7 +70,6 @@ internal object FrameDecoder {
             FrameType.STREAMS_BLOCKED_BIDI,
             FrameType.STREAMS_BLOCKED_UNI,
             FrameType.NEW_CONNECTION_ID,
-            FrameType.RETIRE_CONNECTION_ID,
             FrameType.PATH_CHALLENGE, FrameType.CONNECTION_CLOSE_APP, FrameType.DATAGRAM, FrameType.DATAGRAM_LEN,
             -> Z or O
 
@@ -100,8 +103,14 @@ internal object FrameDecoder {
         var nonProbing = 0
         while (r.remaining > 0) {
             r.frameType = 0
+            val typeStart = r.pos
             val type = r.varint()
             r.frameType = type
+            // RFC 9000 section 12.4: "An endpoint MAY treat the receipt of a frame type that uses a longer encoding than necessary as
+            // a connection error of type PROTOCOL_VIOLATION" (the sender MUST use the shortest one); ngtcp2, quic-go and picoquic do
+            if (r.pos - typeStart != VarInt.size(type)) {
+                throw QuicWireException(TransportError.PROTOCOL_VIOLATION, type, "frame type 0x${type.toString(16)} not minimally encoded")
+            }
             when (type) {
                 FrameType.PADDING, FrameType.ACK, FrameType.ACK_ECN -> {}
 
