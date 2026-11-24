@@ -159,14 +159,16 @@ prohibited_port_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/ngtcp2_*/rebind-addr/*' -o -path '*/ngtcp2_*/rebind-port/*' \) 2>/dev/null | sort)
 }
 
-# zerortt cells of our server with the msquic client failed only on the runner's 1-RTT budget (5000 bytes over both connections),
-# taken by msquic's own DPLPMTUD probes: PING+PADDING datagrams of 1228/1260 bytes after the handshake and, once one is
-# acknowledged, a larger one (1340). The first connection only fetches the ticket and closes on it, and it sends its 1340-byte probe
-# only when our HANDSHAKE_DONE packet already acknowledges the 1260-byte one, which depends on whether msquic's Finished and that
-# probe reach our server in one receive batch (0.3.0 integration run 20261121-105505: 18 us apart, red; the run before: 0.4 ms
-# apart, green; 9 of 10 reruns green). Acknowledging in the next packet sent is RFC 9000 section 13.2.1, as ngtcp2 and quic-go do.
-# tools/interop/msquic-probe-budget.py proves it from the client-side capture: the client's 1-RTT payload is the runner's count, every
-# larger probe followed our ACK of the one before, and without the probes the client stays within the budget. Prints
+# zerortt cells of our server with the msquic client failed only on the runner's 1-RTT budget (5000 bytes of protected payload
+# over both connections) because msquic's first connection raised its DPLPMTUD probe after our ACK. msquic's PING+PADDING probes
+# carry 1207, 1239 and 1319 bytes (IPv4 packets of 1248, 1280 and 1360), 2446-5004 bytes in the saved runs. The first connection
+# only fetches the ticket and closes on it; it sends the 1319-byte probe only when our HANDSHAKE_DONE packet already acknowledges
+# the 1239-byte one, which depends on whether msquic's Finished and that probe reach our server in one receive batch (0.3.0
+# integration run 20261121-105505: 18 us apart, red; the run before: 0.4 ms apart, green; 9 of 10 reruns green). RFC 9000 section
+# 13.2.1 requires the ACK within max_ack_delay and allows it at once, which ngtcp2 and quic-go do as well.
+# tools/interop/msquic-probe-budget.py proves it from the client-side capture: the client's 1-RTT payload is the runner's count and
+# holds no STREAM, CRYPTO or other frame outside an allow-list (ACK, MAX_*, CONNECTION_CLOSE, PING, PADDING), the first connection's
+# probes grew only after our ACK of the one before, and without those raised probes the client stays within the budget. Prints
 # "<server>_<client> <case>" per cell.
 msquic_probe_budget() {
   local o cell
@@ -192,7 +194,7 @@ environment_rerun_cells() {
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
     closing_challenge "$1" | sed 's/$/ the rebind landed just after the client closed: the server challenged the new path before the close arrived, and the closing client could not answer (closing-challenge.py)/'
-    msquic_probe_budget "$1" | sed 's/$/ msquic'"'"'s own PMTU probes took the runner'"'"'s 1-RTT budget: its larger probe followed our ACK of the one before, and without the probes the client stayed within 5000 bytes (msquic-probe-budget.py)/'
+    msquic_probe_budget "$1" | sed 's/$/ msquic'"'"'s first connection raised its PMTU probe after our ACK and took the runner'"'"'s 1-RTT budget: without the raised probe the client stayed within 5000 bytes, and it sent no data in 1-RTT (msquic-probe-budget.py)/'
   } | sort -u -k1,2
 }
 

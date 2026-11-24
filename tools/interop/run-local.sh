@@ -37,8 +37,8 @@
 # and a rebind cell of the ngtcp2 server whose downloading client the sim rebound to a source port that server drops (below 1024:
 # the fixed-seed 193.167.0.155:745 at 11 s in rebind-addr), so the server kept sending to the old binding until the client idled
 # out (tools/interop/prohibited-port-rebind.py; release/0.2.x run 40563746089, ngtcp2->kuicksilver:rebind-addr), and a zerortt cell of our server
-# whose msquic client's own PMTU probes took the runner's 1-RTT budget: its larger probe followed our ACK of the one before, and
-# without the probes it stayed within 5000 bytes (tools/interop/msquic-probe-budget.py; 0.3.0 integration run 20261121-105505).
+# whose msquic client's first connection raised its PMTU probe after our ACK and took the runner's 1-RTT budget: without the raised
+# probe, and with no data in 1-RTT, it stayed within 5000 bytes (tools/interop/msquic-probe-budget.py; 0.3.0 integration run 20261121-105505).
 # The prohibited_port_rebind cell is the exception (environment-yellow, owner's decision 2026-10-28): the binding at 11 s is fixed, so
 # on a host where the transfer still runs then every rerun fails alike; it is not rerun, it gets a warning (::warning:: in CI) and
 # --check-required (check-required.py) reports it apart and does not count it red. Every other ENVIRONMENT cell that stays red fails.

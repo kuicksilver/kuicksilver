@@ -105,23 +105,32 @@ check "close: the client closed with an error code"                1 "" -- pytho
 check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
 
-# msquic-probe-budget.py: msquic's own PMTU probes took the runner's 1-RTT budget of our server's zerortt cell (0.3.0 integration,
-# the sixth of ten reruns with the image of run 20261121-105505; decoded with --dump): probes of 1252 and 1332 bytes in the first connection,
-# the second after our HANDSHAKE_DONE packet acknowledged the first, 1220 and 1252 in the second connection; 5303 bytes, 299 without them
+# msquic-probe-budget.py: msquic's first connection raised its PMTU probe after our ACK of the one before and took the runner's
+# 1-RTT budget of our server's zerortt cell (0.3.0 integration, the sixth of ten reruns with the image of run 20261121-105505;
+# decoded with --dump; sizes are protected payload, the runner's unit): probes of 1239 and 1319 bytes in the first connection, the
+# second after our HANDSHAKE_DONE packet acknowledged the first, 1207 and 1239 in the second; 5303 bytes, 3984 without the 1319
 mp="$here/msquic-probe-budget.py"; fm="$td/msquic-probe-budget-zerortt.json"
 mvar() { jq "$2" "$fm" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
-data='{"n": 200, "port": "45038", "udp": 1252, "short_only": true, "pn": 300, "frames": [2, 8]}'
-check "probes: rerun 6, msquic's probes took the budget"                0 "without them 299 of the runner's 5000" -- python3 "$mp" --decoded "$fm"
+dgram() { echo "{\"n\": $1, \"port\": \"45038\", \"udp\": $(($3 + 13)), \"long\": ${4:-0}, \"packets\": [{\"pn\": $1, \"frames\": $2, \"payload\": $3}]}"; }
+p45='(.client[] | select(.n == 45))'
+check "probes: rerun 6, the first connection's raised probe took the budget" 0 "the client's 1-RTT payload is 3984 of the runner's 5000" -- python3 "$mp" --decoded "$fm"
 check "probes: the native image's cell alike"                      0 "" -- python3 "$mp" --decoded "$(mvar native '.pair = "kuicksilver-native_msquic"')"
-check "probes: 4702 bytes of data besides the probes (5001 left)"  1 "" -- python3 "$mp" --decoded "$(mvar excess ".client += [$data | .payload = 4702] | .reported += 4702")"
-check "probes:   4701 bytes of data (5000 left) stay within"       0 "without them 5000 of" -- python3 "$mp" --decoded "$(mvar within ".client += [$data | .payload = 4701] | .reported += 4701")"
-check "probes: a small PING+PADDING is no probe"                   1 "" -- python3 "$mp" --decoded "$(mvar small ".client += [$data | .udp = 1100 | .frames = [0, 1] | .payload = 4800] | .reported += 4800")"
-check "probes: a probe that carries data is no probe"              1 "" -- python3 "$mp" --decoded "$(mvar probedata '(.client[] | select(.n == 64 or .n == 123)) |= (.frames = [0, 1, 8] | .payload = 2400) | .reported += 2354')"
+check "probes: 1017 more bytes of ACK and MAX_DATA (5001 left)"    1 "" -- python3 "$mp" --decoded "$(mvar excess ".client += [$(dgram 200 '[3, 16, 0]' 1017)] | .reported += 1017")"
+check "probes:   1016 more bytes (5000 left) stay within"          0 "is 5000 of" -- python3 "$mp" --decoded "$(mvar within ".client += [$(dgram 200 '[3, 16, 0]' 1016)] | .reported += 1016")"
+check "probes: three re-sent requests (STREAM) are never excused"  1 "" -- python3 "$mp" --decoded "$(mvar stream ".client += [$(dgram 200 '[15]' 270), $(dgram 201 '[15]' 270), $(dgram 202 '[15]' 270)] | .reported += 810")"
+check "probes: CRYPTO in a 1-RTT packet is never excused"          1 "" -- python3 "$mp" --decoded "$(mvar crypto ".client += [$(dgram 200 '[6]' 40)] | .reported += 40")"
+check "probes: a coalesced datagram with an unknown frame"         1 "" -- python3 "$mp" --decoded "$(mvar coalesced ".client += [$(dgram 200 '[3, 24]' 40 1)] | .reported += 40")"
+check "probes: a coalesced datagram whose 1-RTT packet did not decrypt" 1 "" -- python3 "$mp" --decoded "$(mvar opaque ".client += [$(dgram 200 'null' 40 1)] | .reported += 40")"
+check "probes:   a coalesced datagram of ACK only is fine"          0 "" -- python3 "$mp" --decoded "$(mvar coalok ".client += [$(dgram 200 '[3]' 40 1)] | .reported += 40")"
+check "probes: a small PING+PADDING is no probe"                   1 "" -- python3 "$mp" --decoded "$(mvar small "$p45.udp = 1100")"
+check "probes: a probe that also carries MAX_STREAM_DATA is not subtracted" 1 "" -- python3 "$mp" --decoded "$(mvar probemax "$p45.packets[0].frames = [1, 0, 17]")"
 check "probes: no ACK of the first probe before the second"        1 "" -- python3 "$mp" --decoded "$(mvar noack '(.server[] | select(.n == 44)).n = 46')"
 check "probes: the ACK named another packet"                       1 "" -- python3 "$mp" --decoded "$(mvar otherack '(.server[] | select(.n == 44)).acked = [[244, 244]]')"
 check "probes: the ACK went to the other connection"               1 "" -- python3 "$mp" --decoded "$(mvar otherport '(.server[] | select(.n == 44)).port = "45038"')"
-check "probes: a repeated probe of the same size"                  1 "" -- python3 "$mp" --decoded "$(mvar repeat '(.client[] | select(.n == 45)).udp = 1252')"
-check "probes: no probe was raised after an ACK"                   1 "" -- python3 "$mp" --decoded "$(mvar noraise '.client |= map(select(.n != 45 and .n != 123)) | .reported -= 2558')"
+check "probes: a retried probe of the same size (or a PTO PING)"   1 "" -- python3 "$mp" --decoded "$(mvar repeat "$p45.udp = 1252")"
+check "probes: a raise only in the second connection"              1 "" -- python3 "$mp" --decoded "$(mvar second '.client |= map(select(.n != 45)) | .reported -= 1319')"
+check "probes: a raise only in the first connection"               0 "is 2745 of" -- python3 "$mp" --decoded "$(mvar firstonly '.client |= map(select(.n != 123)) | .reported -= 1239')"
+check "probes: the raised probe alone does not explain the excess" 1 "" -- python3 "$mp" --decoded "$(mvar notenough ".client += [$(dgram 200 '[3]' 1500)] | .reported += 1500")"
 check "probes: not the runner's count"                             1 "" -- python3 "$mp" --decoded "$(mvar count '.reported = 5302')"
 check "probes: a peer other than the msquic client"                1 "" -- python3 "$mp" --decoded "$(mvar peer '.pair = "kuicksilver_quic-go"')"
 check "probes: msquic's server, our client"                        1 "" -- python3 "$mp" --decoded "$(mvar role '.pair = "msquic_kuicksilver"')"
@@ -605,7 +614,7 @@ if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlo
 fi
 if [ -n "${KSL_INTEROP_PROBE_CELL:-}" ]; then   # the real rerun-6 cell: client-side pcap and key log through tshark
   cell=${KSL_INTEROP_PROBE_CELL%/}; res=$(dirname "$(dirname "$cell")")
-  check "real probe cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") msquic's own PMTU probes took the runner's 1-RTT budget" -- environment_cells "$res"
+  check "real probe cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") msquic's first connection raised its PMTU probe after our ACK" -- environment_cells "$res"
   check "real probe cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$mp' --dump '$cell' | jq -e --slurpfile f '$fm' '. == \$f[0]' > /dev/null"
 fi
 if [ -n "${KSL_INTEROP_PORT_CELL:-}" ]; then   # the real release/0.2.x cell: pcap through tshark, the ngtcp2 server's log
