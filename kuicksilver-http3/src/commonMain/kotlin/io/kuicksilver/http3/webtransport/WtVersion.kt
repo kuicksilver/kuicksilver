@@ -150,9 +150,10 @@ private const val NO_COMMON_VERSION =
 internal object WtSettings {
     /**
      * The codepoints this library interprets; the peer's are taken out of `Http3PeerSettings.unknown`. The flow-control
-     * ones are among them, so a client keeps them with its tickets and refuses a resumed connection whose server lowered
-     * them after 0-RTT (section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS frame
-     * received in the resumed connection reduces any flow control values from the cached previous values").
+     * ones are among them, so a client keeps them with its tickets and refuses a resumed connection whose draft-16 or
+     * draft-14 server lowered them after 0-RTT (their section 3.2: "A client MUST close the connection with
+     * H3_SETTINGS_ERROR if the SETTINGS frame received in the resumed connection reduces any flow control values from the
+     * cached previous values"); a draft-17 server's are taken as sent ([discardedOnResumption]).
      */
     val ALL: Set<Long> =
         setOf(

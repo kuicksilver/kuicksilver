@@ -61,7 +61,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * One WebTransport session (draft-ietf-webtrans-http3-16): the Extended CONNECT [stream], spoken as the Capsule Protocol,
+ * One WebTransport session (draft-ietf-webtrans-http3-17): the Extended CONNECT [stream], spoken as the Capsule Protocol,
  * and the WebTransport streams routed to it.
  *
  * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read; with flow control
@@ -737,7 +737,7 @@ internal class WtSessionImpl(
     }
 }
 
-/** The client side of `Http3Connection.webTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 5.1). */
+/** The client side of `Http3Connection.webTransport` (draft-ietf-webtrans-http3-17 sections 3.2, 3.3, 5.1). */
 internal suspend fun H3Session.webTransport(
     r: Http3Request,
     protocols: List<String>,

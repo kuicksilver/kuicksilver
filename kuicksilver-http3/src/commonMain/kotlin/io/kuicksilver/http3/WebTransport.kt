@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.io.IOException
 
 /**
- * A WebTransport session over HTTP/3 (draft-ietf-webtrans-http3-16): an Extended CONNECT stream that groups
+ * A WebTransport session over HTTP/3 (draft-ietf-webtrans-http3-17): an Extended CONNECT stream that groups
  * WebTransport streams and datagrams. With WebTransport flow control (section 5, on when both sides declare it in their
  * SETTINGS) its streams and stream data stay within the peer's limits and a violation by the peer closes the session
  * ([WebTransportException.FlowControl]); without it a connection carries one session (section 5.1).
@@ -204,7 +204,7 @@ public sealed class WebTransportException(
     ) : WebTransportException(message)
 
     /**
-     * The session broke WebTransport flow control (draft-ietf-webtrans-http3-16 section 5): the peer opened more streams or
+     * The session broke WebTransport flow control (draft-ietf-webtrans-http3-17 section 5): the peer opened more streams or
      * sent more data than our limits allowed, or sent a flow-control capsule that lowered a limit or went beyond 2^60
      * streams, or a WT_MAX_STREAM_DATA or WT_STREAM_DATA_BLOCKED capsule. The session was closed by resetting its CONNECT
      * stream with WT_FLOW_CONTROL_ERROR. A session the peer closed that way ends with the peer's reset as the cause instead.

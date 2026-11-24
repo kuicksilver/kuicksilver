@@ -31,7 +31,7 @@ import kotlin.time.Duration
  * [QuicConfig.maxUniStreams] must be at least 3, so the peer can open its control and QPACK streams (RFC 9114 section
  * 6.2): [bind], [connect] and [connectEarly] throw IllegalArgumentException for a smaller value. With
  * [Http3Settings.webTransport] [QuicConfig.resetStreamAt] is turned on (WebTransport needs `reset_stream_at` on both sides,
- * draft-ietf-webtrans-http3-16 section 3.1), as the Ktor engines do.
+ * draft-ietf-webtrans-http3-17 section 3.1), as the Ktor engines do.
  */
 public class Http3Endpoint private constructor(
     private val endpoint: QuicEndpoint,
@@ -266,7 +266,7 @@ public class Http3Endpoint private constructor(
         }
 
         /**
-         * draft-ietf-webtrans-http3-16 section 3.1: "both the client and the server enable the extension by sending an empty
+         * draft-ietf-webtrans-http3-17 section 3.1: "both the client and the server enable the extension by sending an empty
          * reset_stream_at transport parameter", so WebTransport turns [QuicConfig.resetStreamAt] on; without it no session
          * of draft-14 or later could be opened or accepted, and our streams could not be reset as section 4.4 requires.
          */

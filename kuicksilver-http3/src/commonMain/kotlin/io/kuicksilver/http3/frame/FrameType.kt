@@ -15,7 +15,7 @@ internal object FrameType {
     const val PRIORITY_UPDATE_PUSH: Long = 0xf0701
 
     /**
-     * `WT_STREAM` (draft-ietf-webtrans-http3-16 section 4.3): not a frame but a signal that opens a WebTransport
+     * `WT_STREAM` (draft-ietf-webtrans-http3-17 section 4.3): not a frame but a signal that opens a WebTransport
      * bidirectional stream, followed by the Session ID and no length. Where WebTransport is on, it anywhere else is
      * H3_FRAME_ERROR.
      */
@@ -37,7 +37,7 @@ internal object StreamType {
     const val QPACK_ENCODER: Long = 0x2
     const val QPACK_DECODER: Long = 0x3
 
-    /** A WebTransport unidirectional stream, followed by the Session ID (draft-ietf-webtrans-http3-16 section 4.2). */
+    /** A WebTransport unidirectional stream, followed by the Session ID (draft-ietf-webtrans-http3-17 section 4.2). */
     const val WT_UNI: Long = 0x54
 }
 

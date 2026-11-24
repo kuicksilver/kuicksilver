@@ -3,7 +3,7 @@
 package io.kuicksilver.http3.webtransport
 
 /**
- * WebTransport application error codes (0..2^32-1) in the HTTP/3 error code space (draft-ietf-webtrans-http3-16 section
+ * WebTransport application error codes (0..2^32-1) in the HTTP/3 error code space (draft-ietf-webtrans-http3-17 section
  * 4.4): they map onto `0x52e4a40fa8db..0x52e5ac983162`, skipping the reserved GREASE codepoints `0x1f * N + 0x21`.
  */
 internal object WtErrorCodes {

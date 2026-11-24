@@ -213,7 +213,7 @@ internal class H3Entry(
     val wtSessions = kotlin.concurrent.atomics.AtomicInt(0)
 
     /**
-     * The sessions it carried when the server refused one more (H3_REQUEST_REJECTED, draft-16 section 5.2), or -1: no new
+     * The sessions it carried when the server refused one more (H3_REQUEST_REJECTED, draft-17 section 5.2), or -1: no new
      * session is tried on it while it carries that many or more.
      */
     @kotlin.concurrent.Volatile
@@ -679,7 +679,7 @@ internal class H3Pool(
 
     /**
      * WebTransport-capable connections beyond the pooled one of their (origin, address) key, by key: made when the server
-     * refused another session on the pooled one (its limit, draft-16 section 5.2) or a session could not join it (no flow
+     * refused another session on the pooled one (its limit, draft-17 section 5.2) or a session could not join it (no flow
      * control, section 5.1). Sessions share them too; each closes with its last session (it is retired from the start).
      * Under [lock].
      */
@@ -917,7 +917,7 @@ internal class H3Pool(
 
     /**
      * A WebTransport-capable QUIC connection to [originHost]:[port] outside the pool map (an extra one): the engine's
-     * endpoint, trust and QUIC settings with WebTransport, Extended CONNECT and `reset_stream_at` on (draft-16 sections 3.1,
+     * endpoint, trust and QUIC settings with WebTransport, Extended CONNECT and `reset_stream_at` on (draft-17 sections 3.1,
      * 4.4). [connectTimeoutMillis] bounds the lookup and the handshakes, raced over the resolved addresses.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -1729,7 +1729,7 @@ internal class H3Pool(
     ): Http3Connection {
         val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
         return if (wt) {
-            // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
+            // never 0-RTT: a WebTransport CONNECT does not go early (draft-17 section 3.2)
             ep.connect(remote, tls, quic, wtSettings)
         } else if (config.http3.earlyData && !noResumption.avoids(t.originHost)) {
             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through

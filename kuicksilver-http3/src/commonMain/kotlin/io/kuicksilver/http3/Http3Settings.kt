@@ -54,7 +54,7 @@ public class Http3Settings private constructor(
     @property:ExperimentalKuicksilverApi
     public val webTransport: Boolean,
     /**
-     * WebTransport sessions a server accepts at once on one connection when flow control is on (draft-ietf-webtrans-http3-16
+     * WebTransport sessions a server accepts at once on one connection when flow control is on (draft-ietf-webtrans-http3-17
      * section 5.2); one more is reset with H3_REQUEST_REJECTED before the application sees it. Without flow control a
      * connection carries one session whatever this says (section 5.1). Advertised to draft-14 clients as
      * `SETTINGS_WT_MAX_SESSIONS`. Ignored by a client, whose limit is the server's.
@@ -147,7 +147,7 @@ public class Http3Settings private constructor(
 
         /**
          * WebTransport sessions on one connection when flow control is on (both sides sent a non-zero
-         * `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-16 section 5.1), 1..65535; 4 by default. A server resets a
+         * `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-17 section 5.1), 1..65535; 4 by default. A server resets a
          * CONNECT beyond it with H3_REQUEST_REJECTED (section 5.2), and a client opens another connection instead of
          * putting more on one. The per-session limits below, times this, must fit the QUIC connection's
          * ([Http3Endpoint] refuses a configuration where they do not, and the connection's receive window is kept at the
@@ -267,7 +267,7 @@ public class Http3Settings private constructor(
         }
 
     /**
-     * We declare WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.1: a non-zero
+     * We declare WebTransport flow control (draft-ietf-webtrans-http3-17 section 5.1: a non-zero
      * `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI`, `_BIDI` or `SETTINGS_WT_INITIAL_MAX_DATA`).
      */
     internal val webTransportFlowControl: Boolean
@@ -278,7 +278,7 @@ public class Http3Settings private constructor(
      * their bidirectional streams and CONNECT streams within `maxBidiStreams`, their unidirectional streams and the
      * peer's three HTTP/3 streams within `maxUniStreams`, their data within `maxConnectionWindow`. Otherwise one session,
      * or a few, could hold every stream slot (a new CONNECT among them) or the whole connection window, and starve the
-     * others (draft-ietf-webtrans-http3-16 sections 5.1 and 8). IllegalArgumentException when they do not.
+     * others (draft-ietf-webtrans-http3-17 sections 5.1 and 8). IllegalArgumentException when they do not.
      */
     internal fun requireWebTransportFits(quic: io.kuicksilver.quic.QuicConfig) {
         if (!webTransport || !webTransportFlowControl) return
@@ -299,10 +299,11 @@ public class Http3Settings private constructor(
 
     /**
      * The settings a 0-RTT client relies on (RFC 9114 section 7.2.4.2), bound into the server's tickets: a ticket issued
-     * under other SETTINGS gets no early data. WebTransport is part of it (draft-ietf-webtrans-http3-16 section 3.2: its
-     * settings must not be reduced for 0-RTT, and "If the server accepts 0-RTT, the server MUST NOT reduce these initial
-     * flow control values from those negotiated during the previous session": its flow-control values and session limit
-     * are part of it, so a server that changed them accepts no 0-RTT); the suffix is only added when it is on, so tickets
+     * under other SETTINGS gets no early data. WebTransport is part of it (draft-ietf-webtrans-http3-16 and -14 section 3.2:
+     * "If the server accepts 0-RTT, the server MUST NOT reduce these initial flow control values from those negotiated
+     * during the previous session": its flow-control values and session limit are part of it, so a server that changed
+     * them accepts no 0-RTT; draft-17 section 3.2 lets a server accept it "regardless of the values it previously sent",
+     * but a draft-16 client resuming here would still hold it to them); the suffix is only added when it is on, so tickets
      * of servers without it stay valid across this release.
      */
     internal fun earlyDataContext(): ByteArray =

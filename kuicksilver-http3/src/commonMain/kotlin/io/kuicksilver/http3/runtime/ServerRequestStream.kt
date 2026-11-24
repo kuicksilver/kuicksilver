@@ -85,7 +85,7 @@ private suspend fun readRequestStream(
     st: QuicStream,
     onDelivered: () -> Unit,
 ) = with(session) {
-    // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
+    // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-17 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
     // nothing of the request head is taken from the stream's flow-control window before the connection's header budget
     // granted it (RFC 9114 section 10.5); RFC 9204 section 2.2.1: with blocked sections possible, nor before it may decode
@@ -126,7 +126,7 @@ private class HeadState {
 
     /**
      * H3_REQUEST_REJECTED while the stream may be a request (RFC 9114 section 4.1.1); once it is a WebTransport stream,
-     * WT_BUFFERED_STREAM_REJECTED: it reached no session (draft-ietf-webtrans-http3-16 section 4.6).
+     * WT_BUFFERED_STREAM_REJECTED: it reached no session (draft-ietf-webtrans-http3-17 section 4.6).
      */
     var rejectCode = Http3ErrorCode.REQUEST_REJECTED
 }
@@ -405,7 +405,7 @@ internal fun H3Session.wtSessionEnded(
  * Server: whether another WebTransport CONNECT ([draft02]: a draft-02 request) may join the sessions already on this
  * connection. The first always may (its acceptance checks the client's SETTINGS). Another one needs flow control on for
  * it and for every session already there, which the client's SETTINGS tell, so they are awaited first (bounded by
- * [H3Session.wtDeadline]; draft-16 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
+ * [H3Session.wtDeadline]; draft-17 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
  * client's SETTINGS have been received"); then: section 5.1, "A server that receives more than one session on an
  * underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a
  * H3_REQUEST_REJECTED status", and section 5.2, "Servers SHOULD limit the rate of incoming WebTransport sessions",
@@ -827,7 +827,7 @@ internal class ServerRequestImpl(
         // the stream first, then the flow: an application that sees the new value finds the stream already scheduled by it
         if (serverPriority == null) {
             st.priority = p
-            wtSession?.priorityChanged() // a WebTransport session's streams go with its CONNECT stream (draft-16 section 3.4)
+            wtSession?.priorityChanged() // a WebTransport session's streams go with its CONNECT stream (draft-17 section 3.4)
         }
         priorityFlow.value = p
     }

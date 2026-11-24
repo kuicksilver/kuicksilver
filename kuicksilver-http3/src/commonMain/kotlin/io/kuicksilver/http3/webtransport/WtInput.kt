@@ -16,7 +16,7 @@ import kotlin.concurrent.atomics.AtomicReference
  * The application's side of a WebTransport stream's input: chunks the stream's pump took from the transport, handed
  * over one at a time through a single slot ([deliver] waits while it is full), so at most a chunk waits here besides what
  * the application has not read yet. [onRead] hears how many bytes the application took into its buffer, as it asks for
- * them: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-16 section 5.6: "Endpoints
+ * them: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-17 section 5.6: "Endpoints
  * SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data"), not what only arrived.
  *
  * The slot is taken atomically and the wake-ups are conflated signals that carry no data, so a reader cancelled while it

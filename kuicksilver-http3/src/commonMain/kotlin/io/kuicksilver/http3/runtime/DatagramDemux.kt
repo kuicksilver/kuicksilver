@@ -51,7 +51,7 @@ import kotlin.time.TimeSource
  * stream limit, which is a connection error H3_ID_ERROR; a datagram without a valid quarter stream ID is a connection
  * error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later datagrams for it are dropped as
  * the RFC requires. With WebTransport a server keeps datagrams for a request stream whose HEADERS have not been read yet:
- * draft-ietf-webtrans-http3-16 section 4.6, "WebTransport endpoints SHOULD buffer streams and datagrams until they can be
+ * draft-ietf-webtrans-http3-17 section 4.6, "WebTransport endpoints SHOULD buffer streams and datagrams until they can be
  * associated with an established session. To avoid resource exhaustion, endpoints MUST limit the number of buffered
  * streams and datagrams." At most [MAX_PENDING] per connection, the excess dropped ("a datagram MUST be dropped"), and
  * each for [pendingHold], on the order of a round trip, as RFC 9297 section 2.1 allows for a stream not yet created
@@ -112,7 +112,7 @@ internal class DatagramDemux(
             return
         }
         if (session.abortRequestWithoutDatagrams(streamId)) return
-        // draft-ietf-webtrans-http3-16 section 4.6: a session's datagrams may overtake its CONNECT; kept, 16 per connection
+        // draft-ietf-webtrans-http3-17 section 4.6: a session's datagrams may overtake its CONNECT; kept, 16 per connection
         // (as its streams, WtStreamRouter), each on the order of a round trip (RFC 9297 section 2.1). Others are dropped.
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
         // RFC 9297 section 2.1: after the stream's receive side is closed a datagram "MUST be silently dropped". A request
@@ -127,7 +127,7 @@ internal class DatagramDemux(
 
     /**
      * How long a datagram for [streamId] may wait: [MAX_HOLD] for a stream that exists and whose HEADERS are on the way (a
-     * large or QPACK-blocked section; draft-ietf-webtrans-http3-16 section 4.6 "SHOULD buffer ... until they can be
+     * large or QPACK-blocked section; draft-ietf-webtrans-http3-17 section 4.6 "SHOULD buffer ... until they can be
      * associated", bounded as early WebTransport streams are), [pendingHold] for a stream not created yet, which RFC 9297
      * section 2.1 allows to buffer only "on the order of a round trip" (review 2026-10-28 H3R-5).
      */
@@ -219,7 +219,7 @@ internal class DatagramDemux(
 
     /**
      * Sends an HTTP datagram of request stream [streamId] scheduled at [priority], the request stream's own (RFC 9218): it
-     * does not go ahead of more urgent streams' data (draft-ietf-webtrans-http3-16 section 3.4 asks this for a WebTransport
+     * does not go ahead of more urgent streams' data (draft-ietf-webtrans-http3-17 section 3.4 asks this for a WebTransport
      * session's datagrams; RFC 9297 section 2 leaves the prioritization of HTTP datagrams open).
      */
     fun trySend(

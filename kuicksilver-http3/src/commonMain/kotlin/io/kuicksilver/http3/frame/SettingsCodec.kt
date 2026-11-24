@@ -6,7 +6,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 
 /**
  * Setting identifiers (RFC 9114 section 7.2.4.1, RFC 9204 section 5, RFC 9220 section 3, RFC 9297 section 2.1.1,
- * draft-ietf-webtrans-http3-16 section 3.1 and the older WebTransport drafts browsers still speak).
+ * draft-ietf-webtrans-http3-17 section 3.1 and the older WebTransport drafts browsers still speak).
  */
 internal object SettingsId {
     const val QPACK_MAX_TABLE_CAPACITY: Long = 0x1

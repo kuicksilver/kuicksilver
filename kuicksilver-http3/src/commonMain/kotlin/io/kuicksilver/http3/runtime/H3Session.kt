@@ -662,7 +662,7 @@ internal class H3Session(
 
     /**
      * A WebTransport session with flow control started ([up]) or ended: the connection's receive window is kept at what
-     * the open sessions may have in flight together (draft-16 section 8: a session nobody reads must not hold the whole
+     * the open sessions may have in flight together (draft-17 section 8: a session nobody reads must not hold the whole
      * connection credit while the others wait), and shrinks back as they end. Session dispatcher only.
      */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -687,13 +687,13 @@ internal class H3Session(
     private var wtFloorSender: Job? = null
 
     /**
-     * Server: the rate of incoming WebTransport sessions (draft-16 section 5.2, "Servers SHOULD limit the rate of incoming
+     * Server: the rate of incoming WebTransport sessions (draft-17 section 5.2, "Servers SHOULD limit the rate of incoming
      * WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources"): a burst of
      * [WT_SESSION_BURST] CONNECTs, then [WT_SESSIONS_PER_SECOND] a second, on [glitchClock]. Session dispatcher only.
      */
     internal val wtSessionRate: GlitchLimiter get() = wtShared.sessionRate
 
-    /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
+    /** The fair queues the WebTransport sessions of this connection take turns in (draft-17 section 8). */
     internal val wtFairness: io.kuicksilver.http3.webtransport.WtFairness get() = wtShared.fairness
 
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
@@ -801,7 +801,7 @@ internal class H3Session(
 
     /**
      * Client with WebTransport: a server-initiated bidirectional stream is a WebTransport stream, which starts with the
-     * `WT_STREAM` signal (draft-ietf-webtrans-http3-16 section 4.3); anything else is H3_STREAM_CREATION_ERROR as without
+     * `WT_STREAM` signal (draft-ietf-webtrans-http3-17 section 4.3); anything else is H3_STREAM_CREATION_ERROR as without
      * WebTransport (RFC 9114 section 6.1). One that ends or is reset before its first bytes is dropped.
      */
     private suspend fun serverBidi(st: QuicStream) {

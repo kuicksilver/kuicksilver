@@ -255,7 +255,7 @@ public interface Http3ServerRequest {
     public val isWebTransport: Boolean get() = false
 
     /**
-     * The application protocols a WebTransport client offers in `WT-Available-Protocols` (draft-ietf-webtrans-http3-16
+     * The application protocols a WebTransport client offers in `WT-Available-Protocols` (draft-ietf-webtrans-http3-17
      * section 3.3), in its order of preference; empty when it offers none or the field is not a valid list of Strings.
      */
     @ExperimentalKuicksilverApi

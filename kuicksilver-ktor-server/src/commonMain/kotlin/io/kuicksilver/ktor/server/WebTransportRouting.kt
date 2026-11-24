@@ -41,7 +41,7 @@ import kotlin.coroutines.CoroutineContext
 public const val WEB_TRANSPORT_HANDLER_FAILED: Long = 1
 
 /**
- * Serves WebTransport sessions (draft-ietf-webtrans-http3-16) on [path]: an Extended CONNECT whose `:protocol` is
+ * Serves WebTransport sessions (draft-ietf-webtrans-http3-17) on [path]: an Extended CONNECT whose `:protocol` is
  * `webtransport-h3` or `webtransport`, over HTTP/3, on an engine with `webTransport = true`. Nothing else matches the
  * route: HTTP/1.1 requests and other CONNECTs go on to the routes that follow, and a WebTransport request without a
  * matching route gets Ktor's 404 (one that another route answers with a 2xx gets 501: no session was accepted).

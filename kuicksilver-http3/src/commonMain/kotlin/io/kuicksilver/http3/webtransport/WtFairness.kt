@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 
 /**
  * One shared resource of a connection taken in turns by its WebTransport sessions: the fairness scheme of
- * draft-ietf-webtrans-http3-16 section 8, "WebTransport endpoints SHOULD implement a fairness scheme that ensures that each
+ * draft-ietf-webtrans-http3-17 section 8, "WebTransport endpoints SHOULD implement a fairness scheme that ensures that each
  * session that shares a transport connection gets a reasonable share of controlled resources; this applies both to
  * sending data and to opening new streams".
  *

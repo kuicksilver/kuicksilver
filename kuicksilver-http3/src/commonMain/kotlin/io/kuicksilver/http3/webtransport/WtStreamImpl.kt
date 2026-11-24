@@ -44,11 +44,11 @@ internal class WtStreamImpl(
     /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
     private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,
-    /** The session's flow control (draft-ietf-webtrans-http3-16 section 5) for our bytes, or null when it is not enabled. */
+    /** The session's flow control (draft-ietf-webtrans-http3-17 section 5) for our bytes, or null when it is not enabled. */
     private val flow: WtSessionFlow? = null,
     /** The count of the peer's bytes on [input] against the session's limit, or null without flow control. */
     private val inCount: WtInCount? = null,
-    /** The session's turns at, and its share of, the connection's send buffer (draft-16 section 8), with flow control. */
+    /** The session's turns at, and its share of, the connection's send buffer (draft-17 section 8), with flow control. */
     private val turns: WtSendTurns? = null,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
@@ -252,10 +252,12 @@ internal class WtStreamImpl(
     }
 
     /**
-     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-16
-     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] with a Reliable Size
-     * set to at least the size of the WebTransport header when resetting a WebTransport data stream"), so the peer can
-     * still tell which session the reset belongs to; on a stream the peer opened our side carries no header (size 0). A
+     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-17
+     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] when resetting a
+     * WebTransport data stream, with a Reliable Size set to the size of the WebTransport header on that stream plus any
+     * offset provided by the application"; our API takes no such offset, so it is the header alone, which also meets
+     * draft-16 and -14's "at least the size of the WebTransport header"), so the peer can still tell which session the
+     * reset belongs to; on a stream the peer opened our side carries no header (size 0). A
      * session of draft-14 or later exists only with `reset_stream_at` on both sides (section 3.1, [wtTransportGap]), so
      * the frame always goes; only a draft-02 session (browsers), whose draft predates the frame, may lack it, and the
      * transport then sends the RESET_STREAM that draft-02 uses.

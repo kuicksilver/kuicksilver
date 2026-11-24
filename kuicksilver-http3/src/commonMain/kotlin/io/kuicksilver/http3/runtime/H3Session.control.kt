@@ -145,7 +145,7 @@ internal class UniHeader {
     /**
      * H3_STREAM_CREATION_ERROR for a type that never arrived (RFC 9114 section 6.2: "If reading is aborted, the recipient
      * SHOULD use the H3_STREAM_CREATION_ERROR error code"); WT_BUFFERED_STREAM_REJECTED for a WebTransport stream whose
-     * Session ID never came (it reached no session, draft-ietf-webtrans-http3-16 section 4.6).
+     * Session ID never came (it reached no session, draft-ietf-webtrans-http3-17 section 4.6).
      */
     var rejectCode = Http3ErrorCode.STREAM_CREATION_ERROR
 }

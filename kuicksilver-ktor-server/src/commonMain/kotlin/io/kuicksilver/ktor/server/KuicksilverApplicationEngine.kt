@@ -410,7 +410,7 @@ public class KuicksilverApplicationEngine(
             }
 
         /**
-         * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) to `webTransport(path) { }` routes: turns on
+         * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17) to `webTransport(path) { }` routes: turns on
          * `Http3Settings.webTransport` and `enableConnectProtocol`; false by default. Needs QUIC datagrams (the default
          * `quic` has them): the engine refuses to start otherwise.
          */

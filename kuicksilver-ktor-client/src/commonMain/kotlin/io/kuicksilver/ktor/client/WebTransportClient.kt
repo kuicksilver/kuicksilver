@@ -14,10 +14,10 @@ import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.http3Request
 
 /**
- * Opens a WebTransport session (draft-ietf-webtrans-http3-16) to [urlString], an `https` URL. Sessions share the
+ * Opens a WebTransport session (draft-ietf-webtrans-http3-17) to [urlString], an `https` URL. Sessions share the
  * engine's pooled HTTP/3 connection to the URL's host and port with each other and with requests (RFC 9114 section 3.3:
  * one connection per address and port), as long as the server allows it: with WebTransport flow control on both sides
- * (draft-16 section 5.1) a connection carries up to `http3 { settings.webTransportMaxSessions }` sessions (4 by default)
+ * (draft-17 section 5.1) a connection carries up to `http3 { settings.webTransportMaxSessions }` sessions (4 by default)
  * and as many as the server accepts (section 5.2: a session it refuses with H3_REQUEST_REJECTED is opened again on
  * another connection to the same server, which the next sessions share too, unless none of this client's sessions was on
  * the refusing connection: that is the server's rate, and the refusal is thrown as
