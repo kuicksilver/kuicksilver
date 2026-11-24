@@ -716,6 +716,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.ser
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.settingsSentImmediately
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.truncatedFrameAtFinIsFrameError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.unknownUniStreamStoppedNotFatal
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ContentLengthTest.digitsAreTheLength
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ContentLengthTest.negative_onlyDigitsAreALength
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameGoAwayIdAgainIsNoError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameMaxPushIdAgainIsNoError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.DatagramGapTest.negative_quarterStreamIdOf2To60IsDatagramError
@@ -1418,6 +1420,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.neg
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_invalidOrListAgeHandledAsRfc9111Says
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storeWithoutClearFallsBackToTheOriginsSeen
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storedAlternativeFailingTheParserRulesIsNotUsed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_unicodeSpaceIsNoOws
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.networkChangeClearsNonPersistent
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.overflowingMaIsCapped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.parsesMaAndPersist
@@ -3210,6 +3213,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Respon
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noContentForHeadAnd204And304
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noContentLengthWithTransferEncoding
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noFramingFieldsOn204And304
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_unicodeSpaceInTheApplicationsConnectionIsNoOws
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.noBodyIsProducedForAResponseWithoutContent
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.responsesCarryDate
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.chunkedResponse

@@ -372,7 +372,7 @@ internal class H1Response(
                 .getAll(HttpHeaders.Connection)
                 .orEmpty()
                 .flatMap { it.split(',') }
-                .map { it.trim() }
+                .map { it.trim(' ', '\t') }
                 .filter { it.isNotEmpty() && !it.equals("keep-alive", ignoreCase = true) }
         headersBuilder[HttpHeaders.Connection] = (options + "close").joinToString(", ")
     }
@@ -380,7 +380,7 @@ internal class H1Response(
     /** Whether a Connection field line of the response carries the `close` option (RFC 9110 section 7.6.1, any case). */
     private fun saysClose(): Boolean =
         headersBuilder.getAll(HttpHeaders.Connection).orEmpty().any { line ->
-            line.split(',').any { it.trim().equals("close", ignoreCase = true) }
+            line.split(',').any { it.trim(' ', '\t').equals("close", ignoreCase = true) }
         }
 
     /**

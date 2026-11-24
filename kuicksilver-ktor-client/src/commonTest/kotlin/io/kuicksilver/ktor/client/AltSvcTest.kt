@@ -47,6 +47,21 @@ class AltSvcTest {
      * section 1.2.2 says a cache MUST, not dropped; before, `ma=99999999999999999999` skipped the alternative. A sign is
      * no delta-seconds.
      */
+    /**
+     * OWS in Alt-Svc is SP and HTAB only (RFC 9110 section 5.6.3, RFC 7838 section 3): a no-break space (U+00A0) or another
+     * Unicode space around the protocol, the authority or a parameter is part of the token, so `<NBSP>h3` is no `h3` entry
+     * and `<NBSP>ma=1` is an unknown parameter (the default ma). Before, Kotlin's Unicode `trim()` read them as the real ones.
+     */
+    @Test fun negative_unicodeSpaceIsNoOws() {
+        assertEquals(emptyList(), AltSvcParser.parse("\u00a0h3=\":443\"", now)!!.map { it.protocol })
+        assertEquals(emptyList(), AltSvcParser.parse("h3\u2003=\":443\"", now)!!.map { it.protocol })
+        assertEquals(emptyList(), AltSvcParser.parse("h3=\u00a0\":443\"", now)!!.map { it.protocol })
+        val e = AltSvcParser.parse("h3=\":443\";\u00a0ma=1", now)!!.single()
+        assertEquals(now + 86_400_000L, e.expiresAtEpochMillis, "an unknown parameter: the default ma")
+        val ows = AltSvcParser.parse(" h3=\":443\" ;\tma=1 ", now)!!.single()
+        assertEquals(now + 1_000L, ows.expiresAtEpochMillis, "SP and HTAB are OWS")
+    }
+
     @Test fun overflowingMaIsCapped() {
         for (ma in listOf("99999999999999999999", "\"99999999999999999999\"")) {
             val e = AltSvcParser.parse("h3=\":443\"; ma=$ma", now)!!

@@ -1047,6 +1047,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
+  RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
+  connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
+  unknown parameter, and `close<U+00A0>` set by the application is not the `close` option (the server adds its own).
 - TLS, `HostName.normalize` (breaking strictness, RFC 9525, RFC 1123 section 2.1, RFC 1035 section 2.3.4, RFC 3696
   section 2): a reference identifier (the URL's host, `TlsConfig.serverName`, an expected name) is now an IP literal only
   in the strict form (IPv4 octets without leading zeros, IPv6 without a zone ID) and otherwise a DNS name of LDH labels of
@@ -3121,6 +3125,14 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- HTTP/3, `content-length` as a framing value (RFC 9110 section 8.6, `Content-Length = 1*DIGIT`): the length the request
+  and response streams frame by was read with Kotlin's `toLongOrNull` after a Unicode `trim()`, which takes `+5` as 5, `-5`
+  as -5 and a value wrapped in no-break spaces as its digits, the parser differential of the request-smuggling class.
+  The peer's fields were already refused unless `1*DIGIT` (`FieldValidator`), so no peer value reached it; the helper
+  and the stream sites that read our own requests and responses now take ASCII digits only, and an application
+  response with another value fails with `IllegalArgumentException` instead of being framed. The HTTP/2 and HTTP/1.1
+  Content-Length parsers (`H2Fields`, both engines' `FramingFields`) were already strict; Ktor keeps applications from
+  setting Content-Length as a header on the other engine paths.
 - TLS client, must-staple on every trust path (breaking strictness, RFC 7633 sections 4.2.3.1 and 4.3.3, RFC 6066 section
   8): under every `RevocationPolicy` but `Off` the client now sends `status_request` and checks the stapled OCSP response
   on every trust path, not only where `ksl` verifies the chain: under `TrustConfig.Platform` on the JVM, Android, Apple and

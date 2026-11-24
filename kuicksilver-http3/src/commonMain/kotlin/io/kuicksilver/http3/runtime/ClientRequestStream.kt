@@ -259,7 +259,7 @@ private suspend fun H3Session.requestOnDispatcher(
         }
         // RFC 9114 section 4.1.2: a request without content cannot match a non-zero content-length (sendBody holds a body to it)
         if (r.body == null && r.method != "CONNECT") {
-            val declared = r.headers["content-length"]?.toLongOrNull()
+            val declared = r.headers["content-length"]?.let(::parseContentLength)
             require(declared == null || declared == 0L) { "invalid request: content-length $declared without a body" }
         }
         checkPeerFieldLimit(-1, fields)
@@ -542,7 +542,7 @@ private suspend fun H3Session.sendBody(
 ) {
     val buf = ByteArray(CHUNK)
     // the content must match its content-length (RFC 9114 section 4.1.2): else the request is abandoned, not sent malformed
-    val declared = if (r.method == "CONNECT") null else r.headers["content-length"]?.toLongOrNull()
+    val declared = if (r.method == "CONNECT") null else r.headers["content-length"]?.let(::parseContentLength)
 
     fun abandon(e: Throwable) {
         sendFailure.completeExceptionally(e)
