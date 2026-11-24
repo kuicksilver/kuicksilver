@@ -692,6 +692,35 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * The capsules (type, value) in [bytes], what a CONNECT stream carried after its HEADERS: the payloads of its DATA frames
+     * (RFC 9297 section 3.2), other frames skipped.
+     */
+    private fun capsulesIn(bytes: ByteArray): List<Pair<Long, ByteArray>> {
+        val data = ArrayList<Byte>()
+        var off = 0
+        while (off < bytes.size) {
+            val type = VarInt.read(bytes, off, bytes.size)
+            off += VarInt.encodedLength(bytes[off])
+            val len = VarInt.read(bytes, off, bytes.size).toInt()
+            off += VarInt.encodedLength(bytes[off])
+            if (type == FrameType.DATA) data.addAll(bytes.copyOfRange(off, off + len).toList())
+            off += len
+        }
+        val payload = data.toByteArray()
+        val out = ArrayList<Pair<Long, ByteArray>>()
+        off = 0
+        while (off < payload.size) {
+            val type = VarInt.read(payload, off, payload.size)
+            off += VarInt.encodedLength(payload[off])
+            val len = VarInt.read(payload, off, payload.size).toInt()
+            off += VarInt.encodedLength(payload[off])
+            out += type to payload.copyOfRange(off, off + len)
+            off += len
+        }
+        return out
+    }
+
     /** The client's WebTransport session count, read on the session's dispatcher. */
     private suspend fun sessions(client: Http3Connection): Int = withContext(client.session.dispatcher) { client.session.wtClientSessions }
 
@@ -710,9 +739,12 @@ class WebTransportSessionTest {
                 withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
                 lateinit var call: kotlinx.coroutines.Job
                 client.session.wtClientStepForTest = { if (it == "counted") call.cancel() }
-                call = launch { client.webTransport(wtReq()) }
-                call.join()
-                client.session.wtClientStepForTest = null
+                try {
+                    call = launch { client.webTransport(wtReq()) }
+                    call.join()
+                } finally {
+                    client.session.wtClientStepForTest = null
+                }
                 assertEquals(0, sessions(client), "the cancelled setup's count is given back")
             }
         }
@@ -738,18 +770,24 @@ class WebTransportSessionTest {
                         "ended" -> ended.complete(Unit)
                     }
                 }
-                call = launch { client.webTransport(wtReq()) }
-                val st = withTimeout(5.seconds) { s.acceptBidi() }
-                readHeaders(st)
-                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
-                st.output.flush()
-                call.join()
-                // the started session nobody got is closed: WT_CLOSE_SESSION and the client's FIN, then the server's FIN
-                val rest = withTimeout(5.seconds) { st.input.readBuffer().readByteArray() }
-                assertTrue(rest.isNotEmpty(), "the client's WT_CLOSE_SESSION capsule")
-                st.output.flushAndClose()
-                withTimeout(5.seconds) { ended.await() }
-                client.session.wtClientStepForTest = null
+                try {
+                    call = launch { client.webTransport(wtReq()) }
+                    val st = withTimeout(5.seconds) { s.acceptBidi() }
+                    readHeaders(st)
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                    st.output.flush()
+                    call.join()
+                    // the started session nobody got is closed: WT_CLOSE_SESSION (code 0, no reason) and the client's FIN, then
+                    // the server's FIN
+                    val rest = withTimeout(5.seconds) { st.input.readBuffer().readByteArray() }
+                    val capsules = capsulesIn(rest)
+                    assertEquals(listOf(WtCloseCapsule.TYPE), capsules.map { it.first }, "one WT_CLOSE_SESSION before the FIN")
+                    assertEquals(0L to "", WtCloseCapsule.decode(capsules.single().second))
+                    st.output.flushAndClose()
+                    withTimeout(5.seconds) { ended.await() }
+                } finally {
+                    client.session.wtClientStepForTest = null
+                }
                 assertEquals(0, sessions(client), "the session is counted off exactly once")
             }
         }
@@ -767,13 +805,18 @@ class WebTransportSessionTest {
                 val client = Http3Connection.client(c, wtOn)
                 withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
                 client.session.wtClientStepForTest = { if (it == "registered") throw IllegalStateException("the session did not start") }
-                val call = async { runCatching { client.webTransport(wtReq()) } }
-                val st = withTimeout(5.seconds) { s.acceptBidi() }
-                readHeaders(st)
-                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
-                st.output.flush()
-                assertIs<IllegalStateException>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
-                client.session.wtClientStepForTest = null
+                val st =
+                    try {
+                        val call = async { runCatching { client.webTransport(wtReq()) } }
+                        val st = withTimeout(5.seconds) { s.acceptBidi() }
+                        readHeaders(st)
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                        st.output.flush()
+                        assertIs<IllegalStateException>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
+                        st
+                    } finally {
+                        client.session.wtClientStepForTest = null
+                    }
                 assertEquals(Http3ErrorCode.INTERNAL_ERROR, withTimeout(5.seconds) { resetCode(st) })
                 assertEquals(0, sessions(client))
             }
