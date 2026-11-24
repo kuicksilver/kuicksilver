@@ -2,14 +2,14 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Tests gradlew-retry.sh with a fake ./gradlew and a fake sleep: one more run, with --refresh-dependencies and the same
-# arguments, after a dependency was not found; up to three more, plain and after doubling pauses, after a 429 or 5xx; a
-# verification failure retried only when each artifact it names was refused (429/5xx) for its own URL or signature; and
-# never after a failing test.
+# arguments, after a dependency was not found; up to three more, plain and after doubling pauses, after a 429 or 5xx; and
+# never after a failing test or a dependency verification failure, whatever 429 or 5xx the same log shows.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 fails=0
 # case_run <name> <expected exit> <runs: - for the first, then R (refreshed) or P (plain) per retry> <outputs, one per run:
-# ok|module|file|get|crlf|tests|both|verify|plugin|range|method|429|503|403|v429|v429asc|vpart|vother|vmismatch|vone|t429>
+# ok|module|file|get|crlf|tests|both|verify|plugin|range|method|429|503|403|v429|v429asc|vmismatch|vone|vkey|vsum|vgroup|t429>
+# (MAX: KSL_GRADLE_RETRY_MAX; LOG=1: every run appended to KSL_GRADLE_RETRY_LOG, which must keep the first run's errors)
 case_run() {
   local name=$1 want_rc=$2 want_runs=$3
   shift 3
@@ -44,9 +44,15 @@ case $(sed -n "${n}p" plan) in
     echo "> Could not GET '$c/org/checkerframework/checker-qual/3.43.0/checker-qual-3.43.0.pom'. Received status code 502 from server: Bad Gateway"; exit 1 ;;
   v429asc) v429; printf "> Could not GET '%s/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.pom.asc'. Received status code 429 from server: Too Many Requests\r\n" "$c"
     echo "> Could not HEAD '$c/org/checkerframework/checker-qual/3.43.0/checker-qual-3.43.0.pom.asc'. Received status code 503 from server"; exit 1 ;;
-  vpart) v429; echo "> Could not GET '$c/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.pom'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
-  vother) v429; echo "> Could not GET '$c/com/squareup/okio/okio/3.15.0/okio-3.15.0.pom'. Received status code 429 from server: Too Many Requests"
-    echo "> Could not GET '$c/org/checkerframework/checker-qual/3.43.0/checker-qual-3.43.0.pom'. Received status code 404 from server: Not Found"; exit 1 ;;
+  vkey) echo "> Dependency verification failed for configuration ':a:c'"   # A2: an untrusted key, next to a 503 for its signature
+    echo "  - On artifact core-1.0.jar (com.victim:core:1.0) in repository 'MavenRepo': Artifact was signed with key '0123456789ABCDEF' but it wasn't found in any key server so it couldn't be verified"
+    echo "> Could not GET '$c/com/victim/core/1.0/core-1.0.jar.asc'. Received status code 503 from server: Service Unavailable"; exit 1 ;;
+  vsum) echo "> Dependency verification failed for configuration ':a:c'"   # A3: a checksum missing, next to a 429 for the file
+    echo "  - On artifact core-1.0.jar (com.victim:core:1.0) in repository 'MavenRepo': checksum is missing from verification metadata."
+    echo "> Could not GET '$c/com/victim/core/1.0/core-1.0.jar'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
+  vgroup) echo "> Dependency verification failed for configuration ':a:c'"   # the same file name in an unrelated group refused
+    echo "  One artifact failed verification: core-1.0.jar (com.victim:core:1.0) from repository MavenRepo"
+    echo "> Could not GET '$c/org/unrelated/core/1.0/core-1.0.jar'. Received status code 503 from server: Service Unavailable"; exit 1 ;;
   vmismatch) echo "> Dependency verification failed for configuration ':a:c'"
     echo "  - On artifact okio-jvm-3.15.0.pom (com.squareup.okio:okio-jvm:3.15.0) in repository 'MavenRepo': expected a 'sha256' checksum of 'aa' but was 'bb'"
     echo "> Could not GET '$c/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.pom'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
@@ -63,8 +69,10 @@ G
   printf '#!/usr/bin/env bash\necho "$1" >> "%s/sleeps"\n' "$dir" > "$dir/bin/sleep"
   chmod +x "$dir/gradlew" "$dir/bin/sleep"
   : > "$dir/sleeps"
-  local rc=0 delay=${DELAY:-0}
+  local rc=0 delay=${DELAY:-0} keep=""
+  [ "${LOG:-0}" = 1 ] && keep="$dir/kept.log" && echo "an earlier step" > "$keep"
   (cd "$dir" && PATH="$dir/bin:$PATH" KSL_GRADLE_RETRY_DELAY="$delay" KSL_GRADLE_RETRY_QUIET="${QUIET:-0}" \
+    KSL_GRADLE_RETRY_MAX="${MAX:-3}" KSL_GRADLE_RETRY_LOG="$keep" \
     bash "$here/gradlew-retry.sh" --stacktrace :a:b > out.log 2>&1) || rc=$?
   if [ "${QUIET:-0}" = 1 ] && { { [ "$1" = ok ] && [ -s "$dir/out.log" ]; } || { [ "$1" != ok ] && ! grep -q . "$dir/out.log"; }; }; then
     echo "FAIL $name (quiet): output '$(cat "$dir/out.log")'"; fails=$((fails + 1))
@@ -83,6 +91,11 @@ G
       [ "$s" -ge "$lo" ] && [ "$s" -lt $((lo + delay)) ] || bad+=" pause $k is ${s}s, not in [$lo, $((lo + delay)));"
     done < "$dir/sleeps"
     [ "$k" -eq "$WANT_PAUSES" ] || bad+=" $k pauses (want $WANT_PAUSES);"
+  fi
+  if [ -n "$keep" ]; then   # appended, never overwritten: what was there, then every run with its header and output
+    [ "$(head -1 "$keep")" = "an earlier step" ] || bad+=" the log was overwritten;"
+    [ "$(grep -c '^=== gradlew-retry.sh: run ' "$keep")" -eq "${#want_runs}" ] || bad+=" not every run is in the log;"
+    grep -q 'Could not find io.ktor:ktor-server-core:3.6.1' "$keep" || bad+=" the first run's error is not in the log;"
   fi
   if [ -n "$bad" ]; then echo "FAIL $name:$bad"; sed 's/^/    /' "$dir/out.log"; fails=$((fails + 1)); else echo "ok $name"; fi
   rm -rf "$dir"
@@ -107,15 +120,24 @@ case_run "a 503 on HEAD is retried without refreshing" 0 -P 503 ok
 DELAY=30 WANT_PAUSES=3 case_run "429 three times: three retries with doubling pauses, then passes" 0 -PPP 429 429 429 ok
 DELAY=30 WANT_PAUSES=3 case_run "negative_429ToTheEndFailsAfterThreeRetries" 1 -PPP 429 429 429 429 ok
 case_run "a 429, then a file not found: the refreshed retry follows" 0 -PR 429 file ok
-case_run "a file not found, then 429s: one refresh, the rest plain, four runs in all" 1 -RPP file 429 429 429 ok
-# verification: retried, refreshed, only when every failed artifact was refused (429/5xx) for its URL or its signature
-case_run "a verification failure whose POMs were refused (429, 502) is retried, refreshed" 0 -R v429 ok
-case_run "a verification failure whose signatures were refused (.asc 429, 503, CRLF) is retried" 0 -R v429asc ok
-case_run "the one-artifact form, its signature refused, is retried" 0 -R vone ok
-case_run "negative_aVerificationFailureWithOneArtifactNotRefusedIsNeverRetried" 1 - vpart ok
-case_run "negative_aVerificationFailureWithRefusalsForOtherUrlsOr404IsNeverRetried" 1 - vother ok
+case_run "a file not found, then three 429s: one refresh and three plain retries" 0 -RPPP file 429 429 429 ok
+case_run "negative_aFileNotFoundThen429ToTheEndStopsAfterFiveRuns" 1 -RPPP file 429 429 429 429 ok
+# dependency verification: never retried, whatever 429 or 5xx the log shows (with Gradle's default console a tampered file
+# whose signature request was refused looks like an overloaded server)
+case_run "negative_aVerificationFailureWhosePomsWereRefusedIsNeverRetried" 1 - v429 ok
+case_run "negative_aVerificationFailureWhoseSignaturesWereRefusedIsNeverRetried" 1 - v429asc ok
+case_run "negative_A1_shortFormFailureWith429OnItsSignatureIsNeverRetried" 1 - vone ok
+case_run "negative_A2_untrustedKeyWith503IsNeverRetried" 1 - vkey ok
+case_run "negative_A3_missingChecksumWith429IsNeverRetried" 1 - vsum ok
+case_run "negative_aRefusalOfTheSameFileNameInAnotherGroupIsNeverAReason" 1 - vgroup ok
 case_run "negative_aChecksumMismatchIsNeverRetriedEvenNextToA429" 1 - vmismatch ok
-case_run "negative_aVerificationFailureRefusedToTheEndFailsAfterThreeRetries" 1 -RRR v429 v429 v429 v429 ok
+case_run "negative_aVerificationFailureInARetryEndsTheRetries" 1 -P 429 v429 ok
+# KSL_GRADLE_RETRY_MAX=0 turns off the 429/5xx retries only; the one refreshed retry after "not found" stays
+MAX=0 case_run "max 0: a module not found still runs once more" 0 -R module ok
+MAX=0 case_run "negative_max0_a429IsNotRetried" 1 - 429 ok
+# the first run's errors are kept after a retry
+LOG=1 case_run "every run is appended to KSL_GRADLE_RETRY_LOG" 0 -R module ok
+LOG=1 QUIET=1 case_run "quiet: every run is appended to KSL_GRADLE_RETRY_LOG" 1 -R module module
 QUIET=1 case_run "quiet: a passing run prints nothing" 0 - ok
 QUIET=1 case_run "quiet: a failed run shows its output and is retried" 0 -R module ok
 QUIET=1 case_run "negative_quiet: a verification failure still shows and is not retried" 1 - verify ok

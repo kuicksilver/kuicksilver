@@ -17,6 +17,11 @@ inputs:
   openssl-cache:
     description: name of the OpenSSL build cache (tools/openssl/build.sh's own cache directory and the source tarball); empty = none
     default: ''
+  gradle-cache:
+    description: >-
+      setup-gradle's Gradle user home cache: default (main and manual runs write it, the rest read it), read-only (never
+      written: the fuzz matrix), disabled (neither read nor written: fuzz.yml's gradle-deps job, which saves only what it resolves)
+    default: default
   pin:
     description: the OpenSSL pin profile the cache key hashes (gradle/openssl-next.toml for the openssl-next job)
     default: gradle/openssl.toml
@@ -30,14 +35,17 @@ runs:
     - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       with:
         # main writes the cache every branch reads; a manual run of a branch also writes its own (scoped to that branch)
-        cache-read-only: ${{ github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch' }}
+        cache-read-only: ${{ inputs.gradle-cache == 'read-only' || (github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch') }}
+        cache-disabled: ${{ inputs.gradle-cache == 'disabled' }}
     - name: Gradle properties for CI
       shell: bash
       run: |
         # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
         mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
-        # and the mirror of Maven Central as the last repository (settings.gradle.kts)
-        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+        # and the mirror of Maven Central as the last repository (settings.gradle.kts); a dependency verification failure
+        # names its reason for every artifact (a missing checksum, an untrusted key, a mismatch), so it can be told apart
+        # in the log (gradlew-retry.sh never retries one)
+        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\nkuicksilver.centralMirror=true\norg.gradle.dependency.verification.console=verbose\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
     - name: Gradle plugin class path (a dependency not found is asked for once more, a refused one after a pause)
       shell: bash
       run: |
@@ -50,7 +58,8 @@ runs:
         # gradle/verification-metadata.xml, in the daemon the later steps reuse. gradlew-retry.sh runs it once more with
         # --refresh-dependencies after a dependency was not found, and up to three more times after doubling pauses when a
         # repository answered 429 or 5xx (run 44892895905: four fuzz jobs refused here, also on the one retry it had then),
-        # as $G does for every later Gradle step. Every job that uses this action runs Gradle.
+        # never after a dependency verification failure, as $G does for every later Gradle step. Every job that uses this
+        # action runs Gradle.
         KSL_GRADLE_RETRY_QUIET=1 bash tools/ci/gradlew-retry.sh --max-workers=2 -q help
     - name: Pinned Xcode
       if: inputs.xcode == 'true'
