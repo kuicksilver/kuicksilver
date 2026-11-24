@@ -373,6 +373,9 @@ internal class H1Pool(
      */
     internal var h2HealthAfterIdleMillis: Long = 10_000
 
+    /** Test hook: runs as a reserved stream's connection starts its health check ([answersHealthCheck]), before the PING. */
+    internal var healthCheckForTest: (suspend () -> Unit)? = null
+
     /**
      * Tests: the connection of a WebSocket that ended in order has sent everything it sends before the server closes its
      * side ("waiting"), then saw that close ("server closed") or gave up at T2 ("T2").
@@ -798,9 +801,7 @@ internal class H1Pool(
                                     // a connection quiet for a while may be dead (a NAT that forgot it, a peer gone without a
                                     // FIN): one PING, bounded, before the request goes on it; a failed one retires it, and the
                                     // request, not sent there, looks again
-                                    if (found.client.receivedIdleMillis >= h2HealthAfterIdleMillis &&
-                                        !found.client.checkHealth(healthTimeoutMillis(data))
-                                    ) {
+                                    if (!answersHealthCheck(found, data)) {
                                         found.client.unreserve()
                                         // calls still running on it (a long poll, an upload) are not cut: GOAWAY, no new streams,
                                         // closed when they are done; a connection without any is closed at once
@@ -949,6 +950,27 @@ internal class H1Pool(
             throw e
         }
         return Obtained(conn, reused, held, stream)
+    }
+
+    /**
+     * Whether [c], on which the caller reserved a stream, may take the request: true at once unless it was quiet for
+     * [h2HealthAfterIdleMillis], else whether it answers a health PING, bounded ([healthTimeoutMillis]). The reservation
+     * is the caller's on a result; when the check throws (the caller cancelled: the race lost to HTTP/3, the connect
+     * timeout) it is given back here, as nobody else holds it yet: a stream left reserved would hold a concurrent-stream
+     * slot and keep the connection from ever being idle, and so from eviction, until the engine closes.
+     */
+    private suspend fun answersHealthCheck(
+        c: H2Conn,
+        data: HttpRequestData,
+    ): Boolean {
+        if (c.client.receivedIdleMillis < h2HealthAfterIdleMillis) return true
+        try {
+            healthCheckForTest?.invoke()
+            return c.client.checkHealth(healthTimeoutMillis(data))
+        } catch (e: Throwable) {
+            c.client.unreserve()
+            throw e
+        }
     }
 
     /** The bound of a health PING: half the connect timeout (the rest is for a new connection), at most 5 s. */
