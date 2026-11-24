@@ -691,6 +691,7 @@ jobs:
       - name: 'repro: double build (macos-arm64)'
         run: |
           bash tools/check/double-build.sh macos-arm64
+          bash tools/check/ar-diff-test.sh        # what double-build.sh prints for an archive that differs (fixtures)
           bash tools/check/native-flags-test.sh   # the builder's compiler and flags (docs/guide/building.md)
           bash tools/openssl/fetch-test.sh        # zlib and brotli verification (ADR-0025), on the tarballs fetched above
           bash tools/openssl/brotli-pin-check-test.sh   # the brotli pin-update check, against a local fixture repository

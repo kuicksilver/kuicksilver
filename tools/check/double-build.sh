@@ -6,6 +6,7 @@
 #   libksl:  libksl.a (tools/build-ksl-a.sh), its ksl_ossl_-prefixed archives and map, and the JNI library of the target
 #            (tools/build-jni.sh on macOS, tools/build-android-so.sh for Android) built in build/double-build/a and .../b.
 # The copies differ only in their absolute path, which -ffile-prefix-map, no-filenames and SOURCE_DATE_EPOCH must hide.
+# An archive that differs is broken down by member (tools/check/ar-diff.py).
 # Usage: double-build.sh <target> [--skip-openssl]   targets: macos-arm64 macos-x64 ios-arm64 ios-sim-arm64 android-arm64
 #        android-x86_64 linux-x64-kn linux-arm64-kn (host builds; the Docker targets run their builds inside the images)
 #        --skip-openssl reuses build/openssl/<target> in both copies and compares only libksl.
@@ -22,7 +23,11 @@ copy() { # <dir>: the sources and scripts a build reads, at another absolute pat
   cp -R "$root/tools" "$root/gradle" "$1/"; cp -R "$root/kuicksilver-native/src" "$1/kuicksilver-native/"
 }
 same() { # <label> <file a> <file b>
-  if cmp -s "$2" "$3"; then echo "OK   $1 ($(wc -c < "$2" | tr -d ' ') bytes)"; else echo "FAIL $1 differs: $2 $3"; rc=1; fi
+  if cmp -s "$2" "$3"; then echo "OK   $1 ($(wc -c < "$2" | tr -d ' ') bytes)"; else
+    echo "FAIL $1 differs: $2 $3"; rc=1
+    # an archive: which members differ and where (tools/check/ar-diff.py), not only that it does
+    case "$2" in *.a) python3 -I "$root/tools/check/ar-diff.py" "$2" "$3" || true ;; esac
+  fi
 }
 copy "$work/a"; copy "$work/b"
 cp -R "$O" "$work/a/build/openssl/"
