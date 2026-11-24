@@ -33,7 +33,13 @@ class HeadMethodScanTest {
 
     @Test fun negative_eachByteIsInspectedOnce() {
         val prefix = " \t\u000b\u000c\r".repeat(1_638) // 8190 bytes of whitespace: no request line
-        for (line in listOf("$prefix HEAD / HTTP/1.1", "${prefix}GET / HTTP/1.1", prefix + " ".repeat(2), "HEAD / HTTP/1.1", "GET / HTTP/1.1")) {
+        for (line in listOf(
+            "$prefix HEAD / HTTP/1.1",
+            "${prefix}GET / HTTP/1.1",
+            prefix + " ".repeat(2),
+            "HEAD / HTTP/1.1",
+            "GET / HTTP/1.1",
+        )) {
             val scan = scan(line, perRead = 1)
             assertTrue(scan.decided, "undecided after ${scan.inspected} bytes")
             assertTrue(scan.inspected <= 5, "${scan.inspected} bytes inspected for ${line.length} received one at a time")

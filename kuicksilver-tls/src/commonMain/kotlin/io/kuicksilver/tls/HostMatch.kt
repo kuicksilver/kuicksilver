@@ -52,6 +52,7 @@ public fun Certificate.matchesHost(host: HostName): Boolean {
  * The bytes of a normalized IPv4 (4) or IPv6 (16, RFC 4291 section 2.2) literal, or null. An IPv4 part is a `dec-octet`
  * of RFC 3986 section 3.2.2, without leading zeros: `127.000.000.001` is a reg-name there, not the address.
  */
+
 /**
  * The bytes of the IP literal [s] (without brackets): an IPv4 dotted quad of ASCII decimal octets without leading zeros, or
  * an IPv6 address of ASCII hex groups (RFC 4291 section 2.2, an IPv4 tail allowed, no zone ID); null for anything else.

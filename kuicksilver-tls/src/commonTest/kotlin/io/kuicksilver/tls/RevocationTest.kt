@@ -372,7 +372,8 @@ class RevocationTest {
 
     /** With its staple the must-staple leaf passes on every path; `Off` asks for nothing and requires nothing. */
     @Test fun mustStapleLeafWithItsStaplePassesOnEveryTrustPath() {
-        val stapled = server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey, OcspStapling(RevocationCerts.ocspMustStaple))
+        val stapled =
+            server(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey, OcspStapling(RevocationCerts.ocspMustStaple))
         for (trust in pausedTrusts) {
             for ((policy, srv) in listOf(RevocationPolicy.StapledIfPresent to stapled, RevocationPolicy.Off to mustStaple)) {
                 val p = pausedQuic(client(policy, trust), srv)

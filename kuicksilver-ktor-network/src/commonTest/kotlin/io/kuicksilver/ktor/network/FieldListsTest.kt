@@ -32,7 +32,10 @@ class FieldListsTest {
      * `trim()` made it one.
      */
     @Test fun negative_webSocketExtensionNamesTrimOwsOnly() {
-        assertEquals(listOf("permessage-deflate", "x-a"), webSocketExtensionNames(listOf(" permessage-deflate ;\tclient_max_window_bits,\tX-A ")))
+        assertEquals(
+            listOf("permessage-deflate", "x-a"),
+            webSocketExtensionNames(listOf(" permessage-deflate ;\tclient_max_window_bits,\tX-A ")),
+        )
         assertEquals(listOf("\u00a0permessage-deflate"), webSocketExtensionNames(listOf("\u00a0permessage-deflate")))
         assertEquals(listOf("x-a\u2003"), webSocketExtensionNames(listOf("x-a\u2003; p=1")))
     }

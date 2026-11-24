@@ -153,7 +153,11 @@ class ServerH1FramingTest {
                 assertTrue(chunked.startsWith("HTTP/1.1 200 ") && chunked.endsWith("body=abcd"), chunked)
                 val sizeLine =
                     withTimeout(10.seconds) {
-                        rawHttp(port, "POST /echo HTTP/1.1\nHost: s\nTransfer-Encoding: chunked\nConnection: close\n\n4\nabcd\r\n0\r\n\r\n", tls = null)
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\nHost: s\nTransfer-Encoding: chunked\nConnection: close\n\n4\nabcd\r\n0\r\n\r\n",
+                            tls = null,
+                        )
                     }
                 assertTrue(sizeLine.contains(" 400 "), sizeLine)
             }

@@ -117,7 +117,9 @@ class KslCryptoTest {
         val a = KslCrypto.sign(SignatureAlgorithm.EcdsaP256, TestCerts.serverKey, msg)
         val b = KslCrypto.sign(SignatureAlgorithm.EcdsaP256, TestCerts.serverKey, msg)
         assertFalse(a.contentEquals(b), "two ECDSA signatures of one input are equal: a deterministic nonce")
-        assertTrue(KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, a) && KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, b))
+        assertTrue(
+            KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, a) && KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, b),
+        )
     }
 
     /** The KDoc promises false for a bad signature: one that is not a DER ECDSA-Sig-Value is a bad signature, not an error. */

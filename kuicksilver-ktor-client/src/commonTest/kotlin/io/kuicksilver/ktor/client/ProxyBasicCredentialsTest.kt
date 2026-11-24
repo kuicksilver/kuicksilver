@@ -67,7 +67,10 @@ class ProxyBasicCredentialsTest {
             ProxyCredentials("üser", "päss w:rd"),
         )) {
             val proxy = ResolvedProxy.http("proxy.test", 3128, c)
-            val expected = "Basic " + kotlin.io.encoding.Base64.encode("${c.user}:${c.password}".encodeToByteArray())
+            val expected =
+                "Basic " +
+                    kotlin.io.encoding.Base64
+                        .encode("${c.user}:${c.password}".encodeToByteArray())
             assertEquals(expected, proxy.basicAuthorization)
             ResolvedProxy.https("proxy.test", 3128, c)
             ConnectUdpProxy(UdpProxyTemplate.wellKnown("proxy.test:443"), c)

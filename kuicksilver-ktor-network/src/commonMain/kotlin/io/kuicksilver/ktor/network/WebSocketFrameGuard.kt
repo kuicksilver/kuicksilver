@@ -123,7 +123,8 @@ public fun negotiatedWebSocketRsv(
             if (name == PERMESSAGE_DEFLATE) {
                 WS_RSV1
             } else {
-                installed.firstOrNull { e -> e.protocols.any { it.name.trim(' ', '\t').lowercase() == name } }?.factory?.rsvBits() ?: WS_RSV_ALL
+                installed.firstOrNull { e -> e.protocols.any { it.name.trim(' ', '\t').lowercase() == name } }?.factory?.rsvBits()
+                    ?: WS_RSV_ALL
             }
     }
     return rsv

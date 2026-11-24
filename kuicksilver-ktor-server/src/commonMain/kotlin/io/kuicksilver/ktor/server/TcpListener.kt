@@ -534,7 +534,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         draining = draining,
                                         sendTimeout = sendTimeout,
                                         newConnectionUntil = accepted + NEW_CONNECTION_FIRST_BYTE,
-                                        allowBareLf = @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) configuration.h1AllowBareLf,
+                                        allowBareLf = @OptIn(
+                                            io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+                                        ) configuration.h1AllowBareLf,
                                     ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc, proxy) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
