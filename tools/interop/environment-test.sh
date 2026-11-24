@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, closing-challenge.py,
-# clienthello-lost.py, prohibited-port-rebind.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
+# clienthello-lost.py, prohibited-port-rebind.py, msquic-probe-budget.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
@@ -14,6 +14,8 @@
 # closing, e.g. the quinn-client/quinn_kuicksilver/rebind-addr cell of CI run 40645584772.
 # KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
 # build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
+# KSL_INTEROP_PROBE_CELL a zerortt cell of our server whose msquic client's PMTU probes took the runner's 1-RTT budget, e.g. the red
+# sixth of the ten reruns of 2026-11-24, whose decoded summary is the fixture.
 # KSL_INTEROP_PORT_CELL a cell of the ngtcp2 server whose client the sim rebound to a port that server drops, e.g. the release/0.2.x
 # run 40563746089 artifact interop-jvm-ngtcp2/20261027-192322/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr.
 # Usage: environment-test.sh
@@ -102,6 +104,43 @@ check "close: two server packets on the new path (10.2.2: one)"    1 "" -- pytho
 check "close: the client closed with an error code"                1 "" -- python3 "$cr" --decoded "$(cvar error "$cli.close_codes = [10]")"
 check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
+
+# msquic-probe-budget.py: msquic's first connection raised its PMTU probe after our ACK of the one before and took the runner's
+# 1-RTT budget of our server's zerortt cell (0.3.0 integration, the sixth of ten reruns with the image of run 20261121-105505;
+# decoded with --dump; sizes are protected payload, the runner's unit): probes of 1239 and 1319 bytes in the first connection, the
+# second after our HANDSHAKE_DONE packet acknowledged the first, 1207 and 1239 in the second; 5303 bytes, 3984 without the 1319
+mp="$here/msquic-probe-budget.py"; fm="$td/msquic-probe-budget-zerortt.json"
+mvar() { jq "$2" "$fm" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+dgram() { echo "{\"n\": $1, \"port\": \"45038\", \"udp\": $(($3 + 13)), \"long\": ${4:-0}, \"packets\": [{\"pn\": $1, \"frames\": $2, \"payload\": $3}]}"; }
+p45='(.client[] | select(.n == 45))'
+check "probes: rerun 6, the first connection's raised probe took the budget" 0 "the client's 1-RTT payload is 3984 of the runner's 5000" -- python3 "$mp" --decoded "$fm"
+check "probes: the native image's cell alike"                      0 "" -- python3 "$mp" --decoded "$(mvar native '.pair = "kuicksilver-native_msquic"')"
+check "probes: 1017 more bytes of ACK and MAX_DATA (5001 left)"    1 "" -- python3 "$mp" --decoded "$(mvar excess ".client += [$(dgram 200 '[3, 16, 0]' 1017)] | .reported += 1017")"
+check "probes:   1016 more bytes (5000 left) stay within"          0 "is 5000 of" -- python3 "$mp" --decoded "$(mvar within ".client += [$(dgram 200 '[3, 16, 0]' 1016)] | .reported += 1016")"
+check "probes: three re-sent requests (STREAM) are never excused"  1 "" -- python3 "$mp" --decoded "$(mvar stream ".client += [$(dgram 200 '[15]' 270), $(dgram 201 '[15]' 270), $(dgram 202 '[15]' 270)] | .reported += 810")"
+check "probes: CRYPTO in a 1-RTT packet is never excused"          1 "" -- python3 "$mp" --decoded "$(mvar crypto ".client += [$(dgram 200 '[6]' 40)] | .reported += 40")"
+check "probes: a coalesced datagram with an unknown frame"         1 "" -- python3 "$mp" --decoded "$(mvar coalesced ".client += [$(dgram 200 '[3, 24]' 40 1)] | .reported += 40")"
+check "probes: a coalesced datagram whose 1-RTT packet did not decrypt" 1 "" -- python3 "$mp" --decoded "$(mvar opaque ".client += [$(dgram 200 'null' 40 1)] | .reported += 40")"
+check "probes:   a coalesced datagram of ACK only is fine"          0 "" -- python3 "$mp" --decoded "$(mvar coalok ".client += [$(dgram 200 '[3]' 40 1)] | .reported += 40")"
+check "probes: a small PING+PADDING is no probe"                   1 "" -- python3 "$mp" --decoded "$(mvar small "$p45.udp = 1100")"
+check "probes: a probe that also carries MAX_STREAM_DATA is not subtracted" 1 "" -- python3 "$mp" --decoded "$(mvar probemax "$p45.packets[0].frames = [1, 0, 17]")"
+check "probes: no ACK of the first probe before the second"        1 "" -- python3 "$mp" --decoded "$(mvar noack '(.server[] | select(.n == 44)).n = 46')"
+check "probes: the ACK named another packet"                       1 "" -- python3 "$mp" --decoded "$(mvar otherack '(.server[] | select(.n == 44)).acked = [[244, 244]]')"
+check "probes: the ACK went to the other connection"               1 "" -- python3 "$mp" --decoded "$(mvar otherport '(.server[] | select(.n == 44)).port = "45038"')"
+check "probes: a retried probe of the same size (or a PTO PING)"   1 "" -- python3 "$mp" --decoded "$(mvar repeat "$p45.udp = 1252")"
+check "probes: a PTO PING of the same size in the second connection" 1 "" -- python3 "$mp" --decoded "$(mvar pto '(.client[] | select(.n == 123)).udp = 1220')"
+check "probes: a transport CONNECTION_CLOSE (0x1c) from msquic"    1 "" -- python3 "$mp" --decoded "$(mvar transportclose ".client += [$(dgram 200 '[28]' 30)] | .reported += 30")"
+check "probes:   its application close (0x1d) is fine"              0 "" -- python3 "$mp" --decoded "$(mvar appclose ".client += [$(dgram 200 '[29]' 30)] | .reported += 30")"
+check "probes: a raise only in the second connection"              1 "" -- python3 "$mp" --decoded "$(mvar second '.client |= map(select(.n != 45)) | .reported -= 1319')"
+check "probes: a raise only in the first connection"               0 "is 2745 of" -- python3 "$mp" --decoded "$(mvar firstonly '.client |= map(select(.n != 123)) | .reported -= 1239')"
+check "probes: the raised probe alone does not explain the excess" 1 "" -- python3 "$mp" --decoded "$(mvar notenough ".client += [$(dgram 200 '[3]' 1500)] | .reported += 1500")"
+check "probes: not the runner's count"                             1 "" -- python3 "$mp" --decoded "$(mvar count '.reported = 5302')"
+check "probes: a peer other than the msquic client"                1 "" -- python3 "$mp" --decoded "$(mvar peer '.pair = "kuicksilver_quic-go"')"
+check "probes: msquic's server, our client"                        1 "" -- python3 "$mp" --decoded "$(mvar role '.pair = "msquic_kuicksilver"')"
+check "probes: another case"                                       1 "" -- python3 "$mp" --decoded "$(mvar case '.case = "resumption"')"
+check "probes: the runner failed the cell on something else"       1 "" -- python3 "$mp" --decoded "$(mvar verdict '.too_much = false')"
+check "probes: the downloaded files were not checked"              1 "" -- python3 "$mp" --decoded "$(mvar nofiles '.download_checked = false')"
+check "probes: a malformed summary cannot be analysed"             2 "cannot analyse" -- python3 "$mp" --decoded "$(mvar broken 'del(.server)')"
 
 # closing-challenge.py: the rebind landed after the client's CONNECTION_CLOSE left, before its last packets arrived (CI run
 # 40571281407, quiche->kuicksilver:rebind-addr, the JVM image; decoded with --dump): the server challenged the new path, the
@@ -339,6 +378,17 @@ check "challenge: no unanswered challenge in the verdict"      1 "" -- python3 "
 # both roles on purpose (closing-rebind.py): our own server's cell is analysed too (here: no captures), not refused by role
 mk msquic-server/kuicksilver-native_msquic rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: our server's cell is analysed as well"           2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-server/kuicksilver-native_msquic/rebind-port"
+# msquic-probe-budget.py on cells: only the budget verdict is analysed, never without the client-side capture and key log
+mk msquic-server/kuicksilver_msquic zerortt "Check of downloaded files succeeded." "0-RTT size: 10700" "1-RTT size: 5503" "Client sent too much data in 1-RTT packets."
+mk msquic-server/kuicksilver_msquic resumption "Check of downloaded files succeeded."
+check "probes: a budget failure without the capture cannot be analysed" 2 "cannot analyse" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt"
+check "probes: no budget failure in the verdict"                   1 "" -- python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/resumption"
+# a JSON array where tshark writes objects is refused, not read as key/value pairs (a stub tshark, no capture needed)
+mkdir -p "$tmp/stub" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client"
+printf '%s\n' '#!/bin/sh' "echo '[{\"_source\": {\"layers\": [\"frame.number\", \"1\"]}}]'" > "$tmp/stub/tshark"; chmod +x "$tmp/stub/tshark"
+: > "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim/trace_node_left.pcap"; echo k > "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client/keys.log"
+check "probes: a JSON array inside a packet cannot be analysed"   2 "a JSON array inside a packet" -- env PATH="$tmp/stub:$PATH" python3 "$mp" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt"
+rm -rf "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/sim" "$tmp/res/msquic-server/kuicksilver_msquic/zerortt/client"
 
 # prohibited-port-rebind.py on cells: no prohibited port in the sim's rebinds is no verdict, one without the capture cannot be analysed
 mk ngtcp2-client/ngtcp2_kuicksilver rebind-addr "sim     | 11s:  rebinding: 193.167.0.229:18108 -> 193.167.0.155:745" "client exited with code 1"
@@ -570,6 +620,11 @@ if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlo
   cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real lost cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the peer client's ClientHello never reached our server" -- environment_cells "$res"
   check "real lost cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cl' --dump '$cell' | jq -e --slurpfile f '$fl' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_PROBE_CELL:-}" ]; then   # the real rerun-6 cell: client-side pcap and key log through tshark
+  cell=${KSL_INTEROP_PROBE_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real probe cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") msquic's first connection raised its PMTU probe after our ACK" -- environment_cells "$res"
+  check "real probe cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$mp' --dump '$cell' | jq -e --slurpfile f '$fm' '. == \$f[0]' > /dev/null"
 fi
 if [ -n "${KSL_INTEROP_PORT_CELL:-}" ]; then   # the real release/0.2.x cell: pcap through tshark, the ngtcp2 server's log
   cell=${KSL_INTEROP_PORT_CELL%/}; res=$(dirname "$(dirname "$cell")")
