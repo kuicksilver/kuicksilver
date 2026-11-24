@@ -169,6 +169,11 @@ case "$target" in
     [ -n "$llvm_ar" ] || [ "$print_only" = 1 ] || { echo "no llvm-ar for $target (install the NDK pinned in gradle/toolchains.toml, or set LLVM_AR)" >&2; exit 2; }
     export AR="$llvm_ar" RANLIB="$llvm_ar s" ;;
 esac
+# The Docker Linux targets archive with the image's GNU ar (devtoolset binutils of manylinux2014), which, unlike the NDK's,
+# Kotlin/Native's and mingw-w64's archivers, writes each member's mtime, uid and gid and the index's mtime unless told D
+# (deterministic mode): ar qcD and ranlib -D give every archive step zeros there.
+ar_args=()
+case "$target" in linux-x64|linux-arm64) ar_args=(ARFLAGS=qcD); export RANLIB="ranlib -D" ;; esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
@@ -201,7 +206,7 @@ cd "$work"
   || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: the carried patches do not apply to OpenSSL $version" >&2; exit 1; }
 # the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
-./Configure "$cfg" $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
+./Configure "$cfg" ${ar_args[@]+"${ar_args[@]}"} $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
 # The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the
 # compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
 # no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer

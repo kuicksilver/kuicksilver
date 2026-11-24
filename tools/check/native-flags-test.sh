@@ -8,7 +8,8 @@
 #      (where Configure would put them in place of the target's flags); configure-target.txt, provenance.txt and
 #      --print-target name them; the cache key tells builds with and without them apart; Configure's own options, words
 #      that are not flags and %-escapes are refused before anything runs. The Apple targets get llvm-ar as AR and RANLIB
-#      (not Xcode's archiver, whose index is not reproducible), and another llvm-ar version is another cache key.
+#      (not Xcode's archiver, whose index is not reproducible), and another llvm-ar version is another cache key; the
+#      Docker Linux targets get GNU ar's deterministic mode.
 #   2. tools/build-ksl-a.sh and tools/build-jni.sh (macOS, on a copy of the tree): a CC wrapper records every compiler
 #      invocation: CC is the compiler, every project flag is still there and the builder's come after them (CPPFLAGS and
 #      CFLAGS after -Werror, LDFLAGS after the export list), a flag that cannot compile fails the build, LDFLAGS reach the
@@ -133,6 +134,8 @@ check "openssl: without them Configure ends with the project's flags" "$([ "$(ta
 t1=$(portable < "$tmp/o1/linux-x64/configure-target.txt")
 check "openssl: configure-target.txt without them is unchanged" "$([ "$t1" = "linux-x86_64 -Os$pids" ] && echo 0 || echo 1)" "$t1"
 check "openssl: the carried patches applied to the stub tree" "$([ "${stubbed:-0}" -gt 0 ] || [ ${#patches[@]} = 0 ]; echo $?)" "stubs: ${stubbed:-none}"
+check "openssl: the Docker Linux targets archive in GNU ar's deterministic mode (ARFLAGS=qcD, RANLIB=ranlib -D)" \
+  "$([ "$(pos "$log.args" ARFLAGS=qcD)" -gt 0 ] && grep -qxF 'RANLIB=ranlib -D' "$log.env" && echo 0 || echo 1)" "$(grep -E '^(ARFLAGS|RANLIB)=' "$log.args" "$log.env")"
 
 rm -f "$log".*; out=$(ossl "$tmp/o2" CPPFLAGS="$F_CPP" CFLAGS="$F_C" LDFLAGS="$F_LD"); rc=$?
 check "openssl: builds with the builder's flags, not from the cache of a build without them" \
