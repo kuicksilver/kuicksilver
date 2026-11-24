@@ -105,7 +105,11 @@ default; draft-14 when Safari does. Only the two older codepoints, 0x2b603742 an
 `sec-webtransport-http3-draft02: 1`, adds `sec-webtransport-http3-draft: draft02` to its 2xx. A session of draft-14,
 draft-16 or draft-17 never gets it, whatever the request carried (hardening audit S2: the field was added for the request
 field with any value, so a draft-16 session whose `webtransport-h3` CONNECT carried the field was answered with a draft-02
-marker; the audit's `== "1"` alone would still have marked that one, so the session's version is checked too).
+marker; the audit's `== "1"` alone would still have marked that one, so the session's version is checked too). So a
+CONNECT carrying the draft-02 request field on a connection whose selected draft is newer gets no response field: in
+`webtransport-h3` form it runs that draft without the marker, and in draft-02 form (`webtransport`) it is malformed, as
+its token is not the selected draft's ([considered and not listed](#considered-and-not-listed)); only while shim 3 lasts
+does a draft-02 request from a client that also announces draft-02 run draft-02, and get the field.
 
 **Peers.** Chrome's draft-02 client refuses a 2xx without it (our `ChromeWebTransportTest`; neither webtransport-go nor
 picoquic sends it, and their Chrome interop was not checked).

@@ -1064,8 +1064,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - A server whose client announces no draft selects draft-17 and accepts its `webtransport-h3` CONNECT ("Otherwise,
     the server selects the version described in this document"). Before, such a request was refused with 400. The
     older `webtransport` token from such a client is still malformed.
-  - A client takes a draft-17 `SETTINGS_WT_ENABLED` above 1 from a server as `H3_SETTINGS_ERROR`. A server ignores
-    the value a client sends and reads only a 1 as a version (section 3.1).
+  - A WebTransport client takes a server's `SETTINGS_WT_ENABLED` above 1, draft-17's or draft-16's, as
+    `H3_SETTINGS_ERROR`. A server ignores the value a client sends and reads only a 1 as a version (section 3.1). An
+    endpoint without WebTransport ignores both, as RFC 9114 section 7.2.4 asks of a setting it does not understand.
+    Before, every endpoint closed on draft-16's value above 1.
+  - A server takes only the selected draft's `:protocol` token: `webtransport-h3` for draft-17 and draft-16,
+    `webtransport` for draft-14 and draft-02 (draft-17 section 3.2). Another token is answered with 400. Before,
+    either token went with any draft.
   - A `WT_STREAM` signal out of place closes a draft-17 connection with `H3_FRAME_UNEXPECTED` (section 4.3). Draft-16
     and draft-14 keep `H3_FRAME_ERROR`.
   - After 0-RTT, a client takes a draft-17 server's WebTransport settings as the resumed connection sends them (section

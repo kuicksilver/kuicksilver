@@ -508,7 +508,8 @@ draft without `reset_stream_at` but also draft-02 gets a draft-02 session when i
 section 7.1 ("the highest version supported by both endpoints" taken as the highest both can actually run), not
 something the draft says. Its draft-17, draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft,
 are refused. The drafts differ on the wire in little else: a `WT_STREAM` signal out of place closes a draft-17
-connection with `H3_FRAME_UNEXPECTED` (`H3_FRAME_ERROR` before), and after 0-RTT a client takes a draft-17 server's
+connection with `H3_FRAME_UNEXPECTED` (`H3_FRAME_ERROR` for draft-16 and older; draft-17's before the peer's SETTINGS
+name a draft), and after 0-RTT a client takes a draft-17 server's
 WebTransport settings as the new connection sends them, while it holds a draft-16 or draft-14 server to those it kept
 (their section 3.2).
 Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
