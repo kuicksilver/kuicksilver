@@ -172,9 +172,20 @@ class ServerH1ResponseFramingTest {
     @Test fun negative_unicodeSpaceInTheApplicationsConnectionIsNoOws() =
         serverTest {
             plainServer { port ->
-                val resp = withTimeout(10.seconds) { rawHttp(port, "GET /nbsp-close HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
+                val resp =
+                    withTimeout(
+                        10.seconds,
+                    ) { rawHttp(port, "GET /nbsp-close HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
                 val head = resp.substringBefore("\r\n\r\n")
-                val connection = head.lines().filter { it.startsWith("Connection:", ignoreCase = true) }.map { it.substringAfter(':').trim(' ') }
+                val connection =
+                    head
+                        .lines()
+                        .filter {
+                            it.startsWith(
+                                "Connection:",
+                                ignoreCase = true,
+                            )
+                        }.map { it.substringAfter(':').trim(' ') }
                 assertEquals(listOf("close\u00a0, close"), connection, resp)
             }
         }

@@ -47,6 +47,7 @@ class AltSvcTest {
      * section 1.2.2 says a cache MUST, not dropped; before, `ma=99999999999999999999` skipped the alternative. A sign is
      * no delta-seconds.
      */
+
     /**
      * OWS in Alt-Svc is SP and HTAB only (RFC 9110 section 5.6.3, RFC 7838 section 3): a no-break space (U+00A0) or another
      * Unicode space around the protocol, the authority or a parameter is part of the token, so `<NBSP>h3` is no `h3` entry

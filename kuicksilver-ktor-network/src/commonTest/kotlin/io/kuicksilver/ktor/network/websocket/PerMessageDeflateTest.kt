@@ -288,7 +288,12 @@ class PerMessageDeflateTest {
      */
     @Test fun negative_unicodeSpaceAroundNamesAndParametersIsNoOws() {
         val nbsp = '\u00a0'
-        assertEquals(emptyList(), PerMessageDeflate.install {}.serverNegotiation(listOf(WebSocketExtensionHeader("${nbsp}permessage-deflate", emptyList()))))
+        assertEquals(
+            emptyList(),
+            PerMessageDeflate
+                .install {
+                }.serverNegotiation(listOf(WebSocketExtensionHeader("${nbsp}permessage-deflate", emptyList()))),
+        )
         assertEquals(
             emptyList(),
             PerMessageDeflate.install {}.serverNegotiation(
@@ -301,7 +306,9 @@ class PerMessageDeflateTest {
             PerMessageDeflate.install {}.serverNegotiation(listOf(WebSocketExtensionHeader("permessage-deflate", listOf("$nbsp")))),
             "a parameter of a no-break space alone is no empty parameter",
         )
-        assertFalse(PerMessageDeflate.install {}.clientNegotiation(listOf(WebSocketExtensionHeader("permessage-deflate\u2003", emptyList()))))
+        assertFalse(
+            PerMessageDeflate.install {}.clientNegotiation(listOf(WebSocketExtensionHeader("permessage-deflate\u2003", emptyList()))),
+        )
         assertFailsWith<ProtocolViolationException> {
             PerMessageDeflate.install {}.clientNegotiation(
                 listOf(WebSocketExtensionHeader("permessage-deflate", listOf("server_max_window_bits=${nbsp}10"))),
@@ -310,9 +317,11 @@ class PerMessageDeflateTest {
         // SP and HTAB are OWS and still go
         assertEquals(
             "permessage-deflate; server_no_context_takeover",
-            PerMessageDeflate.install {}.serverNegotiation(
-                listOf(WebSocketExtensionHeader(" permessage-deflate\t", listOf("\tserver_no_context_takeover "))),
-            ).text(),
+            PerMessageDeflate
+                .install {}
+                .serverNegotiation(
+                    listOf(WebSocketExtensionHeader(" permessage-deflate\t", listOf("\tserver_no_context_takeover "))),
+                ).text(),
         )
         assertTrue(
             PerMessageDeflate.install {}.clientNegotiation(

@@ -235,7 +235,15 @@ class H1PipelineUpgradeOfferTest {
                     output.writeStringUtf8(ok)
                     output.flush()
                 }
-            val values = listOf("Connection:\r\n", "Connection: \r\n", "Connection: \t \r\n", "Connection: , ,\r\n", "Connection:\n", "Connection: \t\n")
+            val values =
+                listOf(
+                    "Connection:\r\n",
+                    "Connection: \r\n",
+                    "Connection: \t \r\n",
+                    "Connection: , ,\r\n",
+                    "Connection:\n",
+                    "Connection: \t\n",
+                )
             toServer.writeStringUtf8(values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" })
             toServer.flush()
             val expected = ok.repeat(values.size)

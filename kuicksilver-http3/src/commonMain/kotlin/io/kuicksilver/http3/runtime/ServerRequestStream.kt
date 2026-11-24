@@ -918,7 +918,17 @@ internal class ServerRequestImpl(
             // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
             val discard = method == "HEAD" || status == 204 || status == 304
             // the content must match its content-length (RFC 9114 section 4.1.2); a tunnel's says nothing about its bytes
-            val declared = if (discard || tunnel) null else headers["content-length"]?.let { parseContentLength(it) ?: throw IllegalArgumentException("invalid content-length '$it'") }
+            val declared =
+                if (discard ||
+                    tunnel
+                ) {
+                    null
+                } else {
+                    headers["content-length"]?.let {
+                        parseContentLength(it)
+                            ?: throw IllegalArgumentException("invalid content-length '$it'")
+                    }
+                }
             ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = discard, declaredLength = declared, tunnel = tunnel)
         }
     }
