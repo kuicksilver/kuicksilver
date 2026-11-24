@@ -1701,6 +1701,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebTransport: a peer's WT_CLOSE_SESSION that arrived with its CONNECTION_CLOSE (Firefox 160 sends both in one packet)
+  is reported in `closed` with its code and reason, also when the application, or a Ktor route whose handler the
+  connection's end cancelled, calls `close()` first. Once the connection is gone `close()` sends nothing and waits for
+  the session's end. Before, it completed `closed` with code 0 ahead of the peer's capsule.
+
 - WebTransport server: `sec-webtransport-http3-draft: draft02`, the response field Chrome's draft-02 client needs, goes
   only to a session that runs draft-02 and whose client sent `sec-webtransport-http3-draft02: 1`. Before, any request
   that carried the request field got it, with any value and in any draft. So a draft-16 session whose

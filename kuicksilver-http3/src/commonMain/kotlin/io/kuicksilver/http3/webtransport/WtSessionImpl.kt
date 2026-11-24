@@ -291,9 +291,13 @@ internal class WtSessionImpl(
         h3.scope.launch { terminate(WebTransportCloseInfo(0, "", WtSessionFlow.error(reason)), End.FlowControl) }
     }
 
+    /** Test hook: runs before the capsule reader handles a capsule of the type it is given. */
+    internal var beforeCapsuleForTest: (suspend (Long) -> Unit)? = null
+
     private suspend fun readCapsules() {
         try {
             capsules.capsules.collect { c ->
+                beforeCapsuleForTest?.invoke(c.type)
                 when (c.type) {
                     WtCloseCapsule.TYPE -> {
                         val (code, reason) =
@@ -700,7 +704,25 @@ internal class WtSessionImpl(
     ) {
         require(code in 0..WtErrorCodes.MAX_APPLICATION_CODE) { "WebTransport error code $code is not in 0..2^32-1" }
         val (c, r) = WtCloseCapsule.decode(WtCloseCapsule.encode(code, reason))!!
-        terminate(WebTransportCloseInfo(c, r, null), End.Locally)
+        // the connection is gone: no capsule can be sent, and the session ends as its connection's end decides (the
+        // capsule reader reads on to what the peer sent before, H3Session.drains): the peer's WT_CLOSE_SESSION that came
+        // with its CONNECTION_CLOSE (Firefox sends them in one packet) is its end, not this close, which would report code
+        // 0 for a session the peer closed with its own code (draft-17 section 6). A handler cancelled by the connection's
+        // end closes this way
+        // decided on the session's dispatcher, where the connection's end is taken note of (H3Session.onTransportClosed),
+        // and the local end is recorded in the same turn (terminate completes `closed` before it suspends): a connection
+        // that ends meanwhile cannot slip between the check and the close. Not cancellable: a cancelled close still ends
+        // the session
+        val local =
+            withContext(NonCancellable + h3.dispatcher) {
+                if (h3.closed.isCompleted || h3.quic.closed.isCompleted) {
+                    false
+                } else {
+                    terminate(WebTransportCloseInfo(c, r, null), End.Locally)
+                    true
+                }
+            }
+        if (!local) closedInfo.await()
     }
 
     override fun toString(): String = "WebTransportSession($sessionId, protocol=$protocol)"

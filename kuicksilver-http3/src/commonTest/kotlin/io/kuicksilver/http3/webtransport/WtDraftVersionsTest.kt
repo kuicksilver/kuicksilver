@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.http3.webtransport
 
@@ -26,11 +26,14 @@ import io.kuicksilver.http3.runtime.peerSawClose
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,6 +49,10 @@ import kotlin.time.Duration.Companion.seconds
  * as a raw client, and the server ones meet our client as a raw server: the version both select (draft-17 section 7.1),
  * the token and the fields on the wire.
  */
+
+/** The WT_CLOSE_SESSION value the tests' clients send: code 7, reason "bye". */
+private val CLOSE_VALUE: ByteArray = WtCloseCapsule.encode(7, "bye")
+
 class WtDraftVersionsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -71,6 +78,46 @@ class WtDraftVersionsTest {
             ),
         )
 
+    /**
+     * The client sends WT_CLOSE_SESSION (code 7, "bye") with the FIN of its CONNECT stream [st], then [then] (its
+     * CONNECTION_CLOSE, or STOP_SENDING for our side), and the server's transport gets them back to back, as in one packet:
+     * the client's datagrams are held until one carries the capsule (a lone ACK before it does not count) and the next
+     * one went out, then delivered together.
+     */
+    private suspend fun closeCapsuleThen(
+        q: QuicPair,
+        c: QuicConnection,
+        s: QuicConnection,
+        st: QuicStream,
+        then: suspend () -> Unit,
+    ) {
+        val held = AtomicReference<List<ByteArray>>(emptyList())
+        val clientAddr = c.paths.first().localAddress
+        val serverAddr = s.paths.first().localAddress
+        q.net.drop = { from, _, b ->
+            (from == clientAddr).also {
+                if (it) {
+                    while (true) {
+                        val now = held.load()
+                        if (held.compareAndSet(now, now + b)) break
+                    }
+                }
+            }
+        }
+        st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, CLOSE_VALUE)))
+        st.output.flushAndClose()
+        withTimeout(5.seconds) { while (held.load().none { it.contains(CLOSE_VALUE) }) kotlinx.coroutines.yield() }
+        val before = held.load().size
+        then()
+        withTimeout(5.seconds) { while (held.load().size <= before) kotlinx.coroutines.yield() }
+        q.net.drop = null
+        for (b in held.load()) q.net.deliver(clientAddr, serverAddr, b)
+    }
+
+    /** Whether [part] occurs in these bytes (the null crypto of the test pair leaves payloads readable). */
+    private fun ByteArray.contains(part: ByteArray): Boolean =
+        (0..size - part.size).any { i -> part.indices.all { this[i + it] == part[it] } }
+
     /** A raw client of [settings] sends a WebTransport CONNECT of [token] and [fields]; returns the response and the session. */
     private suspend fun kotlinx.coroutines.CoroutineScope.serve(
         settings: List<Pair<Long, Long>>,
@@ -92,6 +139,79 @@ class WtDraftVersionsTest {
         }
         return out!!
     }
+
+    /**
+     * The client's WT_CLOSE_SESSION reaches the server's `closed` with its code and reason in every draft (draft-17, -16
+     * and -14 section 6; draft-02 section 5 has the same capsule, 0x2843), also when the client closes the QUIC connection
+     * right behind it, as Firefox does: its CONNECT stream's capsule, FIN and CONNECTION_CLOSE (H3_NO_ERROR) came in one
+     * packet, and the session ended with code 0 as if the FIN had come without a capsule.
+     */
+    @Test fun negative_theClientsCloseCapsuleReachesTheServerAlsoWithTheConnectionsCloseBehindIt() =
+        h3Test {
+            for (d in drafts) {
+                for (closeConnection in listOf(false, true)) {
+                    QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                        val (c, s) = q.connect(H3Fixtures.quic)
+                        val server = Http3Connection.server(s, wtOn)
+                        val raw = RawPeer(c)
+                        raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                        val accepted = async { server.acceptRequest().acceptWebTransport() }
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                        st.output.flush()
+                        assertEquals("200", readHeaders(st)[":status"], "$d")
+                        val session = withTimeout(5.seconds) { accepted.await() }
+                        // the capsule with the FIN, and the CONNECTION_CLOSE, reach the server's transport back to back (as
+                        // Firefox's one packet does): the client's datagrams are held, then delivered together
+                        if (closeConnection) {
+                            closeCapsuleThen(q, c, s, st) { c.close(Http3ErrorCode.NO_ERROR, "") }
+                        } else {
+                            st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, CLOSE_VALUE)))
+                            st.output.flushAndClose()
+                        }
+                        val info = withTimeout(10.seconds) { session.closed.await() }
+                        assertEquals(7L, info.code, "$d, connection closed behind: $closeConnection, cause ${info.cause}")
+                        assertEquals("bye", info.reason, "$d, connection closed behind: $closeConnection")
+                    }
+                }
+            }
+        }
+
+    /**
+     * The application closes the session (or its route's handler is cancelled, which closes it with code 0) after the
+     * connection ended but before the capsule reader handled the client's WT_CLOSE_SESSION, which came with the connection's
+     * close (as Firefox sends it): nothing can be sent any more, so the local close must not win; `closed` reports the
+     * client's code and reason, in every draft. The reader is held at the capsule ([WtSessionImpl.beforeCapsuleForTest]);
+     * before, the local close completed `closed` with code 0.
+     */
+    @Test fun negative_aLocalCloseAfterTheConnectionEndedLeavesThePeersCloseCapsule() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    val session = withTimeout(5.seconds) { accepted.await() } as WtSessionImpl
+                    val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    session.beforeCapsuleForTest = { type -> if (type == WtCloseCapsule.TYPE) gate.await() }
+                    st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, WtCloseCapsule.encode(7, "bye"))))
+                    st.output.flushAndClose()
+                    c.close(Http3ErrorCode.NO_ERROR, "")
+                    withTimeout(10.seconds) { server.closed.await() }
+                    val local = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { session.close(0) }
+                    gate.complete(Unit)
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(7L to "bye", info.code to info.reason, "$d")
+                    withTimeout(10.seconds) { local.join() }
+                }
+            }
+        }
 
     /** Every draft's client is served in its own draft; only a draft-02 one is answered with the draft-02 field (shim 2). */
     @Test fun eachDraftClientIsServedInItsDraft() =
