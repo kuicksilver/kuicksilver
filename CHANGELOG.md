@@ -1047,6 +1047,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client and server, WebSocket handshake (breaking strictness, RFC 6455 sections 4.1 and 4.2.1, RFC 9110 section
+  5.6.3): the values of `Upgrade`, `Sec-WebSocket-Accept`, `Sec-WebSocket-Protocol` and `Sec-WebSocket-Extensions` (client)
+  and of `Sec-WebSocket-Key` and `Sec-WebSocket-Version` (server) lose only SP and HTAB around them, no longer any Unicode
+  space: `Upgrade: <U+00A0>websocket` fails the client's handshake with `WebSocketException`, and
+  `Sec-WebSocket-Version: <U+00A0>13` gets 426 from the server, as x/net/websocket holds.
 - Ktor client, proxy credentials (breaking strictness, RFC 7617 section 2): `ProxyCredentials` sent as
   `Proxy-Authorization: Basic` (an HTTP or `https://` proxy, `ConnectUdpProxy`) with a colon in the user name, or with a
   control character (0x00-0x1F, 0x7F) in the user name or password, now fail with `IllegalArgumentException` where the

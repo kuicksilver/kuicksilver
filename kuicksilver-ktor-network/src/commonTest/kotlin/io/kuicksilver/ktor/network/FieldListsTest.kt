@@ -26,6 +26,17 @@ class FieldListsTest {
         assertEquals(setOf("keep-alive", "upgrade", "x-a"), connectionOptions(listOf("keep-alive", "", " Upgrade ,X-A,")))
     }
 
+    /**
+     * The names of `Sec-WebSocket-Extensions` (RFC 6455 section 9.1) lose SP and HTAB around them, never another Unicode
+     * space (RFC 9110 section 5.6.3): "\u00a0permessage-deflate" is not the name "permessage-deflate". Before, Kotlin's
+     * `trim()` made it one.
+     */
+    @Test fun negative_webSocketExtensionNamesTrimOwsOnly() {
+        assertEquals(listOf("permessage-deflate", "x-a"), webSocketExtensionNames(listOf(" permessage-deflate ;\tclient_max_window_bits,\tX-A ")))
+        assertEquals(listOf("\u00a0permessage-deflate"), webSocketExtensionNames(listOf("\u00a0permessage-deflate")))
+        assertEquals(listOf("x-a\u2003"), webSocketExtensionNames(listOf("x-a\u2003; p=1")))
+    }
+
     /** Random lists of tokens with empty elements and OWS mixed in read back as their tokens, whatever the split. */
     @Test fun randomListsReadBackAsTheirTokens() {
         val random = Random(20261115)
