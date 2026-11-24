@@ -275,18 +275,21 @@ class ClientH2Test {
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(0, e.h1.h2.streamCount)
                     e.h1.h2HealthAfterIdleMillis = 0 // the next reuse is checked
-                    val checking = CompletableDeferred<Unit>()
+                    // the engine's coroutine of the call, in its health check: cancelling the caller reaches it through
+                    // Ktor's call job, so the test waits for that coroutine's end, not only the caller's
+                    val checking = CompletableDeferred<kotlinx.coroutines.Job>()
                     e.h1.healthCheckForTest = {
-                        checking.complete(Unit)
+                        checking.complete(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!)
                         kotlinx.coroutines.awaitCancellation() // the health check outlasts its caller
                     }
                     try {
                         coroutineScope {
-                            val call = launch { c.get("https://127.0.0.1:$port/") }
-                            checking.await()
+                            val caller = launch { c.get("https://127.0.0.1:$port/") }
+                            val call = checking.await()
                             assertEquals(1, e.h1.h2.streamCount, "the request reserved its stream before the check")
-                            call.cancel()
+                            caller.cancel()
                             call.join()
+                            caller.join()
                         }
                     } finally {
                         e.h1.healthCheckForTest = null
