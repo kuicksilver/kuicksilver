@@ -55,6 +55,9 @@ fun fallbackHint(reason: FallbackReason): String =
         FallbackReason.Other -> "the HTTP/3 failure below"
         FallbackReason.QuicStalled -> "the HTTP/3 connection stopped carrying packets: a network that cuts UDP flows (firewall, NAT, VPN)"
         FallbackReason.H2Refused -> "the server's HTTP/2 configuration (it answered HTTP_1_1_REQUIRED)"
+        FallbackReason.ServerConnectionIdChanged ->
+            "nothing here: the server's QUIC stack (msquic) switched its connection ID mid-handshake; " +
+                "later requests use HTTP/3 without resumption for a while"
     }
 
 /** The Diagnostics screen's lines for a response: the protocol first; null when another engine served it. */
