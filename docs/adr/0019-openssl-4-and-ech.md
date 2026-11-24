@@ -66,9 +66,10 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length;
   2026-11-20: the client's flight on a rejection, section 6.1.7, then the ALPN padding of section 6.1.3; decided
   2026-11-21 (owner): patch 10, the SVE probe that crashed on load, carried verbatim from upstream cb5f5d00e4 / PR #33481
-  (openssl-4.1 658a1c947b), dropped with 4.1.1; proposed 2026-11-25, pending the owner's decision: patch 11, the CPU
-  denial of service CVE-2026-121482 that a peer's certificate causes on the CRL path, carried verbatim from upstream
-  54e14955ef / PR #33546 (openssl-4.1 14a9f9ad6e), dropped with 4.1.1).
+  (openssl-4.1 658a1c947b), dropped with 4.1.1; decided 2026-11-25 (owner): patch 11, the CPU denial of service
+  CVE-2026-121482 that a peer's certificate causes on the CRL path, carried verbatim from upstream 54e14955ef / PR #33546
+  (openssl-4.1 14a9f9ad6e), and the pin moves to the first 4.1.x release that has 14a9f9ad6e as soon as it ships,
+  dropping the patch).
   Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and
   nothing else. The build carries eleven minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
@@ -116,7 +117,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      such CRL and 0.83 s against 32 of them (macos-arm64, `test_revocation.c` `revocation_crl_distribution_points`). The
      fix builds the names once per certificate and fails closed on more than 16 relative points when such a CRL is
      scored). Upstream code: OpenSSL commit openssl/openssl@54e14955ef (pull request #33546), merged to master on
-     2026-11-18 and to openssl-4.1 as 14a9f9ad6e, verbatim; dropped with 4.1.1.
+     2026-11-18 and to openssl-4.1 as 14a9f9ad6e, verbatim. Owner decision 2026-11-25: dropped with the first 4.1.x
+     release that contains 14a9f9ad6e (expected 4.1.1), and the pin moves to that release as soon as it ships.
   The rules for all eleven:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405

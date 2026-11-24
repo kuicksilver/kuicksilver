@@ -56,6 +56,7 @@ patch_10_sha256 = "544fe772aa31496dda0d459d10982ff859f94c3fd384763dab7978535d5ae
 # The eleventh carried patch (ADR-0019, not ECH): CVE-2026-121482, a CPU denial of service in certificate verification with CRLs
 # (crl_crldp_check built the full name of every relative CRL distribution point of a certificate again for each CRL of its
 # issuer, before any signature is checked). Upstream code (commit openssl/openssl@54e14955ef, on the openssl-4.1 branch as
-# openssl/openssl@14a9f9ad6e); dropped with 4.1.1.
+# openssl/openssl@14a9f9ad6e). Owner decision 2026-11-25: the pin moves to the first 4.1.x release that contains
+# openssl/openssl@14a9f9ad6e (expected 4.1.1) as soon as it ships, and this patch is dropped with it.
 patch_11 = "tools/openssl/patches/openssl-4.1.0-crl-dp-dos.patch"
 patch_11_sha256 = "015b883c6cd5c9ac6c9a0f5d5f00a85daa169c97e576c83d007ef237402936da"
