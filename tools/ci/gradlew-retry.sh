@@ -39,7 +39,7 @@ gradlew=${KSL_GRADLEW:-./gradlew}
 delay=${KSL_GRADLE_RETRY_DELAY:-30}
 max=${KSL_GRADLE_RETRY_MAX:-3}
 log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+trap 'rm -f "$log" "$log.tmp"' EXIT
 
 run() { # one run of the wrapper with the given arguments, its output in $log; sets rc
   if [ "${KSL_GRADLE_RETRY_QUIET:-0}" = 1 ]; then
@@ -50,6 +50,8 @@ run() { # one run of the wrapper with the given arguments, its output in $log; s
     "$gradlew" "$@" 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
   fi
+  # the rules below read the output without ANSI escapes: a colored console may split a phrase with them
+  LC_ALL=C sed $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
   attempt=$((attempt + 1))
   [ -z "${KSL_GRADLE_RETRY_LOG:-}" ] || { echo "=== gradlew-retry.sh: run $attempt: gradlew $*, exit $rc"; cat "$log"; } >> "$KSL_GRADLE_RETRY_LOG"
 }
@@ -68,7 +70,8 @@ run "$@"
 retries=0 refreshed_for_missing=0
 while [ "$rc" -ne 0 ]; do
   grep -q "There were failing tests" "$log" && break
-  grep -q "Dependency verification failed" "$log" && break   # never, see the header
+  # never, see the header; also the artifact lines of a failure whose header is missing or differs
+  grep -Eq "Dependency verification failed|failed verification|On artifact .* in repository" "$log" && break
   if grep -Eq "$overloaded_re" "$log"; then
     [ "$retries" -lt "$max" ] || break
     retries=$((retries + 1))

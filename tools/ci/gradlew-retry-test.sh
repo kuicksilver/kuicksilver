@@ -8,7 +8,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 fails=0
 # case_run <name> <expected exit> <runs: - for the first, then R (refreshed) or P (plain) per retry> <outputs, one per run:
-# ok|module|file|get|crlf|tests|both|verify|plugin|range|method|429|503|403|v429|v429asc|vmismatch|vone|vkey|vsum|vgroup|t429>
+# ok|module|file|get|crlf|tests|both|verify|plugin|range|method|429|503|403|v429|v429asc|vmismatch|vone|vkey|vsum|vgroup|vansi|vnohead|a429|t429>
 # (MAX: KSL_GRADLE_RETRY_MAX; LOG=1: every run appended to KSL_GRADLE_RETRY_LOG, which must keep the first run's errors)
 case_run() {
   local name=$1 want_rc=$2 want_runs=$3
@@ -59,6 +59,11 @@ case $(sed -n "${n}p" plan) in
   vone) echo "> Dependency verification failed for configuration ':a:c'"
     echo "  One artifact failed verification: okio-jvm-3.15.0.pom (com.squareup.okio:okio-jvm:3.15.0) from repository MavenRepo"
     echo "> Could not GET '$c/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.pom.asc'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
+  vansi) printf '> \033[1mDependency \033[31mverification\033[0m failed\033[0m for configuration '"'"':a:c'"'"'\n'   # a colored console
+    echo "> Could not GET '$c/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.pom'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
+  vnohead) echo "  - On artifact core-1.0.jar (com.victim:core:1.0) in repository 'MavenRepo': checksum is missing from verification metadata."
+    echo "> Could not GET '$c/com/victim/core/1.0/core-1.0.jar'. Received status code 429 from server: Too Many Requests"; exit 1 ;;
+  a429) printf "   > Could not \033[1mGET\033[0m '%s/a/b/1/b-1.pom'. Received status code \033[31m429\033[0m from server: Too Many Requests\n" "$c"; exit 1 ;;
   plugin) echo "> Plugin [id: 'org.jmailen.kotlinter', version: '5.4.2'] was not found in any of the following sources:"; exit 1 ;;
   range) echo "   > Could not find any matches for org.example:lib:1.+ as no versions of org.example:lib are available."; exit 1 ;;
   method) echo "> Could not find method implementation() for arguments [x] on object of type Foo."; exit 1 ;;
@@ -131,6 +136,9 @@ case_run "negative_A2_untrustedKeyWith503IsNeverRetried" 1 - vkey ok
 case_run "negative_A3_missingChecksumWith429IsNeverRetried" 1 - vsum ok
 case_run "negative_aRefusalOfTheSameFileNameInAnotherGroupIsNeverAReason" 1 - vgroup ok
 case_run "negative_aChecksumMismatchIsNeverRetriedEvenNextToA429" 1 - vmismatch ok
+case_run "negative_aVerificationHeaderSplitByAnsiEscapesIsNeverRetried" 1 - vansi ok
+case_run "negative_anOnArtifactLineWithoutTheHeaderIsNeverRetried" 1 - vnohead ok
+case_run "a 429 split by ANSI escapes is still retried" 0 -P a429 ok
 case_run "negative_aVerificationFailureInARetryEndsTheRetries" 1 -P 429 v429 ok
 # KSL_GRADLE_RETRY_MAX=0 turns off the 429/5xx retries only; the one refreshed retry after "not found" stays
 MAX=0 case_run "max 0: a module not found still runs once more" 0 -R module ok

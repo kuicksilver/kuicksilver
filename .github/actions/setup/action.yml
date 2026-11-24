@@ -28,6 +28,13 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: gradle-cache input
+      shell: bash
+      env:
+        MODE: ${{ inputs.gradle-cache }}
+      run: |
+        # a misspelt value would otherwise fall through to the default and write a Gradle user home entry
+        case "$MODE" in default|read-only|disabled) ;; *) echo "::error::gradle-cache '$MODE' is not one of default, read-only, disabled (.github/actions/setup/action.yml)"; exit 1 ;; esac
     - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
       with:
         distribution: temurin
