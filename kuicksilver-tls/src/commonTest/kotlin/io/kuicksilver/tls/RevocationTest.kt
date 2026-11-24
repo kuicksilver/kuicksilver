@@ -425,6 +425,41 @@ class RevocationTest {
         }
     }
 
+    /**
+     * The verifier's issuer is what the staple is checked against when the presented chain has none. A Kotlin server staples
+     * only a response that verifies under a certificate of its own chain (`server_status`), and the JVM tests run the
+     * release `libksl` (no `forced_status_cb`), so a leaf-only server cannot staple from here; the presented chain is
+     * therefore [leaf, impostor of rv-mid] with a "good" staple the impostor signed, which that server does staple. The client
+     * passes over the impostor (its key did not sign the leaf). Without an issuer candidate the must-staple leaf has no
+     * issuer: `UnknownRevocationStatus`. With the verifier's path through rv-mid the staple is checked against rv-mid and
+     * names another issuer key: `InvalidStatusResponse`. The C cases `revocation_stapling` (`negative_paused_candidate_revoked`,
+     * a leaf alone with a forced revoked staple) cover the revoked and good verdicts through the candidate.
+     */
+    @Test fun negative_verifiersIssuerIsWhatTheStapleIsCheckedAgainst() {
+        val server =
+            Fixtures.server(listOf(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvImpMid), RevocationCerts.rvLeafMustStapleKey) {
+                ocspStapling = OcspStapling(RevocationCerts.ocspImpMustStaple)
+            }
+        for ((validated, reason) in listOf(
+            { leaf: Certificate -> listOf(leaf) } to VerifyReason.UnknownRevocationStatus,
+            { leaf: Certificate -> listOf(leaf, Certificate(RevocationCerts.rvMid)) } to VerifyReason.InvalidStatusResponse,
+        )) {
+            val p =
+                Pump(KslQuicCrypto.newSession(client(trust = pausedTrusts.first())), KslQuicCrypto.newSession(server)).also {
+                    it.c.setTransportParameters(Fixtures.tp)
+                    it.s.setTransportParameters(Fixtures.tp)
+                }
+            p.run(onVerify = { VerifyResult.Accepted(validated(it.chain.first())) })
+            try {
+                val f = assertIs<DriveResult.Failed>(p.cs.last, "$reason: the client refuses")
+                assertEquals(113, f.alert)
+                assertEquals(reason, assertIs<TlsException.Verify>(f.exception).reason)
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     /** A platform or application verifier keeps its own revocation behaviour; requiring a staple there is refused. */
     @Test fun negative_requireStapledNeedsKslVerifier() {
         val custom = TrustConfig.Custom(CertificateVerifier { chain, _, _ -> VerifyResult.Accepted(chain) })

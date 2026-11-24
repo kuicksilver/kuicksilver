@@ -6406,6 +6406,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_stapli
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_tcpRequiredStapleMissing
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_tcpStapledRevokedFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_unsupportedCrlsRefusedWhenTheTrustIsMade
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_verifiersIssuerIsWhatTheStapleIsCheckedAgainst
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.oversizeResponseIsNotStapledInTls13
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.oversizeResponseIsNotStapledOverTcpTls13
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.quicNoStapleSoftFails
