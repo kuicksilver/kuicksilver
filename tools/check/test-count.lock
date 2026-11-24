@@ -6233,6 +6233,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.emptyRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.ipLiteralsDetected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.lowercaseAndTrailingDot
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.negative_nonAsciiHostRejected
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.negative_sloppyIdentifiersRejected
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.validIdentifiersAtTheLimitsAreAccepted
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.wildcardNotAllowed
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.defaultIsTheListOfTheContextsAndTwoShares
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.derivedKeyShares

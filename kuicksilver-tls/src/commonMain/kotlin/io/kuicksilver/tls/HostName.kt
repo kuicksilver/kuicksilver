@@ -13,6 +13,12 @@ internal fun sniOf(config: TlsConfig): String? =
  * A reference identifier (RFC 9525): a DNS-ID or an IP-ID. Normalization: ASCII lower case, one trailing dot removed,
  * brackets around IPv6 literals removed. Non-ASCII names are rejected; convert IDNs to A-labels before calling.
  *
+ * An IP literal is an IPv4 dotted quad of decimal octets without leading zeros or an IPv6 address (RFC 4291 section
+ * 2.2), without a zone ID; anything else is a DNS name of LDH labels (RFC 1123 section 2.1, RFC 5890 section 2.3.1:
+ * letters, digits and hyphens, no hyphen first or last), 1 to 63 octets each and at most 253 in all (RFC 1035 section
+ * 2.3.4), whose last label is not all digits (RFC 3696 section 2: no top-level domain is, so `010.0.0.1` or `1.2.3` is a
+ * malformed IPv4 literal, not a name). The same parser decides an IP-ID's address when a certificate is matched.
+ *
  * @property value the normalized form; two names are equal when their values are.
  * @property isIpLiteral true for an IPv4 or IPv6 literal, which is matched against iPAddress entries of the certificate
  *   (IP-ID) and never sent as SNI (RFC 6066 section 3); false for a DNS name.
@@ -34,7 +40,9 @@ public class HostName private constructor(
     public companion object {
         /**
          * Normalizes [input] as described on [HostName]. Throws [TlsException.Config] for an empty, non-ASCII or malformed
-         * name and for a wildcard, which a reference identifier never contains (RFC 9525).
+         * name (an IP literal with a leading zero or a zone ID, a label that is empty, longer than 63 octets or not LDH, a
+         * name longer than 253 octets, an all-digit last label) and for a wildcard, which a reference identifier never
+         * contains (RFC 9525).
          */
         public fun normalize(input: String): HostName {
             var s = input.trim()
@@ -43,25 +51,21 @@ public class HostName private constructor(
             if (s.startsWith("[") && s.endsWith("]")) s = s.substring(1, s.length - 1)
             if (s.endsWith(".") && s.length > 1) s = s.dropLast(1)
             s = s.lowercase()
-            val ip = isIpv4(s) || isIpv6(s)
-            if (!ip) {
-                if (s.any { it != '.' && it != '-' && it !in 'a'..'z' && it !in '0'..'9' } || s.startsWith(".") ||
-                    s.contains("..")
-                ) {
-                    throw TlsException.Config("invalid host name '$input'")
-                }
-                if (s.contains('*')) throw TlsException.Config("wildcards are not allowed in a reference identifier")
+            if (ipLiteralBytes(s) != null) return HostName(s, true)
+            if (s.contains('*')) throw TlsException.Config("wildcards are not allowed in a reference identifier")
+            if (!isLdhName(s)) throw TlsException.Config("invalid host name '$input'")
+            return HostName(s, false)
+        }
+
+        /** LDH labels of 1 to 63 octets, at most 253 octets in all, the last label not all digits (see [HostName]). */
+        private fun isLdhName(s: String): Boolean {
+            if (s.length > 253) return false
+            val labels = s.split('.')
+            for (label in labels) {
+                if (label.isEmpty() || label.length > 63 || label.first() == '-' || label.last() == '-') return false
+                if (!label.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }) return false
             }
-            return HostName(s, ip)
+            return !labels.last().all { it in '0'..'9' }
         }
-
-        private fun isIpv4(s: String): Boolean {
-            val p = s.split('.')
-            return p.size == 4 &&
-                p.all { it.isNotEmpty() && it.length <= 3 && it.all(Char::isDigit) && it.toInt() <= 255 }
-        }
-
-        private fun isIpv6(s: String): Boolean =
-            s.contains(':') && s.all { it == ':' || it == '.' || it in '0'..'9' || it in 'a'..'f' } && s.count { it == ':' } in 2..7
     }
 }

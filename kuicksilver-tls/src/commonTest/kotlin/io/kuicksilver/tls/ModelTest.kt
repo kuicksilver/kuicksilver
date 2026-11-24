@@ -137,6 +137,66 @@ class HostNameTest {
     @Test fun emptyRejected() {
         assertFailsWith<TlsException.Config> { HostName.normalize("") }
     }
+
+    /**
+     * A reference identifier is an IP literal by the strict grammar (an IPv4 octet without leading zeros: `inet_aton`
+     * reads `010` as octal 8, so such a literal names no single address; no zone ID, which no certificate names) or a
+     * DNS name of LDH labels (RFC 1123 section 2.1, RFC 5890 section 2.3.1: letters, digits and hyphens, no hyphen first
+     * or last, 1 to 63 octets each, at most 253 in all, RFC 1035 section 2.3.4) whose last label is not all digits (RFC
+     * 3696 section 2: no top-level domain is; such a name reads as a malformed IPv4 literal). Go refuses all of these
+     * (`net.ParseIP`, `x509` `validHostname`). Before, `010.0.0.1` was an IP literal and the others DNS names.
+     */
+    @Test fun negative_sloppyIdentifiersRejected() {
+        for (name in listOf(
+            "010.0.0.1",
+            "1.2.3.04",
+            "1.2.3",
+            "256.0.0.1",
+            "1.2.3.4.5",
+            "0x7f.0.0.1",
+            "-a.example",
+            "a-.example",
+            "a.-b.example",
+            "a".repeat(64) + ".example",
+            ("a".repeat(63) + ".").repeat(4).dropLast(1) + "b",
+            "a..b",
+            ".a",
+            "::1%eth0",
+            "[fe80::1%25eth0]",
+            "1:2:3:4:5:6:7:8:9",
+            "1::2::3",
+            "::g",
+            "12345::1",
+            "a_b.example",
+            "a b.example",
+            "example.123",
+        )) {
+            assertFailsWith<TlsException.Config>(name) { HostName.normalize(name) }
+        }
+    }
+
+    /** The valid forms stay valid, at the limits too. */
+    @Test fun validIdentifiersAtTheLimitsAreAccepted() {
+        val name253 = ("a".repeat(63) + ".").repeat(3) + "a".repeat(61)
+        assertEquals(253, name253.length)
+        for (name in listOf(
+            "a-b.example",
+            "xn--bcher-kva.example",
+            "a".repeat(63) + ".example",
+            name253,
+            "$name253.",
+            "123abc.example",
+            "1a.example",
+            "example.c0m",
+            "localhost",
+            "a",
+        )) {
+            assertFalse(HostName.normalize(name).isIpLiteral, name)
+        }
+        for (name in listOf("1.2.3.4", "0.0.0.0", "255.255.255.255", "::ffff:1.2.3.4", "2001:db8::1", "[2001:DB8::1]", "1:2:3:4:5:6:7:8")) {
+            assertTrue(HostName.normalize(name).isIpLiteral, name)
+        }
+    }
 }
 
 class CertificateTest {
