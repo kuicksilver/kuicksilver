@@ -557,6 +557,7 @@ public final class io/kuicksilver/http3/UdpProxyStats {
 	public final fun getPacketTooBigNoSource ()J
 	public final fun getPacketTooBigSent ()J
 	public final fun getRequestsRefused ()J
+	public final fun getSocketFactoryUncaught ()J
 	public final fun getToTargets ()J
 	public final fun getTunnelsOpened ()J
 	public fun toString ()Ljava/lang/String;

@@ -163,6 +163,7 @@ internal class UdpProxyImpl(
     internal val packetTooBigSent = AtomicLong(0)
     internal val packetTooBigNoSource = AtomicLong(0)
     internal val packetTooBigFailed = AtomicLong(0)
+    internal val socketFactoryUncaught = AtomicLong(0)
 
     /** RFC 9298 section 6.1: probed once, at the first tunnel (before its 2xx), when the configuration asks for it. */
     private val packetTooBig =
@@ -268,6 +269,7 @@ internal class UdpProxyImpl(
             packetTooBigSent.load(),
             packetTooBigNoSource.load(),
             packetTooBigFailed.load(),
+            socketFactoryUncaught.load(),
         )
 
     suspend fun serve(
@@ -306,15 +308,19 @@ internal class UdpProxyImpl(
      * The factory's calls, on a `Dispatchers.IO.limitedParallelism(MAX_OPENING)` view of this proxy's own: a call that
      * blocks its thread holds one of its [MAX_OPENING] threads, never a thread of the request's dispatcher. Such a view is
      * not counted against `Dispatchers.IO`'s 64 threads, so each proxy may add up to [MAX_OPENING] threads of its own; a
-     * call given up on keeps its thread until it returns. What escapes a call (nothing should: [openSocket] catches the
-     * factory's throws and a late socket's `close`) is kept in [uncaughtInOpening], never handed to the platform's
-     * handler, which ends the process on Android and Kotlin/Native.
+     * call given up on keeps its thread until it returns. The handler guards a case that should not be reachable:
+     * [openSocket] catches the factory's throws and a late socket's `close`, so nothing should escape a call. If something
+     * ever does, it is counted in [UdpProxyStats.socketFactoryUncaught] (and kept in [uncaughtInOpening] for tests) rather
+     * than handed to the platform's handler, which ends the process on Android and Kotlin/Native.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val opening =
         CoroutineScope(
             SupervisorJob() + Dispatchers.IO.limitedParallelism(MAX_OPENING) +
-                CoroutineExceptionHandler { _, e -> uncaughtInOpening.store(e) },
+                CoroutineExceptionHandler { _, e ->
+                    uncaughtInOpening.store(e)
+                    count(socketFactoryUncaught)
+                },
         )
 
     /** The last throwable that escaped a factory call of [opening] (tests: null when none did). */

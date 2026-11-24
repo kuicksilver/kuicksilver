@@ -411,6 +411,10 @@ public class UdpProxyConfig(
  *   to one address answers from that address.
  * @property packetTooBigFailed ICMP Packet Too Big messages the raw socket did not send (the family's socket did not open,
  *   the kernel refused the message, or the sender ruled out its addresses); their rate-limit tokens stay spent.
+ * @property socketFactoryUncaught throwables that escaped a [socketFactory][UdpProxyConfig.socketFactory] call outside the
+ *   request it served. It should stay 0: the proxy catches what the factory throws and what closing a socket returned
+ *   too late throws. The counter shows the case if it ever happens, which would otherwise reach the platform's uncaught
+ *   exception handler (the end of the process on Android and Kotlin/Native).
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyStats internal constructor(
@@ -433,6 +437,7 @@ public class UdpProxyStats internal constructor(
     public val packetTooBigSent: Long,
     public val packetTooBigNoSource: Long,
     public val packetTooBigFailed: Long,
+    public val socketFactoryUncaught: Long,
 ) {
     /** The counters, for logs. */
     override fun toString(): String =
@@ -443,7 +448,7 @@ public class UdpProxyStats internal constructor(
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
             "ignoredUnreachable=$ignoredUnreachable, " +
             "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent, packetTooBigNoSource=$packetTooBigNoSource, " +
-            "packetTooBigFailed=$packetTooBigFailed)"
+            "packetTooBigFailed=$packetTooBigFailed, socketFactoryUncaught=$socketFactoryUncaught)"
 }
 
 /** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */

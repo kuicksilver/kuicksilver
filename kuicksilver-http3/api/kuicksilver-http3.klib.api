@@ -641,6 +641,8 @@ final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProx
         final fun <get-packetTooBigSent>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.packetTooBigSent.<get-packetTooBigSent>|<get-packetTooBigSent>(){}[0]
     final val requestsRefused // io.kuicksilver.http3/UdpProxyStats.requestsRefused|{}requestsRefused[0]
         final fun <get-requestsRefused>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.requestsRefused.<get-requestsRefused>|<get-requestsRefused>(){}[0]
+    final val socketFactoryUncaught // io.kuicksilver.http3/UdpProxyStats.socketFactoryUncaught|{}socketFactoryUncaught[0]
+        final fun <get-socketFactoryUncaught>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.socketFactoryUncaught.<get-socketFactoryUncaught>|<get-socketFactoryUncaught>(){}[0]
     final val toTargets // io.kuicksilver.http3/UdpProxyStats.toTargets|{}toTargets[0]
         final fun <get-toTargets>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.toTargets.<get-toTargets>|<get-toTargets>(){}[0]
     final val tunnelsOpened // io.kuicksilver.http3/UdpProxyStats.tunnelsOpened|{}tunnelsOpened[0]

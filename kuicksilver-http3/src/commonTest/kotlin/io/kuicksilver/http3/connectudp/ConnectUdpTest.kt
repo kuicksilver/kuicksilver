@@ -1335,6 +1335,7 @@ class ConnectUdpTest {
                             .load(),
                         "the throwing close escaped the call",
                     )
+                    assertEquals(0L, rig.proxy.stats.socketFactoryUncaught)
                     val got = rig.echo(echoAt)
                     val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
                     t.send("on".encodeToByteArray())
