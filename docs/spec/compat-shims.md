@@ -344,6 +344,12 @@ the data.
   origin-form target (§3.2), a higher minor version processed as HTTP/1.1 (RFC 9110 §6.2 SHOULD), an invalid status
   code read as a 5xx (RFC 9110 §15 SHOULD). Where Ktor's own parser is more lenient (Unicode spaces, control characters,
   chunk-size lines), both engines are stricter; nothing lenient is added for any client.
+- **HTTP/2: a client's GOAWAY is not checked for parity** (Go's `ClientConn.Shutdown`, `x/net/http2/transport.go`
+  `sendGoAway`, sends its own next, odd, stream identifier): peer tolerance, not a deviation. RFC 9113 §6.8 defines the
+  last stream identifier as one the receiver initiated but gives the receiver no rule for another value, and §5.4.1 only
+  permits an error. The server still refuses a GOAWAY that raises the identifier ("MUST NOT increase"), and the client
+  refuses a server's GOAWAY that names an even stream, as nghttp2 does; a server's value names pushes, which we never make,
+  and refusing Go's would reset the requests its shutdown waits for ([details](rfc/9113.md#s6-8-goaway)).
 - **SOCKS5 empty password**: refused (RFC 1929 §2, PASSWD has 1 to 255 octets), stricter than curl and Go.
 - **Greasing** (`Http3Settings.grease`, `grease_quic_bit`): excluded by definition.
 - **Android API levels** (`java.nio.file`, `DnsResolver.rawQuery`): platform APIs, not a peer's protocol.

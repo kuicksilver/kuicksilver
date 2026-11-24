@@ -1305,6 +1305,9 @@ class EndpointCoreTest {
             val live = localCids(s)
             assertTrue(live.isNotEmpty() && live.all { (it[0].toInt() and 0xff) ushr 5 == 4 }, live.map { hexOf(it) }.toString())
             assertEquals(ConnectionState.Confirmed, c.state)
+            // the client retired the ID it was sending to only from packets sent to a new one: the server, which refuses a
+            // RETIRE_CONNECTION_ID naming the packet's own Destination Connection ID (RFC 9000 section 19.16), keeps the connection
+            assertEquals(ConnectionState.Confirmed, s.state)
         } finally {
             p.close()
         }
