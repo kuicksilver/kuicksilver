@@ -1047,6 +1047,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server, HTTP/1.1 request line (breaking strictness, RFC 9112 section 3): the method, request-target and version
+  must be separated by exactly one SP, with nothing before or after them. A request line with HTAB, VT, FF or a bare CR
+  as a separator, two spaces, or whitespace before the method or after the version now gets `400 Bad Request` and the
+  connection closes, as Go's net/http and llhttp answer; section 3 only lets a recipient accept those (MAY) and warns of
+  request smuggling between parsers that split the line differently. There is no switch to bring them back.
 - Ktor server, HTTP/1.1 line ends (breaking strictness, RFC 9112 sections 2.2 and 11.2): a request whose request line,
   field lines, closing empty line or trailer lines end with a bare LF (no CR before it) now gets `400 Bad Request` and the
   connection closes, as llhttp answers. RFC 9112 section 2.2 only lets a recipient accept it (MAY), and a server behind a

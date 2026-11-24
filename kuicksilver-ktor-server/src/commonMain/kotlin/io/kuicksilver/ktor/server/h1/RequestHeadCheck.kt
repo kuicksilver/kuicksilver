@@ -210,8 +210,11 @@ internal class RequestLineCheck(
  * caller sends it only for an otherwise valid head), or throws [RequestHeadRefused]. Ktor's parser is lenient where this
  * is not: it takes any run of non-whitespace as the method (section 3.1: method = token), any Unicode whitespace (U+00A0
  * among them) as a separator, and passes control characters in the target. Here:
- * - the separators are the whitespace section 3 lets a recipient take as SP (SP, HTAB, VT, FF, a bare CR), also before
- *   the method and after the version; any other control character (NUL, DEL, ...) or a Unicode space anywhere: 400;
+ * - the parts are separated by exactly one SP, with nothing before the method or after the version: section 3 lets a
+ *   recipient take HTAB, VT, FF or a bare CR as SP and ignore whitespace around the line (MAY), and warns that a parser
+ *   doing so behind or in front of one that does not invites request smuggling; Go's net/http and llhttp take one SP
+ *   only, and so does this server. Any control character (HTAB, VT, FF, CR, NUL, DEL, ...) or a Unicode space anywhere:
+ *   400;
  * - the method is a token (RFC 9110 section 5.6.2), else 400;
  * - the version is `"HTTP/" DIGIT "." DIGIT`, case-sensitive (section 2.3), else 400; a major version other than 1 gets
  *   505 (RFC 9110 section 15.6.6); a higher minor version is processed as HTTP/1.1, the highest minor version the
@@ -222,29 +225,23 @@ internal fun checkRequestLine(line: ByteArray): RequestLineCheck {
     for (i in line.indices) {
         val b = line[i]
         val c = b.toInt() and 0xFF
-        if ((c < 0x20 && !isRequestLineWhitespace(b)) || c == 0x7F) refuse("A control character in the request line")
+        if (c < 0x20 || c == 0x7F) refuse("A control character in the request line")
         if (c >= 0x80 && unicodeSpaceLength(line, i) > 0) refuse("A Unicode space in the request line")
     }
     var i = 0
     val n = line.size
-
-    fun skipWhitespace() {
-        while (i < n && isRequestLineWhitespace(line[i])) i++
-    }
-
-    skipWhitespace()
     val methodStart = i
     while (i < n && isTcharByte(line[i])) i++
     val methodEnd = i
-    if (i == methodStart || i == n || !isRequestLineWhitespace(line[i])) refuse("The method is not a token")
-    skipWhitespace()
+    if (i == methodStart || i == n || line[i] != SP_BYTE) refuse("The method is not a token followed by one SP")
+    i++
     val targetStart = i
-    while (i < n && !isRequestLineWhitespace(line[i])) i++
-    if (i == targetStart || i == n) refuse("No request-target or no version")
+    while (i < n && line[i] != SP_BYTE) i++
+    if (i == targetStart || i == n) refuse("No request-target or no version, or more than one SP between them")
     val targetEnd = i
-    skipWhitespace()
+    i++
     val version = i
-    while (i < n && !isRequestLineWhitespace(line[i])) i++
+    while (i < n && line[i] != SP_BYTE) i++
     val ok =
         i - version == 8 &&
             line.decodeToString(version, version + 5) == "HTTP/" &&
@@ -252,7 +249,6 @@ internal fun checkRequestLine(line: ByteArray): RequestLineCheck {
             line[version + 6] == '.'.code.toByte() &&
             line[version + 7] in DIGITS
     if (!ok) refuse("Invalid HTTP-version")
-    skipWhitespace()
     if (i != n) refuse("Extra characters in the request line")
     if (line[version + 5] != '1'.code.toByte()) {
         throw RequestHeadRefused(505, "HTTP Version Not Supported", "HTTP major version other than 1", body = VERSION_NOT_SUPPORTED_BODY)
@@ -509,7 +505,7 @@ internal fun unicodeSpaceLength(
 /**
  * The answer to a request line longer than [MAX_REQUEST_LINE_BYTES]: 501 when its method alone is that long (RFC 9112
  * section 3: a server that receives a method longer than any that it implements SHOULD respond with 501), 414 when a
- * method and a separator start it, so the request-target is what is too long (section 3: MUST respond with 414), else
+ * method and its SP start it, so the request-target is what is too long (section 3: MUST respond with 414), else
  * 400 (not a request line).
  */
 private fun refuseLongLine(buffer: kotlinx.io.Buffer): Nothing {
@@ -517,22 +513,18 @@ private fun refuseLongLine(buffer: kotlinx.io.Buffer): Nothing {
     while (i < buffer.size && isTcharByte(buffer[i])) i++
     val message = "The request line is longer than $MAX_REQUEST_LINE_BYTES bytes"
     if (i > MAX_REQUEST_LINE_BYTES) throw RequestHeadRefused(501, "Not Implemented", message)
-    if (i > 0 && i < buffer.size && isRequestLineWhitespace(buffer[i])) throw RequestHeadRefused(414, "URI Too Long", message)
+    if (i > 0 && i < buffer.size && buffer[i] == SP_BYTE) throw RequestHeadRefused(414, "URI Too Long", message)
     throw RequestHeadRefused(400, "Bad Request", message)
 }
 
 /**
- * Whether a request head starts, after request-line whitespace, with the method `HEAD` and a separator, decided as its
- * bytes arrive: [update] is called after every read with the buffer that holds the head from its first byte, and looks
- * at each byte once (the request line may start with up to 8 KiB of whitespace, sent one byte per segment). [inspected]
- * counts the bytes looked at, for tests.
+ * Whether a request head starts with the method `HEAD` and its SP, decided as its bytes arrive: [update] is called after
+ * every read with the buffer that holds the head from its first byte, and looks at each byte once, at most five of them
+ * (nothing comes before the method, RFC 9112 section 3). [inspected] counts the bytes looked at, for tests.
  */
 internal class HeadMethodScan {
     /** The next byte of the buffer to look at. */
     private var next = 0L
-
-    /** Where the method starts; -1 while only whitespace has been seen. */
-    private var methodStart = -1L
 
     /** Whether the answer is known. */
     var decided: Boolean = false
@@ -549,17 +541,12 @@ internal class HeadMethodScan {
         while (!decided && next < buffer.size) {
             val b = buffer[next]
             inspected++
-            if (methodStart < 0) {
-                if (!isRequestLineWhitespace(b)) methodStart = next
-            }
-            if (methodStart >= 0) {
-                val k = (next - methodStart).toInt()
-                if (k < 4) {
-                    if (b != "HEAD"[k].code.toByte()) decided = true
-                } else {
-                    head = isRequestLineWhitespace(b)
-                    decided = true
-                }
+            val k = next.toInt()
+            if (k < 4) {
+                if (b != "HEAD"[k].code.toByte()) decided = true
+            } else {
+                head = b == SP_BYTE
+                decided = true
             }
             next++
         }
@@ -575,13 +562,8 @@ internal fun isTcharByte(b: Byte): Boolean {
         c.toChar() in "!#$%&'*+-.^_`|~"
 }
 
-/** The whitespace RFC 9112 section 3 lets a recipient take as the SP separator of a request line: SP, HTAB, VT, FF, CR. */
-internal fun isRequestLineWhitespace(b: Byte): Boolean = b == SP_BYTE || b == HTAB_BYTE || b == VT_BYTE || b == FF_BYTE || b == CR_BYTE
-
 private const val SP_BYTE: Byte = 0x20
 private const val HTAB_BYTE: Byte = 0x09
-private const val VT_BYTE: Byte = 0x0B
-private const val FF_BYTE: Byte = 0x0C
 private const val CR_BYTE: Byte = 0x0D
 private const val LF_BYTE: Byte = 0x0A
 

@@ -178,7 +178,6 @@ class H1RequestHeadCheckTest {
         runTest {
             for ((head, status) in listOf(
                 "HEAD / HTTP/2.0\r\nHost: s\r\n" to "505",
-                " HEAD / HTTP/2.0\r\nHost: s\r\n" to "505",
                 "HEAD / HTTP/1.1\r\nHost: s\r\nX-A: a\u0000b\r\n" to "400",
                 "HEAD / HTTP/1.1\r\nHost: a\r\nHost: b\r\n" to "400",
                 "HEAD /\u0001 HTTP/1.1\r\nHost: s\r\n" to "400",
@@ -222,12 +221,40 @@ class H1RequestHeadCheckTest {
             }
         }
 
-    /** The whitespace RFC 9112 section 3 lets a server take as SP still separates the parts. */
-    @Test fun lenientSeparatorsAreAccepted() =
+    /**
+     * `request-line = method SP request-target SP HTTP-version` (RFC 9112 section 3), exactly: one SP between the parts and
+     * nothing before or after them. Section 3 lets a recipient take HTAB, VT, FF or a bare CR as SP and skip whitespace
+     * around the line (MAY), and warns that such parsing invites request smuggling when another parser splits the line
+     * otherwise; Go's net/http and llhttp both take one SP only, so the server does too: 400 and close, the pipelined
+     * request behind it not served. Before, all of these were served as `GET / HTTP/1.1`.
+     */
+    @Test fun negative_requestLineSeparatorsMustBeOneSp() =
         runTest {
-            for (line in listOf("GET\t/ HTTP/1.1", "GET  /  HTTP/1.1 ", "GET\u000b/\u000cHTTP/1.1")) {
+            for (line in listOf(
+                "GET\t/ HTTP/1.1",
+                "GET  / HTTP/1.1",
+                "GET /  HTTP/1.1",
+                "GET / HTTP/1.1 ",
+                "GET / HTTP/1.1\t",
+                " GET / HTTP/1.1",
+                "\tGET / HTTP/1.1",
+                "GET\u000b/\u000cHTTP/1.1",
+                "GET\r/ HTTP/1.1",
+                "GET /\rHTTP/1.1",
+                "\u000cGET / HTTP/1.1",
+            )) {
+                val response = exchange("$line\r\nHost: s\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(line)}: $response")
+                assertTrue(!response.contains("/next"), "${show(line)}: the next request was served: $response")
+            }
+        }
+
+    /** The grammar's own form is served: one SP between method, target and version. */
+    @Test fun singleSpSeparatorsAreServed() =
+        runTest {
+            for (line in listOf("GET / HTTP/1.1", "OPTIONS * HTTP/1.1", "GET /a?b=c HTTP/1.0")) {
                 val response = exchange("$line\r\nHost: s\r\nConnection: close\r\n\r\n")
-                assertTrue(response.endsWith("GET / HTTP/1.1"), "${show(line)}: $response")
+                assertTrue(response.startsWith("HTTP/1.1 200 ") && response.endsWith(line), "${show(line)}: $response")
             }
         }
 

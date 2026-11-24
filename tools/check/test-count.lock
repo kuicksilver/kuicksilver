@@ -3706,7 +3706,6 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHe
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.emptyLinesBeforeTheRequestLineAreSkipped
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.higherMinorVersionIsProcessedAsHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.invalidOriginFormOfGetIsRedirectedProperlyEncoded
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.lenientSeparatorsAreAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_bareLfInTheHeadGets400ByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersAndUnicodeSpacesInTheRequestLineAreRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersInAFieldValueAreRejected
@@ -3717,9 +3716,11 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHe
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_noContentInARefusalOfHead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_redirectNeverLeavesTheServer
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_redirectOnlyForAnOtherwiseValidHead
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_requestLineSeparatorsMustBeOneSp
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_unicodeSpaceBeforeAFramingValueIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_unsupportedMajorVersionGets505
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.obsTextThatIsNotUtf8IsPassedOnByteForByte
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.singleSpSeparatorsAreServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.tabsSpacesAndObsTextInAFieldValueAreAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.unicodeSpaceBeforeAFieldValueIsKept
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.unicodeSpaceInsideAFieldValueIsAccepted
