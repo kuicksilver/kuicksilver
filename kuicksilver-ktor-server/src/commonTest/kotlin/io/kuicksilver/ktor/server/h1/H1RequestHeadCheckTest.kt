@@ -34,11 +34,16 @@ class H1RequestHeadCheckTest {
 
     /** A pipeline whose handler answers with the method, target and version it was given. */
     @OptIn(InternalAPI::class)
-    private fun TestScope.pipeline(): Conn {
+    private fun TestScope.pipeline(allowBareLf: Boolean = false): Conn {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
         val job =
-            backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 45.seconds, 30.seconds) { request ->
+            backgroundScope.startH1Pipeline(
+                H1Connection(toServer, fromServer, null, null),
+                45.seconds,
+                30.seconds,
+                allowBareLf = allowBareLf,
+            ) { request ->
                 val body =
                     "${request.method.value} ${request.uri} ${request.version}" + (fields.getAll("X-A")?.joinToString("|", " [", "]") ?: "")
                 request.release()
@@ -49,8 +54,11 @@ class H1RequestHeadCheckTest {
     }
 
     /** Sends [bytes] and then ends the client's side; returns what the server sent until it closed. */
-    private suspend fun TestScope.exchange(bytes: ByteArray): String {
-        val c = pipeline()
+    private suspend fun TestScope.exchange(
+        bytes: ByteArray,
+        allowBareLf: Boolean = false,
+    ): String {
+        val c = pipeline(allowBareLf)
         backgroundScope.launch {
             c.toServer.writeFully(bytes)
             c.toServer.flushAndClose()
@@ -60,7 +68,52 @@ class H1RequestHeadCheckTest {
         return c.fromServer.readBuffer().readString()
     }
 
-    private suspend fun TestScope.exchange(text: String): String = exchange(text.encodeToByteArray())
+    private suspend fun TestScope.exchange(
+        text: String,
+        allowBareLf: Boolean = false,
+    ): String = exchange(text.encodeToByteArray(), allowBareLf)
+
+    /**
+     * RFC 9112 section 2.2: a recipient MAY take a bare LF as a line end; the server does so only with `h1AllowBareLf`
+     * (`allowBareLf`). By default a bare LF that ends the request line, a field line or the head's empty line gets 400 and
+     * the connection closes: a front proxy that reads the LF as part of the line frames the head differently (the
+     * smuggling of section 11.2), and llhttp refuses it too. The pipelined request behind it is not served.
+     */
+    @Test fun negative_bareLfInTheHeadGets400ByDefault() =
+        runTest {
+            val next = "GET /next HTTP/1.1\r\nHost: s\r\n\r\n"
+            for (head in listOf(
+                "GET / HTTP/1.1\nHost: s\r\n\r\n",
+                "GET / HTTP/1.1\r\nHost: s\n\r\n",
+                "GET / HTTP/1.1\r\nHost: s\r\n\n",
+                "GET / HTTP/1.1\r\nHost: s\r\nX-A: a\nX-B: b\r\n\r\n",
+                "GET / HTTP/1.1\nHost: s\n\n",
+            )) {
+                val response = exchange(head + next)
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(head)}: $response")
+                assertTrue(!response.contains("/next"), "${show(head)}: the next request was served: $response")
+            }
+        }
+
+    /** With `allowBareLf` a bare LF ends every line of the head, a CR before it ignored (RFC 9112 section 2.2 MAY). */
+    @Test fun bareLfEndsTheLinesOfTheHeadWhenAllowed() =
+        runTest {
+            for (head in listOf("GET / HTTP/1.1\nHost: s\nConnection: close\n\n", "GET / HTTP/1.1\r\nHost: s\nConnection: close\r\n\n")) {
+                val response = exchange(head, allowBareLf = true)
+                assertTrue(response.startsWith("HTTP/1.1 200 ") && response.endsWith("GET / HTTP/1.1"), "${show(head)}: $response")
+            }
+        }
+
+    /**
+     * Empty lines before the request line are skipped as before, a bare LF among them too, whatever `allowBareLf`: RFC
+     * 9112 section 2.2 lets a server ignore them, no line of the head ends there, and llhttp, strict on line ends, skips
+     * them too. A bare CR there still is not a line end (the request line then starts with CR: 400).
+     */
+    @Test fun emptyLinesBeforeTheRequestLineAreSkipped() =
+        runTest {
+            val response = exchange("\r\n\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 200 "), response)
+        }
 
     /** method = token (RFC 9112 section 3.1): anything else is an invalid request line, 400 (section 3.2). */
     @Test fun negative_methodMustBeAToken() =

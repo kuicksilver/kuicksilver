@@ -241,6 +241,18 @@ class EngineMainTest {
         assertFailsWith<IllegalArgumentException> { enabled("-P:kuicksilver.webSocketsOverHttp2=no") }
     }
 
+    /** `kuicksilver.h1AllowBareLf` lets a bare LF end an HTTP/1.1 head line (RFC 9112 section 2.2 MAY); off by default. */
+    @Test fun h1AllowBareLfKey() {
+        fun allowed(vararg extra: String): Boolean {
+            val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            return server.engine.configuration.h1AllowBareLf
+        }
+        assertEquals(false, allowed())
+        assertEquals(true, allowed("-P:kuicksilver.h1AllowBareLf=true"))
+        assertFailsWith<IllegalArgumentException> { allowed("-P:kuicksilver.h1AllowBareLf=yes") }
+    }
+
     /** `kuicksilver.http2RepeatOffenderPenalty` turns the backoff by address on; off by default (threat model 3.23). */
     @Test fun http2RepeatOffenderPenaltyKey() {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

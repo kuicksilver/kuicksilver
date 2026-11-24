@@ -3175,7 +3175,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTe
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTest.statusPagesAnswerToABodyTimeoutStays
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTest.unreadBodyOfExactlyTheCapKeepsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.absoluteFormIsRoutedByItsPathAndAuthority
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.bareLfEndsTheLinesOfTheHead
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.bareLfEndsTheLinesOfTheHeadWithH1AllowBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.chunkedRequestWithTrailersIsAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.http10KeepAliveResponseOfKnownLengthKeepsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.http10RequestWithoutHostIsServed
@@ -3183,6 +3183,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Framin
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_anEmptyConnectionFieldIsAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_badRequestDoesNotEchoTheHeaderSection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareCrInChunkSizeIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareLfIsRejectedByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_chunkedTwiceOrNotFinalIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_connectionCloseInAListIsAnnouncedAndEndsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_contentLengthTooLargeGets413
@@ -3701,9 +3702,12 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineW
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineWriteStallTest.negative_upgradedClientThatStopsReadingIsClosed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineWriteStallTest.slowReaderAt8KiBPerSecondKeepsItsResponse
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.anyTokenIsAMethod
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.bareLfEndsTheLinesOfTheHeadWhenAllowed
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.emptyLinesBeforeTheRequestLineAreSkipped
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.higherMinorVersionIsProcessedAsHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.invalidOriginFormOfGetIsRedirectedProperlyEncoded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.lenientSeparatorsAreAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_bareLfInTheHeadGets400ByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersAndUnicodeSpacesInTheRequestLineAreRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersInAFieldValueAreRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_fieldNameMustBeAToken
@@ -3737,6 +3741,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.cl
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.echKeysKeyReadsTheKeyFiles
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideApplicationConfStarts
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideQuicTransportBlockLoads
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h1AllowBareLfKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h2cKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2Key
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2RepeatOffenderPenaltyKey

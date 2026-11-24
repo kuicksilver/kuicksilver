@@ -52,7 +52,8 @@ internal const val VERSION_NOT_SUPPORTED_BODY: String =
  * method longer than any the server implements (501), see [refuseLongLine]. The request line itself is checked by
  * [checkRequestLine] as soon as it is there, the field lines by [checkFieldSection] once the whole head is. A 301 the
  * target earned goes out only after that, and only when the head's Host and framing fields are valid too (their
- * refusal wins, see [RequestFraming.of]). Returns without a verdict when the input ends or the head limit is reached
+ * refusal wins, see [RequestFraming.of]). A line ends with CRLF; a bare LF ends one only with [HeadLimitedInput.allowBareLf]
+ * (RFC 9112 section 2.2 MAY), else 400. Returns without a verdict when the input ends or the head limit is reached
  * before the head's end: the parser then reports that as it did (a head that earned a 301 and ended early gets 400).
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)
@@ -84,6 +85,8 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
             continue
         }
         val end = if (lf > lineStart && buffer[lf - 1] == CR_BYTE) lf - 1 else lf
+        // RFC 9112 section 2.2: a bare LF is a line end only where the server allows it (`h1AllowBareLf`)
+        if (end == lf && !allowBareLf) refuse("A bare LF ends a line of the request head (RFC 9112 section 2.2)")
         if (fieldsStart < 0) {
             if (end > MAX_REQUEST_LINE_BYTES) refuseLongLine(buffer)
             val line = buffer.peek().readByteArray(end.toInt())

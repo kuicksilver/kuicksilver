@@ -104,6 +104,21 @@ public class KuicksilverApplicationEngine(
             }
 
         /**
+         * Whether a bare LF (one without the CR before it) ends a line of an HTTP/1.1 request head (the request line, a
+         * field line, the empty line after them) and of a chunked request's trailer section; false by default. RFC 9112
+         * section 2.2 lets a recipient take a bare LF as a line end (MAY) and warns in section 11.2 that lenient parsing
+         * "can result in request smuggling" when parsers disagree: behind a proxy that reads a bare LF as part of a line,
+         * this server would end the line there and frame the head otherwise. So by default such a request gets
+         * `400 Bad Request` and the connection closes, as llhttp (Node.js, nghttpx) answers; Go's net/http and nginx accept
+         * it. Turn it on only for hand-written clients (scripts, devices) that send LF alone, and only where no proxy in front
+         * forwards a bare LF. The chunk-size line takes CRLF alone either way, and the empty lines a client may send before
+         * a request line are skipped, a bare LF among them, either way. Not used by HTTP/2 or HTTP/3. `EngineMain` key
+         * `kuicksilver.h1AllowBareLf`.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var h1AllowBareLf: Boolean = false
+
+        /**
          * The most TCP connections each connector holds at once, HTTP/1.1 and HTTP/2 alike, counted from `accept` (TLS
          * handshakes included) until the socket is released. At the limit the connector stops accepting: the OS backlog
          * holds new clients (their connect succeeds, nothing is read from them) until a connection closes, and the server

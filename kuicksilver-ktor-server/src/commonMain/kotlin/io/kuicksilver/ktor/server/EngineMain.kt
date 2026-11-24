@@ -43,7 +43,8 @@ import kotlin.time.Duration.Companion.seconds
  * the `kuicksilver.tls.*` identity files), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
- * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
+ * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.h1AllowBareLf` (off by
+ * default: a bare LF in an HTTP/1.1 request head gets 400), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
  * server), `kuicksilver.proxyProtocol.trustedSources`, `headerTimeout` and `maxHeaderSize` (the PROXY protocol on the
  * deployment port, [ProxyProtocolConfig]; off by default), and the QUIC transport of the HTTP/3 listeners under `kuicksilver.quic`
  * ([KuicksilverApplicationEngine.Configuration.quic], each key the `QuicConfig` option of its name): `initialUdpPayloadSize`,
@@ -177,6 +178,14 @@ public object EngineMain {
             }
             h2cDeploymentPort = it
         }
+        config
+            .propertyOrNull("kuicksilver.h1AllowBareLf")
+            ?.getString()
+            ?.toBooleanStrict()
+            ?.let {
+                @OptIn(ExperimentalKuicksilverApi::class)
+                h1AllowBareLf = it
+            }
         config
             .propertyOrNull("kuicksilver.webSocketsOverHttp2")
             ?.getString()

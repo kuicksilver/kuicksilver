@@ -1047,6 +1047,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server, HTTP/1.1 line ends (breaking strictness, RFC 9112 sections 2.2 and 11.2): a request whose request line,
+  field lines, closing empty line or trailer lines end with a bare LF (no CR before it) now gets `400 Bad Request` and the
+  connection closes, as llhttp answers. RFC 9112 section 2.2 only lets a recipient accept it (MAY), and a server behind a
+  proxy that reads the LF as part of a line frames the request otherwise. New experimental
+  `KuicksilverApplicationEngine.Configuration.h1AllowBareLf` (`EngineMain` key `kuicksilver.h1AllowBareLf`, false by
+  default) turns the old behaviour back on for hand-written clients. Empty lines before the request line are still
+  skipped, a bare LF among them. The client is unchanged: it still ends a response line at a bare LF (it is the final
+  recipient; Go's net/http and curl do the same).
 - Ktor client and server, HTTP/1.1 chunked trailers (breaking strictness, RFC 9112 sections 7.1.2 and 2.2, RFC 9110
   sections 5.1 and 5.5): each line of a trailer section must now be a field line (a token name right before its colon, no
   control character but HTAB in the value). The server answers another line with 400 and closes the connection (and
