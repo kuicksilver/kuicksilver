@@ -207,6 +207,31 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * Compatibility shim 2 answers a draft-02 session only: a client of draft-16 and draft-02 whose CONNECT carries the
+     * draft-02 request field but runs draft-16 (a `webtransport-h3` CONNECT, or the field with a value other than `1`)
+     * gets no draft-02 marker in its 200.
+     */
+    @Test fun negative_draft02ResponseFieldOnlyForADraft02Session() =
+        h3Test {
+            for ((token, value) in listOf(WtTokens.H3 to "1", WtTokens.LEGACY to "2")) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(wtClientSettings)
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, token, WtTokens.DRAFT02_REQUEST_FIELD to value))
+                    st.output.flush()
+                    val h = readHeaders(st)
+                    assertEquals("200", h[":status"], "$token $value")
+                    assertEquals(WtVersion.Draft16, (withTimeout(5.seconds) { accepted.await() } as WtSessionImpl).version)
+                    assertNull(h[WtTokens.DRAFT02_RESPONSE_FIELD], "$token $value")
+                }
+            }
+        }
+
     @Test fun clientUsesLegacyTokenForDraft02Server() =
         h3Test {
             QuicPair.open(H3Fixtures.quic).useScoped { q ->

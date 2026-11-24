@@ -790,8 +790,10 @@ internal class ServerRequestImpl(
             buildList {
                 addAll(headers.fields)
                 if (protocol != null) add(WtProtocols.SELECTED_FIELD to WtProtocols.quote(protocol))
-                // Chrome's draft-02 client refuses a 2xx without it
-                if (this@ServerRequestImpl.headers[WtTokens.DRAFT02_REQUEST_FIELD] != null) {
+                // Chrome's draft-02 client refuses a 2xx without it (compatibility shim 2). Only for a session that runs
+                // draft-02 and a client that asked with the field's one value, `1`: a draft-17 or draft-16 session never
+                // answers with a draft-02 marker
+                if (version == WtVersion.Draft02 && this@ServerRequestImpl.headers[WtTokens.DRAFT02_REQUEST_FIELD] == "1") {
                     add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
                 }
             }
