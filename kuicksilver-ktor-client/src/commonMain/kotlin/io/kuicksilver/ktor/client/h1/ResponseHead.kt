@@ -291,8 +291,8 @@ private fun checkFieldName(line: ByteArray) {
     }
 }
 
-/** tchar (RFC 9110 section 5.6.2) as a byte. */
-private fun isTcharByte(b: Byte): Boolean {
+/** tchar (RFC 9110 section 5.6.2) as a byte; the response head and the chunked coding's lines share it. */
+internal fun isTcharByte(b: Byte): Boolean {
     val c = b.toInt() and 0xFF
     return c in 'a'.code..'z'.code || c in 'A'.code..'Z'.code || c in '0'.code..'9'.code || c.toChar() in "!#$%&'*+-.^_`|~"
 }

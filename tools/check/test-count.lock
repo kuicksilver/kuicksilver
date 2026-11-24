@@ -3185,6 +3185,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Framin
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.http10RequestWithoutHostIsServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_absoluteFormWithEmptyHostOrUserinfoIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_anEmptyConnectionFieldIsAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_anEmptyConnectionFieldIsAcceptedWithBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_badRequestDoesNotEchoTheHeaderSection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareCrInChunkSizeIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareLfIsRejectedByDefault
@@ -3699,6 +3700,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.anUpgradeNotTakenEndsTheUpgradedInputAndServesTheNextRequest
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.anUpgradeTakenAfterTheBodyWasReadGetsTheBytesAfterTheHead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_anEmptyConnectionFieldIsAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_anEmptyConnectionFieldIsAcceptedWithBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_everyOrderOfReadingTheBodyOfAnUpgradeOfferEnds
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_theBodyOfAnUpgradeOfferEndsAtOnce
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_upgradeOffersFollowTheListRules

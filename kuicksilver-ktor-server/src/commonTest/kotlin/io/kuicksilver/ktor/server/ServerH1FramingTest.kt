@@ -111,6 +111,25 @@ class ServerH1FramingTest {
             }
         }
 
+    /** The same with `h1AllowBareLf`: an empty Connection field ended by a bare LF is an empty list too. */
+    @Test fun negative_anEmptyConnectionFieldIsAcceptedWithBareLf() =
+        serverTest {
+            plainServer(allowBareLf = true) { port ->
+                val values = listOf("Connection:\r\n", "Connection: \t\r\n", "Connection: ,, ,\r\n", "Connection:\n")
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" } +
+                                "GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertEquals(values.size + 1, Regex("HTTP/1.1 200 ").findAll(resp).count(), resp)
+                assertFalse(resp.contains(" 400 "), resp)
+            }
+        }
+
     /**
      * RFC 9112 section 2.2: "a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR". The
      * server does so only with `h1AllowBareLf` (strict by default, as llhttp; Go's net/http and nginx are lenient): a

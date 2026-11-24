@@ -31,10 +31,19 @@ import kotlin.time.Duration.Companion.seconds
  * time.
  */
 class H1PipelineUpgradeOfferTest {
-    private fun TestScope.pipeline(handler: suspend H1RequestScope.(Request) -> Unit): Pair<ByteChannel, ByteChannel> {
+    private fun TestScope.pipeline(
+        allowBareLf: Boolean = false,
+        handler: suspend H1RequestScope.(Request) -> Unit,
+    ): Pair<ByteChannel, ByteChannel> {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
-        backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 45.seconds, 30.seconds, handler = handler)
+        backgroundScope.startH1Pipeline(
+            H1Connection(toServer, fromServer, null, null),
+            45.seconds,
+            30.seconds,
+            allowBareLf = allowBareLf,
+            handler = handler,
+        )
         runCurrent()
         return toServer to fromServer
     }
@@ -207,6 +216,26 @@ class H1PipelineUpgradeOfferTest {
                     output.flush()
                 }
             val values = listOf("Connection:\r\n", "Connection: \r\n", "Connection: \t \r\n", "Connection: , ,\r\n")
+            toServer.writeStringUtf8(values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" })
+            toServer.flush()
+            val expected = ok.repeat(values.size)
+            assertEquals(expected, withTimeout(10.seconds) { fromServer.readText(expected.length) })
+            assertEquals(values.size, served)
+            assertFalse(fromServer.isClosedForRead)
+        }
+
+    /** The same with `h1AllowBareLf`: an empty Connection field ended by a bare LF is an empty list too. */
+    @Test fun negative_anEmptyConnectionFieldIsAcceptedWithBareLf() =
+        runTest {
+            var served = 0
+            val (toServer, fromServer) =
+                pipeline(allowBareLf = true) { request ->
+                    request.release()
+                    served++
+                    output.writeStringUtf8(ok)
+                    output.flush()
+                }
+            val values = listOf("Connection:\r\n", "Connection: \r\n", "Connection: \t \r\n", "Connection: , ,\r\n", "Connection:\n", "Connection: \t\n")
             toServer.writeStringUtf8(values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" })
             toServer.flush()
             val expected = ok.repeat(values.size)

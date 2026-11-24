@@ -86,7 +86,8 @@ private suspend fun skipTrailerSection(
     acceptObsFold: Boolean,
 ) {
     var total = 0
-    val line = ByteArray(MAX_TRAILER_SECTION)
+    // allocated with the first trailer byte: a body without trailers (the common case) holds no buffer
+    var line: ByteArray? = null
     var length = 0
     var afterCr = false
     var fieldBefore = false
@@ -98,7 +99,7 @@ private suspend fun skipTrailerSection(
             LF -> {
                 if (!afterCr && !allowBareLf) throw MalformedChunkedBodyException("Bare LF in the trailer section")
                 if (length == 0) return
-                checkTrailerLine(line, length, fieldBefore, acceptObsFold)
+                checkTrailerLine(line!!, length, fieldBefore, acceptObsFold)
                 fieldBefore = true
                 length = 0
             }
@@ -106,7 +107,8 @@ private suspend fun skipTrailerSection(
             CR -> {}
 
             else -> {
-                line[length++] = b
+                val buffer = line ?: ByteArray(MAX_TRAILER_SECTION).also { line = it }
+                buffer[length++] = b
             }
         }
         afterCr = b == CR
@@ -125,7 +127,7 @@ private fun checkTrailerLine(
         if (!acceptObsFold) throw MalformedChunkedBodyException("Obsolete line folding (obs-fold) in the trailer section")
         if (!fieldBefore) throw MalformedChunkedBodyException("A trailer line that starts with whitespace continues no field")
     } else {
-        while (i < length && isTchar(line[i].toInt() and 0xff)) i++
+        while (i < length && isTcharByte(line[i])) i++
         if (i == 0 || i == length || line[i] != COLON) {
             throw MalformedChunkedBodyException("A trailer line whose field name is not a token followed by a colon")
         }
@@ -232,7 +234,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.BEFORE_NAME -> {
                     when {
-                        isTchar(b) -> LineState.NAME
+                        isTcharByte(b.toByte()) -> LineState.NAME
                         isWhitespace(b) -> state
                         else -> invalid(b)
                     }
@@ -240,7 +242,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.NAME -> {
                     when {
-                        isTchar(b) -> state
+                        isTcharByte(b.toByte()) -> state
                         b == CR_INT -> LineState.CR_SEEN
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         b == EQUALS -> LineState.BEFORE_VALUE
@@ -262,7 +264,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.BEFORE_VALUE -> {
                     when {
-                        isTchar(b) -> LineState.TOKEN_VALUE
+                        isTcharByte(b.toByte()) -> LineState.TOKEN_VALUE
                         b == QUOTE -> LineState.QUOTED_VALUE
                         isWhitespace(b) -> state
                         else -> invalid(b)
@@ -271,7 +273,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.TOKEN_VALUE -> {
                     when {
-                        isTchar(b) -> state
+                        isTcharByte(b.toByte()) -> state
                         b == CR_INT -> LineState.CR_SEEN
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         isWhitespace(b) -> LineState.BEFORE_SEMICOLON
@@ -336,10 +338,6 @@ private fun invalid(b: Int): Nothing =
     )
 
 private fun isWhitespace(b: Int): Boolean = b == ' '.code || b == '\t'.code
-
-/** tchar (RFC 9110 section 5.6.2). */
-private fun isTchar(b: Int): Boolean =
-    b in 'a'.code..'z'.code || b in 'A'.code..'Z'.code || b in '0'.code..'9'.code || b.toChar() in "!#$%&'*+-.^_`|~"
 
 private fun hexDigit(v: Int): Long =
     when (v) {
