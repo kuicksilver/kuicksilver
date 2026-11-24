@@ -120,6 +120,7 @@ class UdpTargetFilterTest {
 
     @Test fun negative_configRefusesAnIdleTimeoutBelowTwoMinutesAndBadValues() {
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(idleTimeout = 119.seconds) }
+        assertFailsWith<IllegalArgumentException> { UdpProxyConfig(socketOpenTimeout = kotlin.time.Duration.ZERO) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(linkMtu = 1279) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(packetRate = 0) }
         assertFailsWith<IllegalArgumentException> { UdpProxyConfig(proxyName = "bad name") }

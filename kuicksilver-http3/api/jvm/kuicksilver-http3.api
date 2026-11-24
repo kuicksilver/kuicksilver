@@ -506,8 +506,8 @@ public final class io/kuicksilver/http3/UdpProxy {
 
 public final class io/kuicksilver/http3/UdpProxyConfig {
 	public fun <init> ()V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getClientIpv6Prefix ()I
 	public final fun getClientPacketBurst ()I
 	public final fun getClientPacketRate ()I
@@ -525,6 +525,7 @@ public final class io/kuicksilver/http3/UdpProxyConfig {
 	public final fun getResolveTimeout-UwyO8pc ()J
 	public final fun getResolver ()Lio/kuicksilver/http3/UdpProxyResolver;
 	public final fun getSocketFactory ()Lkotlin/jvm/functions/Function2;
+	public final fun getSocketOpenTimeout-UwyO8pc ()J
 	public final fun getTargetFilter ()Lio/kuicksilver/http3/UdpTargetFilter;
 	public final fun getUnansweredLimit ()I
 }

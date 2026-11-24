@@ -320,6 +320,12 @@ public fun interface UdpProxyResolver {
  *   host"`; the other family is still served. The proxy remembers a family as without DF only for a permanent cause: a
  *   custom factory throws [io.kuicksilver.quic.QuicException.DontFragmentUnavailable] with `permanent = false` for a
  *   failure that may pass on a later attempt (out of descriptors, a bind refused under load), so later requests try again.
+ * @property socketOpenTimeout how long [socketFactory][UdpProxyConfig.socketFactory] may take to open one socket; then
+ *   that family counts as failed for the request, as a factory that throws does: the other family's candidate is tried,
+ *   and with none opened the answer is 502 with `proxy_internal_error`, not a request left waiting for the client to give
+ *   up. A factory call runs on threads of the proxy's own (at most 16 at once, so factories that block cannot hold every
+ *   thread of `Dispatchers.IO`); one that suspends is cancelled at the deadline, one that blocks its thread is given up
+ *   on, not interrupted, and a socket it returns after the deadline is closed.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
@@ -342,11 +348,13 @@ public class UdpProxyConfig(
     public val proxyName: String = "proxy",
     public val packetTooBig: Boolean = true,
     public val socketFactory: suspend (InetSocketAddress) -> DatagramIo = { DatagramIo.open(it) },
+    public val socketOpenTimeout: Duration = 5.seconds,
 ) {
     internal val template: UdpUriTemplate = UdpUriTemplate.parsePath(pathTemplate)
 
     init {
         require(resolveTimeout.isPositive()) { "resolveTimeout must be positive" }
+        require(socketOpenTimeout.isPositive()) { "socketOpenTimeout must be positive" }
         require(idleTimeout >= 2.minutes) { "idleTimeout must be at least two minutes (RFC 9298 section 3.1)" }
         require(linkMtu in 1280..65_535) { "linkMtu must be 1280..65535" }
         require(maxTunnels >= 1) { "maxTunnels must be at least 1" }

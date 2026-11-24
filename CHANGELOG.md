@@ -1662,6 +1662,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
   sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
   502 comes only when none opened (also when the other family lacked DF).
+- CONNECT-UDP proxy: a `socketFactory` call that did not return (one blocked in a lookup, a suspension that never
+  ends) left the request unanswered until the client gave up. The call is now bounded by `UdpProxyConfig.socketOpenTimeout`
+  (5 s by default): it runs on threads of the proxy's own (16 at most, never `Dispatchers.IO` as a whole), a suspending one
+  is cancelled at the deadline, a blocking one given up on, and a socket it returns late is closed; that family counts as
+  failed, so the other family is tried and the answer is 502 `proxy_internal_error` when none opened. Found through a
+  test socket factory that read the wildcard bind's `hostname` (on the JVM `getHostName()`, a reverse lookup of `0.0.0.0`)
+  and hung for minutes in the local matrix's JDK 25 step; `tools/check/env-apis.py` now covers test sources too.
 - Android and Linux on AArch64: `libksl` died with SIGILL while it loaded (and the app's process with it) on a kernel
   that reports SVE2 without SVE, as an Android emulator on Apple M4 does (SME, no SVE; kernels without Linux's fix
   "arm64: Filter out SVE hwcaps when FEAT_SVE isn't implemented"): OpenSSL's CPU detection, run as the library loads,

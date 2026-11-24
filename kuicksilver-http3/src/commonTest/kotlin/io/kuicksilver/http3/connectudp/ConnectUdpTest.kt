@@ -1149,6 +1149,96 @@ class ConnectUdpTest {
             }
         }
 
+    /**
+     * A socket factory that does not return, here one that blocks its thread (no deadline can interrupt it), is given up on
+     * at `socketOpenTimeout`: that family counts as failed, the other family's candidate is tried, and with none opened the
+     * answer is 502 proxy_internal_error, not a request left waiting for the client to give up; a socket the factory returns
+     * after the deadline is closed. Red before: the request hung until the client's own timeout (ConnectUdpTest on JDK 25 in
+     * the local matrix: a test factory blocked in a reverse DNS lookup, 274 s and 682 s).
+     */
+    @Test fun negative_aSocketFactoryThatBlocksIsGivenUpOn() =
+        h3Test {
+            val v4 = byteArrayOf(192.toByte(), 0, 2, 50)
+            val v6 =
+                ByteArray(16).also {
+                    it[0] = 0x20
+                    it[1] = 0x01
+                    it[2] = 0x0d
+                    it[3] = 0xb8.toByte()
+                    it[15] = 0x50
+                }
+            val release = CompletableDeferred<Unit>()
+            val late = OpenedIos<InetSocketAddress>()
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        resolver = UdpProxyResolver { host -> if (host == "dual.example") listOf(v4, v6) else listOf(v4) },
+                        socketOpenTimeout = 300.milliseconds,
+                        socketFactory = { a ->
+                            if (':' in a.ipLiteral()) {
+                                f(a)
+                            } else {
+                                kotlinx.coroutines.runBlocking { release.await() } // blocks this thread until the test ends
+                                f(a).also { late.add(it.localAddress) }
+                            }
+                        },
+                    )
+                }
+            try {
+                rig.use { r ->
+                    val got = rig.echo(InetSocketAddress("2001:db8::50", 5000))
+                    val t = withTimeout(10.seconds) { r.pair.client.connectUdp(template, "dual.example", 5000) }
+                    t.send("dual".encodeToByteArray())
+                    assertContentEquals("dual".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                    t.close()
+                    val e =
+                        withTimeout(10.seconds) {
+                            assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "v4only.example", 5000) }
+                        }
+                    assertEquals(502, e.status)
+                    assertTrue("error=proxy_internal_error" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                    // the two blocked calls return now: the sockets they open belong to no tunnel and are closed
+                    release.complete(Unit)
+                    val closed = HashSet<InetSocketAddress>()
+                    withTimeout(10.seconds) {
+                        while (late.list.size < 2 || !closed.containsAll(late.list)) closed += rig.socketsClosed.receive()
+                    }
+                }
+            } finally {
+                release.complete(Unit)
+            }
+        }
+
+    /** A factory that suspends and never returns is cancelled at `socketOpenTimeout`, and the request is answered 502. */
+    @Test fun negative_aSocketFactoryThatNeverReturnsIsCancelled() =
+        h3Test {
+            val cancelled = CompletableDeferred<Unit>()
+            val rig =
+                rig { _ ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketOpenTimeout = 300.milliseconds,
+                        socketFactory = {
+                            try {
+                                awaitCancellation()
+                            } finally {
+                                cancelled.complete(Unit)
+                            }
+                        },
+                    )
+                }
+            rig.use { r ->
+                val e =
+                    withTimeout(10.seconds) {
+                        assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                    }
+                assertEquals(502, e.status)
+                assertTrue("error=proxy_internal_error" in e.headers["proxy-status"]!!, e.headers["proxy-status"])
+                withTimeout(10.seconds) { cancelled.await() }
+            }
+        }
+
     /** An AF_INET target socket reports IPv6 as without DF (it cannot reach IPv6 at all): later IPv6 targets are unaffected. */
     @Test fun anIpv4SocketReportingIpv6DoesNotRefuseIpv6Targets() =
         h3Test {
