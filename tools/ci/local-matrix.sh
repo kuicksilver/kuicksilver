@@ -427,8 +427,11 @@ fi
 # no SDK either way is refused here, before the preflight and step 1. KSL_MATRIX_LOCAL_PROPERTIES: another file (the test's).
 sdk=""; sdk_props=${KSL_MATRIX_LOCAL_PROPERTIES:-local.properties}
 if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ] && [ -f "$sdk_props" ]; then
-  # a properties value: the last sdk.dir, its escapes undone (C\:\\Android\\sdk on Windows)
+  # the subset of the properties format read here: the last one-line `sdk.dir=value` or `sdk.dir: value`, blanks around the
+  # separator, a backslash before any character dropped (C\:\\Android\\sdk on Windows); not read: a value continued on the
+  # next line, \t \n \uXXXX escapes, sdk.dir written with escapes. A relative path is taken against the repository root.
   sdk=$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' "$sdk_props" | tail -1 | tr -d '\r' | sed 's/\\\(.\)/\1/g')
+  case "$sdk" in ''|/*|[A-Za-z]:*) ;; *) sdk="$root/$sdk" ;; esac
   if [ -n "$sdk" ] && [ -d "$sdk" ]; then
     export ANDROID_HOME="$sdk"
     echo "android sdk: $sdk (sdk.dir of $sdk_props; ANDROID_HOME and ANDROID_SDK_ROOT are unset)"

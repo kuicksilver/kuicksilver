@@ -82,6 +82,8 @@ sdk_case() { # <name> <properties content, or - for no file> <expected exit> <ex
 sdk_case sdkDirFromRootLocalProperties "sdk.dir=$fx/sdk" 0 "android sdk: $fx/sdk (sdk.dir of $fx/case.properties;" --only 38
 sdk_case sdkDirEscapedAndSpaced "  sdk.dir = ${fx//:/\\:}/C\\:/Android/sdk\\ dir" 0 "android sdk: $fx/C:/Android/sdk dir (" --only 38
 sdk_case sdkDirLastWins "$(printf 'sdk.dir=/nonexistent/one\nsdk.dir=%s' "$fx/sdk")" 0 "android sdk: $fx/sdk (" --only 56
+mkdir -p "$here/../../build/ci/local-matrix-test-sdk"
+sdk_case sdkDirRelativeToTheRepositoryRoot "sdk.dir=build/ci/local-matrix-test-sdk" 0 "android sdk: $(cd "$here/../.." && pwd)/build/ci/local-matrix-test-sdk (" --only 38
 sdk_case noSdkButNoComposeStep - 0 "" --only 37
 sdk_case negative_noSdkComposeBuild - 2 "step 38 (sample: compose-demo (build, tests)) builds samples/compose-demo" --only 38
 sdk_case negative_noSdkComposeDevice "ndk.dir=/x" 2 "step 56 (android: compose demo migration" --only 56
