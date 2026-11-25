@@ -8,7 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 What Kuicksilver 0.2.x promises: which API you can build on, what may still change, how the promise is checked, and
 which platforms, Ktor versions and OpenSSL releases are covered. Kuicksilver is pre-1.0 ([README](../README.md),
 [CHANGELOG](../CHANGELOG.md): Semantic Versioning, "before 1.0, any 0.x release may contain breaking changes"); this
-page says how far below that ceiling each part of the API stays.
+page says how far below that ceiling each part of the API stays. From 1.0, Semantic Versioning holds in full: no
+breaking change of the public API within 1.x. Which release carries what is the
+[version policy](roadmap.md#version-policy).
 
 0.2.0 and 0.2.1 are withdrawn: their Kotlin/Native artifacts contain a local build path, and their removal from Maven
 Central has been requested. Use 0.3.0; what this page says of 0.2.x describes those releases as they were published.
@@ -163,7 +165,8 @@ operating system.
   certificate compression, pinned in `gradle/compression-libs.toml` and verified the same way (brotli, which signs no
   release, by its SHA-256, the tag and tree checked against the repository when the pin changes; [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
   4.1 is supported by OpenSSL
-  until 2027-11-23; the move to 4.2 LTS is a planned patch release. The CI job `openssl-next` (weekly, or
+  until 2027-11-23; the move to 4.2 LTS is made in a minor release
+  ([version policy](roadmap.md#version-policy)). The CI job `openssl-next` (weekly, or
   `only=openssl-next` by hand; never required, never a source of release artifacts) builds the release named in
   `gradle/openssl-next.toml` on linux-x64 and macos-arm64 and runs the C tests and a JVM smoke test against it (the build
   scripts take that pin from `KSL_OPENSSL_PIN`, Gradle from `-Pkuicksilver.openssl.pin=gradle/openssl-next.toml`); it
@@ -179,8 +182,9 @@ operating system.
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
   within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and
-  within 30 days for a non-security 4.1.x patch release, with a GitHub Security Advisory for each reachable issue.
-  Such a release is a patch release (0.2.x) when nothing else changes.
+  in the next minor release for a non-security 4.1.x patch release, with a GitHub Security Advisory for each reachable
+  issue. The releases for reachable issues are patch releases (0.X.Y) of the latest line
+  ([version policy](roadmap.md#version-policy)).
 - **Visibility.** The version stays visible in the native libraries; the JVM jar's manifest names it as
   `OpenSSL-Version` and `OpenSSL-SHA256`.
 - **Symbols.** On Kotlin/Native and in the JNI libraries the OpenSSL inside cannot clash with another OpenSSL or
@@ -237,8 +241,8 @@ work on every target above. What differs:
 | Kotlin/Native Windows | `mingwX64` | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops > 1` shares one socket in process (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); the hosted CI's `windows` job runs the test executables on GitHub's Windows runners, and the release gate runs locally (`tools/ci/local-matrix.sh`). |
 
 Not in 0.2.x: HTTP/2 (ADR-0009, by decision; in 0.3.0 the client speaks it and the server serves it opt-in, ADR-0017),
-HTTP/3 server push (not planned), WebTransport (0.3.0, experimental), multipath (later, see the
-[roadmap](roadmap.md)), OpenSSL 4.x. 0-RTT is available as an opt-in, experimental API and is off by default (ADR-0015).
+HTTP/3 server push (not planned), WebTransport (0.3.0, experimental), multipath (planned for 0.4.0, see the
+[roadmap](roadmap.md#040-planned)), OpenSSL 4.x. 0-RTT is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## What is experimental
 

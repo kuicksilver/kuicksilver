@@ -155,7 +155,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 ## Consequences
 
 - **A non-LTS window.** From 0.3.0 until 4.2 LTS ships, the bundled OpenSSL is a release with a short support window
-  (4.1 until 2027-11-23). The move to 4.2 is a planned patch release; until then the commitments of SECURITY.md for
+  (4.1 until 2027-11-23). The move to 4.2 is a planned patch release (since 2026-11-26 a minor release, by the
+  [version policy](../roadmap.md#version-policy)); until then the commitments of SECURITY.md for
   OpenSSL advisories apply to 4.1.x unchanged.
 - **The move is not a version bump.** Before the pin changes: `build.sh` removes the read-only `crypto/buildinf.h`
   before rewriting it (which also fixes the `openssl-next` job), `configure-flags.txt` drops the removed options,

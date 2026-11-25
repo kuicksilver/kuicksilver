@@ -1682,6 +1682,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for Low), Critical and High still within 72 hours, each with a GitHub Security Advisory of this repository naming the
   OpenSSL CVE and the fixed version. New: where to see advisories and security releases, the emergency path when the
   month's Maven Central quota is used up, and `main` in the supported-versions table.
+- Release policy (`docs/roadmap.md`, "Version policy", decided on 2026-11-26; `SECURITY.md`, `docs/stability.md`): every
+  minor release 0.X.0 carries new features and the fixes found since the previous one; a patch release 0.X.Y is made
+  only when users need a fix before the next minor release or for a security fix that cannot wait, an OpenSSL security
+  release reachable through Kuicksilver included (72 hours and 7 days as before). A non-security OpenSSL 4.1.x patch
+  release now ships in the next minor release (was: a patch release within 30 days), and the move to OpenSSL 4.2 LTS
+  in a minor release (was: a planned patch release).
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.

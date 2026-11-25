@@ -15,7 +15,7 @@ Original row: draft-ietf-quic-multipath (published as RFC 10069 in 2026-11; draf
 
 **Requirement.** Multipath.
 
-**Recorded status.** ⬜ planned for 0.4.0, experimental and off by default, with every MUST and SHOULD (by the version policy of [the roadmap](../../roadmap.md#version-policy); before: later, after 0.3.x, then 0.3.0 from 2026-11-16, then a 0.3.x release by the owner decision of 2026-11-18)
+**Recorded status.** ⬜ planned for 0.4.0, experimental and off by default, with every MUST and SHOULD (since 2026-11-26, by the version policy of [the roadmap](../../roadmap.md#version-policy); before: later, after 0.3.x, then 0.3.0 from 2026-11-16, then a 0.3.x release by the owner decision of 2026-11-18)
 
 **How it is met.**
 

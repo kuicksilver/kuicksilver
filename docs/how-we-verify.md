@@ -185,10 +185,11 @@ Still to measure (the tool that produces each):
 - TODO(measure): the handshake rate after the 0.3.0 server changes: `tools/bench/run-table.sh --phases handshakes`.
 - TODO(measure): the size on iOS for 0.3.0 (`tools/check/ios-size.sh`) and the arm64-v8a `libksl.so` of 0.3.0
   (`tools/check/size.sh`, printed by the gate's "android: size gate" step).
-- Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): benchmarks against OkHttp beyond `tools/bench/why-quic.sh`
-  (which covers OkHttp's HTTP/1.1 and HTTP/2 over an emulated network), against Cronet and URLSession on a phone and
-  against Netty's HTTP/3 server, and high-bandwidth benchmarks against the peer QUIC stacks on gigabit links: no tool in
-  the repository does these yet.
+
+Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): benchmarks against OkHttp beyond `tools/bench/why-quic.sh` (which
+covers OkHttp's HTTP/1.1 and HTTP/2 over an emulated network), against Cronet and URLSession on a phone and against
+Netty's HTTP/3 server, and high-bandwidth benchmarks against the peer QUIC stacks on gigabit links. No tool in the
+repository does these yet.
 
 ## Repository checks
 
