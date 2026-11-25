@@ -38,7 +38,8 @@ static int list_syntax_ok(const uint8_t *list, size_t len) {
         return 0;
     size_t off = 2;
     while (off < len) {
-        if (!ksl_span_fits(off, 4, len))
+        /* off < len <= ECH_LIST_MAX, so no overflow; the bound spelled out stays visible to a range analysis */
+        if (off + 4 > len)
             return 0;
         size_t version = ((size_t)list[off] << 8) | list[off + 1], n = ((size_t)list[off + 2] << 8) | list[off + 3];
         off += 4;

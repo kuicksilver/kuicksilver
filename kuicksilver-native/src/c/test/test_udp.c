@@ -1161,7 +1161,8 @@ static void udp_sender_cases(void) {
                 rb[i] = rbuf[i];
                 rc[i] = sizeof rbuf[i];
             }
-            int bad = 0, dup = 0, disorder = 0, total = 0, failed = 0, unhanded = 0, stretches = 0, lossy = 0;
+            int bad = 0, dup = 0, disorder = 0, total = 0, failed = 0, unhanded = 0, stretches = 0, lossy = 0,
+                nostart = 0;
             int64_t last[SENDER_THREADS];
             for (int i = 0; i < SENDER_THREADS; i++)
                 last[i] = -1;
@@ -1172,10 +1173,20 @@ static void udp_sender_cases(void) {
                  round++) {
                 struct sender_run runs[SENDER_THREADS];
                 pthread_t th[SENDER_THREADS];
-                int done = 0;
+                int done = 0, started = 0;
                 for (int i = 0; i < SENDER_THREADS; i++) {
                     runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, round * SENDER_BATCH, 0, &done};
-                    pthread_create(&th[i], NULL, clone_sender, &runs[i]);
+                    if (pthread_create(&th[i], NULL, clone_sender, &runs[i]) != 0)
+                        break;
+                    started++;
+                }
+                /* the receive below waits for every clone: on a failed start, join the ones running and end */
+                if (started < SENDER_THREADS) {
+                    CHECK(0, "sender threads");
+                    for (int i = 0; i < started; i++)
+                        pthread_join(th[i], NULL);
+                    nostart = 1;
+                    break;
                 }
                 /* the socket receives while its clones send; once they are joined, what is still to come is what the kernel
                    holds (queued_now): every datagram of it must come out */
@@ -1247,20 +1258,23 @@ static void udp_sender_cases(void) {
                         stretches++; /* more than one stretch lost: not what loopback does */
                 }
             }
-            int all = SENDER_THREADS * SENDER_EACH;
-            CHECK(!failed, "every clone's sends succeeded");
-            CHECK(round == SENDER_EACH / SENDER_BATCH, "every round within 120 s");
-            CHECK(bad == 0 && dup == 0, "every datagram intact and received once");
-            CHECK(disorder == 0, "each clone's datagrams in the order it sent them");
-            CHECK(unhanded == 0, "every datagram the kernel queued is handed out");
-            CHECK(stretches == 0, "a clone's round lost one stretch at most, never datagrams between two that arrived");
-            CHECK(lossy <= 10, "at most 10 rounds of a clone lost anything");
-            CHECK(total >= all - all / 50, "at most 2 % lost on loopback");
-            if (total != all)
-                printf("    note: %d of %d received (%d bad, %d duplicate, %d rounds of a clone short)\n", total, all,
-                       bad, dup, lossy);
-            if (queued_now(base) < 0)
-                CHECK(total == all, "udp_sender_clones_send_concurrently: all 40 000 received");
+            if (!nostart) { /* "sender threads" failed above: a round cut short says nothing more */
+                int all = SENDER_THREADS * SENDER_EACH;
+                CHECK(!failed, "every clone's sends succeeded");
+                CHECK(round == SENDER_EACH / SENDER_BATCH, "every round within 120 s");
+                CHECK(bad == 0 && dup == 0, "every datagram intact and received once");
+                CHECK(disorder == 0, "each clone's datagrams in the order it sent them");
+                CHECK(unhanded == 0, "every datagram the kernel queued is handed out");
+                CHECK(stretches == 0,
+                      "a clone's round lost one stretch at most, never datagrams between two that arrived");
+                CHECK(lossy <= 10, "at most 10 rounds of a clone lost anything");
+                CHECK(total >= all - all / 50, "at most 2 % lost on loopback");
+                if (total != all)
+                    printf("    note: %d of %d received (%d bad, %d duplicate, %d rounds of a clone short)\n", total,
+                           all, bad, dup, lossy);
+                if (queued_now(base) < 0)
+                    CHECK(total == all, "udp_sender_clones_send_concurrently: all 40 000 received");
+            }
         }
         for (int i = 0; i < SENDER_THREADS; i++)
             ksl_udp_close(clones[i]);
@@ -1809,7 +1823,8 @@ void run_udp(void) {
             if (c) {
                 struct sender_args sa = {b, la, 0};
                 pthread_t t;
-                CHECK(pthread_create(&t, NULL, sender_thread, &sa) == 0, "sender thread");
+                int up = pthread_create(&t, NULL, sender_thread, &sa) == 0;
+                CHECK(up, "sender thread");
                 uint8_t *tb[8];
                 uint32_t tl[8];
                 uint8_t ta[8 * KSL_UDP_ADDR_LEN];
@@ -1884,7 +1899,8 @@ void run_udp(void) {
                                  0); /* keep a's queue from filling with the sender's traffic */
                 }
                 __atomic_store_n(&sa.stop, 1, __ATOMIC_RELEASE);
-                pthread_join(t, NULL);
+                if (up)
+                    pthread_join(t, NULL);
                 CHECK(ok, "every train sent");
                 CHECK(rounds == 300, "300 rounds within 120 s and at most 30 short trains");
                 CHECK(corrupted == 0, "no segment corrupted by the concurrent sender");
@@ -2429,7 +2445,8 @@ void run_udp(void) {
             if (r) {
                 struct junk_args ja = {port_of(lr), 0};
                 pthread_t t;
-                CHECK(pthread_create(&t, NULL, junk_thread, &ja) == 0, "junk sender");
+                int up = pthread_create(&t, NULL, junk_thread, &ja) == 0;
+                CHECK(up, "junk sender");
                 struct timespec w = {0, 20000000};
                 nanosleep(&w, NULL); /* the flood is on */
                 uint8_t buf[1500];
@@ -2442,7 +2459,8 @@ void run_udp(void) {
                 clock_gettime(CLOCK_MONOTONIC, &t1);
                 long ms = (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
                 __atomic_store_n(&ja.stop, 1, __ATOMIC_RELEASE);
-                pthread_join(t, NULL);
+                if (up)
+                    pthread_join(t, NULL);
                 CHECK(rc == KSL_WANT_READ && got == 0, "only empty datagrams: KSL_WANT_READ");
                 CHECK(ms < 200, "a 20 ms receive answers within 200 ms while empty datagrams keep arriving");
                 int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000 + (t1.tv_nsec - t0.tv_nsec);
@@ -2542,11 +2560,11 @@ void run_udp(void) {
                 snprintf(want_recv, sizeof want_recv, "recvmsg: %s", strerror(ENOBUFS));
                 struct err_args w1 = {r, EINVAL, "sendmsg"}, w2 = {r, ENOBUFS, "recvmsg"};
                 pthread_t t1, t2;
-                CHECK(pthread_create(&t1, NULL, err_writer, &w1) == 0 &&
-                          pthread_create(&t2, NULL, err_writer, &w2) == 0,
-                      "error writers");
+                int up1 = pthread_create(&t1, NULL, err_writer, &w1) == 0;
+                int up2 = up1 && pthread_create(&t2, NULL, err_writer, &w2) == 0;
+                CHECK(up1 && up2, "error writers");
                 int torn = 0;
-                for (int i = 0; i < 100000; i++) {
+                for (int i = 0; up1 && up2 && i < 100000; i++) {
                     uint8_t out[4 + 512];
                     size_t n = 0;
                     if (ksl_udp_get(r, KSL_UDP_GET_ERROR, out, sizeof out, &n) != KSL_OK || n < 4) {
@@ -2559,8 +2577,10 @@ void run_udp(void) {
                     if (strlen(want) != ml || memcmp(out + 4, want, ml) != 0)
                         torn++;
                 }
-                pthread_join(t1, NULL);
-                pthread_join(t2, NULL);
+                if (up1)
+                    pthread_join(t1, NULL);
+                if (up2)
+                    pthread_join(t2, NULL);
                 CHECK(torn == 0, "every error read is one error's number and text");
                 if (torn)
                     printf("    %d of 100000 reads mixed two errors\n", torn);
