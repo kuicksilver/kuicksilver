@@ -30,7 +30,30 @@ internal class PacketNumberSpace(
     internal var lossTime: TimeMark = TimeMark.NEVER
     internal var lastAckElicitingTime: TimeMark = TimeMark.NEVER
     internal var ackElicitingInFlight = 0
-    private val pool = ArrayList<SentPacket>()
+
+    /**
+     * Records of acknowledged or lost packets kept for the next ones sent, so the steady state allocates none: as many as were
+     * in flight at once at most, halved by [giveBackIdle] for each idle period down to [POOL_IDLE_KEEP], so a burst does not
+     * stay with an idle connection.
+     */
+    private var pool = arrayOfNulls<SentPacket>(POOL_INITIAL)
+    private var pooled = 0
+
+    /** When [sent] last went empty with records or room beyond its idle share ([LossDetection.settleDeadline]), else NEVER. */
+    internal var emptySince: TimeMark = TimeMark.NEVER
+
+    /** More records or room than an idle space keeps ([giveBackIdle] would give some back). */
+    internal val hasIdleExcess: Boolean get() = pooled > POOL_IDLE_KEEP || pool.size > POOL_SHRINK_ABOVE || sent.grown
+
+    /** Records kept for reuse, for the tests and the memory benchmark. */
+    internal val pooledForTest: Int get() = pooled
+
+    /** The pool's room, for the tests. */
+    internal val poolRoomForTest: Int get() = pool.size
+
+    /** Records made because the pool was empty, for the tests. */
+    internal var createdForTest = 0L
+        private set
 
     /**
      * In-flight packets declared lost, remembered for a while so an acknowledgement that arrives after all shows the loss was
@@ -185,13 +208,62 @@ internal class PacketNumberSpace(
     /** [peekPn] and [commitPn] at once. */
     fun takePn(random: Random): Long = peekPn(random).also { commitPn(it) }
 
-    fun newSentPacket(): SentPacket = pool.removeLastOrNull() ?: SentPacket()
+    fun newSentPacket(): SentPacket {
+        if (pooled == 0) {
+            createdForTest++
+            return SentPacket()
+        }
+        val p = pool[--pooled]!!
+        pool[pooled] = null
+        return p
+    }
 
     internal fun release(p: SentPacket) {
         p.reset()
-        pool += p
+        if (pooled == pool.size) pool = pool.copyOf(pooled * 2)
+        pool[pooled++] = p
+    }
+
+    /**
+     * Nothing of this space was in flight for an idle period ([LossDetection.settleDeadline]): half the records beyond
+     * [POOL_IDLE_KEEP] go, and once no more are left to give, the room the pool and the sent-packet ring grew. Halving, so a
+     * connection that answers a request now and then reuses most of its records for the next answer, and one left idle comes
+     * down to [POOL_IDLE_KEEP] in a few periods (a window of 1000 packets in 9). True once nothing more is to give back.
+     */
+    internal fun giveBackIdle(): Boolean {
+        drop(maxOf(POOL_IDLE_KEEP, pooled / 2))
+        if (pooled > POOL_IDLE_KEEP) return false
+        shrinkRoom()
+        return true
+    }
+
+    /** A discarded space (RFC 9001 section 4.9) sends nothing again: every record and the room go at once. */
+    internal fun giveBackAll() {
+        drop(0)
+        shrinkRoom()
+    }
+
+    private fun drop(to: Int) {
+        if (pooled <= to) return
+        pool.fill(null, to, pooled)
+        pooled = to
+    }
+
+    private fun shrinkRoom() {
+        if (pool.size > POOL_SHRINK_ABOVE) pool = pool.copyOf(POOL_INITIAL)
+        sent.shrinkIfEmpty()
     }
 }
+
+/** Records a space's pool starts with room for, and the room it shrinks back to when idle from beyond [POOL_SHRINK_ABOVE]. */
+internal const val POOL_INITIAL = 4
+internal const val POOL_SHRINK_ABOVE = 16
+
+/**
+ * Records an idle space keeps for its next packets: one for the packet the builder takes and gives back when it has nothing to
+ * send (or an ACK-only one), one for a packet in flight, such as a PING or a single-packet response, and its acknowledgment.
+ */
+internal const val POOL_IDLE_KEEP = 2
 
 /** Lost packets each space remembers for spurious-loss detection; more within the retention time settle the oldest early. */
 internal const val LOST_KEEP = 64

@@ -208,6 +208,19 @@ public fun QuicStream.markTunnel() {
 }
 
 /**
+ * The sent-packet records each packet number space (Initial, Handshake, Application) of [this] connection keeps for reuse,
+ * -1 for a space with packets in flight or records still to give back once idle (RFC 9002 section 6.2.1 sets the period's
+ * PTO): the memory benchmark waits until none is -1 before it measures, and prints the counts. Read on the connection's
+ * loop, so a poll sees the core between two of its steps; for connections of other implementations, the core read as is.
+ */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public suspend fun QuicConnection.idleSentRecords(): IntArray {
+    val runtime = this as? io.kuicksilver.quic.runtime.ConnectionRuntime ?: return core.idleSentRecords()
+    return kotlinx.coroutines.withContext(runtime.loopDispatcher) { core.idleSentRecords() }
+}
+
+/**
  * From now on a bidirectional stream the peer opens on [this] connection keeps counting toward the limit we grant it
  * (MAX_STREAMS, RFC 9000 section 4.6) after both its halves are done, until [releaseStreamCredit] is called for it; the
  * peer's streams still counted now are held too. An HTTP/3 server releases a request stream when the request's handler

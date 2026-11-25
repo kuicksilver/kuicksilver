@@ -11,6 +11,7 @@ import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
+import kotlin.time.Duration.Companion.seconds
 
 internal enum class CongestionKind { Acked, Lost }
 
@@ -142,6 +143,9 @@ private const val LONG_HEADER_SPACES = 3
 /** The largest PTO backoff exponent (RFC 9002 section 6.2.1: PTO x 2^pto_count) before the doubling stops. */
 private const val MAX_PTO_BACKOFF_SHIFT = 30
 
+/** Room for this many packets in the acknowledged and lost lists stays when a space goes idle; more is given back. */
+private const val LISTS_SHRINK_ABOVE = 16
+
 /** Loss detection and the PTO timer (RFC 9002 sections 5–6, appendix A), over the three packet number spaces. */
 internal class LossDetection(
     rtt: RttEstimator,
@@ -163,6 +167,9 @@ internal class LossDetection(
     private val persistentRtts = arrayOfNulls<RttEstimator>(8)
     private val doneCcs = arrayOfNulls<io.kuicksilver.quic.CongestionController>(8)
     private val acked = ArrayList<SentPacket>()
+
+    /** The most packets [acked] or [lost] held since they were last shrunk (their arrays keep that room until [settleIdle]). */
+    private var listsPeak = 0
 
     var handshakeConfirmed: Boolean = false
 
@@ -198,6 +205,7 @@ internal class LossDetection(
             return
         }
         sp.sent.add(p)
+        sp.emptySince = TimeMark.NEVER
         if (p.inFlight) bytesInFlight += p.size
         if (p.ackEliciting) {
             sp.lastAckElicitingTime = now
@@ -322,9 +330,77 @@ internal class LossDetection(
             }
             sp.release(p)
         }
+        if (acked.size > listsPeak) listsPeak = acked.size
+        acked.clear() // the records are the pool's again: no reference stays here
         listener.onAckProcessed(now)
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
+        markIfEmpty(sp, now)
+    }
+
+    /** [sp] has nothing left in flight and a burst's records or room to give back: [settleDeadline] counts from [now]. */
+    private fun markIfEmpty(
+        sp: PacketNumberSpace,
+        now: TimeMark,
+    ) {
+        if (!sp.sent.isEmpty() || sp.emptySince != TimeMark.NEVER) return
+        if (sp.hasIdleExcess || listsPeak > LISTS_SHRINK_ABOVE) sp.emptySince = now
+    }
+
+    /**
+     * When the first space that went empty with something to give back has stayed empty for an idle period ([idlePeriod]),
+     * [TimeMark.NEVER] when no space waits. Recomputed from the RTT estimate at each call.
+     */
+    fun settleDeadline(): TimeMark {
+        var t = TimeMark.NEVER
+        for (i in spaces.indices) {
+            val since = spaces[i].emptySince
+            if (since != TimeMark.NEVER && since < t) t = since
+        }
+        return if (t == TimeMark.NEVER) t else t + idlePeriod()
+    }
+
+    /**
+     * Each space empty for an idle period gives back half its spare records ([PacketNumberSpace.giveBackIdle]) and waits another
+     * period for the next half; once it has nothing more to give, the acknowledged and lost lists' room goes too. An idle
+     * connection so comes down to the same records whatever it once had in flight.
+     */
+    fun settleIdle(now: TimeMark) {
+        val period = idlePeriod()
+        var done = false
+        for (i in spaces.indices) {
+            val sp = spaces[i]
+            if (sp.emptySince == TimeMark.NEVER || sp.emptySince + period > now) continue
+            if (!sp.sent.isEmpty()) {
+                sp.emptySince = TimeMark.NEVER
+                continue
+            }
+            if (sp.giveBackIdle()) {
+                sp.emptySince = TimeMark.NEVER
+                done = true
+            } else {
+                sp.emptySince = now
+            }
+        }
+        if (done && listsPeak > LISTS_SHRINK_ABOVE) {
+            acked.trimToSize()
+            lost.trimToSize()
+            listsPeak = 0
+        }
+    }
+
+    /** The most packets [acked] or [lost] held since their room was last given back, for the tests. */
+    internal val listsPeakForTest: Int get() = listsPeak
+
+    /**
+     * How long a space stays empty before it counts as idle: three PTO periods of the Application space without backoff
+     * (what RFC 9000 section 10.1 asks an idle timeout to exceed), and at least 1 s, the floor of TCP's retransmission timeout
+     * (RFC 6298 section 2.4) after which an idle TCP sender restarts its window (RFC 5681 section 4.1). Requests to a server
+     * a second or less apart reuse their records; a space halves its spare records once per period beyond that.
+     */
+    private fun idlePeriod(): Duration {
+        val p = ptoPeriod(SpaceId.Application) * 3
+        return if (p > 1.seconds) p else 1.seconds
     }
 
     /**
@@ -614,6 +690,7 @@ internal class LossDetection(
             }
         }
         for (k in lost.indices) sp.release(lost[k])
+        if (lost.size > listsPeak) listsPeak = lost.size
         lost.clear()
         for (i in 0 until persistentPaths) {
             // RFC 9002 section 5.2: min_rtt restarts from the newest sample, and (as ngtcp2) a new persistent congestion period
@@ -672,12 +749,18 @@ internal class LossDetection(
     private fun peerCompletedAddressValidation(): Boolean = role == TlsRole.Server || peerAddressValidated || handshakeConfirmed
 
     private fun pto(space: SpaceId): Duration {
-        val v4 = rtt.rttVar * 4
-        var d = rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds)
-        if (space == SpaceId.Application && handshakeConfirmed) d += peerMaxAckDelay
+        val d = ptoPeriod(space)
         // the backoff stops doubling at 2^30 (12 days of PTO at 1 ms): 1 shl 31 is negative and 1 shl 32 is 1 again, so 31
         // unanswered PTOs (possible with both idle timeouts disabled) used to make the timer fire at once, and 32 reset it
         return d * (1 shl minOf(ptoCount, MAX_PTO_BACKOFF_SHIFT))
+    }
+
+    /** The PTO period of [space] without backoff (RFC 9002 section 6.2.1). */
+    private fun ptoPeriod(space: SpaceId): Duration {
+        val v4 = rtt.rttVar * 4
+        var d = rtt.smoothed + (if (v4 > 1.milliseconds) v4 else 1.milliseconds)
+        if (space == SpaceId.Application && handshakeConfirmed) d += peerMaxAckDelay
+        return d
     }
 
     /** The persistent congestion period (RFC 9002 section 7.6.1) of [est] (the active path's by default): (sRTT + max(4 rttvar, granularity) + max_ack_delay) × 3. */
@@ -778,7 +861,9 @@ internal class LossDetection(
     fun onTimeout(now: TimeMark): PtoProbe? {
         val loss = earliestLossTime()
         if (loss <= now) {
-            detectLost(space(timerSpace), now)
+            val sp = space(timerSpace)
+            detectLost(sp, now)
+            markIfEmpty(sp, now)
             return null
         }
         if (ptoTimeAndSpace() == TimeMark.NEVER) return null
@@ -793,7 +878,10 @@ internal class LossDetection(
      * Removes the 0-RTT packets of the Application space (rejected 0-RTT, a Retry or a Version Negotiation restart): out of
      * flight without a congestion signal (RFC 9002 section 6.4), [each] sees them first to queue their frames again.
      */
-    fun discardZeroRtt(each: (SentPacket) -> Unit) {
+    fun discardZeroRtt(
+        now: TimeMark,
+        each: (SentPacket) -> Unit,
+    ) {
         val sp = space(SpaceId.Application)
         for (i in sp.sent.start until sp.sent.end) {
             val p = sp.sent.at(i) ?: continue
@@ -808,6 +896,7 @@ internal class LossDetection(
             sp.release(p)
         }
         sp.sent.trim()
+        markIfEmpty(sp, now)
     }
 
     fun discard(
@@ -824,6 +913,8 @@ internal class LossDetection(
             sp.release(p)
         }
         sp.sent.clear()
+        sp.giveBackAll() // nothing is sent in it again (RFC 9001 section 4.9)
+        sp.emptySince = TimeMark.NEVER
         sp.clearAcked()
         sp.lossTime = TimeMark.NEVER
         sp.lastAckElicitingTime = TimeMark.NEVER

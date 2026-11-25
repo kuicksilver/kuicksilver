@@ -496,7 +496,8 @@ What went, by commit (each measured on its own, JVM loopback UDP; the order is t
 - A stream's output hands the core its head segment in place instead of through a `peek()` and the loop's scratch:
   145 -> 130 MiB (`MemoryNetwork`: 2726 -> 2079 MiB).
 - The HTTP/3 accept loop no longer keeps its last request stream (an idle server connection: 78.6-79.6 K in every run,
-  instead of 88.6-89.4 K in about a third of them; `IdleFootprintTest`'s ceiling is now 85 000).
+  instead of 88.6-89.4 K in about a third of them; `IdleFootprintTest`'s ceiling was set to 85 000 then, and its
+  comments record each change since).
 
 What the loopback-UDP figure still holds (JFR, JVM): no allocation per datagram on the packet path itself; what is left
 is per wake-up of a coroutine. The timer coroutine's `select` with `onTimeout` (about 10 %: the select, its clauses, a
@@ -684,6 +685,38 @@ that bounded the wait by writing the held-for DATA first, whatever its priority:
 16 KiB frame per waiting stream at each shrink. "Now" acknowledges at once: the acknowledgement waits only for the frame
 already being written (at most 16 KiB, 1.3 ms at 100 Mbit/s), and the urgent stream pays nothing. The same shape cannot
 be driven with h2load, which sends its SETTINGS only at the start of a connection.
+
+### Sent-packet records of an idle connection (P.5, 2026-11-26)
+
+Each packet number space kept the records of its acknowledged and lost packets (744 bytes each with their frame
+arrays, on the JVM) for the next packets it sent, so the steady state allocates none, and kept as many as it ever had
+in flight at once: after a transfer, one per packet of the largest window, for as long as the connection lived. The
+idle HTTP/3 server connection of `IdleFootprintTest` held 87.7 K on the macOS CI runner, where more of the server's
+packets waited for their acknowledgement together (8 records pooled instead of 3 or 4).
+
+A space that has had nothing in flight for an idle period, three PTOs without backoff and at least 1 s (the floor of
+TCP's retransmission timeout, after which an idle TCP sender restarts its window: RFC 6298 section 2.4, RFC 5681
+section 4.1), now gives back half its spare records, and half again each further period, down to 2; then the room its
+pool, its sent-packet ring and the acknowledged and lost lists grew. A window of 1000 packets is down to 2 records in
+9 periods. A discarded space keeps none, and the acknowledged list and the probe list no longer reference records
+after use. What that costs, counted in `LossDetectionTest` for a server answering 64 KB (55 packets in flight):
+
+| answers | records made per answer, once warm |
+|---|---|
+| 0.9 s apart (within the period) | 0 |
+| 1.1 s apart (one halving between two answers) | 28 (about 20 KB) |
+| after a long idle (not in the test: all but the 2 kept) | 53 |
+
+A sender limited by its window empties for a moment between rounds and sends again within the period, keeping its
+records: `CoreAllocationTest` allocates as before, 5.9-11.3 KB over 100 000 packets in 15 runs of the bench tests, under
+its 12 KiB bound (the BBR run is the 6.5-11.3 KB end, as it was with the timer disabled). JVM 21, Apple Silicon Mac,
+local; before = parent `c9513c37e`.
+
+| per idle connection, JVM heap, server side (`IdleFootprintTest`) | before | after |
+|---|---|---|
+| QUIC core | 36 064 B | 33 744 B (every run) |
+| HTTP/3, after the exchange | 84.0-84.8 K (6 runs); 87.7 K on the CI runner | 78.00-78.41 K (16 runs, records 0, 0, 2) |
+| a space after N packets in flight, idle | N records | 2 records after about log2(N/2) idle periods |
 
 ## msquic's goodput outlier
 

@@ -179,7 +179,7 @@ internal fun ConnectionCore.probeOtherHandshakeSpace(space: SpaceId) {
  * owed for that flight, and left pending it would exempt a datagram from the window and the pacer (RFC 9002 section 7).
  */
 internal fun ConnectionCore.discardZeroRttPackets(each: (SentPacket) -> Unit) {
-    loss.discardZeroRtt(each)
+    loss.discardZeroRtt(now, each)
     probePending[SpaceId.Application.ordinal] = 0
 }
 
@@ -202,6 +202,7 @@ internal fun ConnectionCore.requeueForProbe(
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) sendHandshakeDone = true
         requeueNewToken(f)
     }
+    probeScratch.clear() // the packets stay loss detection's (and go back to its pool): no reference stays here
 }
 
 /** A lost (or probed) packet carried the NEW_TOKEN frame still unacknowledged: the same token goes again. */

@@ -46,6 +46,16 @@ class IdleFootprintTest {
     }
 
     private companion object {
+        // 78.00-78.41 K measured (2026-11-26, JVM 21, macOS arm64, 16 runs), the inventory taken once every space has given
+        // back the records it does not keep idle (MemoryBench waits for it, and prints the records kept per space: 0, 0, 2
+        // in every run). A space's sent-packet records were as many as it ever had in flight at once and stayed: 87.7 K on
+        // the macOS runner (2026-11-25), 8 records pooled where runs here pooled 3 or 4 (744 B each with their frame
+        // arrays), and after a large transfer one per packet of the window. A space empty for an idle period (three PTOs,
+        // at least 1 s) now halves its spare records per period down to 2 (LossDetection.settleIdle), a discarded space
+        // keeps none, and neither the acknowledged list nor the probe list holds a record past its use. What still varies
+        // (410 B) is the control-frame queue and the session's waiters. The ceiling leaves 1.6 K, two records and that
+        // spread, for the CI runner, which only the records set apart before; the modes below (an 8 KiB segment kept, 6 K
+        // and more made up front) land well above it.
         // 81.2-85.7 K measured (2026-11-20, JVM 21, macOS arm64, 36 runs; 84.0-84.8 K in 29 of them). What varies between
         // runs is how many sent-packet records each number space keeps pooled for reuse (744 B each with their frame
         // arrays: 0 to 2 more) and the control-frame queue (160 B); the reset-tracking sets, which stayed allocated empty
@@ -66,7 +76,11 @@ class IdleFootprintTest {
         // last request stream and its 8 KiB input segment when that request had arrived while the loop waited
         // (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K with 4 KiB reassembly
         // windows, 292 K with per-stream staging arrays
-        const val HTTP3_CEILING = 86_500L
+        const val HTTP3_CEILING = 80_000L
+        // 33 744 measured (2026-11-26, JVM 21, every run): -2 320 B, three sent-packet records fewer (the Initial and
+        // Handshake spaces, discarded, keep none; the acknowledged list let go of the one it still referenced: -2 232)
+        // and each space's pool an array of 4 instead of an ArrayList of 10 (-144), less the idle mark and the
+        // allocation count per space (+48) and the lists' peak (+8).
         // 36 064 measured (2026-11-20, JVM 21, every run): +144 B over 35 920 on main, the state of four 0.3.0
         // features, each a field or two per connection: DPLPMTUD's datagram size and sequence per sent packet (RFC 8899
         // section 4.3, black-hole detection by datagram; 4 pooled and acknowledged packets, +64) and the builder's
@@ -80,6 +94,6 @@ class IdleFootprintTest {
         // up front, now by the first hold). 35 552 measured (2026-11-11, JVM 21): the 0.3.0 RFC 9000/9002 state a
         // connection keeps from the start (its own IDs for removal by key, per-path ECN and persistent-congestion
         // marks, the 0-RTT packet range); 35 104 before (2026-11-06), 36 160 with the DATAGRAM ring made up front
-        const val CORE_CEILING = 36_200L
+        const val CORE_CEILING = 33_900L
     }
 }

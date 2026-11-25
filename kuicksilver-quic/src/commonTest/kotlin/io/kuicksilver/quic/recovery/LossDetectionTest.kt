@@ -12,6 +12,7 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -19,6 +20,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class LossDetectionTest {
@@ -435,7 +437,7 @@ class LossDetectionTest {
         send(ld, SpaceId.Application, 0, t0, cc = b)
         val app = ld.space(SpaceId.Application).sent
         app.at(app.start)!!.zeroRtt = true
-        ld.discardZeroRtt {}
+        ld.discardZeroRtt(t0) {}
         assertEquals(b to 1200, l.discarded.last(), "rejected 0-RTT too")
     }
 
@@ -465,6 +467,205 @@ class LossDetectionTest {
         }
         val e = assertFailsWith<QuicWireException> { ld.onAck(SpaceId.Application, ack(skipped to skipped), t0) }
         assertEquals(0x0aL, e.code)
+    }
+
+    private fun confirmed(): Pair<LossDetection, Listener> =
+        ld().also { (ld, _) ->
+            ld.handshakeConfirmed = true
+            ld.peerAddressValidated = true
+        }
+
+    /** Runs the settle timer as the connection does, at each deadline up to [until]; returns how often it fired. */
+    private fun settleUntil(
+        ld: LossDetection,
+        until: TimeMark,
+    ): Int {
+        var fired = 0
+        while (true) {
+            val d = ld.settleDeadline()
+            if (d == TimeMark.NEVER || d > until) return fired
+            ld.settleIdle(d)
+            fired++
+        }
+    }
+
+    /** [n] packets in flight from [first] at [at], all acknowledged by one ACK 10 ms later; returns when. */
+    private fun burst(
+        ld: LossDetection,
+        first: Long,
+        n: Int,
+        at: TimeMark,
+    ): TimeMark {
+        repeat(n) { send(ld, SpaceId.Application, first + it, at) }
+        val acked = at + 10.milliseconds
+        ld.onAck(SpaceId.Application, ack(first to first + n - 1), acked)
+        return acked
+    }
+
+    /**
+     * The records of a burst stay while the space keeps sending; once it has had nothing in flight for an idle period (1 s
+     * here: three PTOs are less) it gives back half its spare records per period, down to [POOL_IDLE_KEEP], and then the room
+     * its pool and ring grew: 500 records in 8 periods.
+     */
+    @Test fun aBurstsRecordsHalveForEachIdlePeriodDownToTwo() {
+        val (ld, _) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        repeat(500) { send(ld, SpaceId.Application, it.toLong(), t0) }
+        assertTrue(sp.sent.grown)
+        assertEquals(TimeMark.NEVER, ld.settleDeadline(), "nothing to settle while packets are in flight")
+        val at = t0 + 10.milliseconds
+        ld.onAck(SpaceId.Application, ack(0L to 499L), at)
+        assertEquals(500, sp.pooledForTest)
+        assertEquals(at + 1.seconds, ld.settleDeadline())
+        ld.settleIdle(at + 1.seconds - 1.microseconds)
+        assertEquals(500, sp.pooledForTest, "not idle yet")
+        val counts = ArrayList<Int>()
+        while (ld.settleDeadline() != TimeMark.NEVER) {
+            ld.settleIdle(ld.settleDeadline())
+            counts += sp.pooledForTest
+        }
+        assertEquals(listOf(250, 125, 62, 31, 15, 7, 3, 2), counts)
+        assertEquals(POOL_INITIAL, sp.poolRoomForTest)
+        assertFalse(sp.sent.grown)
+        // the space works as before: a second burst grows it again and its acknowledgement empties it
+        val created = sp.createdForTest
+        burst(ld, 500, 40, at + 10.seconds)
+        assertEquals(38L, sp.createdForTest - created)
+        assertEquals(40, sp.pooledForTest)
+        assertEquals(0, ld.storedPackets(SpaceId.Application))
+    }
+
+    /** A space that sends again within the period was between two flights: it keeps its records, and the clock starts over. */
+    @Test fun aSpaceThatSendsAgainWithinThePeriodKeepsItsRecords() {
+        val (ld, _) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        val at = burst(ld, 0, 64, t0)
+        val first = ld.settleDeadline()
+        send(ld, SpaceId.Application, 64, at + 500.milliseconds)
+        assertEquals(TimeMark.NEVER, ld.settleDeadline())
+        ld.settleIdle(first + 10.seconds)
+        assertEquals(63, sp.pooledForTest)
+        ld.onAck(SpaceId.Application, ack(64L to 64L), at + 510.milliseconds)
+        assertEquals(at + 1510.milliseconds, ld.settleDeadline(), "counted from the second time it went empty")
+        ld.settleIdle(ld.settleDeadline())
+        assertEquals(32, sp.pooledForTest)
+    }
+
+    /**
+     * A server answering 64 KB (55 packets in flight at once) at intervals: within the idle period each answer reuses every
+     * record of the one before; just beyond it, one halving falls between two answers, and each makes the half it gave back
+     * again (28 records, 20 KB, per 64 KB answered) — the price of an idle connection not keeping its largest window.
+     */
+    @Test fun answersWithinThePeriodMakeNoRecordsAndBeyondItHalfTheirFlight() {
+        val (ld, _) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        var pn = 0L
+        var at = burst(ld, pn, 55, t0) // warm
+        pn += 55
+        val created = sp.createdForTest
+        repeat(10) {
+            at = burst(ld, pn, 55, at + 900.milliseconds)
+            pn += 55
+            settleUntil(ld, at)
+        }
+        assertEquals(created, sp.createdForTest, "answers 0.9 s apart reuse their records")
+        repeat(10) {
+            val next = at + 1100.milliseconds
+            assertEquals(1, settleUntil(ld, next), "one idle period between two answers")
+            val before = sp.createdForTest
+            at = burst(ld, pn, 55, next)
+            pn += 55
+            assertEquals(28L, sp.createdForTest - before)
+        }
+    }
+
+    /** Records that come back through a loss declaration (packet threshold, RFC 9002 section 6.1.1) settle the same way. */
+    @Test fun lostPacketsRecordsSettleToo() {
+        val (ld, l) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        repeat(100) { send(ld, SpaceId.Application, it.toLong(), t0) }
+        ld.onAck(SpaceId.Application, ack(99L to 99L), t0 + 10.milliseconds)
+        assertEquals(97, l.lost.size)
+        assertEquals(TimeMark.NEVER, ld.settleDeadline(), "98 and 97 are still in flight")
+        ld.onAck(SpaceId.Application, ack(97L to 99L), t0 + 12.milliseconds)
+        assertEquals(100, sp.pooledForTest)
+        settleUntil(ld, t0 + 1.minutes)
+        assertEquals(POOL_IDLE_KEEP, sp.pooledForTest)
+        assertFalse(sp.sent.grown)
+    }
+
+    /** The deadline follows the RTT estimate: one that grew after the space went empty moves it later, and nothing goes early. */
+    @Test fun anRttThatGrowsBeforeTheDeadlineMovesIt() {
+        val (ld, _) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        val at = burst(ld, 0, 64, t0)
+        val d1 = ld.settleDeadline()
+        repeat(8) { ld.rtt.onSample(2.seconds, 0.milliseconds, true, 25.milliseconds) }
+        val d2 = ld.settleDeadline()
+        assertTrue(d2 > d1 && d2 - at > 3.seconds, "three PTOs of a 2 s RTT: ${d2 - at}")
+        ld.settleIdle(d1)
+        assertEquals(64, sp.pooledForTest)
+        ld.settleIdle(d2)
+        assertEquals(32, sp.pooledForTest)
+    }
+
+    /**
+     * A space emptied before any RTT sample (only padding in flight: no sample, RFC 9002 section 5.1) waits three PTOs of the
+     * initial RTT (RFC 9002 section 6.2.2), without max_ack_delay before the handshake is confirmed, as the PTO itself does.
+     */
+    @Test fun aSpaceEmptiedBeforeAnRttSampleWaitsThreeInitialPtos() {
+        val (ld, _) = ld()
+        repeat(20) { send(ld, SpaceId.Application, it.toLong(), t0, ackEliciting = false, inFlight = true) }
+        val at = t0 + 10.milliseconds
+        ld.onAck(SpaceId.Application, ack(0L to 19L), at)
+        assertFalse(ld.rtt.hasSample)
+        assertEquals(at + (ld.rtt.smoothed + ld.rtt.rttVar * 4) * 3, ld.settleDeadline())
+    }
+
+    /**
+     * The acknowledged and lost lists keep the room of the largest ACK until a space has nothing more to give; a pool grown
+     * past 16 records goes back to room for 4.
+     */
+    @Test fun theListsAndThePoolGiveBackTheirRoom() {
+        val (ld, _) = confirmed()
+        val sp = ld.space(SpaceId.Application)
+        burst(ld, 0, 40, t0)
+        assertEquals(40, ld.listsPeakForTest)
+        assertTrue(sp.poolRoomForTest >= 40)
+        settleUntil(ld, t0 + 1.minutes)
+        assertEquals(0, ld.listsPeakForTest)
+        assertEquals(POOL_INITIAL, sp.poolRoomForTest)
+        // a pool that never grew past 16 keeps its room: nothing is allocated for it
+        burst(ld, 40, 10, t0 + 2.minutes)
+        assertEquals(16, sp.poolRoomForTest)
+        settleUntil(ld, t0 + 3.minutes)
+        assertEquals(16, sp.poolRoomForTest)
+        assertEquals(POOL_IDLE_KEEP, sp.pooledForTest)
+    }
+
+    /** Rejected 0-RTT emptying the Application space (RFC 9002 section 6.4) starts the idle period as an acknowledgement does. */
+    @Test fun discardedZeroRttEmptyingTheSpaceStartsThePeriod() {
+        val (ld, _) = ld()
+        val sp = ld.space(SpaceId.Application)
+        repeat(20) { send(ld, SpaceId.Application, it.toLong(), t0) }
+        for (i in sp.sent.start until sp.sent.end) sp.sent.at(i)!!.zeroRtt = true
+        val at = t0 + 5.milliseconds
+        ld.discardZeroRtt(at) {}
+        assertEquals(20, sp.pooledForTest)
+        assertEquals(at + (ld.rtt.smoothed + ld.rtt.rttVar * 4) * 3, ld.settleDeadline())
+    }
+
+    /** A discarded space (RFC 9001 section 4.9) sends nothing again: it keeps no record, and arms no settle timer. */
+    @Test fun aDiscardedSpaceKeepsNoRecords() {
+        val (ld, _) = ld()
+        val sp = ld.space(SpaceId.Initial)
+        repeat(20) { send(ld, SpaceId.Initial, it.toLong(), t0) }
+        ld.onAck(SpaceId.Initial, ack(0L to 9L), t0 + 10.milliseconds)
+        ld.discard(SpaceId.Initial, t0 + 20.milliseconds)
+        assertEquals(0, sp.pooledForTest)
+        assertEquals(POOL_INITIAL, sp.poolRoomForTest)
+        assertFalse(sp.sent.grown)
+        assertEquals(TimeMark.NEVER, ld.settleDeadline())
     }
 
     @Test fun ackOnlyPacketsNotStored() {

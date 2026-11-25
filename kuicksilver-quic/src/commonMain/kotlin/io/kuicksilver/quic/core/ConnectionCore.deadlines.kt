@@ -87,6 +87,8 @@ internal fun ConnectionCore.earliestDeadline(): TimeMark {
     }
     val retired = cids.nextRetiredExpiry()
     if (retired < t) t = retired
+    val settle = loss.settleDeadline()
+    if (settle < t) t = settle
     return t
 }
 
@@ -128,6 +130,7 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
     // outlive the handshake when a raced copy carried the client's Finished)
     handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
     cids.expireRetired(now)
+    loss.settleIdle(now)
     if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
