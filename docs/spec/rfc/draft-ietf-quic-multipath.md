@@ -9,13 +9,13 @@ Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for th
 
 ## <a id="multipath"></a>multipath
 
-Status: ⬜ planned for 0.3.x · [summary](../rfc-compliance.md#quic)
+Status: ⬜ planned for 0.4.0 · [summary](../rfc-compliance.md#quic)
 
 Original row: draft-ietf-quic-multipath (published as RFC 10069 in 2026-11; draft-21 is its last draft).
 
 **Requirement.** Multipath.
 
-**Recorded status.** ⬜ planned for a 0.3.x release, experimental and off by default, with every MUST and SHOULD (owner decision of 2026-11-18; before: later, after 0.3.x, then 0.3.0 from 2026-11-16)
+**Recorded status.** ⬜ planned for 0.4.0, experimental and off by default, with every MUST and SHOULD (by the version policy of [the roadmap](../../roadmap.md#version-policy); before: later, after 0.3.x, then 0.3.0 from 2026-11-16, then a 0.3.x release by the owner decision of 2026-11-18)
 
 **How it is met.**
 
@@ -29,4 +29,4 @@ Original row: draft-ietf-quic-multipath (published as RFC 10069 in 2026-11; draf
 - Not implemented: draft-ietf-quic-multipath (draft-21) as a whole — the `initial_max_path_id` transport parameter,
   the PATH_ACK, PATH_ABANDON, PATH_STATUS_BACKUP/AVAILABLE, PATH_NEW_CONNECTION_ID, PATH_RETIRE_CONNECTION_ID,
   MAX_PATH_ID, PATHS_BLOCKED and PATH_CIDS_BLOCKED frames, per-path packet number spaces and the per-path nonce. Planned for
-  0.3.x: [roadmap](../../roadmap.md#03x--multipath-quic).
+  0.4.0: [roadmap](../../roadmap.md#040-planned).

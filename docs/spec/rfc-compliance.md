@@ -82,7 +82,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
 | draft-ietf-quic-qlog-h3-events | qlog HTTP/3 and QPACK events, draft-04 | ✅ | 0.3.0 | HTTP/3 frames, stream types, SETTINGS and QPACK state go into the connection's qlog trace, field values redacted unless the sink opts in. | [details](rfc/draft-ietf-quic-qlog.md#qlog-h3) |
 | RFC 9368/9369 | compatible version negotiation, QUIC v2 | ✅ | 0.2.0 | QUIC v2 is opt-in on the wire, with compatible version negotiation and a downgrade check. | [details](rfc/9368-9369.md#compatible-version-negotiation-quic-v2) |
-| RFC 10069 | multipath | ⬜ | 0.3.x | Multipath QUIC (published from draft-ietf-quic-multipath) is planned for a 0.3.x release, experimental and off by default, with every MUST and SHOULD of the RFC. | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
+| RFC 10069 | multipath | ⬜ | 0.4.0 | Multipath QUIC (published from draft-ietf-quic-multipath) is planned for 0.4.0, experimental and off by default, with every MUST and SHOULD of the RFC. | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
 | draft-ietf-quic-load-balancers | QUIC-LB, draft-21 §3, §5 | ✅ | 0.3.0 | Experimental server connection IDs encode a configured server ID with config rotation, self-encoded length, plaintext, single-pass or four-pass encryption and unroutable IDs. | [details](rfc/draft-ietf-quic-load-balancers.md#quic-lb) |
 
 ## TLS

@@ -57,7 +57,7 @@ to cellular (`followDefaultNetwork`); the [Compose Multiplatform demo](../sample
 to OkHttp and CIO.
 
 Where it is worse: CONNECT-UDP and ECH are not in a release yet; quic-go's companion library masque-go has CONNECT-UDP today. Multipath QUIC is
-planned for a 0.3.x release ([roadmap](roadmap.md#03x--multipath-quic)). WebTransport follows a draft and is
+planned for 0.4.0 ([roadmap](roadmap.md#040-planned)). WebTransport follows a draft and is
 experimental. Safari has not been tested against it ([interop](spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)).
 
 ## Performance
@@ -78,12 +78,12 @@ handshake at twice Kuicksilver's rate and msquic uses less CPU per GB even under
 more CPU per GB. The handshake gap is on the
 [roadmap](roadmap.md#030--client-and-server-completeness-feature-parity-planned).
 
-- TODO(measure): HTTP/3 client benchmarks against Cronet and URLSession on a phone (requests per second, time to first
-  byte, CPU and battery). No tool in the repository measures these yet.
+- Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): HTTP/3 client benchmarks against Cronet and URLSession on a
+  phone (requests per second, time to first byte, CPU and battery). No tool in the repository measures these yet.
 - TODO(measure): the handshake table again after the 0.3.0 changes (`SSL_CTX` shared per server configuration):
   `tools/bench/run-table.sh --phases handshakes`.
-- TODO(measure): against Netty's HTTP/3 server on the JVM (goodput, CPU per GB). The engine interop bench
-  (`kuicksilver-engine-interop`) checks correctness against it, not speed.
+- Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): against Netty's HTTP/3 server on the JVM (goodput, CPU per
+  GB). The engine interop bench (`kuicksilver-engine-interop`) checks correctness against it, not speed.
 
 ## Binary size
 
@@ -128,7 +128,7 @@ Kuicksilver is pre-1.0: any 0.x release may break the API, and every break is li
 through a deprecation cycle before removal. Experimental API (`@ExperimentalKuicksilverApi`, opt-in) may change in any
 minor release: 0-RTT, BBR and the whole HTTP/2 module among others ([What is experimental](stability.md#what-is-experimental)),
 and the newer WebTransport, PROXY protocol and pluggable DNS resolver APIs ([CHANGELOG](../CHANGELOG.md)). ABI dumps are checked on
-every change. The public API is frozen before 1.0.0 ([roadmap](roadmap.md#after-030-until-10)). The others have a
+every change. The public API is frozen before 1.0.0 ([roadmap](roadmap.md#after-040-until-10)). The others have a
 longer history; we have not compared their compatibility policies.
 
 ## Verification effort
