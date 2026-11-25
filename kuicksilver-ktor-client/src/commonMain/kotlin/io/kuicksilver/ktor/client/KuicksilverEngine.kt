@@ -791,48 +791,84 @@ internal class KuicksilverEngine(
         }
     }
 
-    /** The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits. */
+    /**
+     * The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits.
+     *
+     * This loop calls only this class's private functions and works on an array, never through an interface or an open
+     * method: the frames are taken in [takeAltSvcFrames] and the batch is finished in [finishAltSvcFrames], neither
+     * suspending. ART 7.0 (API 24) aborted in the GC here ("Tried to mark 0xebadde09 not contained by any spaces", run
+     * 45685880281, negative_altSvcFramesLearnedInOrderAndBounded) when the loop itself called `Map.isEmpty`, `List.last` and
+     * the logger: the JIT-compiled loop was deoptimized at such a call when a receiver of a class it had not seen came
+     * (an empty map after full ones, a batch of many frames after batches of one), the deoptimization filled the registers
+     * the compiled code had found dead with 0xEBADDE09 (kDeadValue), and the coroutine state machine's move-object copies at
+     * the loop's turn, run by the interpreter that went on, put one into the frame's references (as in ClientH2FloodTest's
+     * batchOf). The helpers are not inlined into this frame by that ART (each is too large, or has a try block).
+     */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private suspend fun learnAltSvcFrames() {
         var done = false
         try {
             while (true) {
-                val batch = pendingAltSvcFrames.exchange(emptyMap())
-                if (batch.isEmpty()) {
-                    altSvcFrameLearner.store(false)
+                val frames = takeAltSvcFrames()
+                if (frames == null) {
                     done = true
-                    // a frame that came after the exchange and found the learner still marked running is taken here
-                    if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return
-                    done = false
-                    continue
+                    return
                 }
-                val frames = batch.values.sortedBy { it.seq }
+                if (frames.isEmpty()) continue
                 val failures = ArrayList<Exception>()
-                altSvcUpdate {
-                    for (f in frames) {
-                        // a store that throws (an application's own) loses this frame, not the ones after it
-                        try {
-                            altSvc.onAltSvcFrame(f.url, f.value)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            failures += e
-                        }
-                    }
-                }
-                failures.firstOrNull()?.let { e ->
-                    runCatching {
-                        if (events.logger.isEnabled(LogLevel.Warn)) {
-                            events.logger.log(LogLevel.Warn, "${failures.size} ALTSVC frame(s) could not be stored", e)
-                        }
-                    }
-                }
-                altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
+                altSvcUpdate { learnAltSvcFrameBatch(frames, failures) }
+                finishAltSvcFrames(frames, failures)
             }
         } finally {
             // cancelled or failed: the next frame starts a learner again
             if (!done) altSvcFrameLearner.store(false)
         }
+    }
+
+    /**
+     * The waiting ALTSVC frames in order of arrival, taken from [pendingAltSvcFrames]; none (an empty array) when a frame
+     * came after the learner found none and the learner goes on; null when none waits and the learner stopped.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun takeAltSvcFrames(): Array<PendingAltSvcFrame>? {
+        val batch = pendingAltSvcFrames.exchange(emptyMap())
+        if (batch.isNotEmpty()) return batch.values.sortedBy { it.seq }.toTypedArray()
+        altSvcFrameLearner.store(false)
+        // a frame that came after the exchange and found the learner still marked running is taken here
+        if (pendingAltSvcFrames.load().isEmpty() || !altSvcFrameLearner.compareAndSet(false, true)) return null
+        return emptyArray()
+    }
+
+    /** Learns [frames] in order (under [altSvcLock]); what a store throws goes to [failures]. */
+    private fun learnAltSvcFrameBatch(
+        frames: Array<PendingAltSvcFrame>,
+        failures: ArrayList<Exception>,
+    ) {
+        for (f in frames) {
+            // a store that throws (an application's own) loses this frame, not the ones after it
+            try {
+                altSvc.onAltSvcFrame(f.url, f.value)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures += e
+            }
+        }
+    }
+
+    /** Logs the [failures] of learning [frames] and marks them applied ([altSvcFramesApplied]). */
+    private fun finishAltSvcFrames(
+        frames: Array<PendingAltSvcFrame>,
+        failures: ArrayList<Exception>,
+    ) {
+        failures.firstOrNull()?.let { e ->
+            runCatching {
+                if (events.logger.isEnabled(LogLevel.Warn)) {
+                    events.logger.log(LogLevel.Warn, "${failures.size} ALTSVC frame(s) could not be stored", e)
+                }
+            }
+        }
+        altSvcFramesApplied.value = maxOf(altSvcFramesApplied.value, frames.last().seq)
     }
 
     /**
