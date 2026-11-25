@@ -1,1 +1,2 @@
 # Hashes that must stand alone in a tracked file, for tools/check/tracked-hashes.py: <lower-case hash> | <reason>.
+54e14955ef7cbea3b82adbc52b52aab8ac76387a | openssl/openssl master commit of CVE-2026-121482, in the cherry-pick line of the verbatim format-patch in tools/openssl/patches/openssl-4.1.0-crl-dp-dos.patch (patch 11)

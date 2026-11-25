@@ -97,7 +97,8 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 
 - **Threats:** a peer presents a certificate its CA has revoked (stolen key, misissuance); a server strips or forges the
   stapled OCSP response; an attacker replays an old "good" response after the revocation; a responder that the
-  certificate's CA did not authorize signs a "good" response; an application CRL goes stale.
+  certificate's CA did not authorize signs a "good" response; an application CRL goes stale; a peer's certificate built to
+  make the CRL check itself expensive (CWE-407), which OpenSSL runs before it checks any signature on the path.
 - **Mitigations (0.3.0):** where `ksl` verifies the chain (`AnchoredCa`, `Platform` on Linux Native) the stapled OCSP
   response is checked by RFC 6960 §3.2 against the issuer the verifier trusted (certID, signature, the issuer's key or a
   delegated responder with id-kp-OCSPSigning signed by that key, thisUpdate/nextUpdate with 5 minutes of skew): revoked,
@@ -106,11 +107,19 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
   must-staple certificates (RFC 7633) close it. A replayed old response is bounded by its nextUpdate; a resumed session
   is bounded by the nextUpdate of the response its full handshake checked. Application CRLs (`AnchoredCa(roots, crls)`)
   are checked on handshakes and resumption, an expired CRL fails closed. A server staples only a response for its own
-  leaf that is fresh.
+  leaf that is fresh. The cost of the CRL check is bounded per certificate, not multiplied by the configured CRLs: OpenSSL
+  4.1.0 built the full name of each relative CRL distribution point of the certificate again for every CRL of its issuer
+  with an issuingDistributionPoint (CVE-2026-121482), so an unsigned leaf under a configured issuer's name with about
+  4,400 of them in the 100 KiB certificate list cost 27 ms of CPU per such CRL, 0.83 s against 32 (macos-arm64);
+  the carried patch 11 (ADR-0019, upstream 54e14955ef) builds them once per certificate and fails closed on more than 16
+  relative distribution points, only when a CRL of the certificate's issuer with an issuingDistributionPoint is configured
+  (`VerifyReason.UnknownRevocationStatus`, unknown_ca: the peer's certificate is the cause, not an internal error).
 - **Not covered:** `Platform` off Linux Native, where the OS verifier decides: Apple and Windows apply their own revocation
   policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks
   revocation; `Custom` and `Tofu` (the application's); delta, indirect and reason-partitioned CRLs (refused); intermediates' status by OCSP, OCSP fetched by the client, CRL distribution points.
-- **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`; `RevocationTest`
+- **Verification:** C `revocation_ocsp_check`, `revocation_stapling`, `revocation_crls`,
+  `revocation_crl_distribution_points` (`negative_crldp_flood`, `negative_crldp_flood_mixed`, `negative_crldp_relative_17`);
+  `RevocationTest.negative_crlDistributionPointsBeyondTheBoundFail`; `RevocationTest`
   (`negative_quicStapledRevokedFails`, `negative_tcpStapledRevokedFails`, `negative_quicRequiredStapleMissing`,
   `negative_quicMustStapleLeafWithoutStaple`, `negative_serverStaplesNoStaleOrForeignResponse`,
   `negative_staleCachedStapleIsNotResumed`, `negative_crlRevokedLeafFails`, `negative_expiredCrlFails`,

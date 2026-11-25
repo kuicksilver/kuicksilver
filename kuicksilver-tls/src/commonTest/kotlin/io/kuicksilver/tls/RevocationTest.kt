@@ -584,6 +584,21 @@ class RevocationTest {
         assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.Off, trust), server(), 51))
     }
 
+    /**
+     * The bound of the carried OpenSSL patch 11 (CVE-2026-121482, ADR-0019): a leaf with 17 relative CRL distribution points,
+     * one more than upstream's MAX_DP_NAMES, against a configured CRL of its issuer with an issuingDistributionPoint. OpenSSL
+     * refuses it with X509_V_ERR_UNSPECIFIED (internal_error, as if ksl had failed); ksl reports it as a configured CRL that
+     * cannot be used for the certificate: [VerifyReason.UnknownRevocationStatus] and unknown_ca (48), fail closed.
+     */
+    @Test fun negative_crlDistributionPointsBeyondTheBoundFail() {
+        val trust =
+            TrustConfig.AnchoredCa(listOf(Certificate(CrlDpCerts.root)), listOf(CertificateRevocationList(CrlDpCerts.rootCrl)))
+        val leaf17 = Fixtures.server(listOf(CrlDpCerts.leaf17), CrlDpCerts.leaf17Key) {}
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.Off, trust), leaf17, 48))
+        // the same leaf without CRLs is not checked against any: it passes
+        quicPasses(client(RevocationPolicy.Off, TrustConfig.AnchoredCa(listOf(Certificate(CrlDpCerts.root)))), leaf17)
+    }
+
     @Test fun negative_crlNotCoveringTheLeafFails() {
         val trust = TrustConfig.AnchoredCa(listOf(root), listOf(CertificateRevocationList(RevocationCerts.crlMidPartitioned)))
         val p = quic(client(RevocationPolicy.Off, trust), server())

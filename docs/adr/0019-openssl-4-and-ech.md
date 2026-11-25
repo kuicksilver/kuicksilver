@@ -62,13 +62,16 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   shared mode with key rotation and retry configurations. No split mode.
 - **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
   reported to OpenSSL as well.
-- **Ten carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
+- **Eleven carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1,
   the padding of section 6.1.3, then the client checks of sections 5, 6.1.2, 6.1.6 and 6.2.1 and the GREASE length;
   2026-11-20: the client's flight on a rejection, section 6.1.7, then the ALPN padding of section 6.1.3; decided
   2026-11-21 (owner): patch 10, the SVE probe that crashed on load, carried verbatim from upstream cb5f5d00e4 / PR #33481
-  (openssl-4.1 658a1c947b), dropped with 4.1.1).
+  (openssl-4.1 658a1c947b), dropped with 4.1.1; decided 2026-11-25 (owner): patch 11, the CPU denial of service
+  CVE-2026-121482 that a peer's certificate causes on the CRL path, carried verbatim from upstream 54e14955ef / PR #33546
+  (openssl-4.1 14a9f9ad6e), and the pin moves to the first 4.1.x release that has 14a9f9ad6e as soon as it ships,
+  dropping the patch).
   Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and
-  nothing else. The build carries ten minimal patches, applied in this order:
+  nothing else. The build carries eleven minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
      extension, which every QUIC client has). Upstream code: the `ssl/statem/extensions.c` hunk of OpenSSL commit
      openssl/openssl@981f976bb0 (pull request #33246, issue #33231), merged to master, openssl-4.1 and openssl-4.0 on 2026-11-13;
@@ -105,8 +108,19 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      the SVE instruction `cntb` whenever the kernel reported SVE2, and kernels without linux@064737920bdb report
      SVE2 without SVE on a CPU with SME but no SVE, such as an Android emulator on Apple M4, where `libksl` died with
      SIGILL while it loaded). Upstream code: the `crypto/armcap.c` change of OpenSSL commit openssl/openssl@cb5f5d00e4
-     (pull request #33481), merged to master and to openssl-4.1 (658a1c947b) on 2026-11-04; dropped with 4.1.1.
-  The rules for all ten:
+     (pull request #33481), merged to master and to openssl-4.1 (658a1c947b) on 2026-11-04; dropped with 4.1.1;
+  11. `openssl-4.1.0-crl-dp-dos.patch` (not ECH: CVE-2026-121482, openssl/srt#560. With CRLs configured (`AnchoredCa(roots,
+     crls)`, `X509_V_FLAG_CRL_CHECK_ALL`), `crl_crldp_check` built the full name of every nameRelativeToCRLIssuer
+     distribution point of a certificate again for each CRL of its issuer that has an issuingDistributionPoint, in
+     `check_revocation`, which runs before any signature on the path is checked: a peer's leaf under a configured
+     issuer's name, signed by nobody, with about 4,400 such points in the 100 KiB certificate list cost 27 ms of CPU per
+     such CRL and 0.83 s against 32 of them (macos-arm64, `test_revocation.c` `revocation_crl_distribution_points`). The
+     fix builds the names once per certificate and fails closed on more than 16 relative points when such a CRL is
+     scored; `ksl` reports that refusal, `X509_V_ERR_UNSPECIFIED` in OpenSSL (internal_error), as
+     `X509_V_ERR_UNABLE_TO_GET_CRL`: unknown_ca, `VerifyReason.UnknownRevocationStatus`). Upstream code: OpenSSL commit openssl/openssl@54e14955ef (pull request #33546), merged to master on
+     2026-11-18 and to openssl-4.1 as 14a9f9ad6e, verbatim. Owner decision 2026-11-25: dropped with the first 4.1.x
+     release that contains 14a9f9ad6e (expected 4.1.1), and the pin moves to that release as soon as it ships.
+  The rules for all eleven:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
     covers part of the bug. The rest of patch 3 and patches 5 to 7 are drafted (2026-11-19) as one upstream report, to be
@@ -114,7 +128,7 @@ quic-go, Android's platform TLS), and without it the server name of every connec
     at 4a5704abc6d2 and 3a3f13563825 too (git apply), and their headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
     that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
-    `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_10`); `tools/openssl/build.sh` applies them in
+    `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_11`); `tools/openssl/build.sh` applies them in
     that order to the verified tarball (`apply-patch.pl`, exactly, all or none) and refuses a patch whose hash differs,
     and a patch without all the ones before it;
   - the patches and their hashes are listed in the build's provenance (`provenance.txt`, the release provenance and the

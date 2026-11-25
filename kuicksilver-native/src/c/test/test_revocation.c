@@ -8,6 +8,8 @@
 #include <openssl/ocsp.h>
 #ifndef _WIN32
 #include <pthread.h>
+#else
+#include <windows.h>
 #endif
 
 #define RV "revocation/"
@@ -619,6 +621,351 @@ static void test_crls(void) {
     END();
 }
 
+/* CRL distribution points of a peer's certificate against configured CRLs that carry an issuingDistributionPoint
+   (CVE-2026-121482, openssl/openssl@54e14955ef, carried as patch_11 under ADR-0019). OpenSSL 4.1.0 rebuilt the full name of
+   every nameRelativeToCRLIssuer distribution point (issuer name + fragment, a copy and a re-encoding) for every CRL it
+   scored, before any signature on the path is checked: a peer's certificate full of them, signed by nobody, cost
+   (CRLs of its issuer) x (its distribution points) name builds per verification. Built here with OpenSSL's own API: a CA, its
+   CRLs, and leaves with the distribution points each case needs. */
+static void dp_ext(X509 *x, X509 *issuer, int nid, const char *value) {
+    X509V3_CTX v;
+    X509V3_set_ctx(&v, issuer, x, NULL, NULL, 0);
+    X509_EXTENSION *e = X509V3_EXT_conf_nid(NULL, &v, nid, value);
+    CHECK(e != NULL && X509_add_ext(x, e, -1) == 1, "crldp: certificate extension");
+    X509_EXTENSION_free(e);
+}
+static DIST_POINT_NAME *dp_name(int relative, const char *v) {
+    DIST_POINT_NAME *n = DIST_POINT_NAME_new();
+    if (relative) {
+        n->type = 1;
+        n->name.relativename = sk_X509_NAME_ENTRY_new_null();
+        sk_X509_NAME_ENTRY_push(n->name.relativename, X509_NAME_ENTRY_create_by_NID(NULL, NID_commonName, MBSTRING_ASC,
+                                                                                    (const unsigned char *)v, -1));
+    } else {
+        n->type = 0;
+        n->name.fullname = GENERAL_NAMES_new();
+        ASN1_IA5STRING *s = ASN1_IA5STRING_new();
+        ASN1_STRING_set1_string(s, v);
+        GENERAL_NAME *g = GENERAL_NAME_new();
+        GENERAL_NAME_set0_value(g, GEN_URI, s);
+        sk_GENERAL_NAME_push(n->name.fullname, g);
+    }
+    return n;
+}
+static X509 *dp_ca(EVP_PKEY *k) {
+    X509 *x = X509_new();
+    X509_NAME *n = X509_NAME_new();
+    const char *rdn[][2] = {
+        {"C", "ZZ"}, {"O", "Kuicksilver test"}, {"OU", "CRL distribution points"}, {"CN", "ksl crldp CA"}};
+    for (int i = 0; i < 4; i++)
+        X509_NAME_add_entry_by_txt(n, rdn[i][0], MBSTRING_ASC, (const unsigned char *)rdn[i][1], -1, -1, 0);
+    X509_set_version(x, X509_VERSION_3);
+    ASN1_INTEGER_set(X509_get_serialNumber(x), 1);
+    X509_set_subject_name(x, n);
+    X509_set_issuer_name(x, n);
+    X509_NAME_free(n);
+    X509_gmtime_adj(X509_getm_notBefore(x), -86400);
+    X509_gmtime_adj(X509_getm_notAfter(x), 30 * 86400);
+    X509_set_pubkey(x, k);
+    dp_ext(x, x, NID_basic_constraints, "critical,CA:TRUE");
+    dp_ext(x, x, NID_key_usage, "critical,keyCertSign,cRLSign");
+    dp_ext(x, x, NID_subject_key_identifier, "hash");
+    CHECK(X509_sign(x, k, EVP_sha256()) > 0, "crldp: CA signed");
+    return x;
+}
+/* A leaf of `ca` with `relative` distribution points CN=dp<i> (none names a CRL), with `interleave` a fullName one after every
+   fourth of them, then `full` fullName ones (URIs naming no CRL), and last, when `match` is set, a relative one CN=<match>
+   (relative = 0: the fullName URI <match>). Its key is `signer`'s, and `signer` signs it. */
+static X509 *dp_leaf(X509 *ca, EVP_PKEY *signer, long serial, int relative, int interleave, int full, const char *match,
+                     int match_relative) {
+    X509 *x = X509_new();
+    X509_set_version(x, X509_VERSION_3);
+    ASN1_INTEGER_set(X509_get_serialNumber(x), serial);
+    X509_set_issuer_name(x, X509_get_subject_name(ca));
+    X509_NAME *n = X509_NAME_new();
+    X509_NAME_add_entry_by_txt(n, "CN", MBSTRING_ASC, (const unsigned char *)"leaf.test", -1, -1, 0);
+    X509_set_subject_name(x, n);
+    X509_NAME_free(n);
+    X509_gmtime_adj(X509_getm_notBefore(x), -86400);
+    X509_gmtime_adj(X509_getm_notAfter(x), 30 * 86400);
+    X509_set_pubkey(x, signer);
+    dp_ext(x, ca, NID_subject_alt_name, "DNS:leaf.test");
+    dp_ext(x, ca, NID_authority_key_identifier, "keyid:always");
+    CRL_DIST_POINTS *dps = sk_DIST_POINT_new_null();
+    char v[48];
+    for (int i = 0; i < relative; i++) {
+        DIST_POINT *dp = DIST_POINT_new();
+        snprintf(v, sizeof v, "dp%d", i);
+        dp->distpoint = dp_name(1, v);
+        sk_DIST_POINT_push(dps, dp);
+        if (interleave && i % 4 == 3) {
+            dp = DIST_POINT_new();
+            snprintf(v, sizeof v, "http://dp.invalid/%d.crl", i);
+            dp->distpoint = dp_name(0, v);
+            sk_DIST_POINT_push(dps, dp);
+        }
+    }
+    for (int i = 0; i < full; i++) {
+        DIST_POINT *dp = DIST_POINT_new();
+        snprintf(v, sizeof v, "http://dp.invalid/f%d.crl", i);
+        dp->distpoint = dp_name(0, v);
+        sk_DIST_POINT_push(dps, dp);
+    }
+    if (match) {
+        DIST_POINT *dp = DIST_POINT_new();
+        dp->distpoint = dp_name(match_relative, match);
+        sk_DIST_POINT_push(dps, dp);
+    }
+    X509_EXTENSION *e = X509V3_EXT_i2d(NID_crl_distribution_points, 0, dps);
+    CHECK(e != NULL && X509_add_ext(x, e, -1) == 1, "crldp: distribution points");
+    X509_EXTENSION_free(e);
+    sk_DIST_POINT_pop_free(dps, DIST_POINT_free);
+    CHECK(X509_sign(x, signer, EVP_sha256()) > 0, "crldp: leaf signed");
+    return x;
+}
+/* A complete CRL of `ca` (number `number`) whose issuingDistributionPoint is CN=<idp> (relative) or the URI <idp>, revoking
+   `revoked` (0: none) */
+static X509_CRL *dp_crl(X509 *ca, EVP_PKEY *k, long number, const char *idp, int relative, long revoked) {
+    X509_CRL *c = X509_CRL_new();
+    X509_CRL_set_version(c, X509_CRL_VERSION_2);
+    X509_CRL_set_issuer_name(c, X509_get_subject_name(ca));
+    ASN1_TIME *t = X509_gmtime_adj(NULL, -3600);
+    X509_CRL_set1_lastUpdate(c, t);
+    X509_gmtime_adj(t, 86400);
+    X509_CRL_set1_nextUpdate(c, t);
+    if (revoked) {
+        X509_REVOKED *r = X509_REVOKED_new();
+        ASN1_INTEGER *s = ASN1_INTEGER_new();
+        ASN1_INTEGER_set(s, revoked);
+        X509_REVOKED_set_serialNumber(r, s);
+        ASN1_INTEGER_free(s);
+        X509_gmtime_adj(t, -1800);
+        X509_REVOKED_set_revocationDate(r, t);
+        X509_CRL_add0_revoked(c, r);
+    }
+    ASN1_TIME_free(t);
+    ASN1_INTEGER *num = ASN1_INTEGER_new();
+    ASN1_INTEGER_set(num, number);
+    X509_EXTENSION *e = X509V3_EXT_i2d(NID_crl_number, 0, num);
+    CHECK(e != NULL && X509_CRL_add_ext(c, e, -1) == 1, "crldp: CRL number");
+    X509_EXTENSION_free(e);
+    ASN1_INTEGER_free(num);
+    X509V3_CTX v;
+    X509V3_set_ctx(&v, ca, NULL, NULL, c, 0);
+    e = X509V3_EXT_conf_nid(NULL, &v, NID_authority_key_identifier, "keyid:always");
+    CHECK(e != NULL && X509_CRL_add_ext(c, e, -1) == 1, "crldp: CRL authorityKeyIdentifier");
+    X509_EXTENSION_free(e);
+    ISSUING_DIST_POINT *ip = ISSUING_DIST_POINT_new();
+    ip->distpoint = dp_name(relative, idp);
+    e = X509V3_EXT_i2d(NID_issuing_distribution_point, 1, ip);
+    CHECK(e != NULL && X509_CRL_add_ext(c, e, -1) == 1, "crldp: issuingDistributionPoint");
+    X509_EXTENSION_free(e);
+    ISSUING_DIST_POINT_free(ip);
+    X509_CRL_sort(c);
+    CHECK(X509_CRL_sign(c, k, EVP_sha256()) > 0, "crldp: CRL signed");
+    return c;
+}
+static void dp_append(blob *b, const unsigned char *der, int len) {
+    b->buf = realloc(b->buf, b->len + 4 + (size_t)len);
+    b->buf[b->len] = (uint8_t)(len >> 24);
+    b->buf[b->len + 1] = (uint8_t)(len >> 16);
+    b->buf[b->len + 2] = (uint8_t)(len >> 8);
+    b->buf[b->len + 3] = (uint8_t)len;
+    memcpy(b->buf + b->len + 4, der, (size_t)len);
+    b->len += 4 + (size_t)len;
+}
+static blob dp_framed_cert(X509 *x) {
+    blob b = {0};
+    unsigned char *der = NULL;
+    int l = i2d_X509(x, &der);
+    dp_append(&b, der, l);
+    OPENSSL_free(der);
+    return b;
+}
+static ksl_ctx *dp_client(X509 *ca, X509_CRL **crls, int n) {
+    ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
+    blob r = dp_framed_cert(ca), l = {0};
+    CHECK(ksl_ctx_set_roots(c, r.buf, r.len) == KSL_OK, "crldp: roots");
+    for (int i = 0; i < n; i++) {
+        unsigned char *der = NULL;
+        int len = i2d_X509_CRL(crls[i], &der);
+        dp_append(&l, der, len);
+        OPENSSL_free(der);
+    }
+    CHECK(ksl_ctx_set_crls(c, l.buf, l.len) == KSL_OK, "crldp: CRLs accepted");
+    free(r.buf);
+    free(l.buf);
+    return c;
+}
+/* the process's CPU time in milliseconds: clock() on POSIX hosts; on Windows, where clock() is wall time, GetProcessTimes,
+   whose resolution is the scheduler tick (about 15.6 ms): the cases here read 0 or one tick there, inside the +25 ms slack */
+static double dp_cpu_ms(void) {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+        return 0;
+    ULARGE_INTEGER k, u;
+    k.LowPart = kernel.dwLowDateTime, k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime, u.HighPart = user.dwHighDateTime;
+    return (double)(k.QuadPart + u.QuadPart) / 10000.0; /* 100 ns units */
+#else
+    return (double)clock() * 1000.0 / CLOCKS_PER_SEC;
+#endif
+}
+static int dp_verify(ksl_ctx *c, X509 *leaf, double *cpu_ms) {
+    blob ch = dp_framed_cert(leaf);
+    int err = -1;
+    double t0 = dp_cpu_ms();
+    int rc = ksl_ctx_verify_chain(c, ch.buf, ch.len, "leaf.test", 0, &err);
+    if (cpu_ms)
+        *cpu_ms = dp_cpu_ms() - t0;
+    free(ch.buf);
+    return rc == KSL_OK ? X509_V_OK : err;
+}
+static void test_crl_dp_work(void) {
+    SECTION("revocation_crl_distribution_points");
+    EVP_PKEY *ck = EVP_PKEY_Q_keygen(NULL, NULL, "EC", "P-256"), *ak = EVP_PKEY_Q_keygen(NULL, NULL, "EC", "P-256");
+    X509 *ca = dp_ca(ck);
+    /* the work bound: a peer's leaf under the CA's name, signed by the peer's own key, with ~95 KB of relative distribution
+       points that name none of the configured CRLs (the 100 KiB certificate list bound of a handshake: max_cert_list) */
+    enum { MANY = 4400, CRLS = 32 };
+    X509_CRL *crls[CRLS];
+    char idp[48];
+    for (int i = 0; i < CRLS; i++) {
+        snprintf(idp, sizeof idp, "http://crl.invalid/%d.crl", i);
+        crls[i] = dp_crl(ca, ck, i + 1, idp, 0, 0);
+    }
+    X509 *evil = dp_leaf(ca, ak, 66, MANY, 0, 0, NULL, 0);
+    int evil_len = i2d_X509(evil, NULL);
+    CHECK(evil_len > 80000 && evil_len < 100 * 1024, "crldp: the peer's leaf fits a handshake's certificate list");
+    ksl_ctx *one = dp_client(ca, crls, 1), *all = dp_client(ca, crls, CRLS);
+    double t1 = 1e9, tn = 1e9;
+    int e1 = 0, en = 0;
+    for (int round = 0; round < 3; round++) { /* the least CPU time of three: a loaded host only adds to it */
+        double t;
+        e1 = dp_verify(one, evil, &t);
+        t1 = t < t1 ? t : t1;
+        en = dp_verify(all, evil, &t);
+        tn = t < tn ? t : tn;
+    }
+    printf(
+        "  %d-byte leaf, %d relative distribution points: %.1f ms CPU against 1 CRL, %.1f ms against %d (x509 %d, %d)\n",
+        evil_len, MANY, t1, tn, CRLS, e1, en);
+    /* refused at the first CRL scored for it (patch 11's bound), reported as a CRL that cannot be used for it: the bound below
+       holds because of that refusal, not because the verification stopped early for another reason */
+    CHECK(e1 == X509_V_ERR_UNABLE_TO_GET_CRL && en == X509_V_ERR_UNABLE_TO_GET_CRL,
+          "negative_crldp_flood: the unsigned leaf fails at the bound on relative distribution points");
+    CHECK(tn <= 4 * t1 + 25.0,
+          "negative_crldp_flood: the work does not grow with (CRLs of the issuer) x (relative distribution points)");
+    /* within the bound: 16 relative distribution points (their names built once per certificate) and ~2,600 fullName ones
+       compared against every CRL; nothing matches, so the leaf is out of every CRL's scope */
+    enum { FULL = 2600 };
+    X509 *mixed = dp_leaf(ca, ak, 67, 16, 0, FULL, NULL, 0);
+    int mixed_len = i2d_X509(mixed, NULL);
+    CHECK(mixed_len > 80000 && mixed_len < 100 * 1024, "crldp: the mixed leaf fits a handshake's certificate list");
+    double m1 = 1e9, mn = 1e9;
+    int f1 = 0, fn = 0;
+    for (int round = 0; round < 3; round++) {
+        double t;
+        f1 = dp_verify(one, mixed, &t);
+        m1 = t < m1 ? t : m1;
+        fn = dp_verify(all, mixed, &t);
+        mn = t < mn ? t : mn;
+    }
+    printf(
+        "  %d-byte leaf, 16 relative and %d fullName distribution points: %.1f ms CPU against 1 CRL, %.1f ms against %d "
+        "(x509 %d, %d)\n",
+        mixed_len, FULL, m1, mn, CRLS, f1, fn);
+    CHECK(f1 == X509_V_ERR_DIFFERENT_CRL_SCOPE && fn == X509_V_ERR_DIFFERENT_CRL_SCOPE,
+          "negative_crldp_flood_mixed: the leaf is out of every CRL's scope");
+    CHECK(mn <= 4 * m1 + 25.0, "negative_crldp_flood_mixed: 16 relative names are built once, not once per CRL");
+    ksl_ctx_free(one);
+    ksl_ctx_free(all);
+    X509_free(evil);
+    X509_free(mixed);
+    for (int i = 0; i < CRLS; i++)
+        X509_CRL_free(crls[i]);
+    /* the names still match: CRL 1 covers CN=part-1 (relative) and revokes serial 2, CRL 2 covers the URI part-2 and revokes
+       serial 5; a leaf names its CRL after 15 or 16 relative distribution points (fullName ones among them) */
+    X509_CRL *parts[2] = {dp_crl(ca, ck, 1, "part-1", 1, 2), dp_crl(ca, ck, 2, "http://crl.invalid/part-2.crl", 0, 5)};
+    ksl_ctx *c = dp_client(ca, parts, 2);
+    X509 *l2 = dp_leaf(ca, ck, 2, 15, 1, 0, "part-1", 1), *l3 = dp_leaf(ca, ck, 3, 15, 1, 0, "part-1", 1),
+         *l5 = dp_leaf(ca, ck, 5, 16, 1, 0, "http://crl.invalid/part-2.crl", 0),
+         *l7 = dp_leaf(ca, ck, 7, 16, 1, 0, "http://crl.invalid/part-2.crl", 0),
+         *l9 = dp_leaf(ca, ck, 9, 16, 1, 0, "part-1", 1);
+    int e = dp_verify(c, l2, NULL);
+    CHECK(e == X509_V_ERR_CERT_REVOKED, "negative_crldp_relative_revoked: 16th distribution point CN=part-1, revoked");
+    if (e != X509_V_ERR_CERT_REVOKED)
+        printf("  got x509=%d\n", e);
+    e = dp_verify(c, l3, NULL);
+    CHECK(e == X509_V_OK, "a leaf whose 16th distribution point is CN=part-1 and not revoked passes");
+    if (e != X509_V_OK)
+        printf("  got x509=%d\n", e);
+    e = dp_verify(c, l5, NULL);
+    CHECK(e == X509_V_ERR_CERT_REVOKED, "negative_crldp_full_revoked: fullName part-2 after 16 relative ones, revoked");
+    e = dp_verify(c, l7, NULL);
+    CHECK(e == X509_V_OK, "a leaf naming part-2 after 16 relative distribution points and not revoked passes");
+    if (e != X509_V_OK)
+        printf("  got x509=%d\n", e);
+    /* upstream's bound (MAX_DP_NAMES): a 17th relative distribution point fails the certificate (fail closed), reported by ksl
+       as a configured CRL that cannot be used for it (OpenSSL's X509_V_ERR_UNSPECIFIED would be internal_error, ksl's fault) */
+    e = dp_verify(c, l9, NULL);
+    CHECK(e == X509_V_ERR_UNABLE_TO_GET_CRL, "negative_crldp_relative_17: 17 relative distribution points fail closed");
+    if (e != X509_V_ERR_UNABLE_TO_GET_CRL)
+        printf("  got x509=%d\n", e);
+    /* and in a handshake (TCP and QUIC): unknown_ca (48), as for any configured CRL that cannot be used for the certificate */
+    for (int quic = 0; quic <= 1; quic++) {
+        ksl_ctx *sc = ksl_ctx_new(KSL_SERVER), *cc = dp_client(ca, parts, 2);
+        ksl_ctx_set_alpn(sc, ALPN_H3, sizeof ALPN_H3);
+        ksl_ctx_set_alpn(cc, ALPN_H3, sizeof ALPN_H3);
+        ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL);
+        blob ch = dp_framed_cert(l9);
+        unsigned char *kd = NULL;
+        int kl = i2d_PrivateKey(ck, &kd);
+        CHECK(ksl_ctx_set_identity(sc, ch.buf, ch.len, kd, (size_t)kl) == KSL_OK, "crldp: server identity");
+        OPENSSL_free(kd);
+        free(ch.buf);
+        int mode = quic ? KSL_MODE_QUIC : KSL_MODE_TCP;
+        ksl_ssl *cs = ksl_ssl_new(cc, mode), *ss = ksl_ssl_new(sc, mode);
+        ksl_ssl_set(cs, KSL_SET_SNI, (const uint8_t *)"leaf.test", sizeof "leaf.test" - 1);
+        ksl_ssl_set(cs, KSL_SET_VERIFY_NAME, (const uint8_t *)"leaf.test", sizeof "leaf.test" - 1);
+        int rc;
+        if (quic) {
+            ksl_quic_set_transport_params(cs, TP, sizeof TP);
+            ksl_quic_set_transport_params(ss, TP, sizeof TP);
+            side a = {0}, b = {0};
+            rc = pump(cs, ss, &a, &b, 40, accept_all, NULL);
+        } else {
+            rc = tcp_pump(cs, ss);
+        }
+        int al = 0;
+        char m[256];
+        uint32_t code;
+        ksl_ssl_last_error(cs, &code, &al, m, sizeof m);
+        CHECK(rc == KSL_ERROR && (al & 0x1ff) == 48 && (al >> 16) == X509_V_ERR_UNABLE_TO_GET_CRL,
+              quic ? "negative_crldp_relative_17 over QUIC: unknown_ca (48), UNABLE_TO_GET_CRL"
+                   : "negative_crldp_relative_17 over TCP: unknown_ca (48), UNABLE_TO_GET_CRL");
+        if (!(rc == KSL_ERROR && (al & 0x1ff) == 48 && (al >> 16) == X509_V_ERR_UNABLE_TO_GET_CRL))
+            printf("  got rc=%d alert=%d x509=%d\n", rc, al & 0x1ff, al >> 16);
+        ksl_ssl_free(cs);
+        ksl_ssl_free(ss);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    ksl_ctx_free(c);
+    X509_free(l2);
+    X509_free(l3);
+    X509_free(l5);
+    X509_free(l7);
+    X509_free(l9);
+    X509_CRL_free(parts[0]);
+    X509_CRL_free(parts[1]);
+    X509_free(ca);
+    EVP_PKEY_free(ck);
+    EVP_PKEY_free(ak);
+    END();
+}
+
 #ifndef OPENSSL_NO_OCSP
 extern int64_t ksl_test_ocsp_clock_skew;
 extern int ksl_test_ocsp_server_checks;
@@ -702,4 +1049,5 @@ void run_revocation(void) {
     test_without_ocsp();
 #endif
     test_crls();
+    test_crl_dp_work();
 }

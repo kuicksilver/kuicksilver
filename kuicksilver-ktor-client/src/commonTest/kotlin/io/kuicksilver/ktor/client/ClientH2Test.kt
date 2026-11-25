@@ -31,6 +31,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
@@ -416,6 +417,66 @@ class ClientH2Test {
                     val e = assertFailsWith<Http2Exception.StreamReset> { c.post("https://127.0.0.1:$port/") { setBody("x") } }
                     assertEquals(Http2ErrorCode.INTERNAL_ERROR, e.code)
                     assertEquals(1, n.load())
+                }
+            }
+        }
+
+    /**
+     * The class of Netty's 1d60263 (a graceful close that never completed when the last request buffered above
+     * SETTINGS_MAX_CONCURRENT_STREAMS failed) at the pool: with the route's one connection full (one stream) and no room for a
+     * second, two requests wait when the server sends GOAWAY with the last stream of the one in flight (RFC 9113 section
+     * 6.8) and keeps the connection open. They never opened a stream there, so they do not hold its end: once the stream
+     * in flight is answered the client closes the connection itself, its slot comes back, and they go on the route's new
+     * connection; the last one cancelled while it waits leaves no waiter behind.
+     */
+    @Test fun goAwayWithRequestsQueuedAboveTheStreamLimitClosesAndMovesThem() =
+        clientTest {
+            for (cancelLast in listOf(false, true)) {
+                val arrived = CompletableDeferred<Unit>()
+                val goAway = CompletableDeferred<Unit>()
+                val firstEnded = CompletableDeferred<Unit>()
+                val accepted = AtomicInt(0)
+                tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                    accepted.addAndFetch(1)
+                    if (index == 0) {
+                        rawH2Server(
+                            input,
+                            output,
+                            maxConcurrentStreams = 1,
+                            goAwayAfterFirst = goAway,
+                            onFirst = { arrived.complete(Unit) },
+                        )
+                        firstEnded.complete(Unit) // the client closed it
+                    } else {
+                        rawH2Server(input, output, maxConcurrentStreams = 1)
+                    }
+                }) { port ->
+                    testClient(engine = {
+                        maxConnectionsPerRoute = 1
+                        connectTimeout = 10.seconds
+                    }).use { c ->
+                        val pool = engine(c).h1.pool
+                        coroutineScope {
+                            val first = async { c.get("https://127.0.0.1:$port/1").status.value }
+                            withTimeout(10.seconds) { arrived.await() } // its HEADERS are in: the connection is full
+                            val before = pool.queuedForTest.value
+                            val second = async { c.get("https://127.0.0.1:$port/2").status.value }
+                            val third = async { c.get("https://127.0.0.1:$port/3").status.value }
+                            withTimeout(10.seconds) { pool.queuedForTest.first { it >= before + 2 } }
+                            if (cancelLast) third.cancel()
+                            goAway.complete(Unit)
+                            assertEquals(200, withTimeout(10.seconds) { first.await() })
+                            withTimeout(10.seconds) { firstEnded.await() } // closed by the client: the server never closes it
+                            assertEquals(200, withTimeout(10.seconds) { second.await() })
+                            if (cancelLast) {
+                                assertTrue(third.isCancelled)
+                            } else {
+                                assertEquals(200, withTimeout(10.seconds) { third.await() })
+                            }
+                            assertEquals(2, accepted.load(), "cancelLast = $cancelLast")
+                        }
+                        assertEquals(0, pool.waiterCount, "a waiter left behind (cancelLast = $cancelLast)")
+                    }
                 }
             }
         }

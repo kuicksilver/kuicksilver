@@ -78,10 +78,12 @@ from us, so we commit to the following.
 - **Pinned release.** We use the OpenSSL 4.1 branch, and the 4.2 LTS branch once it is released (ADR-0019: Encrypted
   Client Hello needs OpenSSL 4; 4.1 is supported by OpenSSL until 2027-11-23). The exact release, the SHA-256 of its tarball and the
   fingerprint of the OpenSSL release signing key are pinned in [`gradle/openssl.toml`](gradle/openssl.toml); the build
-  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). Two small patches are carried on the
-  tarball as an exception (ADR-0019: OpenSSL 4.1.0 fails Encrypted Client Hello after a HelloRetryRequest when the client
-  has a custom extension, as every QUIC client has, and ends an ECH rejection after a HelloRetryRequest with
-  `illegal_parameter`): they are in `tools/openssl/patches/`, pinned by their SHA-256 next to the tarball's, applied in
+  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). Eleven small patches are carried on the
+  tarball as an exception (ADR-0019: nine for Encrypted Client Hello, where OpenSSL 4.1.0 fails after a HelloRetryRequest
+  when the client has a custom extension, as every QUIC client has, ends a rejection after a HelloRetryRequest with
+  `illegal_parameter`, and misses checks and padding of RFC 9849; one for a crash while libcrypto loads on CPUs that report
+  SVE2 without SVE; one for CVE-2026-121482, a CPU denial of service by a peer's certificate when CRLs are configured): they
+  are in `tools/openssl/patches/`, pinned by their SHA-256 next to the tarball's, applied in
   a fixed order and exactly by `tools/openssl/build.sh`, listed in the build provenance and the SBOM, and each is dropped
   with the first OpenSSL release that fixes its bug. The build configuration
   ([`tools/openssl/configure-flags.txt`](tools/openssl/configure-flags.txt)) compiles out everything the stack does

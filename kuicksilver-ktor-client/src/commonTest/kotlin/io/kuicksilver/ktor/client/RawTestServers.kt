@@ -702,6 +702,13 @@ internal suspend fun rawH2Server(
     answerOnce: Boolean = false,
     // the first answer leaves its stream open (a long poll); completing this sends its last DATA ("done", END_STREAM)
     finishFirst: kotlinx.coroutines.Deferred<Unit>? = null,
+    // SETTINGS_MAX_CONCURRENT_STREAMS in the server's SETTINGS (null: none, no limit)
+    maxConcurrentStreams: Int? = null,
+    // the first request is answered only once this completes, right after a GOAWAY (NO_ERROR) whose last stream is that
+    // request's; the server then answers nothing more and never closes the connection itself (it reads until the client does)
+    goAwayAfterFirst: kotlinx.coroutines.Deferred<Unit>? = null,
+    // called as the first request's HEADERS arrive (with goAwayAfterFirst)
+    onFirst: () -> Unit = {},
 ) = coroutineScope {
     val writeLock = kotlinx.coroutines.sync.Mutex()
 
@@ -724,9 +731,14 @@ internal suspend fun rawH2Server(
         ) + payload
     try {
         input.readByteArray(24) // PRI * HTTP/2.0...
-        output.writeFully(frame(4, 0, 0))
+        val limit =
+            maxConcurrentStreams?.let {
+                byteArrayOf(0, 3, (it ushr 24).toByte(), (it shr 16).toByte(), (it shr 8).toByte(), it.toByte())
+            } ?: ByteArray(0)
+        output.writeFully(frame(4, 0, 0, limit))
         output.flush()
         var answered = 0
+        var goneAway = false
         while (true) {
             val head = input.readByteArray(9)
             val len = ((head[0].toInt() and 0xff) shl 16) or ((head[1].toInt() and 0xff) shl 8) or (head[2].toInt() and 0xff)
@@ -741,6 +753,34 @@ internal suspend fun rawH2Server(
                 type == 4 && flags and 1 == 0 -> {
                     writeLock.withLock { output.writeFully(frame(4, 1, 0)) }
                 }
+
+                type == 1 && answered == 0 && goAwayAfterFirst != null -> {
+                    answered++
+                    goneAway = true
+                    onFirst()
+                    launch {
+                        goAwayAfterFirst.await()
+                        val goAway =
+                            byteArrayOf(
+                                (stream ushr 24).toByte(),
+                                (stream shr 16).toByte(),
+                                (stream shr 8).toByte(),
+                                stream.toByte(),
+                                0,
+                                0,
+                                0,
+                                0,
+                            )
+                        writeLock.withLock {
+                            output.writeFully(frame(7, 0, 0, goAway))
+                            output.writeFully(frame(1, 0x5, stream, byteArrayOf(0x88.toByte())))
+                            output.flush()
+                        }
+                    }
+                }
+
+                // above the GOAWAY's last stream: not processed
+                type == 1 && goneAway -> {}
 
                 type == 1 && live && answered == 0 && finishFirst != null -> {
                     answered++
