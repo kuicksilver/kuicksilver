@@ -288,11 +288,25 @@ order were cross-checked with msquic `src/platform/datapath_winuser.c`.
 - **USO/URO** — granted only when the probe answers: `getsockopt(UDP_SEND_MSG_SIZE)` for USO (runs leave as one
   `WSASendMsg` with a `UDP_SEND_MSG_SIZE` cmsg; the run rule is Linux's), `setsockopt(UDP_RECV_MAX_COALESCED_SIZE)` for URO
   (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). Fallbacks: see the send-error classes.
-- **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where
-  the system takes it, so no path MTU cache drives sizes (quic-go CVE-2024-53259). Windows 11 (24H2 on ARM64, x64
+- **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE`
+  where the system takes it, so no path MTU cache drives sizes (quic-go CVE-2024-53259). Windows 11 (24H2 on ARM64, x64
   emulation) refuses PROBE; msquic never sets it and runs on DF alone, and `WSAEMSGSIZE` on a send loses only that slot,
   so DF alone is safe. The test checks the pairing: DF granted means `IP_DONTFRAGMENT` reads back set, and PROBE is
-  required only where `ksl` recorded that the option was taken.
+  required only where `ksl` recorded that the option was taken. DF is set before `bind`, as msquic does; PROBE too
+  (msquic never sets it). Both go on the halves the socket carries: the IPv4 one only on an `AF_INET` socket or a
+  dual-stack one on `::` (or a v4-mapped address); a socket bound to `::1` carries IPv6 alone (`udp_win_loopback6_df`).
+  Observed on Windows Server 2025 (CI): a socket bound to `::1` got no DF when both halves were asked for after the
+  bind, while one on `::` got both; which option was refused, and that setting them before the bind is what cures it, is
+  inferred, to be confirmed by the next Windows CI run. A `0.0.0.0` socket whose dual-stack socket gets no DF for a
+  lasting reason is an `AF_INET` socket instead when DF takes there, as `NioDatagramIo`'s AF_INET channel, so IPv4 QUIC
+  still works and IPv6 destinations are unreachable from it (`udp_win_dual_stack_without_df_takes_af_inet`). The
+  dual-stack socket is closed first, so an explicit port is free; where the `AF_INET` socket does not open, or opens
+  without DF for a lasting reason, the dual-stack socket is opened again (IPv6 stays reachable) and reported without DF,
+  so it is not used (`udp_win_dual_stack_without_df_reopens_dual`); a transient refusal fails the open and reopens
+  nothing. The tests reach these cases, on port 0 and on an explicit port, through `KSL_TEST` seams (DF refused on the
+  v4-mapped half, DF refused on `AF_INET` for good or transiently, `AF_INET` sockets failing). Another process can take
+  an explicit port between the close and a bind: that open then fails with `KSL_E_BIND` instead of reporting no DF.
+  Windows only for now: `ksl_udp.c` keeps a dual-stack socket without DF on Linux and Apple.
 - **Binding** — `SO_EXCLUSIVEADDRUSE`; addresses as in "Dual-stack binds" (a wildcard `0.0.0.0` is dual-stack, as on Linux
   and Apple: `udp_win_wildcard_dual_stack`, `udp_win_wildcard_without_ipv6_falls_back`); one loop per port.
 - **Winsock start.** `WSAStartup(2.2)` once per process, never `WSACleanup`. ktor-network starts Winsock only when it
