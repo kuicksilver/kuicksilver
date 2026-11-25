@@ -207,6 +207,8 @@ abstract interface io.kuicksilver.http3/WebTransportSession { // io.kuicksilver.
         abstract fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/WebTransportSession.protocol.<get-protocol>|<get-protocol>(){}[0]
     abstract val sessionId // io.kuicksilver.http3/WebTransportSession.sessionId|{}sessionId[0]
         abstract fun <get-sessionId>(): kotlin/Long // io.kuicksilver.http3/WebTransportSession.sessionId.<get-sessionId>|<get-sessionId>(){}[0]
+    open val maxStreamErrorCode // io.kuicksilver.http3/WebTransportSession.maxStreamErrorCode|{}maxStreamErrorCode[0]
+        open fun <get-maxStreamErrorCode>(): kotlin/Long // io.kuicksilver.http3/WebTransportSession.maxStreamErrorCode.<get-maxStreamErrorCode>|<get-maxStreamErrorCode>(){}[0]
 
     abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/WebTransportSession.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
     abstract suspend fun acceptBidi(): io.kuicksilver.http3/WebTransportBidiStream // io.kuicksilver.http3/WebTransportSession.acceptBidi|acceptBidi(){}[0]

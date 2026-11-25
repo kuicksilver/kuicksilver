@@ -23,7 +23,9 @@ import kotlinx.io.IOException
  * FIN on the CONNECT stream (code 0), or with a failure (a malformed capsule, a reset CONNECT stream, a lost
  * connection); [closed] says which. Its streams are then reset and stopped with WT_SESSION_GONE, opening and accepting
  * throw [WebTransportException.SessionClosed], and the connection's session slot is free once both directions of the
- * CONNECT stream ended. Application error codes, of the session and of its streams, are 0..2^32-1 (section 4.4).
+ * CONNECT stream ended. Application error codes, of the session and of its streams, are 0..2^32-1 (section 4.4), but a
+ * stream's are 0..255 on a session of draft-02, which Chrome and Firefox negotiate as of this writing (docs/spec/interop.md;
+ * [maxStreamErrorCode]).
  */
 @ExperimentalKuicksilverApi
 public interface WebTransportSession {
@@ -35,6 +37,16 @@ public interface WebTransportSession {
 
     /** The application protocol the server chose from the client's offer (`WT-Protocol`, section 3.3), or null when none was. */
     public val protocol: String?
+
+    /**
+     * The highest application code a stream of this session can reset or stop with, either way: 255 on a session
+     * of draft-02, whose stream codes are "limited to an unsigned 8-bit integer" (draft-ietf-webtrans-http3-02
+     * section 4.3), which Chrome and Firefox negotiate as of this writing (docs/spec/interop.md); 2^32-1 on
+     * later drafts (section 4.4). The session's own close code is 32-bit in every draft. The default, for
+     * implementations outside this library, is 2^32-1.
+     */
+    @ExperimentalKuicksilverApi
+    public val maxStreamErrorCode: Long get() = 0xffffffffL
 
     /**
      * Opens a bidirectional stream (section 4.3). Waits for the peer's QUIC stream credit (its `initial_max_streams_bidi`
@@ -143,7 +155,11 @@ public interface WebTransportReceiveStream {
     /** The bytes the peer sends; it ends at the peer's FIN. */
     public val input: ByteReadChannel
 
-    /** Asks the peer to stop sending with the application [code], 0..2^32-1 (STOP_SENDING); [input] then fails. */
+    /**
+     * Asks the peer to stop sending with the application [code] (STOP_SENDING); [input] then fails. [code] is
+     * 0..[WebTransportSession.maxStreamErrorCode]: 0..2^32-1, and 0..255 on a session of draft-02, whose stream codes are
+     * "limited to an unsigned 8-bit integer" (draft-ietf-webtrans-http3-02 section 4.3); IllegalArgumentException otherwise.
+     */
     public fun stopSending(code: Long)
 }
 
@@ -156,21 +172,26 @@ public interface WebTransportSendStream {
     /** Bytes for the peer; closing it sends FIN. The transport's flow control applies backpressure to writes. */
     public val output: ByteWriteChannel
 
-    /** Abandons sending with the application [code], 0..2^32-1 (RESET_STREAM); [output] then fails. */
+    /**
+     * Abandons sending with the application [code] (RESET_STREAM); [output] then fails. [code] is
+     * 0..[WebTransportSession.maxStreamErrorCode]: 0..2^32-1, and 0..255 on a session of draft-02, whose stream codes are
+     * "limited to an unsigned 8-bit integer" (draft-ietf-webtrans-http3-02 section 4.3); IllegalArgumentException otherwise.
+     */
     public fun reset(code: Long)
 
     /**
-     * Abandons sending with the application [code], 0..2^32-1, but still delivers the first [reliableOffset] bytes of the
-     * stream to the peer's application, however many packets are lost, before it sees the reset: the "abort send side"
-     * with an offset of draft-ietf-webtrans-overview section 4.3, carried by RESET_STREAM_AT whose Reliable Size is the
-     * stream's header plus [reliableOffset] (draft-ietf-webtrans-http3-17 section 4.4). [output] fails at once for new
+     * Abandons sending with the application [code] (its range as in [reset] with one argument), but still delivers the
+     * first [reliableOffset] bytes of the stream to the peer's application, however many packets are lost, before it sees
+     * the reset: the "abort send side" with an offset of draft-ietf-webtrans-overview section 4.3, carried by
+     * RESET_STREAM_AT whose Reliable Size is the stream's header plus [reliableOffset] (draft-ietf-webtrans-http3-17
+     * section 4.4). [output] fails at once for new
      * writes; the bytes written before the call are sent up to [reliableOffset] (as the session's flow control lets them),
      * then the reset goes, also when [output] was already closed (its FIN not yet acknowledged). Sending those bytes can
      * wait indefinitely for the peer's flow-control credit; the offset is never cut on a deadline, as that would break the
      * reliability asked for. A later [reset] (one argument), or the session's end, takes over at once: it resets with the
      * bytes already sent kept (Reliable Size = header + bytes sent). The call closes [output], so cancelling [output]
-     * afterwards does nothing: a later [reset] or the session's end is the way to take over. A [reliableOffset] beyond the bytes written before
-     * the call is cut to them; 0 is [reset].
+     * afterwards does nothing: a later [reset] or the session's end is the way to take over. A [reliableOffset] beyond the
+     * bytes written before the call is cut to them; 0 is [reset].
      *
      * Throws IllegalArgumentException for a negative [reliableOffset], and IllegalStateException, without resetting, for
      * an offset above 0 on a session without RESET_STREAM_AT (draft-02, which browsers speak: the transport must not send
@@ -246,7 +267,8 @@ public sealed class WebTransportException(
      * The peer reset the stream (RESET_STREAM).
      *
      * @property code the peer's application code, or null when its HTTP/3 code is outside the WebTransport range (such as
-     *   WT_SESSION_GONE when the session closed).
+     *   WT_SESSION_GONE when the session closed) or, on a session of draft-02, carries a code above 255 (draft-02 section
+     *   4.3 limits stream codes to 8 bits).
      */
     public class StreamReset(
         public val code: Long?,
@@ -255,7 +277,8 @@ public sealed class WebTransportException(
     /**
      * The peer asked us to stop sending on the stream (STOP_SENDING).
      *
-     * @property code the peer's application code, or null when its HTTP/3 code is outside the WebTransport range.
+     * @property code the peer's application code, or null when its HTTP/3 code is outside the WebTransport range or, on a
+     *   session of draft-02, carries a code above 255 (draft-02 section 4.3 limits stream codes to 8 bits).
      */
     public class StreamStopped(
         public val code: Long?,

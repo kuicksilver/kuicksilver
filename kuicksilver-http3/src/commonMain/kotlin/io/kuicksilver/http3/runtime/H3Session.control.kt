@@ -143,6 +143,19 @@ internal class UniHeader {
     }
 
     /**
+     * What arrived of the type can still be the WebTransport type 0x54: nothing yet, or the start of a varint of two or
+     * more bytes whose value bits are zero but for a last byte of 0x54 (0x40 0x54; a longer encoding as [couldBeCritical]
+     * allows, RFC 9000 section 16 not requiring the shortest). One byte holds at most 0x3f, so never 0x54.
+     */
+    fun couldBeWtUni(): Boolean {
+        if (prefix.isEmpty()) return true
+        val first = prefix[0].toInt() and 0xff
+        val n = 1 shl (first ushr 6)
+        if (n == 1 || first and 0x3f != 0) return false
+        return (1 until prefix.size).all { i -> (prefix[i].toInt() and 0xff) == if (i == n - 1) 0x54 else 0 }
+    }
+
+    /**
      * H3_STREAM_CREATION_ERROR for a type that never arrived (RFC 9114 section 6.2: "If reading is aborted, the recipient
      * SHOULD use the H3_STREAM_CREATION_ERROR error code"); WT_BUFFERED_STREAM_REJECTED for a WebTransport stream whose
      * Session ID never came (it reached no session, draft-ietf-webtrans-http3-17 section 4.6).
@@ -194,6 +207,13 @@ private suspend fun H3Session.readUniArmed(
             throw e
         } catch (e: Throwable) {
             if (transportCause(e) !is QuicException.StreamError) throw e
+            // reset before its type: the only WebTransport session may own its code (draft-ietf-webtrans-http3-02 section 4.3)
+            // and only while what arrived of its type can still be 0x54: a stream visibly of another type is no WebTransport one
+            if (settings.webTransport && header.couldBeWtUni() && wt.headerless(st, bidi = false, header.prefix.size, e)) {
+                header.known = true
+                headerRead()
+                return
+            }
             null
         } ?: run {
             discardedUniStreams.value++

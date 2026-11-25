@@ -43,6 +43,14 @@ internal enum class WtVersion {
      */
     val misplacedWtStreamCode: Long get() = if (this >= Draft17) Http3ErrorCode.FRAME_UNEXPECTED else Http3ErrorCode.FRAME_ERROR
 
+    /**
+     * The highest application code of a stream's reset or STOP_SENDING. draft-02 section 4.3: "WebTransport application
+     * errors for streams are limited to an unsigned 8-bit integer, assuming values between 0x00 and 0xff"; from draft-06
+     * on 32 bits (draft-17 section 4.4, 0..2^32-1). The code of a session's close is 32 bits in every draft (draft-02
+     * section 5: "Application Error Code: A 32-bit error code").
+     */
+    val maxStreamErrorCode: Long get() = if (this == Draft02) 0xffL else WtErrorCodes.MAX_APPLICATION_CODE
+
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */
         fun of(settings: Map<Long, Long>): WtVersion? = offeredIn(settings).maxOrNull()

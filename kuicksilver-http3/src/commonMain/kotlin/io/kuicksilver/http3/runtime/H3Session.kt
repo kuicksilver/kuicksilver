@@ -821,6 +821,10 @@ internal class H3Session(
                 throw e
             } catch (e: Throwable) {
                 if (transportCause(e) !is QuicException.StreamError) throw e
+                // reset before its signal: the only WebTransport session may own its code (draft-ietf-webtrans-http3-02
+                // section 4.3); the bytes of the signal read are not known here, and only flow control, which draft-02
+                // lacks, would count them
+                if (wt.headerless(st, bidi = true, 0, e)) return
                 null
             } ?: run {
                 glitch("server-initiated bidirectional stream ended before its first bytes")

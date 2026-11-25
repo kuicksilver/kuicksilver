@@ -53,6 +53,8 @@ internal class WtStreamImpl(
     private val turns: WtSendTurns? = null,
     /** RESET_STREAM_AT is on for the connection (`reset_stream_at` on both sides): a reset may keep a reliable offset. */
     private val reliableResets: Boolean = false,
+    /** The highest application code of a reset or STOP_SENDING, either way ([WtVersion.maxStreamErrorCode]). */
+    private val maxCode: Long = WtErrorCodes.MAX_APPLICATION_CODE,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
     private val outCh = ByteChannel()
@@ -237,12 +239,12 @@ internal class WtStreamImpl(
     private fun map(e: Throwable): Throwable =
         when (val q = H3Session.transportCause(e)) {
             is QuicException.StreamError.Reset -> {
-                WebTransportException.StreamReset(WtErrorCodes.fromHttp3(q.code))
+                WebTransportException.StreamReset(WtErrorCodes.fromHttp3(q.code, maxCode))
             }
 
             is QuicException.StreamError.Stopped -> {
                 if (q.initiator == Initiator.Peer) {
-                    WebTransportException.StreamStopped(WtErrorCodes.fromHttp3(q.code))
+                    WebTransportException.StreamStopped(WtErrorCodes.fromHttp3(q.code, maxCode))
                 } else {
                     IOException("WebTransport stream $streamId: we stopped reading it", e)
                 }
@@ -254,7 +256,7 @@ internal class WtStreamImpl(
         }
 
     override fun reset(code: Long) {
-        val h = WtErrorCodes.toHttp3(code)
+        val h = WtErrorCodes.toHttp3(code, maxCode)
         check(writable) { "stream $streamId is receive-only" }
         abandon(h)
         outPump?.cancel()
@@ -267,7 +269,7 @@ internal class WtStreamImpl(
     ) {
         require(reliableOffset >= 0) { "reliableOffset $reliableOffset is negative" }
         if (reliableOffset == 0L) return reset(code)
-        val h = WtErrorCodes.toHttp3(code)
+        val h = WtErrorCodes.toHttp3(code, maxCode)
         check(writable) { "stream $streamId is receive-only" }
         check(reliableResets) {
             "stream $streamId: a reliable offset needs RESET_STREAM_AT, which this connection does not have (draft-02, or no " +
@@ -286,7 +288,7 @@ internal class WtStreamImpl(
     }
 
     override fun stopSending(code: Long) {
-        val h = WtErrorCodes.toHttp3(code)
+        val h = WtErrorCodes.toHttp3(code, maxCode)
         check(readable) { "stream $streamId is send-only" }
         runCatching { st.stopSending(h) }
         inPump?.cancel()
