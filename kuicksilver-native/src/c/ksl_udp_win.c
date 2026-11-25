@@ -1363,7 +1363,8 @@ int ksl_udp_df_mode_for_test(int fd) {
         return -1;
     return (int)v;
 }
-/* IP_DONTFRAGMENT of the socket's IPv4 half: 1 when set, 0 when clear, -1 when it cannot be read */
+/* the IP_DONTFRAGMENT read-back (on AF_INET6 possibly the IPV6_DONTFRAG state): 1 when set, 0 when clear, -1 when it
+   cannot be read */
 int ksl_udp_df_bit_for_test(int fd) {
     DWORD v = 0;
     int l = (int)sizeof v;
