@@ -117,7 +117,7 @@ class ClientH2FloodTest {
      * Built here, outside the suspending handler of [flooded], whose loop makes no call whose target can change. ART 7.0
      * (API 24) aborted in the GC ("Tried to mark 0xebadde09 not contained by any spaces", run 44453449060, in
      * negative_priorityAndUnknownFloodFromTheServer) while that loop called [flood] itself: as in ktor-server's
-     * ServerH2FloodTest.flood, the JIT-compiled loop was deoptimized at the call of the lambda it had not seen, the
+     * ServerH2FloodTest.batchOf, the JIT-compiled loop was deoptimized at the call of the lambda it had not seen, the
      * deoptimization filled the registers the compiled code had found dead with 0xEBADDE09 (kDeadValue), and the
      * coroutine state machine's move-object copies, run by the interpreter that went on, put one into the frame's references.
      */
