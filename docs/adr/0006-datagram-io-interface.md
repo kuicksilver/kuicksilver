@@ -296,10 +296,12 @@ order were cross-checked with msquic `src/platform/datapath_winuser.c`.
   (msquic never sets it). Both go on the halves the socket carries: the IPv4 one only on an `AF_INET` socket or a
   dual-stack one on `::` (or a v4-mapped address); a socket bound to `::1` carries IPv6 alone (`udp_win_loopback6_df`).
   Observed on Windows Server 2025 (CI): a socket bound to `::1` got no DF when both halves were asked for after the
-  bind, while one on `::` got both; which option was refused, and that setting them before the bind is what cures it, is
-  inferred, to be confirmed by the next Windows CI run. A `0.0.0.0` socket whose dual-stack socket gets no DF for a
-  lasting reason is an `AF_INET` socket instead when DF takes there, as `NioDatagramIo`'s AF_INET channel, so IPv4 QUIC
-  still works and IPv6 destinations are unreachable from it (`udp_win_dual_stack_without_df_takes_af_inet`). The
+  bind, while one on `::` got both; with both changes (before the bind, the IPv6 half alone) CI run 45713491080 granted
+  it DF in DO mode (Server 2025, like Windows 11, refuses PROBE there); which of the two changes cures it is not
+  isolated. That socket reads `IP_DONTFRAGMENT` back set although it never asked for it, cause unknown
+  (`udp_win_loopback6_df` prints it, beside two control sockets). A `0.0.0.0` socket whose dual-stack socket gets no DF
+  for a lasting reason is an `AF_INET` socket instead when DF takes there, as `NioDatagramIo`'s AF_INET channel, so IPv4
+  QUIC still works and IPv6 destinations are unreachable from it (`udp_win_dual_stack_without_df_takes_af_inet`). The
   dual-stack socket is closed first, so an explicit port is free; where the `AF_INET` socket does not open, or opens
   without DF for a lasting reason, the dual-stack socket is opened again (IPv6 stays reachable) and reported without DF,
   so it is not used (`udp_win_dual_stack_without_df_reopens_dual`); a transient refusal fails the open and reopens

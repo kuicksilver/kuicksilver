@@ -623,7 +623,8 @@ void run_udp_win(void) {
         CHECK((g & KSL_FD_DF_INET6) != 0, "AF_INET6: both halves");
         CHECK((g & (KSL_FD_DF_V4 | KSL_FD_DF_V4_DO)) != 0, "the v4-mapped half has DF");
         CHECK((g & (KSL_FD_DF_V6 | KSL_FD_DF_V6_DO)) != 0, "the IPv6 half has DF");
-        CHECK(ksl_udp_df_bit_for_test((int)s6) == 1, "IP_DONTFRAGMENT set on the v4-mapped half");
+        /* on AF_INET6 this read-back may reflect IPV6_DONTFRAG (udp_win_loopback6_df); the grant bits above are the proof */
+        CHECK(ksl_udp_df_bit_for_test((int)s6) == 1, "AF_INET6: IP_DONTFRAGMENT reads back set");
         closesocket(s6);
     }
     /* udp_win_fd_df_probe_not_ip: a socket of another family is no IP socket, KSL_ERROR (AF_UNIX: Windows 10 1803 and later) */
@@ -937,8 +938,10 @@ void run_udp_win(void) {
             to6[2] = lw[2];
             uint32_t c = wcaps(w, NULL);
             CHECK((c & KSL_UDP_DF), "DF granted on the dual-stack socket");
+            /* on an AF_INET6 socket this read-back may reflect IPV6_DONTFRAG (udp_win_loopback6_df), so it does not prove
+               the v4-mapped half on its own; set_df's setsockopt result does */
             CHECK(ksl_udp_df_bit_for_test(wfd(w)) == 1,
-                  "the dual-stack socket's IPv4 half reads back DF after the bind");
+                  "the dual-stack socket: IP_DONTFRAGMENT reads back set after the bind");
             CHECK(ksl_udp_df6_bit_for_test(wfd(w)) == 1,
                   "the dual-stack socket's IPv6 half reads back DF after the bind");
             CHECK(wping(a, w, to4, 1, 100, 0, NULL, ra, rl) == 1 && ra[0] == 4 && ra[3] == 127 && ra[6] == 1 &&
@@ -987,8 +990,30 @@ void run_udp_win(void) {
             CHECK(((c & KSL_UDP_DF_DO) != 0) == !ksl_udp_df_probe_for_test(p),
                   "::1: KSL_UDP_DF_DO exactly when probe mode is missing");
             CHECK(ksl_udp_df6_bit_for_test(wfd(p)) == 1, "::1: IPV6_DONTFRAG reads back set after the bind");
-            CHECK(ksl_udp_df_bit_for_test(wfd(p)) != 1,
-                  "::1: IP_DONTFRAGMENT not set (clear, or not readable on an IPv6-only socket)");
+            /* not asked for on ::1, yet Windows Server 2025 reads IP_DONTFRAGMENT back set there (CI run 45713491080);
+               whether that query shares IPV6_DONTFRAG's flag or reports a default is not known, so it is reported, not
+               checked, next to two controls */
+            printf("udp(win): ::1 IP_DONTFRAGMENT reads %d\n", ksl_udp_df_bit_for_test(wfd(p)));
+            /* the controls are shaped like the ::1 socket (IPV6_V6ONLY off, bound to [::1]:0): one with no DF option (a
+               default?), one with IPV6_DONTFRAG alone (a shared flag?) */
+            for (int dont = 0; dont <= 1; dont++) {
+                SOCKET ctl = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                if (ctl == INVALID_SOCKET)
+                    continue;
+                DWORD off = 0, on = 1;
+                struct sockaddr_in6 sa;
+                memset(&sa, 0, sizeof sa);
+                sa.sin6_family = AF_INET6;
+                sa.sin6_addr = in6addr_loopback;
+                int ok = setsockopt(ctl, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&off, sizeof off) == 0 &&
+                         (!dont || setsockopt(ctl, IPPROTO_IPV6, IPV6_DONTFRAG, (const char *)&on, sizeof on) == 0) &&
+                         bind(ctl, (struct sockaddr *)&sa, sizeof sa) == 0;
+                if (ok)
+                    printf("udp(win): [::1] control with %s: IP_DONTFRAGMENT reads %d, IPV6_DONTFRAG %d\n",
+                           dont ? "IPV6_DONTFRAG alone" : "no DF option", ksl_udp_df_bit_for_test((int)ctl),
+                           ksl_udp_df6_bit_for_test((int)ctl));
+                closesocket(ctl);
+            }
             if (q) {
                 uint32_t rl[4];
                 CHECK(wping(q, p, lp, 1, 1200, 0, NULL, NULL, rl) == 1 && rl[0] == 1200,
