@@ -674,6 +674,7 @@ internal class KslQuicTlsSession(
     override fun resumeVerify(result: VerifyResult) {
         when (result) {
             is VerifyResult.Accepted -> {
+                result.issuerCandidate()?.let { mapped { Ksl.sslSet(s(), KslConst.SET_ISSUER_CANDIDATE, it) } }
                 mapped { Ksl.sslVerifyResume(s(), true, 0) }
             }
 

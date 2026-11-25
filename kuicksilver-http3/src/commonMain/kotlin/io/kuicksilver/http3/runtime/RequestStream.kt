@@ -324,4 +324,11 @@ internal suspend fun H3Session.truncated(
     fail(Http3ErrorCode.FRAME_ERROR, reason)
 }
 
-internal fun contentLength(h: Http3Headers): Long? = h["content-length"]?.trim()?.toLongOrNull()
+/** The length the `content-length` field of [h] states, or null when it has none or one that is not a [parseContentLength]. */
+internal fun contentLength(h: Http3Headers): Long? = h["content-length"]?.let(::parseContentLength)
+
+/**
+ * [v] as a length: `Content-Length = 1*DIGIT` (RFC 9110 section 8.6), ASCII digits only and fitting a Long; null otherwise.
+ * No sign, no whitespace (Kotlin's `toLongOrNull` takes `+5` and `-5`, and `trim()` any Unicode space).
+ */
+internal fun parseContentLength(v: String): Long? = if (v.isEmpty() || v.any { it !in '0'..'9' }) null else v.toLongOrNull()

@@ -99,6 +99,32 @@ class ServerWebSocketHandshakeTest {
             assertTrue(response.contains("\r\nUpgrade: websocket\r\n"), response)
         }
 
+    /**
+     * OWS is SP and HTAB only (RFC 9110 section 5.6.3): a no-break space (U+00A0, obs-text on the wire) around the
+     * version or the key is part of the value, so "\u00a013" is not version 13 and the key is not base64. Before, Kotlin's
+     * Unicode `trim()` dropped it and the handshake went through.
+     */
+    @Test fun negative_unicodeSpaceAroundTheVersionGets426() =
+        serverTest {
+            val response = handshake("${key}Sec-WebSocket-Version: \u00a013\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 426"), response)
+        }
+
+    @Test fun negative_unicodeSpaceAroundTheKeyGets400() = refused("400", "Sec-WebSocket-Key: \u2003dGhlIHNhbXBsZSBub25jZQ==\r\n$version")
+
+    /** SP and HTAB around the values are OWS: the handshake goes through. */
+    @Test fun owsAroundTheKeyAndVersionIsAccepted() =
+        serverTest {
+            val (server, port) = tlsServer { webSocketEcho() }
+            try {
+                h1(port, fields = "Sec-WebSocket-Key: \tdGhlIHNhbXBsZSBub25jZQ== \r\nSec-WebSocket-Version:  13\t\r\n") { _, r ->
+                    assertEquals("HTTP/1.1 101 Switching Protocols", r.readLine(LineEnding.Lenient))
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun validHandshakeIsUpgraded() =
         serverTest {
             val (server, port) = tlsServer { webSocketEcho() }
@@ -270,6 +296,7 @@ class ServerWebSocketHandshakeTest {
     private suspend fun h1(
         port: Int,
         extra: String = "",
+        fields: String = "$key$version",
         block: suspend (io.ktor.utils.io.ByteWriteChannel, ByteReadChannel) -> Unit,
     ) {
         val selector = SelectorManager(Dispatchers.IO)
@@ -279,7 +306,7 @@ class ServerWebSocketHandshakeTest {
                 val w = socket.openWriteChannel(autoFlush = true)
                 val r = socket.openReadChannel()
                 w.writeStringUtf8(
-                    "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n$key$version$extra\r\n",
+                    "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n$fields$extra\r\n",
                 )
                 withTimeout(10.seconds) { block(w, r) }
             } finally {

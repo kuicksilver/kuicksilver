@@ -9,9 +9,9 @@ import kotlin.test.assertTrue
 
 /**
  * Whether a request head is for HEAD is decided as the request line arrives ([HeadMethodScan]); the head check asks after
- * every read, so the scan must look at each byte once, whatever the segments: the request line may start with up to
- * 8 KiB of the whitespace RFC 9112 section 3 lets a recipient skip, and a client can send it one byte per segment.
- * The work is counted, not timed.
+ * every read, so the scan must look at each byte once, whatever the segments. The method starts the line (RFC 9112
+ * section 3: nothing before it) and SP alone ends it, so the answer is known after at most five bytes. The work is
+ * counted, not timed.
  */
 class HeadMethodScanTest {
     private fun scan(
@@ -32,18 +32,25 @@ class HeadMethodScanTest {
     }
 
     @Test fun negative_eachByteIsInspectedOnce() {
-        val prefix = " \t\u000b\u000c\r".repeat(1_638) // 8190 bytes of request-line whitespace
-        for (line in listOf("$prefix HEAD / HTTP/1.1", "${prefix}GET / HTTP/1.1", prefix + " ".repeat(2))) {
+        val prefix = " \t\u000b\u000c\r".repeat(1_638) // 8190 bytes of whitespace: no request line
+        for (line in listOf(
+            "$prefix HEAD / HTTP/1.1",
+            "${prefix}GET / HTTP/1.1",
+            prefix + " ".repeat(2),
+            "HEAD / HTTP/1.1",
+            "GET / HTTP/1.1",
+        )) {
             val scan = scan(line, perRead = 1)
-            val upTo = line.encodeToByteArray().size
-            assertTrue(scan.inspected <= upTo, "${scan.inspected} bytes inspected for $upTo received one at a time")
+            assertTrue(scan.decided, "undecided after ${scan.inspected} bytes")
+            assertTrue(scan.inspected <= 5, "${scan.inspected} bytes inspected for ${line.length} received one at a time")
         }
     }
 
     @Test fun headIsRecognizedWhateverTheSegments() {
         for (perRead in listOf(1, 3, 1_000)) {
-            assertEquals(true, scan("  HEAD / HTTP/1.1", perRead).head, "$perRead")
-            assertEquals(true, scan("HEAD\t/ HTTP/1.1", perRead).head, "$perRead")
+            assertEquals(true, scan("HEAD / HTTP/1.1", perRead).head, "$perRead")
+            assertEquals(false, scan("  HEAD / HTTP/1.1", perRead).head, "$perRead")
+            assertEquals(false, scan("HEAD\t/ HTTP/1.1", perRead).head, "$perRead")
             assertEquals(false, scan("HEADER / HTTP/1.1", perRead).head, "$perRead")
             assertEquals(false, scan("GET / HTTP/1.1", perRead).head, "$perRead")
             assertEquals(false, scan("HEA", perRead).head, "$perRead")

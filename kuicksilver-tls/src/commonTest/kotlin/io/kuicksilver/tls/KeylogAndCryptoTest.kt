@@ -105,6 +105,23 @@ class KslCryptoTest {
         }
     }
 
+    /**
+     * RFC 9325 section 4.2: OpenSSL's ECDSA nonce combines the key and the digest with fresh randomness (the hedged form the
+     * section names for deployments where side channels and fault injection are a concern), not RFC 6979's purely
+     * deterministic one: two signatures of the same input differ, and both verify. A pure RFC 6979 signer would make them
+     * equal; a nonce from randomness alone would differ as well, so this pins that randomness is part of it.
+     */
+    @Test fun ecdsaSignaturesOfEqualInputDiffer() {
+        val msg = "kuicksilver".encodeToByteArray()
+        val spki = SpkiExtractor.spkiDer(TestCerts.server)
+        val a = KslCrypto.sign(SignatureAlgorithm.EcdsaP256, TestCerts.serverKey, msg)
+        val b = KslCrypto.sign(SignatureAlgorithm.EcdsaP256, TestCerts.serverKey, msg)
+        assertFalse(a.contentEquals(b), "two ECDSA signatures of one input are equal: a deterministic nonce")
+        assertTrue(
+            KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, a) && KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, b),
+        )
+    }
+
     /** The KDoc promises false for a bad signature: one that is not a DER ECDSA-Sig-Value is a bad signature, not an error. */
     @Test fun negative_malformedEcdsaSignatureVerifiesFalse() {
         val msg = "kuicksilver".encodeToByteArray()

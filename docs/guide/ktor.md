@@ -206,7 +206,10 @@ server.start(wait = true)
   engine's connection pipeline handle requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as
   in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
-  body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
+  body (also with `Connection: close`), and a chunked trailer section is accepted when each line is a field line (its
+  fields are discarded). Lines of the request head and of a trailer section end with CRLF: a bare LF gets 400 and the
+  connection closed, unless `h1AllowBareLf` (*experimental*) is on (RFC 9112 section 2.2 lets a server take it; leave it
+  off behind a proxy that forwards a bare LF, which would read the head otherwise). A
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, no whitespace
   right before the CRLF, which 0.2.0 and Go's net/http tolerate): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
@@ -1066,6 +1069,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.altSvc` | announce HTTP/3: `Alt-Svc` on HTTP/1.1 and HTTP/2 responses, plus ALTSVC frames on HTTP/2 (`true`) |
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
+| `kuicksilver.h1AllowBareLf` | let a bare LF end a line of an HTTP/1.1 request head or trailer section (`false`: 400); see [Server](#server) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
 | `kuicksilver.quic.initialUdpPayloadSize`, `.maxSendUdpPayloadSize`, `.maxUdpPayloadSize`, `.pmtud`, `.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams`, `.maxUniStreams`, `.allowMigration` | the QUIC transport of the HTTP/3 listeners, each the `QuicConfig` option of its name (unset: its default); an unknown key under `kuicksilver.quic` or a value out of range fails the start; see [QUIC transport keys](configuration.md#quic-transport-keys) and, for tunnels, [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
@@ -2054,7 +2058,10 @@ tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experiment
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
 clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
-them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. `Basic` cannot carry a
+user name with a colon, nor control characters (0x00-0x1F, 0x7F) in either part (RFC 7617 section 2): credentials like that
+for an HTTP, `https://` or CONNECT-UDP proxy fail with `IllegalArgumentException` where the proxy is configured (the
+engine's creation for its `proxy`), before anything is sent; a SOCKS5 user name may contain a colon. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
 resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):

@@ -390,6 +390,7 @@ public class TlsConnection private constructor(
     private fun resume(r: VerifyResult) {
         when (r) {
             is VerifyResult.Accepted -> {
+                r.issuerCandidate()?.let { Ksl.sslSet(s(), KslConst.SET_ISSUER_CANDIDATE, it) }
                 Ksl.sslVerifyResume(s(), true, 0)
             }
 

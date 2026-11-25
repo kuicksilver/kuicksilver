@@ -95,13 +95,16 @@ extern "C" {
                                       it accepts (TrustConfig.Platform: the platform's path, not every certificate the peer sent).
                                       KSL_E_BAD_ARG on a server context */
 #define KSL_OPT_REVOCATION 12 /* client (ABI 7, additive): KSL_REVOCATION_*; asks for a stapled OCSP response (status_request, RFC 6066
-                                      section 8) and checks it where ksl's own verifier runs (KSL_VERIFY_OPENSSL) against the issuer that
-                                      verifier trusted (ksl_ocsp_check rules); a failed check ends the handshake with
+                                      section 8) and checks it, where ksl's own verifier runs (KSL_VERIFY_OPENSSL) against the issuer that
+                                      verifier trusted, on the pause path (KSL_VERIFY_PAUSE, once the caller's verifier said yes) against
+                                      the presented certificate whose key signed the leaf (ksl_ocsp_check rules); a failed check ends the handshake with
                                       bad_certificate_status_response (113), the X509 error in ksl_ssl_last_error: CERT_REVOKED,
                                       OCSP_VERIFY_FAILED (does not verify, another certificate, outside its validity interval),
                                       OCSP_VERIFY_NEEDED (none sent) or OCSP_CERT_UNKNOWN ("unknown"); the last two only under
-                                      KSL_REVOCATION_REQUIRE_STAPLED or for a leaf with the RFC 7633 status_request feature. A leaf
-                                      that is itself a trust anchor is not checked. KSL_E_BAD_ARG on a server context */
+                                      KSL_REVOCATION_REQUIRE_STAPLED or for a leaf with the RFC 7633 status_request feature, on both
+                                      paths. A leaf without an issuer to check against (a trust anchor itself, or sent without its issuer on
+                                      the pause path) is not checked unless a staple is required (OCSP_VERIFY_NEEDED). KSL_E_BAD_ARG on a
+                                      server context */
 #define KSL_OPT_ALPN_POLICY 13 /* server (ABI 7, additive): KSL_ALPN_POLICY_*, applied to TCP sessions under this context (the base
                                       one, or the SNI override once applied) at every ClientHello, a second one after HelloRetryRequest
                                       included, and checked again when the handshake completes (no protocol negotiated: KSL_ERROR).
@@ -227,6 +230,12 @@ extern "C" {
                                       CertificateEntry's extensions; larger: not stapled there). Sent only when it is for the leaf the handshake presents (the issuer: the
                                       certificate of the configured chain that issued it), verifies, and is inside its validity interval
                                       at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
+#define KSL_SET_ISSUER_CANDIDATE 7 /* client, before KSL_WANT_VERIFY is resumed (ABI 7, additive): a DER certificate the caller's verifier
+                                      put right above the leaf in the path it built (the platform's issuer, perhaps fetched by AIA), the
+                                      first candidate for the issuer a stapled OCSP response is checked against on the pause path; it is
+                                      used only when it named the leaf's issuer, its key verifies the leaf's signature and that key is not
+                                      the leaf's own, as every presented candidate (KSL_OPT_REVOCATION). KSL_E_BAD_ARG on a server or for
+                                      anything but one DER certificate */
 #define KSL_SET_ECH_CONFIG_LIST 15 /* client, before the handshake starts, once (ABI 7, additive): an ECHConfigList (RFC 9849
                                       section 4, the value of an HTTPS record's ech parameter, RFC 9848) in binary. Only its usable
                                       ECHConfigs are kept (ksl_ech_config_list_check); the ClientHello then carries ECH with one of them:

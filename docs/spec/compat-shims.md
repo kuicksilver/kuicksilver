@@ -24,8 +24,6 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | Safari (expected), any client announcing draft-02 and a newer draft | no (`webTransport`) | our reading of draft-16 §7.1 (borderline) |
 | 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
-| 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
-| 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
 | 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks) | yes (client and server) | stricter than RFC 9113 (borderline) |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
 
@@ -199,54 +197,6 @@ its test `duplicate_data_first_fin`. The shim can go once the interop runner's q
 `kuicksilver->quiche:handshakeloss` (the case that lost a request; required in `tools/interop/required.json`) stays
 green without the shim over several runs, as does `kuicksilver->quiche:transferloss`, which resends stream data too.
 
-## 7. HTTP/1.1 status line without the SP before an absent reason
-
-Borderline: RFC 9112 §4 lets a recipient parse leniently, but the case accepted is one where the server broke a MUST.
-
-**What it does.** The client takes `HTTP/1.1 204` as well as `HTTP/1.1 204 ` (the grammar's form); everything else of the
-status line is parsed strictly.
-
-**Peers.** Servers that leave out the space; OkHttp 5.3.2 (`StatusLine.parse`) and, by the source comment, Go accept it.
-
-**Standard text.** RFC 9112 §4: `status-line = HTTP-version SP status-code SP [ reason-phrase ]`, "A server MUST send the
-space that separates the status-code from the reason-phrase even when the reason-phrase is absent", and "recipients MAY
-instead parse on whitespace-delimited word boundaries and, aside from the line terminator, treat any form of whitespace
-as the SP separator while ignoring preceding or trailing whitespace".
-
-**Where.** `kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt:125`
-(`statusLineOf`).
-
-**On by default.** Yes (the Ktor client engine over HTTP/1.1); no switch.
-
-**Tests.** `h1.H1ResponseHeadTest.statusLineWithoutReasonPhraseIsAccepted`.
-
-**Risk.** Low: a missing trailing space cannot shift the status code or the framing (the line must still be exactly
-`HTTP/1.x SP 3DIGIT`); response splitting needs a second recipient that reads the line differently.
-
-**Removal.** None planned: the leniency is what the RFC allows and what other clients do.
-
-## 8. SOCKS5 username/password reply with VER 5
-
-**What it does.** The reply to the username/password subnegotiation is accepted with VER 1, as RFC 1929 defines, or 5
-(the SOCKS version); any other VER fails the connection with `ProxyException`. STATUS is checked as usual.
-
-**Peers.** SOCKS5 proxies that answer the subnegotiation with the SOCKS version (not named in the source); curl
-tolerates them too.
-
-**Standard text.** RFC 1929 §2: "The VER field contains the current version of the subnegotiation, which is X'01'.", and
-the reply is `VER STATUS` with a 1-octet VER; the RFC gives no rule for another value.
-
-**Where.** `kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78`.
-
-**On by default.** Yes, with a SOCKS5 proxy and credentials; no switch.
-
-**Tests.** `h1.Socks5Test.authReplyVersion5Tolerated` (VER 5 accepted, VER 4 refused).
-
-**Risk.** Low: the VER byte carries no authentication; a proxy that rejects the credentials still fails the connection
-by STATUS.
-
-**Removal.** None planned; the proxies are not tracked.
-
 ## 9. HTTP/2: a stream that depends on itself is a stream error
 
 Borderline: stricter, not lenient, and kept for a test tool built on the older RFC rather than for a peer; listed
@@ -316,6 +266,12 @@ the data.
   ngtcp2, quinn and picoquic are: such a handshake fails (msquic#3762, #4905) and the Ktor client goes over TCP
   ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is), [interop](interop.md)) —
   `core.ReceivePathTest.negative_msquicProvisionalScidFailsTheHandshakeAtOnceAndSilently`.
+- **SOCKS5 username/password reply with VER 5** (shim 8, 0.3.0; its number is kept free). The reply to the RFC 1929
+  subnegotiation was accepted with VER 5 (the SOCKS version) as well as X'01', as curl does (it ignores the byte); no
+  proxy that needs it was ever named. RFC 1929 §2: "The VER field contains the current version of the subnegotiation,
+  which is X'01'"; Go's x/net/internal/socks refuses any other value too. Any VER but 1 now fails the connection with
+  `ProxyException` before the CONNECT is sent — `h1.Socks5Test.negative_authReplyVersionMustBe1`. Should a real proxy
+  need it, it would come back as an opt-in.
 - **`Proxy-Connection: Keep-Alive` on CONNECT** (0.3.0). The CONNECT that opens a tunnel through an HTTP proxy carried the
   field for HTTP/1.0 proxies, as OkHttp 5.3.2 does (`RealRoutePlanner`, "For HTTP/1.0 proxies like Squid"), against RFC
   9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests". No peer
@@ -344,11 +300,32 @@ the data.
 - **WebTransport: reading what arrived before CONNECTION_CLOSE** (Firefox's `WT_CLOSE_SESSION`) and **waiting for the
   peer's FIN before STOP_SENDING on close** (Chrome): correct handling of legal behaviour and a timing choice within the
   draft's close procedure.
-- **HTTP/1.1 parsing the RFCs allow or require**: obs-fold in a response replaced with SP (RFC 9112 §5.2 MUST for a user
-  agent), a bare LF as a line end in the head (§2.2 MAY), the request-line whitespace of §3 (MAY), a 301 for an invalid
-  origin-form target (§3.2), a higher minor version processed as HTTP/1.1 (RFC 9110 §6.2 SHOULD), an invalid status
-  code read as a 5xx (RFC 9110 §15 SHOULD). Where Ktor's own parser is more lenient (Unicode spaces, control characters,
-  chunk-size lines), both engines are stricter; nothing lenient is added for any client.
+- **HTTP/1.1 parsing the RFCs allow or require**, by side:
+  - obs-fold: the client replaces it with SP in a response head and a trailer section (RFC 9112 §5.2: a user agent MUST);
+    the server rejects it with 400 in a request head and a trailer section (§5.2 lets it reject or replace);
+  - a bare LF as a line end (§2.2 MAY): the client takes it in a response head and a trailer section, kept on purpose: the
+    client is the final recipient, so no second parser behind it can read the line otherwise, and Go and curl do the
+    same; the server refuses it (400) unless the application sets `h1AllowBareLf`, since a server sits behind proxies
+    (§11.2), as llhttp; the chunk-size line takes CRLF alone on both sides;
+  - the request-line whitespace §3 lets a recipient accept (HTAB, VT, FF, a bare CR as SP, whitespace around the line): not
+    accepted since 0.3.0, the server takes exactly one SP, as Go and llhttp;
+  - the status line without the SP before an absent reason phrase (`HTTP/1.1 204`): the client accepts it. A server MUST
+    send that SP, but §4 says "recipients MAY instead parse on whitespace-delimited word boundaries and, aside from the
+    line terminator, treat any form of whitespace as the SP separator while ignoring preceding or trailing whitespace",
+    and word-boundary parsing takes exactly this line; Go, curl ("the browsers do not so let's not insist") and OkHttp
+    accept it, llhttp does not. The rest of the status line is strict (`HTTP/1.x SP 3DIGIT`), so the leniency cannot
+    shift the status code or the framing (`h1.H1ResponseHeadTest.statusLineWithoutReasonPhraseIsAccepted`; a numbered
+    shim until 0.3.0);
+  - Content-Length as a list of equal values or repeated equal lines: both sides take it as one length (§6.3 item 5 and
+    RFC 9110 §8.6 allow it; Go takes repeats only, curl both, llhttp neither); unequal values fail;
+  - Transfer-Encoding with Content-Length: the client frames by the coding and does not reuse the connection (§6.3 item 3,
+    "ought to be handled as an error"), as Go and curl; the server answers 400 and closes (§6.1);
+  - Transfer-Encoding in an HTTP/1.0 message: the client reads the body until the close and does not reuse the connection,
+    the server answers 400 (§6.1 MUST treat the framing as faulty);
+  - the server's 301 for an invalid origin-form target (§3.2), a higher minor version processed as HTTP/1.1 (RFC 9110 §6.2
+    SHOULD, both sides), and the client's invalid status code read as a 5xx (RFC 9110 §15 SHOULD).
+  Where Ktor's own parser is more lenient (Unicode spaces, control characters, field names, chunk-size lines), both engines
+  are stricter; nothing lenient is added for any client.
 - **SOCKS5 empty password**: refused (RFC 1929 §2, PASSWD has 1 to 255 octets), stricter than curl and Go.
 - **Greasing** (`Http3Settings.grease`, `grease_quic_bit`): excluded by definition.
 - **Android API levels** (`java.nio.file`, `DnsResolver.rawQuery`): platform APIs, not a peer's protocol.

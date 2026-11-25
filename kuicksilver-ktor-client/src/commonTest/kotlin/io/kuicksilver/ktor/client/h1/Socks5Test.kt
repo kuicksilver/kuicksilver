@@ -90,10 +90,18 @@ class Socks5Test {
         assertTrue(handshake(bytes(4, 0) + ok).second is ProxyException, "a reply that is not SOCKS5")
     }
 
-    /** RFC 1929 says the reply's VER is 1; a proxy that answers 5 (the SOCKS version) is tolerated, as curl does. */
-    @Test fun authReplyVersion5Tolerated() {
-        assertNull(handshake(bytes(5, 2, 5, 0) + ok, credentials = ProxyCredentials("u", "p")).second)
-        assertTrue(handshake(bytes(5, 2, 4, 0) + ok, credentials = ProxyCredentials("u", "p")).second is ProxyException)
+    /**
+     * RFC 1929 section 2: "The VER field contains the current version of the subnegotiation, which is X'01'". A reply with
+     * any other version, the SOCKS version 5 among them, fails before the request is sent (as Go's x/net/internal/socks).
+     */
+    @Test fun negative_authReplyVersionMustBe1() {
+        assertNull(handshake(bytes(5, 2, 1, 0) + ok, credentials = ProxyCredentials("u", "p")).second)
+        for (version in listOf(5, 4, 0, 2)) {
+            val (sent, e) = handshake(bytes(5, 2, version, 0) + ok, credentials = ProxyCredentials("u", "p"))
+            assertTrue(e is ProxyException && "authentication with version $version" in e.message!!, "VER $version: $e")
+            // the greeting and the credentials went out, the CONNECT request did not
+            assertEquals(4 + 5, sent.size, "VER $version: the CONNECT was sent after a refused authentication reply")
+        }
     }
 
     @Test fun negative_socksAuthRejected() {
@@ -132,6 +140,21 @@ class Socks5Test {
         assertTrue(e is ProxyException && e.replyCode == 5 && "connection refused" in e.message!!, "$e")
         val other = handshake(bytes(5, 0, 5, 0x42, 0, 1, 0, 0, 0, 0, 0, 0)).second
         assertTrue(other is ProxyException && other.replyCode == 0x42, "$other")
+    }
+
+    /**
+     * RFC 1928 section 6: "Fields marked RESERVED (RSV) must be set to X'00'". A CONNECT reply with another RSV is not a
+     * SOCKS5 reply this client reads (as Go's x/net/internal/socks: "non-zero reserved field"); a failure's REP is still
+     * reported first, as Go does.
+     */
+    @Test fun negative_socksReplyNonZeroReservedFails() {
+        for (rsv in listOf(1, 0x80, 0xff)) {
+            val e = handshake(bytes(5, 0, 5, 0, rsv, 1, 127, 0, 0, 1, 0x1f, 0x90)).second
+            assertTrue(e is ProxyException && e.replyCode == null && "reserved" in e.message!!, "RSV $rsv: $e")
+        }
+        val refused = handshake(bytes(5, 0, 5, 5, 1, 1, 0, 0, 0, 0, 0, 0)).second
+        assertTrue(refused is ProxyException && refused.replyCode == 5, "$refused")
+        assertNull(handshake(bytes(5, 0) + ok).second)
     }
 
     @Test fun negative_truncatedReplyFails() {

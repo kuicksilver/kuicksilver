@@ -64,7 +64,7 @@ public fun webSocketExtensionNames(values: List<String>): List<String> {
         val name = StringBuilder()
 
         fun end() {
-            val n = name.toString().trim().lowercase()
+            val n = name.toString().trim(' ', '\t').lowercase()
             if (n.isNotEmpty()) names += n
             name.clear()
             inName = true
@@ -123,7 +123,8 @@ public fun negotiatedWebSocketRsv(
             if (name == PERMESSAGE_DEFLATE) {
                 WS_RSV1
             } else {
-                installed.firstOrNull { e -> e.protocols.any { it.name.trim().lowercase() == name } }?.factory?.rsvBits() ?: WS_RSV_ALL
+                installed.firstOrNull { e -> e.protocols.any { it.name.trim(' ', '\t').lowercase() == name } }?.factory?.rsvBits()
+                    ?: WS_RSV_ALL
             }
     }
     return rsv

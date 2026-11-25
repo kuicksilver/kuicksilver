@@ -96,6 +96,25 @@ class ServerH1FramingTest {
     @Test fun negative_anEmptyConnectionFieldIsAccepted() =
         serverTest {
             plainServer { port ->
+                val values = listOf("Connection:\r\n", "Connection: \t\r\n", "Connection: ,, ,\r\n")
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" } +
+                                "GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertEquals(values.size + 1, Regex("HTTP/1.1 200 ").findAll(resp).count(), resp)
+                assertFalse(resp.contains(" 400 "), resp)
+            }
+        }
+
+    /** The same with `h1AllowBareLf`: an empty Connection field ended by a bare LF is an empty list too. */
+    @Test fun negative_anEmptyConnectionFieldIsAcceptedWithBareLf() =
+        serverTest {
+            plainServer(allowBareLf = true) { port ->
                 val values = listOf("Connection:\r\n", "Connection: \t\r\n", "Connection: ,, ,\r\n", "Connection:\n")
                 val resp =
                     withTimeout(10.seconds) {
@@ -113,17 +132,53 @@ class ServerH1FramingTest {
 
     /**
      * RFC 9112 section 2.2: "a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR". The
-     * server does so in the request line, the field section and a trailer section (as Go's net/http and nginx), and only
-     * there: the chunk-size line takes CRLF alone (`h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected`).
+     * server does so only with `h1AllowBareLf` (strict by default, as llhttp; Go's net/http and nginx are lenient): a
+     * server sits behind proxies, and one that reads a bare LF as part of a line frames the head otherwise (RFC 9112
+     * section 11.2). By default a bare LF in the head or a trailer section gets 400 and the connection closes.
      */
-    @Test fun bareLfEndsTheLinesOfTheHead() =
+    @Test fun negative_bareLfIsRejectedByDefault() =
         serverTest {
             plainServer { port ->
+                for (request in listOf(
+                    "POST /echo HTTP/1.1\nHost: s\nContent-Length: 4\nConnection: close\n\nabcd",
+                    "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nabcd\r\n0\r\nX-A: 1\n\r\n",
+                )) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, request, tls = null) }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), resp)
+                }
+            }
+        }
+
+    /**
+     * With `h1AllowBareLf` a bare LF ends a line of the request line, the field section and a trailer section; the
+     * chunk-size line takes CRLF alone still (`h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected`).
+     */
+    @Test fun bareLfEndsTheLinesOfTheHeadWithH1AllowBareLf() =
+        serverTest {
+            plainServer(allowBareLf = true) { port ->
                 val resp =
                     withTimeout(10.seconds) {
                         rawHttp(port, "POST /echo HTTP/1.1\nHost: s\nContent-Length: 4\nConnection: close\n\nabcd", tls = null)
                     }
                 assertTrue(resp.startsWith("HTTP/1.1 200 ") && resp.endsWith("body=abcd"), resp)
+                val chunked =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\nHost: s\nTransfer-Encoding: chunked\nConnection: close\n\n4\r\nabcd\r\n0\r\nX-A: 1\n\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(chunked.startsWith("HTTP/1.1 200 ") && chunked.endsWith("body=abcd"), chunked)
+                val sizeLine =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\nHost: s\nTransfer-Encoding: chunked\nConnection: close\n\n4\nabcd\r\n0\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(sizeLine.contains(" 400 "), sizeLine)
             }
         }
 
@@ -205,6 +260,30 @@ class ServerH1FramingTest {
                     }
                 assertTrue(resp.contains("body=hello"), resp)
                 assertTrue(resp.endsWith("root"), resp)
+            }
+        }
+
+    /**
+     * A trailer section line outside the field-line grammar (RFC 9112 section 7.1.2, RFC 9110 section 5.1 and 5.5) gets 400
+     * and the connection closes (RFC 9112 section 2.2 SHOULD); the pipelined request behind it is not served. Before, such
+     * lines were skipped unread. Unit cases: `h1.ChunkedBodyTest`.
+     */
+    @Test fun negative_malformedTrailerLineGets400() =
+        serverTest {
+            plainServer { port ->
+                for (trailer in listOf("X-A: a\u0000b", "X-A", "X/A: 1", "X-A : 1", " folded")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                                    "5\r\nhello\r\n0\r\n$trailer\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "${trailer.replace("\u0000", "\\0")}: $resp")
+                    assertFalse(resp.endsWith("root"), "the request after the trailer was served: $resp")
+                }
             }
         }
 
@@ -637,9 +716,14 @@ class ServerH1FramingTest {
             }
         }
 
-    private suspend fun plainServer(block: suspend (Int) -> Unit) {
+    private suspend fun plainServer(
+        allowBareLf: Boolean = false,
+        block: suspend (Int) -> Unit,
+    ) {
         val server =
             embeddedServer(Kuicksilver, configure = {
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                h1AllowBareLf = allowBareLf
                 connector {
                     host = "127.0.0.1"
                     port = 0

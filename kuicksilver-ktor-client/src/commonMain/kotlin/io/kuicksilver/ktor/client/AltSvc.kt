@@ -215,12 +215,12 @@ internal object AltSvcParser {
         if (elements.any { it.trim(' ', '\t') == "clear" }) return null
         val out = ArrayList<AltSvcEntry>()
         for (alt in elements) {
-            val parts = splitTopLevel(alt, ';').map { it.trim() }
+            val parts = splitTopLevel(alt, ';').map { it.trim(' ', '\t') }
             val head = parts.firstOrNull() ?: continue
             val eq = head.indexOf('=')
             if (eq <= 0) continue
-            val protocol = head.substring(0, eq).trim()
-            val authority = unquote(head.substring(eq + 1).trim()) ?: continue
+            val protocol = head.substring(0, eq).trim(' ', '\t')
+            val authority = unquote(head.substring(eq + 1).trim(' ', '\t')) ?: continue
             val colon = authority.lastIndexOf(':')
             if (colon < 0) continue
             val port = portOf(authority.substring(colon + 1)) ?: continue
@@ -239,8 +239,8 @@ internal object AltSvcParser {
             var persist = false
             var bad = false
             for (p in parts.drop(1)) {
-                val k = p.substringBefore('=').trim().lowercase()
-                val raw = p.substringAfter('=', "").trim()
+                val k = p.substringBefore('=').trim(' ', '\t').lowercase()
+                val raw = p.substringAfter('=', "").trim(' ', '\t')
                 val v = unquote(raw) ?: raw
                 when (k) {
                     // delta-seconds is 1*DIGIT; one too large for a Long is 2147483648 (RFC 9111 section 1.2.2's rule for a

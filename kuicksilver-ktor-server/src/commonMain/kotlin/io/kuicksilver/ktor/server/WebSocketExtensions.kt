@@ -174,17 +174,19 @@ internal fun webSocketHandshakeRefusal(
     if (!http3) {
         val keys = request.getAll(HttpHeaders.SecWebSocketKey).orEmpty()
         if (keys.size != 1) return WebSocketRefusal(HttpStatusCode.BadRequest, "${keys.size} Sec-WebSocket-Key fields, not one")
-        val decoded = runCatching { Base64.decode(keys[0].trim()) }.getOrNull()
+        val decoded = runCatching { Base64.decode(keys[0].trim(' ', '\t')) }.getOrNull()
         if (decoded?.size != 16) {
             return WebSocketRefusal(HttpStatusCode.BadRequest, "a Sec-WebSocket-Key that is not 16 bytes in base64")
         }
     }
     val versions = request.getAll(HttpHeaders.SecWebSocketVersion).orEmpty()
     if (versions.size != 1) return WebSocketRefusal(HttpStatusCode.BadRequest, "${versions.size} Sec-WebSocket-Version fields, not one")
-    if (versions[0].trim() != WEBSOCKET_VERSION) {
+    // OWS is SP and HTAB only (RFC 9110 section 5.6.3): "\u00a013" is not version 13
+    val version = versions[0].trim(' ', '\t')
+    if (version != WEBSOCKET_VERSION) {
         return WebSocketRefusal(
             if (http3) HttpStatusCode.BadRequest else HttpStatusCode.UpgradeRequired,
-            "WebSocket version ${versions[0].trim()}; this server speaks version $WEBSOCKET_VERSION",
+            "WebSocket version $version; this server speaks version $WEBSOCKET_VERSION",
         )
     }
     return null

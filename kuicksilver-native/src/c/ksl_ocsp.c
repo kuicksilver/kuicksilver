@@ -235,34 +235,138 @@ static int must_staple(X509 *leaf) {
     return found;
 }
 
+/* Whether [c] issued [leaf]: it names the leaf's issuer (X509_check_issued: name, AKID, keyUsage), its key verifies the leaf's
+   signature, and that key is not the leaf's own (a self-signed leaf, or another certificate of the same key, would sign its own
+   "good" response). A certificate that only takes the issuer's name and key identifier fails the signature. */
+static int issued_by(X509 *c, X509 *leaf) {
+    EVP_PKEY *key = X509_get0_pubkey(c), *own = X509_get0_pubkey(leaf);
+    int r = c != leaf && key != NULL && own != NULL && EVP_PKEY_eq(key, own) != 1 &&
+            X509_check_issued(c, leaf) == X509_V_OK && X509_verify(leaf, key) == 1;
+    ERR_clear_error();
+    return r;
+}
+
+/* The issuer of [leaf] a staple is checked against on the pause path: [candidate] (the certificate above the leaf in the path
+   the caller's verifier built, KSL_SET_ISSUER_CANDIDATE) when it issued the leaf, else the first certificate of the presented
+   [chain] that did (issued_by). NULL when none did (the leaf sent alone and no candidate, its issuer left out, a self-signed
+   leaf). */
+static X509 *issuer_among(X509 *candidate, STACK_OF(X509) * chain, X509 *leaf) {
+    if (candidate != NULL && issued_by(candidate, leaf))
+        return candidate;
+    for (int i = 0; chain && i < sk_X509_num(chain); i++) {
+        X509 *c = sk_X509_value(chain, i);
+        if (issued_by(c, leaf))
+            return c;
+    }
+    return NULL;
+}
+
+/* Whether the stapled [der] is an OCSPResponse that states an error and nothing else: its responseStatus one of the defined
+   error statuses (malformedRequest 1, internalError 2, tryLater 3, sigRequired 5, unauthorized 6; RFC 6960 section 4.2.1), no
+   responseBytes (the same section: such a response carries none), and DER (re-encoding it gives exactly its bytes, so no BER
+   length form, padding or trailing byte). Such a response carries no status of the certificate (section 2.3), and the client
+   takes it for no staple, as Firefox does; Apache's mod_ssl, for one, staples a tryLater it made up while its CA's responder is
+   down. Anything else - successful, an undefined status, responseBytes with an error status, not DER - is an answer, and the
+   checks decide it (all of those fail them). */
+static int no_answer(const uint8_t *der, size_t len) {
+    if (der == NULL || len == 0 || len > LONG_MAX)
+        return 0;
+    const unsigned char *p = der;
+    OCSP_RESPONSE *resp = d2i_OCSP_RESPONSE(NULL, &p, (long)len);
+    int r = 0;
+    if (resp != NULL && p == der + len) {
+        int status = OCSP_response_status(resp);
+        unsigned char *again = NULL;
+        int n = i2d_OCSP_RESPONSE(resp, &again);
+        /* without responseBytes the DER OCSPResponse is SEQUENCE { ENUMERATED }: 30 03 0a 01 <status> */
+        r = (status == OCSP_RESPONSE_STATUS_MALFORMEDREQUEST || status == OCSP_RESPONSE_STATUS_INTERNALERROR ||
+             status == OCSP_RESPONSE_STATUS_TRYLATER || status == OCSP_RESPONSE_STATUS_SIGREQUIRED ||
+             status == OCSP_RESPONSE_STATUS_UNAUTHORIZED) &&
+            n == 5 && (size_t)n == len && memcmp(again, der, len) == 0;
+        OPENSSL_free(again);
+    }
+    OCSP_RESPONSE_free(resp);
+    ERR_clear_error();
+    return r;
+}
+
+#ifdef KSL_TEST
+int ksl_test_ocsp_no_answer(const uint8_t *der, size_t len) {
+    return no_answer(der, len);
+}
+
+int ksl_test_presented_issuer(const uint8_t *chain, size_t chain_len, const uint8_t *candidate, size_t candidate_len) {
+    STACK_OF(X509) *sk = NULL, *cand = NULL;
+    int r = -1;
+    if (ksl_parse_chain(chain, chain_len, &sk) && sk_X509_num(sk) >= 1 &&
+        (candidate == NULL || (ksl_parse_chain(candidate, candidate_len, &cand) && sk_X509_num(cand) == 1))) {
+        X509 *leaf = sk_X509_value(sk, 0), *c = cand ? sk_X509_value(cand, 0) : NULL;
+        X509 *got = issuer_among(c, sk, leaf);
+        if (got != NULL && got == c)
+            r = 0;
+        for (int i = 1; got != NULL && r < 0 && i < sk_X509_num(sk); i++)
+            if (sk_X509_value(sk, i) == got)
+                r = i;
+    }
+    sk_X509_pop_free(sk, X509_free);
+    sk_X509_pop_free(cand, X509_free);
+    ERR_clear_error();
+    return r;
+}
+#endif
+
 /* A client's status callback (OpenSSL tls_process_initial_server_flight: after the server's Finished in TLS 1.3, after
-   ServerHelloDone in TLS 1.2, so after ksl_cert_verify_cb built the validated chain). RFC 6066 section 8: "Clients requesting an
-   OCSP response and receiving an OCSP response in a "CertificateStatus" message MUST check the OCSP response and abort the
-   handshake if the response is not satisfactory with bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL
-   sends 113; generic alerts do not apply to it). Only where ksl's own verifier ran (KSL_VERIFY_OPENSSL): the issuer is the one
-   that verifier trusted. A leaf that is itself a trust anchor has no issuer here, and its trust is configuration: nothing is
+   ServerHelloDone in TLS 1.2, so after the chain was verified, by ksl_cert_verify_cb or, on the pause path, by the caller's
+   verifier). RFC 6066 section 8: "Clients requesting an OCSP response and receiving an OCSP response in a "CertificateStatus"
+   message MUST check the OCSP response and abort the handshake if the response is not satisfactory with
+   bad_certificate_status_response(113) alert" - returning 0 does that (OpenSSL sends 113; generic alerts do not apply to it).
+   The issuer the response is checked against: where ksl's own verifier ran (KSL_VERIFY_OPENSSL), the one it trusted; on the
+   pause path (KSL_VERIFY_PAUSE: the platform's verifier, an application's, TOFU), the certificate above the leaf in the path that
+   verifier built (KSL_SET_ISSUER_CANDIDATE) or else the presented certificate that issued the leaf (issuer_among), since the caller's verifier said yes to that chain and only the leaf's real issuer, or a responder it
+   delegated, can sign a response for it. A leaf with no such issuer (a trust anchor itself, or sent without its issuer) is not
    checked, unless a stapled response is required (KSL_REVOCATION_REQUIRE_STAPLED, a must-staple leaf), which then fails
-   (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). A delegated responder listed on a configured CRL of the
-   issuer is not authorized (responder_authorized). The verdict: revoked fails (CERT_REVOKED); a response that does not verify, names another certificate or is outside
-   its validity interval fails (OCSP_VERIFY_FAILED); no response, or "unknown", fails only under KSL_REVOCATION_REQUIRE_STAPLED or
-   for a must-staple leaf (OCSP_VERIFY_NEEDED, OCSP_CERT_UNKNOWN) and passes otherwise. */
+   (OCSP_VERIFY_NEEDED: no response can be checked without an issuer). RFC 7633 section 4.3.3: a client "MUST treat a
+   certificate with a TLS feature extension as an invalid certificate if the features offered by the server do not contain all
+   features present in both the client's ClientHello message and the TLS feature extension", and section 4.2.3.1 has it reject
+   a server inconsistent with status_request (SHOULD): every client but KSL_REVOCATION_OFF sends status_request, on both paths,
+   so a must-staple leaf needs a good staple everywhere. A delegated responder listed on a configured CRL of the issuer is not
+   authorized (responder_authorized; CRLs exist on the ksl verifier's path only). The verdict: revoked fails (CERT_REVOKED); a
+   response that does not verify, names another certificate or is outside its validity interval fails (OCSP_VERIFY_FAILED); no
+   response, or "unknown", fails only under KSL_REVOCATION_REQUIRE_STAPLED or for a must-staple leaf (OCSP_VERIFY_NEEDED,
+   OCSP_CERT_UNKNOWN) and passes otherwise. A resumed session presents no certificate: nothing is checked (the full handshake
+   that made the ticket was). */
 static int client_status(SSL *ssl, ksl_ssl *s) {
     s->ocsp_status = -1;
     s->ocsp_until = 0;
-    if (s->owner->revocation == KSL_REVOCATION_OFF || s->verify_mode != KSL_VERIFY_OPENSSL ||
-        s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 1)
+    if (s->owner->revocation == KSL_REVOCATION_OFF || SSL_session_reused(ssl))
         return 1;
-    X509 *leaf = sk_X509_value(s->validated_chain, 0);
+    X509 *leaf = NULL, *issuer = NULL;
+    if (s->verify_mode == KSL_VERIFY_OPENSSL) {
+        if (s->validated_chain == NULL || sk_X509_num(s->validated_chain) < 1)
+            return 1;
+        leaf = sk_X509_value(s->validated_chain, 0);
+        if (sk_X509_num(s->validated_chain) >= 2)
+            issuer = sk_X509_value(s->validated_chain, 1);
+    } else if (s->verify_mode == KSL_VERIFY_PAUSE) {
+        leaf = SSL_get0_peer_certificate(ssl);
+        if (leaf == NULL)
+            return 1;
+        issuer = issuer_among(s->issuer_candidate, SSL_get_peer_cert_chain(ssl), leaf);
+    } else {
+        return 1; /* KSL_VERIFY_NONE: nothing is verified, tests only */
+    }
     int required = s->owner->revocation == KSL_REVOCATION_REQUIRE_STAPLED || must_staple(leaf);
-    if (sk_X509_num(s->validated_chain) < 2) {
+    if (issuer == NULL) {
         if (!required)
             return 1;
         s->verify_err = X509_V_ERR_OCSP_VERIFY_NEEDED;
         return 0;
     }
-    X509 *issuer = sk_X509_value(s->validated_chain, 1);
     const unsigned char *resp = NULL;
     long len = SSL_get_tlsext_status_ocsp_resp(ssl, &resp);
+    /* a non-successful OCSPResponse carries no status of the certificate: no staple (no_answer) */
+    if (resp != NULL && len > 0 && no_answer(resp, (size_t)len))
+        resp = NULL;
     if (resp == NULL || len <= 0) {
         if (!required)
             return 1;
@@ -270,7 +374,8 @@ static int client_status(SSL *ssl, ksl_ssl *s) {
         return 0;
     }
     int64_t until = 0;
-    X509_STORE *crls = s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
+    X509_STORE *crls =
+        s->verify_mode == KSL_VERIFY_OPENSSL && s->owner->has_crls ? SSL_CTX_get_cert_store(s->owner->ctx) : NULL;
     int r = ksl_ocsp_check_x509(resp, (size_t)len, leaf, issuer, ocsp_now(), crls, NULL, &until);
     switch (r) {
     case KSL_OCSP_GOOD:

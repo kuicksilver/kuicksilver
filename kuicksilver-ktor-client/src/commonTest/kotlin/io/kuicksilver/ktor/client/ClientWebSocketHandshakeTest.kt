@@ -116,6 +116,45 @@ class ClientWebSocketHandshakeTest {
             head(upgrade + accept(key) + "Sec-WebSocket-Extensions: x-a\r\nSec-WebSocket-Extensions: x-b\r\n")
         }
 
+    /**
+     * OWS is SP and HTAB only (RFC 9110 section 5.6.3), and `Upgrade` must be "websocket" compared ASCII
+     * case-insensitively (RFC 6455 section 4.1): a no-break space (U+00A0, `C2 A0` on the wire, obs-text) before the
+     * token is part of the value, not whitespace, so the answer is refused. Before, Kotlin's Unicode `trim()` dropped it.
+     */
+    @Test fun negative_unicodeSpaceAroundUpgradeFailsTheHandshake() =
+        refused("not websocket") { key -> head("Upgrade: \u00a0websocket\r\nConnection: Upgrade\r\n" + accept(key)) }
+
+    /** The same for the subprotocol the server chose (RFC 6455 section 4.1 step 6): it must be one the client offered. */
+    @Test fun negative_unicodeSpaceAroundTheSubprotocolFailsTheHandshake() =
+        refused("which the client did not offer", offer = "chat") { key ->
+            head(upgrade + accept(key) + "Sec-WebSocket-Protocol: \u2003chat\r\n")
+        }
+
+    /** The same for Sec-WebSocket-Accept (RFC 6455 section 4.1): its value must be the expected base64 string exactly. */
+    @Test fun negative_unicodeSpaceAroundTheAcceptFailsTheHandshake() =
+        refused("Sec-WebSocket-Accept does not answer") { key ->
+            head(upgrade + "Sec-WebSocket-Accept: \u00a0${websocketServerAccept(key!!)}\r\n")
+        }
+
+    /** SP and HTAB around the values are OWS and still go (RFC 9110 section 5.6.3). */
+    @Test fun owsAroundTheValuesIsAccepted() =
+        clientTest {
+            var text: String? = null
+            server({ _, key ->
+                head(
+                    "Upgrade: \twebsocket \r\nConnection: Upgrade\r\nSec-WebSocket-Accept:  ${websocketServerAccept(key!!)}\t\r\n" +
+                        "Sec-WebSocket-Protocol: \tchat \r\n",
+                )
+            }, frames = byteArrayOf(0x81.toByte(), 0x02, 0x68, 0x69)) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws", request = { header(HttpHeaders.SecWebSocketProtocol, "chat") }) {
+                        text = (incoming.receive() as Frame.Text).readText()
+                    }
+                }
+            }
+            assertEquals("hi", text)
+        }
+
     /** The checks are ASCII case-insensitive, `Connection` a list, and the subprotocol one the client offered. */
     @Test fun validAnswerOpensTheSession() =
         clientTest {

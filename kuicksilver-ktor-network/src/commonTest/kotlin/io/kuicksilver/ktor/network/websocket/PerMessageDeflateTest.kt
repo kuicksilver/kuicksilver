@@ -281,6 +281,55 @@ class PerMessageDeflateTest {
         }
     }
 
+    /**
+     * OWS around an extension name or parameter is SP and HTAB only (RFC 9110 section 5.6.3, RFC 6455 section 9.1): a no-break
+     * space (U+00A0) or another Unicode space is part of the token, so `<NBSP>permessage-deflate` is not this extension and
+     * `<NBSP>server_no_context_takeover` is an unknown parameter. Before, Kotlin's Unicode `trim()` took them for the real ones.
+     */
+    @Test fun negative_unicodeSpaceAroundNamesAndParametersIsNoOws() {
+        val nbsp = '\u00a0'
+        assertEquals(
+            emptyList(),
+            PerMessageDeflate
+                .install {
+                }.serverNegotiation(listOf(WebSocketExtensionHeader("${nbsp}permessage-deflate", emptyList()))),
+        )
+        assertEquals(
+            emptyList(),
+            PerMessageDeflate.install {}.serverNegotiation(
+                listOf(WebSocketExtensionHeader("permessage-deflate", listOf("${nbsp}server_no_context_takeover"))),
+            ),
+            "an offer with an unknown parameter is declined",
+        )
+        assertEquals(
+            emptyList(),
+            PerMessageDeflate.install {}.serverNegotiation(listOf(WebSocketExtensionHeader("permessage-deflate", listOf("$nbsp")))),
+            "a parameter of a no-break space alone is no empty parameter",
+        )
+        assertFalse(
+            PerMessageDeflate.install {}.clientNegotiation(listOf(WebSocketExtensionHeader("permessage-deflate\u2003", emptyList()))),
+        )
+        assertFailsWith<ProtocolViolationException> {
+            PerMessageDeflate.install {}.clientNegotiation(
+                listOf(WebSocketExtensionHeader("permessage-deflate", listOf("server_max_window_bits=${nbsp}10"))),
+            )
+        }
+        // SP and HTAB are OWS and still go
+        assertEquals(
+            "permessage-deflate; server_no_context_takeover",
+            PerMessageDeflate
+                .install {}
+                .serverNegotiation(
+                    listOf(WebSocketExtensionHeader(" permessage-deflate\t", listOf("\tserver_no_context_takeover "))),
+                ).text(),
+        )
+        assertTrue(
+            PerMessageDeflate.install {}.clientNegotiation(
+                listOf(WebSocketExtensionHeader("permessage-deflate", listOf("server_max_window_bits = 10"))),
+            ),
+        )
+    }
+
     /** RFC 7692 section 7.1.1.1: a server that accepts an offer with server_no_context_takeover includes it. */
     @Test fun negative_requestedServerNoContextTakeoverMissingFails() {
         val c = PerMessageDeflate.install { serverNoContextTakeover = true }

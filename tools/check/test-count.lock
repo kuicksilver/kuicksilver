@@ -724,6 +724,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.ser
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.settingsSentImmediately
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.truncatedFrameAtFinIsFrameError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.unknownUniStreamStoppedNotFatal
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ContentLengthTest.digitsAreTheLength
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ContentLengthTest.negative_onlyDigitsAreALength
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameGoAwayIdAgainIsNoError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameMaxPushIdAgainIsNoError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.DatagramGapTest.negative_quarterStreamIdOf2To60IsDatagramError
@@ -1431,6 +1433,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.neg
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_invalidOrListAgeHandledAsRfc9111Says
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storeWithoutClearFallsBackToTheOriginsSeen
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storedAlternativeFailingTheParserRulesIsNotUsed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_unicodeSpaceIsNoOws
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.networkChangeClearsNonPersistent
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.overflowingMaIsCapped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.parsesMaAndPersist
@@ -1649,6 +1652,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Framin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_http10ServerGetsContentLength
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_http10ServerSlowBodyFailsWithinTheConnectTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_hugeTrailerSectionFails
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_malformedTrailerLineFailsTheBody
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_nonOwsWhitespaceInFramingFieldsFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_signedContentLengthRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.negative_unknownServerGetsNoTransferEncoding
@@ -2092,8 +2096,12 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocke
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_twoAcceptsFailTheHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_twoExtensionsFieldsFailTheHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_twoSubprotocolsFailTheHandshake
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_unicodeSpaceAroundTheAcceptFailsTheHandshake
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_unicodeSpaceAroundTheSubprotocolFailsTheHandshake
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_unicodeSpaceAroundUpgradeFailsTheHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_unofferedSubprotocolFailsTheHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.negative_wrongAcceptFailsTheHandshake
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.owsAroundTheValuesIsAccepted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketHandshakeTest.validAnswerOpensTheSession
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebTransportTest.cancellationDuringConnectReleasesTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebTransportTest.closingTheSessionReturnsTheConnectionToThePool
@@ -2234,6 +2242,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.minimumHeadStartOnUnconfirmedNetwork
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_anH1WinnerTheCallerNeverGotIsHandedToOnLoser
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_hardDelayOutsideRfc8305BoundsIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.colonInASocks5UserNameIsAccepted
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_colonInUserIdOrControlCharactersAreRefusedForBasic
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_engineWithAnInvalidBasicUserIdFailsAtCreation
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.validBasicCredentialsAreAccepted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.anExpiredAnswerIsAskedAgainWhileTheOldCallIsStillListed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.cfAnswerPicked
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyResolverTest.concurrentLookupsShareOneCall
@@ -2521,11 +2533,16 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbResolu
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.chunkExtensionsAreSkipped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_bareCrInChunkSizeLineIsRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_bareLfInTrailersOnlyWhereAllowed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_malformedChunkSizeIsRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_malformedTrailerLinesAreRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_obsFoldInTrailersOnlyWhereAccepted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_overlongChunkSizeIsRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_quoteOutsideAnExtensionIsRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_trailerSectionOverTheLimitIsRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.negative_whitespaceBeforeTheLineEndIsRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.plainChunks
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.validTrailerFieldLinesAreDiscarded
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.ChunkedBodyTest.whitespaceBeforeTheLineEndFailsWithAClearMessage
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1AfterResponseTest.everyKindOfResponse
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1AfterResponseTest.negative_connectionListsFollowTheListRules
@@ -2555,6 +2572,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConne
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.quietIdleConnectionIsReused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.strayBytesOnIdleConnectionAreNotReused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.unsolicitedResponseOnIdleConnectionIsNotReused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.everyTcharIsAFieldNameCharacter
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.headIsReadWhateverItsChunks
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.headUnderTheLimitIsRead
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.higherMinorVersionIsProcessedAsHttp11
@@ -2565,6 +2583,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseH
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_connectHeadCutBeforeTheEmptyLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_endlessInterimResponsesFail
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_endlessInterimResponsesToTheConnectFail
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_fieldNameMustBeAToken
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_foldRightAfterTheStatusLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_headCutBeforeTheEmptyLineFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1ResponseHeadTest.negative_hugeResponseHeadFails
@@ -2580,15 +2599,16 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTim
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.negative_socketTimeoutOnPooledConnectionIsNotRetried
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.negative_stalledApplicationBodyTimesOut
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1SocketTimeoutTest.steadyUploadLongerThanTheSocketTimeoutSucceeds
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.authReplyVersion5Tolerated
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.greetingOffersUserPassOnlyWithCredentials
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.hostnameSentAsDomainAtyp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.ipv6LiteralUsesAtyp4
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_authReplyVersionMustBe1
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksAuthRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksCredentialsNotSentWhenServerChoosesNoAuth
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksEmptyPasswordRejected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksNoAcceptableMethodFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksOverlongCredentialsRejected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksReplyNonZeroReservedFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksReplyUnknownAtypFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_socksUnofferedMethodFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.Socks5Test.negative_truncatedReplyFails
@@ -2754,6 +2774,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.CloseWhileWr
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.EngineSelectorTest.socketClosedWhileTheSelectorIsIdleIsReleased
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.FieldListsTest.negative_elementsSurviveEmptyElementsOwsAndLineSplits
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.FieldListsTest.negative_emptyListsHaveNoElements
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.FieldListsTest.negative_webSocketExtensionNamesTrimOwsOnly
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.FieldListsTest.randomListsReadBackAsTheirTokens
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeballsResolutionTest.aFirstWaitsTheResolutionDelayForAaaa
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeballsResolutionTest.aaaaFirstStartsIpv6AtOnceWithoutWaitingForA
@@ -2933,6 +2954,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.Pe
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_requestedServerNoContextTakeoverMissingFails
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_serverDeclinesInvalidOffers
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_truncatedMessageFailsWhereZlibTellsTheBoundary
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_unicodeSpaceAroundNamesAndParametersIsNoOws
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.negative_unrequestedClientMaxWindowBitsRejected
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.noContextTakeoverResetsDictionary
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.PerMessageDeflateTest.rfc7692Section72Examples
@@ -3175,14 +3197,16 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTe
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTest.statusPagesAnswerToABodyTimeoutStays
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1BodyTest.unreadBodyOfExactlyTheCapKeepsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.absoluteFormIsRoutedByItsPathAndAuthority
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.bareLfEndsTheLinesOfTheHead
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.bareLfEndsTheLinesOfTheHeadWithH1AllowBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.chunkedRequestWithTrailersIsAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.http10KeepAliveResponseOfKnownLengthKeepsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.http10RequestWithoutHostIsServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_absoluteFormWithEmptyHostOrUserinfoIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_anEmptyConnectionFieldIsAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_anEmptyConnectionFieldIsAcceptedWithBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_badRequestDoesNotEchoTheHeaderSection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareCrInChunkSizeIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_bareLfIsRejectedByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_chunkedTwiceOrNotFinalIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_connectionCloseInAListIsAnnouncedAndEndsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_contentLengthTooLargeGets413
@@ -3190,6 +3214,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Framin
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_http10StreamingResponseIsCloseDelimitedWithoutTransferEncoding
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_invalidContentLengthIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_invalidHostIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_malformedTrailerLineGets400
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_missingOrRepeatedHostIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_nonOwsWhitespaceInFramingFieldsIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1FramingTest.negative_responseConnectionCloseEndsThePipeline
@@ -3207,6 +3232,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Respon
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noContentForHeadAnd204And304
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noContentLengthWithTransferEncoding
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_noFramingFieldsOn204And304
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.negative_unicodeSpaceInTheApplicationsConnectionIsNoOws
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.noBodyIsProducedForAResponseWithoutContent
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1ResponseFramingTest.responsesCarryDate
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Test.chunkedResponse
@@ -3519,7 +3545,10 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocke
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_serverNeverMasksH3
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_twoKeysGet400
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_twoVersionFieldsGet400
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_unicodeSpaceAroundTheKeyGets400
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_unicodeSpaceAroundTheVersionGets426
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.negative_unreadableOwnAnswerClosesWith1011
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.owsAroundTheKeyAndVersionIsAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebSocketHandshakeTest.validHandshakeIsUpgraded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebTransportTest.echoRoute
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerWebTransportTest.h1RequestNeverMatchesWebTransportRoute
@@ -3615,11 +3644,16 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.contract.WebSo
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.chunkExtensionsAreSkipped
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_bareCrInChunkSizeLineIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_bareLfInTrailersOnlyWhereAllowed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_malformedChunkSizeIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_malformedTrailerLinesAreRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_obsFoldInTrailersOnlyWhereAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_overlongChunkSizeIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_quoteOutsideAnExtensionIsRejected
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_trailerSectionOverTheLimitIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.negative_whitespaceBeforeTheLineEndIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.plainChunks
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.validTrailerFieldLinesAreDiscarded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.ChunkedBodyTest.whitespaceBeforeTheLineEndFailsWithAClearMessage
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1ConnectionPointTest.deprecatedHostAndPortWithoutLocalAddress
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1ConnectionPointTest.hostsAreTheAddressLiterals
@@ -3684,6 +3718,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.anUpgradeNotTakenEndsTheUpgradedInputAndServesTheNextRequest
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.anUpgradeTakenAfterTheBodyWasReadGetsTheBytesAfterTheHead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_anEmptyConnectionFieldIsAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_anEmptyConnectionFieldIsAcceptedWithBareLf
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_everyOrderOfReadingTheBodyOfAnUpgradeOfferEnds
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_theBodyOfAnUpgradeOfferEndsAtOnce
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineUpgradeOfferTest.negative_upgradeOffersFollowTheListRules
@@ -3692,9 +3727,11 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineW
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineWriteStallTest.negative_upgradedClientThatStopsReadingIsClosed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineWriteStallTest.slowReaderAt8KiBPerSecondKeepsItsResponse
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.anyTokenIsAMethod
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.bareLfEndsTheLinesOfTheHeadWhenAllowed
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.emptyLinesBeforeTheRequestLineAreSkipped
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.higherMinorVersionIsProcessedAsHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.invalidOriginFormOfGetIsRedirectedProperlyEncoded
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.lenientSeparatorsAreAccepted
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_bareLfInTheHeadGets400ByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersAndUnicodeSpacesInTheRequestLineAreRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_controlCharactersInAFieldValueAreRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_fieldNameMustBeAToken
@@ -3704,9 +3741,11 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHe
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_noContentInARefusalOfHead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_redirectNeverLeavesTheServer
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_redirectOnlyForAnOtherwiseValidHead
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_requestLineSeparatorsMustBeOneSp
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_unicodeSpaceBeforeAFramingValueIsRejected
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.negative_unsupportedMajorVersionGets505
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.obsTextThatIsNotUtf8IsPassedOnByteForByte
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.singleSpSeparatorsAreServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.tabsSpacesAndObsTextInAFieldValueAreAccepted
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.unicodeSpaceBeforeAFieldValueIsKept
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1RequestHeadCheckTest.unicodeSpaceInsideAFieldValueIsAccepted
@@ -3728,6 +3767,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.cl
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.echKeysKeyReadsTheKeyFiles
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideApplicationConfStarts
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideQuicTransportBlockLoads
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h1AllowBareLfKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.h2cKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2Key
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2RepeatOffenderPenaltyKey
@@ -6233,6 +6273,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.emptyRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.ipLiteralsDetected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.lowercaseAndTrailingDot
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.negative_nonAsciiHostRejected
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.negative_sloppyIdentifiersRejected
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.validIdentifiersAtTheLimitsAreAccepted
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.wildcardNotAllowed
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.defaultIsTheListOfTheContextsAndTwoShares
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.derivedKeyShares
@@ -6253,6 +6295,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.explicitSinkReceive
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.noSinkMeansNoLines
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.tcpConnectionLogsBothSides
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.ecdsaRoundTrip
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.ecdsaSignaturesOfEqualInputDiffer
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.hkdfRfc8448
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.lbKeyDerivedIsTheEncryptedLabel
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KslCryptoTest.lbKeyDuplicateOutlivesTheOriginal
@@ -6372,6 +6415,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ReloadableIdentityTest.reloadO
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ReloadableIdentityTest.snapshotReplacedBeforeUseIsRetried
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.crlPemParses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.crlsChangeTheTrustKey
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.mustStapleLeafWithItsStaplePassesOnEveryTrustPath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlDistributionPointsBeyondTheBoundFail
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlIssuerOutsideThePathFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlNotCoveringTheLeafFails
@@ -6379,6 +6423,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlRev
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_crlThatDoesNotVerifyFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_declinedResumptionTicketCarriesTheNewStaple
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_expiredCrlFails
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_mustStapleEnforcedOnEveryTrustPath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicMustStapleLeafWithoutStaple
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicRequiredStapleMissing
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicSniOverrideStaplesItsOwnResponseOnly
@@ -6387,6 +6432,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_quicUn
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_reloadedCrlRefusesRevokedClient
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_requireStapledNeedsKslVerifier
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_responseLimitIsTheCertificateStatusMessage
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_revokedStapleFailsOnThePausePath
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_serverStaplesNoStaleOrForeignResponse
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_sniOverrideStaplesItsOwnResponseOnly
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_staleCachedStapleIsNotResumed
@@ -6394,6 +6440,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_stapli
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_tcpRequiredStapleMissing
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_tcpStapledRevokedFails
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_unsupportedCrlsRefusedWhenTheTrustIsMade
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.negative_verifiersIssuerIsWhatTheStapleIsCheckedAgainst
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.oversizeResponseIsNotStapledInTls13
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.oversizeResponseIsNotStapledOverTcpTls13
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.quicNoStapleSoftFails
@@ -6401,6 +6448,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.quicStapledGood
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.tcpStapledGoodPasses
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.tls13StaplesUpTo65527Bytes
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.updateReplacesTheStapledResponse
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RevocationTest.verifiersIssuerIsHandedToTheStapleCheck
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.rfc9001AppendixA
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.rfc9369AppendixA
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.RfcVectorsTest.unknownVersionRejected
@@ -6601,6 +6649,9 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PrivateFilesJvmTest.negative_plan
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PrivateFilesJvmTest.negative_sharedOrLinkedDirectoryRefused
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PrivateFilesJvmTest.ownerCheckDoesNotTrustUserName
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.PrivateFilesJvmTest.stickySharedDirectoryAccepted
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RealTrustManagerStapleJvmTest.goodStaplesPassUnderTheJdkTrustManager
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RealTrustManagerStapleJvmTest.negative_mustStapleLeafWithoutStapleFailsUnderTheJdkTrustManager
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RealTrustManagerStapleJvmTest.negative_revokedStapleFailsUnderTheJdkTrustManager
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RecordLimitAlertJvmTest.negative_aSessionAtItsRecordLimitEndsWithInternalError
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RenegotiationJvmTest.negative_renegotiationOnH2FailsTheInputAfterTheDataBeforeIt
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.RenegotiationJvmTest.renegotiationElsewhereIsRefusedAndTheConnectionGoesOn

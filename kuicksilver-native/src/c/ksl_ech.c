@@ -95,9 +95,55 @@ static int list_syntax_ok(const uint8_t *list, size_t len) {
     return 1;
 }
 
+/* Whether the public_name of the ECHConfig contents `c` (version 0xfe0d, syntax checked by list_syntax_ok) is a name the client's
+   reference identifiers take (kuicksilver-tls HostName.normalize): LDH labels (RFC 1123 section 2.1, RFC 5890 section 2.3.1:
+   letters, digits, hyphens, no hyphen first or last) of 1 to 63 octets, at most 253 octets in all (RFC 1035 section 2.3.4), no
+   trailing dot, and a last label that is neither all digits nor "0x" with hex digits (RFC 9849 section 6.1.7 and the WHATWG URL
+   standard's ends-in-a-number rule, which reads an empty "0x" as a number too). OpenSSL's own check (ech_final_config_checks)
+   takes an underscore, "0x" alone and names up to 255 octets; a public_name HostName refuses would fail the handshake after a
+   rejection instead of being ignored here (section 4: the client ignores an unusable ECHConfig). */
+#if KSL_HAS_ECH
+static int public_name_ok(const uint8_t *c, size_t n) {
+    size_t p = 3, pk = ((size_t)c[p] << 8) | c[p + 1];
+    p += 2 + pk;
+    size_t cs = ((size_t)c[p] << 8) | c[p + 1];
+    p += 2 + cs + 1; /* maximum_name_length */
+    size_t pn = c[p++];
+    if (p + pn > n || pn == 0 || pn > 253)
+        return 0;
+    const uint8_t *name = c + p;
+    size_t start = 0;
+    for (size_t i = 0; i <= pn; i++) {
+        if (i < pn && name[i] != '.') {
+            uint8_t b = name[i];
+            if (!((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-'))
+                return 0;
+            continue;
+        }
+        size_t l = i - start;
+        if (l == 0 || l > 63 || name[start] == '-' || name[i - 1] == '-')
+            return 0;
+        if (i == pn) { /* the last label */
+            int digits = 1, hex = l >= 2 && name[start] == '0' && (name[start + 1] == 'x' || name[start + 1] == 'X');
+            for (size_t k = start; k < i; k++) {
+                uint8_t b = name[k];
+                digits = digits && b >= '0' && b <= '9';
+                if (k >= start + 2)
+                    hex = hex && ((b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F'));
+            }
+            if (digits || hex)
+                return 0;
+        }
+        start = i + 1;
+    }
+    return 1;
+}
+#endif
+
 /* The checked list into out: the ECHConfigs of `list` this OpenSSL can use, in their order. RFC 9849 section 4 has the client ignore an
    ECHConfig of another version, one with an unsupported mandatory extension (section 4.2), one without a KEM and cipher suite it
-   supports, and one whose public_name is not a valid DNS name or could be read as an IPv4 address (section 6.1.7). OpenSSL checks all of
+   supports, and one whose public_name is not a valid DNS name or could be read as an IPv4 address (section 6.1.7; checked here first,
+   as strictly as the client's reference identifiers, public_name_ok). OpenSSL checks all of
    that per ECHConfig (ech_store.c ech_final_config_checks), but refuses the whole list for one bad entry, where the RFC ignores that
    entry alone: so each entry goes to OpenSSL on its own, as a list of one, and only those it takes are kept. Bounds: the list's own
    length must match `len` exactly, every entry must fit, and an entry OpenSSL would not read (longer than OSSL_ECH_MAX_ECHCONFIG_LEN)
@@ -120,7 +166,8 @@ static int check_list(const uint8_t *list, size_t len, uint8_t *out, size_t cap,
         if (!ksl_span_fits(off + 4, n, len))
             return KSL_ERROR;
         size_t entry = 4 + n;
-        int usable = version == ECH_VERSION && entry + 2 < OSSL_ECH_MAX_ECHCONFIG_LEN;
+        int usable =
+            version == ECH_VERSION && entry + 2 < OSSL_ECH_MAX_ECHCONFIG_LEN && public_name_ok(list + off + 4, n);
         if (usable) {
             uint8_t one[OSSL_ECH_MAX_ECHCONFIG_LEN];
             one[0] = (uint8_t)(entry >> 8);

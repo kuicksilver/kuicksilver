@@ -98,6 +98,7 @@ void ksl_ssl_free(ksl_ssl *s) {
     free(s->verify_ip);
     sk_X509_pop_free(s->presented_chain, X509_free);
     sk_X509_pop_free(s->validated_chain, X509_free);
+    X509_free(s->issuer_candidate);
     if (s->keylog) {
         OPENSSL_cleanse(s->keylog, s->keylog_cap);
         free(s->keylog);
@@ -263,6 +264,23 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
             return KSL_ERROR;
         }
         return KSL_OK;
+    case KSL_SET_ISSUER_CANDIDATE: {
+        if (s->owner->role != KSL_CLIENT || !data || len == 0 || len > LONG_MAX) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an issuer candidate is a client's DER certificate");
+            return KSL_ERROR;
+        }
+        const unsigned char *p = data;
+        X509 *x = d2i_X509(NULL, &p, (long)len);
+        if (x == NULL || p != data + len) {
+            X509_free(x);
+            ERR_clear_error();
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: the issuer candidate is not one DER certificate");
+            return KSL_ERROR;
+        }
+        X509_free(s->issuer_candidate);
+        s->issuer_candidate = x;
+        return KSL_OK;
+    }
     case KSL_SET_OCSP_RESPONSE: {
         /* 2^24-5: the response, its status_type and its 3-byte length fill a TLS 1.2 CertificateStatus message */
         if (s->owner->role != KSL_SERVER || (len > 0 && !data) || len > (1u << 24) - 5) {

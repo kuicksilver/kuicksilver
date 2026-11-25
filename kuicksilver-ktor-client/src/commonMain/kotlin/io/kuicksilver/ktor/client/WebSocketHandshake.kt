@@ -53,7 +53,8 @@ internal fun newWebSocketKey(): String = Base64.encode(KslCrypto.randomBytes(16)
  * RFC 6455 section 4.1, steps 2 to 4 of the client's check of the server's 101 over HTTP/1.1, for a request sent with
  * [key]: an `Upgrade` field whose value is `websocket` (ASCII case-insensitive), a `Connection` field with the token
  * `Upgrade` (the same), and exactly one `Sec-WebSocket-Accept` (section 11.3.3: it MUST NOT appear more than once) whose
- * value, without leading and trailing whitespace, is the base64-encoded SHA-1 of [key] and the GUID
+ * value, without leading and trailing OWS (SP and HTAB only, RFC 9110 section 5.6.3: a Unicode space such as U+00A0 is part
+ * of the value), is the base64-encoded SHA-1 of [key] and the GUID
  * `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`. Anything else fails the handshake with [WebSocketException] ("the client MUST
  * _Fail the WebSocket Connection_"), before a session is opened. Over HTTP/3 (RFC 9220, RFC 8441 section 5) none of
  * these fields exists.
@@ -63,7 +64,7 @@ internal fun checkWebSocketUpgrade(
     headers: Headers,
 ) {
     val upgrade = headers.getAll(HttpHeaders.Upgrade).orEmpty()
-    if (upgrade.size != 1 || !upgrade[0].trim().equals("websocket", ignoreCase = true)) {
+    if (upgrade.size != 1 || !upgrade[0].trimOws().equals("websocket", ignoreCase = true)) {
         handshakeFailure("the 101 response's Upgrade is ${upgrade.describe()}, not websocket (RFC 6455 section 4.1)")
     }
     if ("upgrade" !in connectionOptions(headers.getAll(HttpHeaders.Connection).orEmpty())) {
@@ -73,7 +74,7 @@ internal fun checkWebSocketUpgrade(
     if (accept.size != 1) {
         handshakeFailure("the 101 response has ${accept.size} Sec-WebSocket-Accept fields, not one (RFC 6455 sections 4.1, 11.3.3)")
     }
-    if (accept[0].trim() != websocketServerAccept(key)) {
+    if (accept[0].trimOws() != websocketServerAccept(key)) {
         handshakeFailure("the 101 response's Sec-WebSocket-Accept does not answer the request's key (RFC 6455 section 4.1)")
     }
 }
@@ -113,7 +114,7 @@ internal fun webSocketAfterHandshake(
     val installed = request.attributes.webSocketExtensions()
     val allowedRsv = negotiatedWebSocketRsv(offered, accepted, installed)
     val perMessageDeflate = negotiatedPerMessageDeflate(offered, accepted)
-    val inUse = installed.filter { e -> e.protocols.any { it.name.trim().lowercase() in accepted } }
+    val inUse = installed.filter { e -> e.protocols.any { it.name.trimOws().lowercase() in accepted } }
     webSocketRsvConflict(inUse)?.let {
         handshakeFailure("the server accepted WebSocket extensions that share an RSV bit (RFC 7692 section 5): $it")
     }
@@ -146,13 +147,13 @@ private fun checkSubprotocol(
             "the response has ${responseProtocols.size} Sec-WebSocket-Protocol fields, not at most one (RFC 6455 section 11.3.4)",
         )
     }
-    val chosen = responseProtocols[0].trim()
+    val chosen = responseProtocols[0].trimOws()
     val offered =
         request
             .allHeaders(
                 HttpHeaders.SecWebSocketProtocol,
             ).flatMap { it.split(',') }
-            .map { it.trim() }
+            .map { it.trimOws() }
             .filter { it.isNotEmpty() }
     if (chosen !in offered) {
         handshakeFailure(
@@ -168,3 +169,6 @@ private fun HttpRequestData.allHeaders(name: String): List<String> = headers.get
 private fun List<String>.describe(): String = if (isEmpty()) "missing" else joinToString(prefix = "\"", postfix = "\"")
 
 private fun handshakeFailure(what: String): Nothing = throw WebSocketException("Handshake exception: $what")
+
+/** [this] without leading and trailing OWS: SP and HTAB only (RFC 9110 section 5.6.3), never another Unicode space. */
+private fun String.trimOws(): String = trim(' ', '\t')

@@ -31,6 +31,14 @@ internal expect object PlatformVerifier {
     ): PlatformVerdict
 }
 
+/**
+ * The certificate above the leaf in the chain an accepted verification validated (the path the platform built, perhaps with an
+ * issuer the peer did not send; an application verifier's answer), as `ksl`'s issuer candidate for the stapled OCSP response
+ * (`KSL_SET_ISSUER_CANDIDATE`): `ksl` takes it only when it issued the leaf, as every presented certificate. Null for a chain of
+ * the leaf alone.
+ */
+internal fun VerifyResult.Accepted.issuerCandidate(): ByteArray? = validatedChain.getOrNull(1)?.encoded
+
 /** The platform's verdict alone, without the path it built. */
 internal suspend fun PlatformVerifier.verify(
     chain: List<Certificate>,

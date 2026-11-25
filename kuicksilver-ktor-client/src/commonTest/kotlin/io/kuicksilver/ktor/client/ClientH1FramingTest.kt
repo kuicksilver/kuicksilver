@@ -242,6 +242,27 @@ class ClientH1FramingTest {
             assertEquals(listOf(0, 0), served)
         }
 
+    /**
+     * A trailer line outside the field-line grammar (RFC 9112 section 7.1.2, RFC 9110 sections 5.1 and 5.5) fails the
+     * body, as Go's net/http and curl hold; a folded or bare-LF trailer line is read as in the head (a user agent replaces
+     * an obs-fold, section 5.2; a bare LF ends a line, section 2.2). Before, every line but one with a bare CR was skipped.
+     */
+    @Test fun negative_malformedTrailerLineFailsTheBody() =
+        clientTest {
+            rawServerPerConnection({ index, input, output ->
+                readHead(input)
+                val trailer = if (index == 0) "X-A: a\u0000b\r\n" else "X-A: a\r\n b\nX-B: c\n"
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n$trailer\r\n")
+                readHead(input)
+            }) { port ->
+                testClient().use { c ->
+                    val r = runCatching { c.get("http://127.0.0.1:$port/").bodyAsText() }
+                    assertTrue(r.isFailure, "a trailer with NUL was accepted")
+                    assertEquals("hello", c.get("http://127.0.0.1:$port/").bodyAsText())
+                }
+            }
+        }
+
     /** A trailer section is bounded: one larger than 16 KiB fails the body. */
     @Test fun negative_hugeTrailerSectionFails() =
         clientTest {

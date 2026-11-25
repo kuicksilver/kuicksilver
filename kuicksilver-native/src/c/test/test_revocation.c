@@ -214,13 +214,18 @@ static int tcp_pump(ksl_ssl *c, ksl_ssl *s) {
     }
     return KSL_WANT_READ;
 }
-static int server_leaf_only; /* the server sends its leaf without rv-mid */
+static int server_leaf_only;                 /* the server sends its leaf without rv-mid */
+static const char *server_second = "rv-mid"; /* the certificate the server sends after its leaf */
+static const char *server_third = NULL;      /* a third certificate after it, or NULL */
+static const char *client_candidate = NULL; /* the client's KSL_SET_ISSUER_CANDIDATE (its verifier's issuer), or NULL */
 static ksl_ctx *rv_server(const char *leaf, int tls12) {
     ksl_ctx *c = ksl_ctx_new(KSL_SERVER);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
     char name[128];
     snprintf(name, sizeof name, "%s", leaf);
-    blob ch = server_leaf_only ? framed(1, name) : framed(2, name, "rv-mid");
+    blob ch = server_leaf_only ? framed(1, name)
+              : server_third   ? framed(3, name, server_second, server_third)
+                               : framed(2, name, server_second);
     char kp[128];
     snprintf(kp, sizeof kp, RV "%s", leaf);
     size_t kl;
@@ -267,6 +272,11 @@ static hs_out handshake_with(hs *x, const char *crl) {
     ksl_ssl *c = ksl_ssl_new(cc, x->mode), *s = ksl_ssl_new(sc, x->mode);
     ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1);
     ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    if (client_candidate) {
+        blob b = file_of(client_candidate);
+        CHECK(ksl_ssl_set(c, KSL_SET_ISSUER_CANDIDATE, b.buf, b.len) == KSL_OK, "client takes the issuer candidate");
+        free(b.buf);
+    }
     if (x->staple) {
         blob b = file_of(x->staple);
         CHECK(ksl_ssl_set(s, KSL_SET_OCSP_RESPONSE, b.buf, b.len) == KSL_OK, "server takes the response");
@@ -360,11 +370,53 @@ static void stapling_over(int mode, int tls12, const char *what) {
                 "negative_client_mismatch: a response for the same serial under another issuer key");
     hs unauth = {"rv-leaf", NULL, "ocsp-unauthorized", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(unauth, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_client_unauthorized_responder");
+    /* an OCSPResponse whose responseStatus is not successful (tryLater, internalError) carries no responseBytes (RFC 6960 section
+       4.2.1) and so no status of the certificate: it counts as no staple, on ksl's path and the pause path alike. A leaf that
+       needs a staple (must-staple, or under RequireStapled) fails as without one; any other goes on. A staple that is no
+       OCSPResponse at all (not DER) is still unsatisfactory: an OpenSSL server does not send one, so revocation_no_answer
+       checks that rule on its own */
+    static const char *const no_answer[] = {"ocsp-try-later", "ocsp-internal-error"};
+    for (int path = 0; path < 2; path++) {
+        int vm = path ? KSL_VERIFY_PAUSE : 0;
+        for (int k = 0; k < 2; k++) {
+            hs soft = {"rv-leaf", NULL, no_answer[k], KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+            EXPECT_PASS(soft, 0xff, "a non-successful staple is no staple: a leaf that needs none goes on");
+            hs must_na = {
+                "rv-leaf-must-staple", NULL, no_answer[k], KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+            EXPECT_FAIL(must_na, X509_V_ERR_OCSP_VERIFY_NEEDED,
+                        "negative_must_staple_non_successful: as without a staple (RFC 7633)");
+            hs req_na = {"rv-leaf", NULL, no_answer[k], KSL_REVOCATION_REQUIRE_STAPLED, mode, tls12, vm};
+            EXPECT_FAIL(req_na, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_required_non_successful: as without a staple");
+        }
+        hs revoked_again = {
+            "rv-leaf-revoked", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, vm};
+        EXPECT_FAIL(revoked_again, X509_V_ERR_CERT_REVOKED, "negative_successful_revoked_still_fails");
+    }
     hs off = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_OFF, mode, tls12, 0};
     EXPECT_PASS(off, 0xff, "off: nothing requested, nothing checked");
+    /* the pause path (the platform's or an application's verifier decides trust): the client asks for a staple there too and
+       checks what it gets against the presented certificate that issued the leaf (RFC 6066 section 8 MUST), and a must-staple
+       leaf needs one (RFC 7633 sections 4.2.3.1 and 4.3.3); before, nothing was checked there */
     hs paused = {"rv-leaf-revoked", "ocsp-revoked", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
                  KSL_VERIFY_PAUSE};
-    EXPECT_PASS(paused, 0xff, "the pause path (an application verifier) is not checked by ksl");
+    EXPECT_FAIL(paused, X509_V_ERR_CERT_REVOKED, "negative_paused_revoked: a revoked staple on the pause path");
+    hs paused_good = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_good, KSL_OCSP_GOOD, "pause path: a good staple is checked and passes");
+    hs paused_none = {"rv-leaf", NULL, NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_none, 0xff, "pause path: no staple passes for a leaf that does not require one");
+    hs paused_must = {"rv-leaf-must-staple", NULL, NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                      KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_must, X509_V_ERR_OCSP_VERIFY_NEEDED,
+                "negative_paused_must_staple: RFC 7633 leaf without a staple");
+    hs paused_must_ok = {
+        "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+        KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_must_ok, KSL_OCSP_GOOD, "pause path: a must-staple leaf with its staple");
+    hs paused_stale = {"rv-leaf", NULL, "ocsp-stale", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_stale, X509_V_ERR_OCSP_VERIFY_FAILED,
+                "negative_paused_stale: not satisfactory (RFC 6066 section 8)");
+    hs paused_off = {"rv-leaf-must-staple", NULL, NULL, KSL_REVOCATION_OFF, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(paused_off, 0xff, "pause path, off: nothing requested, nothing required");
     /* a leaf that is itself the trust anchor, sent alone: nothing to check against, so a required staple fails */
     client_root = "rv-leaf";
     server_leaf_only = 1;
@@ -377,7 +429,55 @@ static void stapling_over(int mode, int tls12, const char *what) {
         "rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     EXPECT_FAIL(anchor_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_must_staple_without_issuer");
     client_root = "rv-root";
+    /* the pause path with the leaf sent alone: no presented certificate issued it, so a staple cannot be checked; it passes
+       unchecked unless the leaf requires one (the same rule as an anchored leaf above) */
+    hs alone_must = {"rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                     KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_must, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_must_staple_without_issuer");
+    hs alone = {"rv-leaf", "ocsp-good", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(alone, 0xff, "pause path, leaf alone: an uncheckable staple of a leaf that requires none passes");
+    /* the leaf alone, but the client's verifier built its path through rv-mid (an AIA fetch, a platform store) and handed
+       it over (KSL_SET_ISSUER_CANDIDATE): the staple is checked against it, so a must-staple leaf passes with its staple and
+       a revoked one fails; an issuer candidate that did not issue the leaf is not taken */
+    /* (an OpenSSL server staples only a response it can check against its own chain, so these are forced) */
+    client_candidate = "rv-mid";
+    hs cand_must = {"rv-leaf-must-staple", NULL, "ocsp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                    KSL_VERIFY_PAUSE};
+    EXPECT_PASS(cand_must, KSL_OCSP_GOOD,
+                "pause path, leaf alone, the verifier's issuer: the must-staple staple is checked");
+    hs cand_good = {"rv-leaf", NULL, "ocsp-good", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, KSL_VERIFY_PAUSE};
+    EXPECT_PASS(cand_good, KSL_OCSP_GOOD, "pause path, leaf alone, the verifier's issuer: a staple is checked");
+    hs alone_revoked = {"rv-leaf-revoked", NULL, "ocsp-revoked", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                        KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_revoked, X509_V_ERR_CERT_REVOKED, "negative_paused_candidate_revoked");
+    client_candidate = "rv-imp-mid";
+    hs alone_imp = {"rv-leaf-must-staple", NULL, "ocsp-imp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                    KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(alone_imp, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_impostor_candidate");
+    client_candidate = NULL;
+    /* the server sends the leaf and, instead of its issuer, the root (which issued rv-mid, not the leaf): no presented
+       certificate signed the leaf, so the must-staple leaf's staple cannot be checked and it fails */
     server_leaf_only = 0;
+    /* an impostor of rv-mid (its name and key identifier, another key) with a "good" staple it signed: X509_check_issued
+       takes it, the leaf's signature does not, so there is no issuer and the must-staple leaf fails. With the impostor
+       ahead of rv-mid in the chain, rv-mid is found, and the impostor's staple fails against it */
+    server_second = "rv-imp-mid";
+    hs impostor = {"rv-leaf-must-staple", NULL, "ocsp-imp-must-staple", KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                   KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(impostor, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_impostor_issuer");
+    server_third = "rv-mid";
+    EXPECT_FAIL(impostor, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_paused_impostor_before_the_issuer");
+    server_third = NULL;
+    server_second = "rv-root";
+    hs wrong_issuer = {"rv-leaf-must-staple", "ocsp-must-staple", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12,
+                       KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(wrong_issuer, X509_V_ERR_OCSP_VERIFY_NEEDED, "negative_paused_issuer_not_presented");
+    server_second = "rv-mid";
+    server_leaf_only = 0;
+    /* a response whose certID names another issuer key than the presented issuer's: refused on the pause path too */
+    hs paused_mismatch = {"rv-leaf", NULL,  "ocsp-other-issuer-key", KSL_REVOCATION_STAPLED_IF_PRESENT,
+                          mode,      tls12, KSL_VERIFY_PAUSE};
+    EXPECT_FAIL(paused_mismatch, X509_V_ERR_OCSP_VERIFY_FAILED, "negative_paused_response_under_another_issuer_key");
     /* a delegated responder the configured CRL lists is not authorized */
     hs rresp = {"rv-leaf", "ocsp-revoked-responder", NULL, KSL_REVOCATION_STAPLED_IF_PRESENT, mode, tls12, 0};
     hs_out o = handshake_with(&rresp, "crl-mid");
@@ -409,6 +509,90 @@ static int staple_with_responder_ids(const char *named) {
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
     return rc;
+}
+
+/* issuer_among (ksl_ocsp.c), the issuer of the pause path's staple check: the candidate the verifier gave, else the first
+   presented certificate that issued the leaf (its name, its key verifying the leaf's signature, a key other than the leaf's) */
+static int pick(const char *candidate, int n, const char *a, const char *b, const char *c) {
+    blob ch = n == 1 ? framed(1, a) : n == 2 ? framed(2, a, b) : framed(3, a, b, c);
+    blob cand = candidate ? framed(1, candidate) : (blob){0};
+    int r = ksl_test_presented_issuer(ch.buf, ch.len, cand.buf, cand.len);
+    free(ch.buf);
+    free(cand.buf);
+    return r;
+}
+static void test_issuer_among(void) {
+    SECTION("revocation_issuer_among");
+    CHECK(pick(NULL, 2, "rv-leaf", "rv-mid", NULL) == 1, "the presented issuer");
+    CHECK(pick(NULL, 2, "rv-leaf", "rv-imp-mid", NULL) == -1,
+          "negative_impostor: the issuer's name and key identifier, another key: no issuer");
+    CHECK(pick(NULL, 3, "rv-leaf", "rv-imp-mid", "rv-mid") == 2,
+          "negative_impostor_first: the real issuer behind an impostor");
+    CHECK(pick(NULL, 3, "rv-leaf", "rv-root", "rv-mid") == 2,
+          "a certificate that did not issue the leaf is passed over");
+    CHECK(pick(NULL, 1, "rv-leaf", NULL, NULL) == -1, "the leaf alone: no issuer");
+    CHECK(
+        pick(NULL, 2, "rv-selfname-leaf", "rv-selfname-ca", NULL) == 1,
+        "a leaf named like its CA, without key identifiers or keyUsage, has that CA for its issuer (its staple is checked)");
+    CHECK(pick(NULL, 1, "rv-self", NULL, NULL) == -1,
+          "negative_self_signed: a self-signed leaf is no issuer of itself");
+    CHECK(pick(NULL, 2, "rv-self", "rv-self", NULL) == -1,
+          "negative_self_signed_twice: nor a second copy of it (the same key)");
+    CHECK(pick("rv-mid", 1, "rv-leaf", NULL, NULL) == 0, "the verifier's issuer for a leaf sent alone");
+    CHECK(pick("rv-imp-mid", 2, "rv-leaf", "rv-mid", NULL) == 1,
+          "negative_impostor_candidate: passed over for the presented issuer");
+    CHECK(pick("rv-root", 1, "rv-leaf", NULL, NULL) == -1, "negative_candidate_not_the_issuer");
+    CHECK(pick("rv-self", 1, "rv-self", NULL, NULL) == -1, "negative_candidate_with_the_leafs_key");
+    END();
+}
+
+/* Which staples say nothing of the certificate (ksl_ocsp.c no_answer): a whole DER OCSPResponse whose responseStatus is not
+   successful (RFC 6960 section 4.2.1: no responseBytes); never one that does not decode, has a byte after it, or says successful
+   (those go to the checks and fail there when they are not satisfactory) */
+static void test_no_answer(void) {
+    SECTION("revocation_no_answer");
+    static const uint8_t try_later[] = {0x30, 0x03, 0x0a, 0x01, 0x03},
+                         internal_error[] = {0x30, 0x03, 0x0a, 0x01, 0x02},
+                         sig_required[] = {0x30, 0x03, 0x0a, 0x01, 0x05},
+                         unauthorized[] = {0x30, 0x03, 0x0a, 0x01, 0x06},
+                         successful_empty[] = {0x30, 0x03, 0x0a, 0x01, 0x00}, cut[] = {0x30, 0x03, 0x0a, 0x02, 0x03},
+                         trailing[] = {0x30, 0x03, 0x0a, 0x01, 0x03, 0x00},
+                         not_enumerated[] = {0x30, 0x03, 0x02, 0x01, 0x03};
+    CHECK(ksl_test_ocsp_no_answer(try_later, sizeof try_later) == 1, "tryLater is no answer");
+    CHECK(ksl_test_ocsp_no_answer(internal_error, sizeof internal_error) == 1, "internalError is no answer");
+    CHECK(ksl_test_ocsp_no_answer(sig_required, sizeof sig_required) == 1, "sigRequired is no answer");
+    CHECK(ksl_test_ocsp_no_answer(unauthorized, sizeof unauthorized) == 1, "unauthorized is no answer");
+    CHECK(ksl_test_ocsp_no_answer(successful_empty, sizeof successful_empty) == 0,
+          "negative_successful_without_bytes: successful is an answer (malformed: it fails the checks)");
+    CHECK(ksl_test_ocsp_no_answer(cut, sizeof cut) == 0,
+          "negative_undecodable_staple: not DER is not taken for no staple");
+    CHECK(ksl_test_ocsp_no_answer(trailing, sizeof trailing) == 0, "negative_trailing_byte: not one OCSPResponse");
+    CHECK(ksl_test_ocsp_no_answer(not_enumerated, sizeof not_enumerated) == 0, "negative_not_an_ocsp_response");
+    /* only the defined error statuses, without responseBytes (section 4.2.1), in DER (the re-encoding is the input) */
+    static const uint8_t with_bytes[] = {0x30, 0x15, 0x0a, 0x01, 0x03, 0xa0, 0x10, 0x30, 0x0e, 0x06, 0x09, 0x2b,
+                                         0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01, 0x01, 0x04, 0x01, 0x00},
+                         status4[] = {0x30, 0x03, 0x0a, 0x01, 0x04}, status99[] = {0x30, 0x03, 0x0a, 0x01, 0x63},
+                         indefinite[] = {0x30, 0x80, 0x0a, 0x01, 0x03, 0x00, 0x00},
+                         long_form[] = {0x30, 0x81, 0x03, 0x0a, 0x01, 0x03},
+                         enum_padded[] = {0x30, 0x04, 0x0a, 0x02, 0x00, 0x03},
+                         malformed_request[] = {0x30, 0x03, 0x0a, 0x01, 0x01};
+    CHECK(ksl_test_ocsp_no_answer(with_bytes, sizeof with_bytes) == 0,
+          "negative_error_status_with_response_bytes: an error status carries none (RFC 6960 section 4.2.1)");
+    CHECK(ksl_test_ocsp_no_answer(status4, sizeof status4) == 0, "negative_unused_status_4: not a defined status");
+    CHECK(ksl_test_ocsp_no_answer(status99, sizeof status99) == 0, "negative_undefined_status_99");
+    CHECK(ksl_test_ocsp_no_answer(indefinite, sizeof indefinite) == 0, "negative_ber_indefinite_length: not DER");
+    CHECK(ksl_test_ocsp_no_answer(long_form, sizeof long_form) == 0, "negative_non_minimal_length: not DER");
+    CHECK(ksl_test_ocsp_no_answer(enum_padded, sizeof enum_padded) == 0, "negative_non_minimal_enumerated: not DER");
+    CHECK(ksl_test_ocsp_no_answer(malformed_request, sizeof malformed_request) == 1, "malformedRequest is no answer");
+    blob good = file_of("ocsp-good");
+    CHECK(ksl_test_ocsp_no_answer(good.buf, good.len) == 0, "a successful response is an answer");
+    int64_t until = 0;
+    blob ch = framed(2, "rv-leaf", "rv-mid");
+    CHECK(ksl_ocsp_check(cut, sizeof cut, ch.buf, ch.len, 0, &until) == KSL_OCSP_INVALID,
+          "an undecodable staple fails the checks (KSL_OCSP_INVALID): unsatisfactory, RFC 6066 section 8");
+    free(ch.buf);
+    free(good.buf);
+    END();
 }
 
 static void test_stapling(void) {
@@ -1043,6 +1227,8 @@ static void test_staple_cache(void) {
 void run_revocation(void) {
 #ifndef OPENSSL_NO_OCSP
     test_ocsp_check();
+    test_issuer_among();
+    test_no_answer();
     test_stapling();
     test_staple_cache();
 #else

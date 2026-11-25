@@ -177,7 +177,7 @@ public class PerMessageDeflate internal constructor(
     /** Answers the first valid permessage-deflate offer this extension can keep to (RFC 7692 section 7); an empty list declines them all. */
     override fun serverNegotiation(requestedProtocols: List<WebSocketExtensionHeader>): List<WebSocketExtensionHeader> {
         for (offer in requestedProtocols) {
-            if (!offer.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true)) continue
+            if (!offer.name.trimOws().equals(PERMESSAGE_DEFLATE, ignoreCase = true)) continue
             val p = parseParameters(offer, response = false) ?: continue // an invalid offer is declined (section 7)
             val window = p.serverMaxWindowBits ?: MAX_WINDOW_BITS
             if (window < DEFLATE_MIN_WINDOW_BITS) continue // a window this deflater cannot keep to (section 7.1.2.1)
@@ -294,7 +294,7 @@ public class PerMessageDeflate internal constructor(
      * fails the WebSocket connection).
      */
     private fun clientAgreement(response: List<WebSocketExtensionHeader>): DeflateAgreement? {
-        val accepted = response.filter { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
+        val accepted = response.filter { it.name.trimOws().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
         if (accepted.isEmpty()) return null
 
         fun fail(why: String): Nothing = throw ProtocolViolationException("Invalid permessage-deflate response: $why")
@@ -399,7 +399,7 @@ public fun negotiatedWebSocketInflate(
     val accepted =
         responseValues
             .flatMap { parseWebSocketExtensions(it) }
-            .filter { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
+            .filter { it.name.trimOws().equals(PERMESSAGE_DEFLATE, ignoreCase = true) }
     if (accepted.isEmpty()) return null
     if (accepted.size >
         1
@@ -429,7 +429,7 @@ public fun sentCompression(
     perMessageDeflate: Boolean,
 ): SentCompression {
     if (!perMessageDeflate) return SentCompression.Checked
-    val deflate = installed.firstOrNull { e -> e.protocols.any { it.name.trim().equals(PERMESSAGE_DEFLATE, ignoreCase = true) } }
+    val deflate = installed.firstOrNull { e -> e.protocols.any { it.name.trimOws().equals(PERMESSAGE_DEFLATE, ignoreCase = true) } }
     return when {
         deflate is PerMessageDeflate -> SentCompression.Checked
         deflate != null && isKtorDeflateExtension(deflate) -> SentCompression.PerFrame
@@ -510,10 +510,10 @@ private fun parseParameters(
     var clientMaxWindowBits: Int? = null
     val seen = HashSet<String>()
     for (parameter in element.parameters) {
-        if (parameter.isBlank()) continue
+        if (parameter.trimOws().isEmpty()) continue
         val eq = parameter.indexOf('=')
-        val name = (if (eq < 0) parameter else parameter.substring(0, eq)).trim().lowercase()
-        val value = if (eq < 0) null else unquote(parameter.substring(eq + 1).trim()) ?: return null
+        val name = (if (eq < 0) parameter else parameter.substring(0, eq)).trimOws().lowercase()
+        val value = if (eq < 0) null else unquote(parameter.substring(eq + 1).trimOws()) ?: return null
         if (!seen.add(name)) return null
         when (name) {
             SERVER_NO_CONTEXT_TAKEOVER -> {
@@ -586,3 +586,6 @@ private const val MAX_WINDOW_BITS = 15
 private const val DISPOSED = 1
 private const val FREED = 2
 private const val USE = 4
+
+/** [this] without leading and trailing OWS: SP and HTAB only (RFC 9110 section 5.6.3), never another Unicode space. */
+private fun String.trimOws(): String = trim(' ', '\t')

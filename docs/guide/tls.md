@@ -373,12 +373,25 @@ experimental in 0.3.0:
   of the issuer. A server that staples nothing, or a response saying "unknown", passes under
   `StapledIfPresent` (OCSP clients "typically 'soft-fail'", RFC 9325 section 7.5) and fails under `RequireStapled`
   (`VerifyReason.UnknownRevocationStatus`, alert 113); a certificate marked must-staple (RFC 7633) fails without one
-  under every policy but `Off`, and so does a required staple for a leaf that is itself the trust anchor (no issuer to
-  check a response against). The check runs where `ksl` verifies the chain: `AnchoredCa`, and `Platform` on Linux Native, also
-  inside `Pinned` and `ExpectedName`. Elsewhere under `Platform` the OS verifier decides: Apple and Windows apply their
-  own revocation policy, while on Android (its blocklist only) and the JVM (off unless the application enables it, e.g.
-  `com.sun.net.ssl.checkRevocation`) nothing checks revocation; use `AnchoredCa` where that matters. A `Custom` or `Tofu`
-  verifier decides alone; `RequireStapled` with them is refused (`TlsException.Config`). A
+  under every policy but `Off` on every trust path (0.3.0: the platform's too), and so does a required staple for a leaf
+  that is itself the trust anchor (no issuer to check a response against). Every policy but `Off` sends `status_request`
+  and checks a stapled response on every trust path: where `ksl` verifies the chain (`AnchoredCa`, and `Platform` on Linux
+  Native, also inside `Pinned` and `ExpectedName`) against the issuer it trusted; under `Platform` elsewhere, `Custom` and
+  `Tofu`, once that verifier said yes, against the issuer of the path it accepted (the platform's own path, with an issuer
+  it may have fetched itself), else the presented certificate whose key signed the leaf; a certificate that only copies the
+  issuer's name never counts. A leaf with no such issuer (a self-signed one, say) has its staple left unchecked, and a
+  must-staple one fails. On top of that, under `Platform` the OS
+  verifier applies its own policy: Apple and Windows check revocation themselves, while on Android (its blocklist only)
+  and the JVM (off unless the application enables it, e.g. `com.sun.net.ssl.checkRevocation`) a server that staples
+  nothing is not checked at all; use `AnchoredCa` where that matters. `RequireStapled` needs `ksl`'s verifier and is
+  refused with `Platform` off Linux, `Custom` and `Tofu` (`TlsException.Config`). `Off` is the way out for a server whose
+  must-staple certificate comes without its staple. A stapled OCSPResponse that only states an error (a defined error
+  status: `malformedRequest`, `internalError`, `tryLater`, `sigRequired` or `unauthorized`, no responseBytes, in DER;
+  Apache's mod_ssl staples a `tryLater` it makes up while its CA's responder is down) carries no status
+  of the certificate (RFC 6960 sections 2.3, 4.2.1) and counts as no staple, as in Firefox: a normal certificate goes on
+  under `StapledIfPresent`, while a must-staple certificate, and any certificate under `RequireStapled`, fails as without a
+  staple. A `successful` response that says revoked, does not verify, names another certificate or is stale, and any other
+  staple (not DER, an undefined status, an error status with responseBytes, no OCSPResponse at all), still fail the handshake on every trust path (RFC 6066 section 8). A
   session resumes only while the response its full handshake checked is fresh.
 - **CRLs (clients and servers).** `TrustConfig.AnchoredCa(roots, crls)` checks every certificate on the verified path
   against its issuer's CRL when one of `crls` is from that issuer (`CertificateRevocationList.parsePem` reads

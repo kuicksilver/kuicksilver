@@ -100,6 +100,10 @@ class ServerH1ResponseFramingTest {
                 call.response.header("X-Hop", "1")
                 call.respondText("hop")
             }
+            get("/nbsp-close") {
+                call.response.header(HttpHeaders.Connection, "close\u00a0")
+                call.respondText("nbsp")
+            }
             get("/keep-alive") {
                 call.response.header(HttpHeaders.Connection, "keep-alive, X-Hop")
                 call.respondText("kept")
@@ -157,6 +161,32 @@ class ServerH1ResponseFramingTest {
                     val connection = head.lines().filter { it.startsWith("Connection:", ignoreCase = true) }
                     assertEquals(listOf(expected), connection.map { it.substringAfter(':').trim() }, "$path: $resp")
                 }
+            }
+        }
+
+    /**
+     * The application's own Connection options are read with OWS of SP and HTAB only (RFC 9110 section 5.6.3): `close<NBSP>`
+     * is not the `close` option, so the server still announces its own `close` for a request that asked for it. Before,
+     * Kotlin's Unicode `trim()` took it for `close` and the response went out without one.
+     */
+    @Test fun negative_unicodeSpaceInTheApplicationsConnectionIsNoOws() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(
+                        10.seconds,
+                    ) { rawHttp(port, "GET /nbsp-close HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
+                val head = resp.substringBefore("\r\n\r\n")
+                val connection =
+                    head
+                        .lines()
+                        .filter {
+                            it.startsWith(
+                                "Connection:",
+                                ignoreCase = true,
+                            )
+                        }.map { it.substringAfter(':').trim(' ') }
+                assertEquals(listOf("close\u00a0, close"), connection, resp)
             }
         }
 

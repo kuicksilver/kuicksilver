@@ -49,17 +49,18 @@ public fun Certificate.matchesHost(host: HostName): Boolean {
 }
 
 /**
- * The bytes of a normalized IPv4 (4) or IPv6 (16, RFC 4291 section 2.2) literal, or null. An IPv4 part is a `dec-octet`
- * of RFC 3986 section 3.2.2, without leading zeros: `127.000.000.001` is a reg-name there, not the address.
+ * The bytes of the IP literal [s] (without brackets): an IPv4 dotted quad of ASCII decimal octets without leading zeros, or
+ * an IPv6 address of ASCII hex groups (RFC 4291 section 2.2, an IPv4 tail allowed, no zone ID); null for anything else.
+ * [HostName.normalize] decides with it whether a name is an IP literal, so the two never disagree.
  */
-private fun ipLiteralBytes(s: String): ByteArray? {
+internal fun ipLiteralBytes(s: String): ByteArray? {
     if (':' !in s) {
         val parts = s.split('.')
         if (parts.size != 4) return null
         return ByteArray(4) { i ->
             (
                 parts[i]
-                    .takeIf { it.length in 1..3 && it.all(Char::isDigit) && (it.length == 1 || it[0] != '0') }
+                    .takeIf { it.length in 1..3 && it.all { c -> c in '0'..'9' } && (it.length == 1 || it[0] != '0') }
                     ?.toInt()
                     ?.takeIf { it <= 255 } ?: return null
             ).toByte()
@@ -82,8 +83,8 @@ private fun ipLiteralBytes(s: String): ByteArray? {
                     ((v4[2].toInt() and 0xff) shl 8) or (v4[3].toInt() and 0xff),
                 )
             } else {
-                if (g.length !in 1..4) return null
-                listOf(g.toIntOrNull(16) ?: return null)
+                if (g.length !in 1..4 || !g.all { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' }) return null
+                listOf(g.toInt(16))
             }
         }
     val h = words(head) ?: return null

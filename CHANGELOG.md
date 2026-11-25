@@ -541,8 +541,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ksl_key_lb_dup`, `ksl_key_lb_derive` and `ksl_key_ecb16` are additive under ABI 7. See docs/guide/quic.md, "Behind a load balancer".
 - Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
   standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
-  `reset_stream_at` codepoint, quiche's FIN handling, lenient HTTP/1.1 and SOCKS5
-  replies), each with its peers, the standard text, where it lives, its default, tests,
+  `reset_stream_at` codepoint, quiche's FIN handling), each with its peers, the standard text, where it lives, its default, tests,
   risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
@@ -790,7 +789,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configured with an empty one, also a URL with a user name only (`socks5h://user@host`), fails with
   `IllegalArgumentException` at once, the engine's creation for its `proxy`, `ResolvedProxy.socks5` or the request
   for a resolver's (curl and Go send PLEN 0 anyway; there is no user-only form, so give a one-byte password). An HTTP
-  proxy takes an empty password (RFC 7617).
+  proxy takes an empty password (RFC 7617). The proxy's replies are read strictly, as Go's x/net/internal/socks does:
+  the authentication reply's VER must be X'01' (RFC 1929 section 2) and the CONNECT reply's RSV X'00' (RFC 1928 section
+  6), else `ProxyException` before the CONNECT or before any TLS.
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
@@ -1046,6 +1047,62 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
+  RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
+  connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
+  unknown parameter, and `close<U+00A0>` set by the application is not the `close` option (the server adds its own).
+- TLS, `HostName.normalize` (breaking strictness, RFC 9525, RFC 1123 section 2.1, RFC 1035 section 2.3.4, RFC 3696
+  section 2, RFC 3986 section 3.2.2): a reference identifier (the URL's host, `TlsConfig.serverName`, an expected name,
+  an ECH `public_name`) that was accepted before now fails with `TlsException.Config` when it is an IPv4 literal with a
+  leading zero (`010.0.0.1`, which `inet_aton` reads as 8.0.0.1; before an IP literal), has a last label of digits only
+  (`1.2.3`, `a.123`) or of `0x` and hex digits (`a.0x1f`, the WHATWG URL standard reads both as an IPv4 address), has a
+  label over 63 octets or is over 253 octets, has a hyphen at the start or end of a label (`-a.example`), puts brackets
+  around anything but an IPv6 literal (`[1.2.3.4]`), or carries a Unicode space around it (only SP and HTAB are trimmed).
+  Go refuses these too. The underscore was refused before as well. The certificate matcher shares the IP-literal parser
+  (its IPv6 groups take ASCII hex digits only). An ECHConfig whose `public_name` breaks these rules is ignored as unusable
+  (RFC 9849 sections 4 and 6.1.7), where OpenSSL alone took an underscore, an empty `0x` last label and names up to 255
+  octets.
+- Ktor server, HTTP/1.1 request line (breaking strictness, RFC 9112 section 3): the method, request-target and version
+  must be separated by exactly one SP, with nothing before or after them. A request line with HTAB, VT, FF or a bare CR
+  as a separator, two spaces, or whitespace before the method or after the version now gets `400 Bad Request` and the
+  connection closes, as Go's net/http and llhttp answer; section 3 only lets a recipient accept those (MAY) and warns of
+  request smuggling between parsers that split the line differently. There is no switch to bring them back.
+- Ktor server, HTTP/1.1 line ends (breaking strictness, RFC 9112 sections 2.2 and 11.2): a request whose request line,
+  field lines, closing empty line or trailer lines end with a bare LF (no CR before it) now gets `400 Bad Request` and the
+  connection closes, as llhttp answers. RFC 9112 section 2.2 only lets a recipient accept it (MAY), and a server behind a
+  proxy that reads the LF as part of a line frames the request otherwise. New experimental
+  `KuicksilverApplicationEngine.Configuration.h1AllowBareLf` (`EngineMain` key `kuicksilver.h1AllowBareLf`, false by
+  default) turns the old behaviour back on for hand-written clients. Empty lines before the request line are still
+  skipped, a bare LF among them. The client is unchanged: it still ends a response line at a bare LF (it is the final
+  recipient; Go's net/http and curl do the same).
+- Ktor client and server, HTTP/1.1 chunked trailers (breaking strictness, RFC 9112 sections 7.1.2 and 2.2, RFC 9110
+  sections 5.1 and 5.5): each line of a trailer section must now be a field line (a token name right before its colon, no
+  control character but HTAB in the value). The server answers another line with 400 and closes the connection (and
+  refuses an obs-fold there, as in the head); the client fails the response body (an obs-fold still continues the line
+  before it, RFC 9112 section 5.2). Before, the lines were discarded unread, so a NUL, a line without a colon or a
+  non-token name passed; Go's net/http and curl refuse them.
+- Ktor client, HTTP/1.1 response head (breaking strictness, RFC 9110 section 5.1, RFC 9112 section 5.1): a field line
+  whose name is not a token followed directly by its colon (bytes above 0x7F, a delimiter such as `/` or `"`, an empty
+  name, whitespace before the colon, no colon) now fails the response with `ParserException`, as Go's net/http and
+  llhttp hold; Ktor's parser let bytes above 0x7F through.
+- Ktor client and server, WebSocket handshake (breaking strictness, RFC 6455 sections 4.1 and 4.2.1, RFC 9110 section
+  5.6.3, RFC 7692 section 7): the values of `Upgrade`, `Sec-WebSocket-Accept`, `Sec-WebSocket-Protocol` and
+  `Sec-WebSocket-Extensions` (client), of `Sec-WebSocket-Key` and `Sec-WebSocket-Version` (server), and the extension names
+  and `permessage-deflate` parameters both sides negotiate lose only SP and HTAB around them, no longer any Unicode space:
+  `Upgrade: <U+00A0>websocket` fails the client's handshake with `WebSocketException`, `Sec-WebSocket-Version: <U+00A0>13`
+  gets 426 from the server, and `<U+00A0>permessage-deflate` or `<U+00A0>server_no_context_takeover` is not that
+  extension or parameter (an offer with it is declined, an answer with it fails), as x/net/websocket holds.
+- Ktor client, proxy credentials (breaking strictness, RFC 7617 section 2): `ProxyCredentials` sent as
+  `Proxy-Authorization: Basic` (an HTTP or `https://` proxy, `ConnectUdpProxy`) with a colon in the user name, or with a
+  control character (0x00-0x1F, 0x7F) in the user name or password, now fail with `IllegalArgumentException` where the
+  proxy is configured (`ResolvedProxy.http`/`https`, `ConnectUdpProxy`, the engine's creation for its `proxy`) instead
+  of being sent: the proxy would split such a user-id at its colon and read another user and password. SOCKS5
+  credentials are unchanged (RFC 1929 has no such rule).
+- Ktor client, SOCKS5 (breaking strictness, RFC 1929 section 2 and RFC 1928 section 6): a proxy that answers the
+  username/password subnegotiation with VER 5 (the SOCKS version) instead of X'01' now fails with `ProxyException`
+  ("answered the authentication with version 5") before the CONNECT is sent; the compatibility shim that accepted it
+  is removed (no proxy that needs it was ever named; Go refuses it too). A CONNECT reply whose reserved byte (RSV) is
+  not X'00' fails with `ProxyException` ("non-zero reserved field") before any TLS.
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
@@ -1364,8 +1421,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `["TLSv1.3"]`, stays TLS 1.3 only.
 - RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
   nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
-  no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
-  libssl support for it.
+  no other. That is the hedged construction section 4.2 itself names against side-channel and fault attacks (Go and
+  BoringSSL sign the same way), so docs/spec/rfc/9325.md records it as met, not as a deviation.
 - Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
   startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
@@ -3111,6 +3168,29 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   `VerifyReason.UnknownRevocationStatus` and the alert unknown_ca (48), as any configured CRL that cannot be used for the
   certificate: `ksl` reports OpenSSL's `X509_V_ERR_UNSPECIFIED` for that refusal, which would have been internal_error (80)
   and `VerifyReason.Custom`, as `X509_V_ERR_UNABLE_TO_GET_CRL` (`docs/guide/tls.md`, "Certificate revocation").
+- HTTP/3, `content-length` as a framing value (RFC 9110 section 8.6, `Content-Length = 1*DIGIT`): the length the request
+  and response streams frame by was read with Kotlin's `toLongOrNull` after a Unicode `trim()`, which takes `+5` as 5, `-5`
+  as -5 and a value wrapped in no-break spaces as its digits, the parser differential of the request-smuggling class.
+  The peer's fields were already refused unless `1*DIGIT` (`FieldValidator`), so no peer value reached it; the helper
+  and the stream sites that read our own requests and responses now take ASCII digits only, and an application
+  response with another value fails with `IllegalArgumentException` instead of being framed. The HTTP/2 and HTTP/1.1
+  Content-Length parsers (`H2Fields`, both engines' `FramingFields`) were already strict; Ktor keeps applications from
+  setting Content-Length as a header on the other engine paths.
+- TLS client, must-staple on every trust path (breaking strictness, RFC 7633 sections 4.2.3.1 and 4.3.3, RFC 6066 section
+  8): under every `RevocationPolicy` but `Off` the client now sends `status_request` and checks the stapled OCSP response
+  on every trust path, not only where `ksl` verifies the chain: under `TrustConfig.Platform` on the JVM, Android, Apple and
+  Windows, `Custom` and `Tofu` too, once that verifier said yes, against the issuer of the path it accepted (the platform's
+  path, with an issuer it may have fetched), else the presented certificate whose key signed the leaf; a certificate that
+  only copies the issuer's name and key identifier, or carries the leaf's own key, is never taken for the issuer. A certificate whose TLS feature extension lists `status_request` (must-staple) now fails there without a good
+  staple (`VerifyReason.UnknownRevocationStatus`, alert 113), and a staple that says revoked or does not verify fails as
+  on the `ksl` path (`Revoked`, `InvalidStatusResponse`). `RevocationPolicy.Off` turns both off. The ClientHello on those
+  paths now carries `status_request`. A stapled OCSPResponse that only states an error (DER, one of the defined error
+  statuses `tryLater`, `internalError`, `malformedRequest`, `sigRequired`, `unauthorized`, and no responseBytes; Apache's mod_ssl staples a made-up `tryLater` while
+  its CA's responder is down) counts as no staple on every path, `ksl`'s verifier included (before 0.3.0 it failed there
+  with `InvalidStatusResponse`): it carries no certificate status (RFC 6960 sections 2.3 and 4.2.1), as Firefox reads it.
+  A normal certificate goes on under `StapledIfPresent`; a must-staple one, or any under `RequireStapled`, fails as without
+  a staple (`UnknownRevocationStatus`). A successful response that is revoked, stale, foreign or forged, and any other
+  staple (not DER, an undefined status, an error status with responseBytes), still fail; `RevocationPolicy.Off` is the way out for such a server.
 - QUIC client: the server's Source Connection ID is fixed by its first Initial without exception (RFC 9000 section 7.2),
   and the peer's first connection ID is never replaced. Until now an Initial with nothing but ACK, PING and PADDING from
   the client's own DCID left the SCID open, so a later Initial from any other SCID, a forged one included (Initial keys

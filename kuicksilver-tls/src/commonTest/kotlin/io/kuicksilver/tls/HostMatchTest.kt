@@ -3,6 +3,7 @@
 package io.kuicksilver.tls
 
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -46,9 +47,13 @@ class HostMatchTest {
         }
     }
 
-    /** RFC 3986 section 3.2.2: `dec-octet` has no leading zeros; such a host is a reg-name, never the address. */
+    /**
+     * RFC 3986 section 3.2.2: `dec-octet` has no leading zeros, so such a host is never the address; nor is it a DNS name
+     * (its last label is all digits, RFC 3696 section 2): it is refused as a reference identifier (`HostNameTest`), never
+     * matched. Before 0.3.0 it was a reg-name that matched nothing.
+     */
     @Test fun negative_ipv4WithLeadingZerosIsNoAddress() {
-        for (h in listOf("127.000.000.001", "127.0.0.01")) assertFalse(server.matches(h), h)
+        for (h in listOf("127.000.000.001", "127.0.0.01")) assertFailsWith<TlsException.Config>(h) { server.matches(h) }
     }
 
     /** RFC 9525 section 6.3: no partial wildcards (OpenSSL's NO_PARTIAL_WILDCARDS, as the client verifier). */
