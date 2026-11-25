@@ -90,7 +90,7 @@ answer against the repository when updating the entry; this file is not kept in 
 | `crypto_random` | MUST | Met | Connection IDs, tokens, stateless-reset secrets and ticket keys come from OpenSSL's `RAND_bytes` (`ksl_crypto.c`, `KslRandom.kt`) |
 | `delivery_mitm` | MUST | Met | Maven Central over HTTPS, every artifact signed with the release key; [verifying.md](verifying.md) |
 | `delivery_unsigned` | MUST | Met | No hash is fetched over HTTP; signatures and Gradle dependency verification ([verifying.md](verifying.md#in-your-build-gradle-dependency-verification)) |
-| `vulnerabilities_fixed_60_days` | MUST | Met, check | No publicly known medium or higher vulnerability unpatched for more than 60 days. Check the Security tab before submitting |
+| `vulnerabilities_fixed_60_days` | MUST | Met, check | No publicly known medium or higher vulnerability unpatched for more than 60 days; SECURITY.md commits to a patch release within 60 days for a Medium or higher vulnerability that is publicly known or will be disclosed within 60 days (Critical and High within 30 days). Check the Security tab before submitting |
 | `vulnerabilities_critical_fixed` | SHOULD | Met | SECURITY.md: Critical and High fixed within 30 days of the assessment; OpenSSL Critical and High within 72 hours |
 | `no_leaked_credentials` | MUST | Met | Credentials and the signing key live outside the repository ([release.md](release.md#once-accounts-keys-dns)); the keys in the repository are test keys for test certificates, and the public release key |
 

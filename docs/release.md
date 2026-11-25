@@ -365,7 +365,9 @@ release commit moves `[Unreleased]` under `## [<X.Y.Z-preN>] - <date>` (the scri
 heading, as in [Every release](#every-release), step 2), and what lands after it goes under a new `[Unreleased]`. The
 final version's release commit merges the prerelease sections and `[Unreleased]` back into one
 `## [<X.Y.Z>] - <date>`: the final's section lists everything since the previous final version, and no prerelease
-section stays in the file. So the prerelease's notes link its section at its tag,
+section stays in the file. The link definitions at the end of the file follow: the prerelease's release commit adds
+`[<X.Y.Z-preN>]` and compares `[Unreleased]` from its tag, and the final's release commit removes the
+`[<X.Y.Z-preN>]` definition together with its section. So the prerelease's notes link its section at its tag,
 `https://github.com/kuicksilver/kuicksilver/blob/v<X.Y.Z-preN>/CHANGELOG.md#<anchor>`, never on `main`, where it is gone
 after the final.
 

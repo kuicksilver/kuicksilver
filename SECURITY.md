@@ -36,7 +36,9 @@ input and the stack trace are not published.
 |---|---|
 | Acknowledgement of your report | within 3 business days |
 | Initial assessment (valid or not, severity, affected versions) | within 14 days |
-| Fix released for Critical and High severity | within 30 days of the assessment |
+| Fix released for Critical and High severity | a patch release within 30 days of the assessment |
+| Fix released for Medium severity, publicly known or to be disclosed within 60 days | a patch release within 60 days of the assessment or of its becoming publicly known, whichever is earlier |
+| Fix released for other vulnerabilities | the next minor release, or a patch release when it cannot wait |
 | Public disclosure | coordinated with you; by default no later than 90 days after the report |
 
 We keep you informed while we work on the fix, agree the disclosure date with you, and credit you in the advisory
@@ -67,8 +69,10 @@ a release with a security fix is coming, without details, and the release's `CHA
 Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
 supported major version will receive security fixes, and a major version will be supported for at least two years
 after the next major version is released. Fixes land on `main` and ship in the next minor release; a security fix that
-cannot wait for it ships in a patch release of the latest line ([version policy](docs/roadmap.md#version-policy)), made
-from its maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
+cannot wait for it ships in a patch release of the latest line ([version policy](docs/roadmap.md#version-policy)): a
+fix for a vulnerability of Medium or higher severity that is publicly known, or will be disclosed within 60 days, cannot
+wait, and ships as a patch release within 60 days ([What happens next](#what-happens-next)). Patch releases are made
+from the line's maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
 
 ## OpenSSL
 
@@ -109,7 +113,7 @@ from us, so we commit to the following.
   |---|---|
   | Advisory, Critical or High, reachable through Kuicksilver | a patch release within 72 hours of the advisory |
   | Advisory, Moderate or Low, reachable through Kuicksilver | a patch release within 7 days of the advisory |
-  | Advisory not reachable in our configuration or through our use of OpenSSL | the next planned release, with a note saying why it does not affect us |
+  | Advisory not reachable in our configuration or through our use of OpenSSL | the next minor release, with a note saying why it does not affect us |
   | Non-security 4.1.x patch release | the next minor release ([version policy](docs/roadmap.md#version-policy)) |
 
   For a reachable issue we also publish a GitHub Security Advisory of this repository that names the OpenSSL advisory

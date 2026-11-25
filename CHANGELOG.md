@@ -1685,7 +1685,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Release policy (`docs/roadmap.md`, "Version policy", decided on 2026-11-26; `SECURITY.md`, `docs/stability.md`): every
   minor release 0.X.0 carries new features and the fixes found since the previous one; a patch release 0.X.Y is made
   only when users need a fix before the next minor release or for a security fix that cannot wait, an OpenSSL security
-  release reachable through Kuicksilver included (72 hours and 7 days as before). A non-security OpenSSL 4.1.x patch
+  release reachable through Kuicksilver included (72 hours and 7 days as before), and the fix for a Medium or higher
+  vulnerability that is publicly known or will be disclosed within 60 days (within 60 days). A non-security OpenSSL 4.1.x patch
   release now ships in the next minor release (was: a patch release within 30 days), and the move to OpenSSL 4.2 LTS
   in a minor release (was: a planned patch release).
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
@@ -5561,5 +5562,6 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   only resumes under the configuration that issued it.
 - Bounds checks on every buffer copy in the JNI and cinterop bindings.
 
-[Unreleased]: https://github.com/kuicksilver/kuicksilver/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kuicksilver/kuicksilver/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/kuicksilver/kuicksilver/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kuicksilver/kuicksilver/releases/tag/v0.2.0

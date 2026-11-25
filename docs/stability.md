@@ -181,7 +181,7 @@ operating system.
   selects the `libssl4` runtime package and soname `libssl.so.4`). Published artifacts never use a system OpenSSL.
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
-  within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and
+  within 7 days for a reachable Moderate or Low one, in the next minor release for issues that are not reachable, and
   in the next minor release for a non-security 4.1.x patch release, with a GitHub Security Advisory for each reachable
   issue. The releases for reachable issues are patch releases (0.X.Y) of the latest line
   ([version policy](roadmap.md#version-policy)).
