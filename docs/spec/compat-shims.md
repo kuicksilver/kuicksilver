@@ -63,10 +63,10 @@ full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothin
 no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
 
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:15` (the versions,
-`offeredIn` at :55, `WtSettings.ours` at :190, `WtTokens.LEGACY` at :220),
+`offeredIn` at :63, `WtSettings.ours` at :198, `WtTokens.LEGACY` at :228),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:407` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:871` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:427` (the 0-or-1 check),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:878` (the client's draft-02
 request field).
 
 **On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`
@@ -118,8 +118,8 @@ costs other clients nothing.
 
 **Justification (kept, hardening audit 2026-11-21, S2).** It goes with shim 1: without it Chrome refuses the session.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:793`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:226`.
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:801`; the name and
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:234`.
 
 **On by default.** No, as shim 1; then always for a draft-02 session whose client sent the request field's value `1`.
 

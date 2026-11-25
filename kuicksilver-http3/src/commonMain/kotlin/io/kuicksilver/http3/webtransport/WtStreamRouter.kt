@@ -11,6 +11,7 @@ import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.IncompleteFrame
 import io.kuicksilver.http3.runtime.qlog
 import io.kuicksilver.http3.runtime.readVarIntSizedOrNull
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -33,6 +34,20 @@ internal interface WtSessionSink {
         bidi: Boolean,
         headerLength: Int,
     )
+
+    /**
+     * This session is the only one its connection may carry, by our choice: draft-02, which has no WebTransport flow
+     * control, so neither side lets a second session onto the connection (the server's `wtAdmits`, the client's
+     * `webTransport`). It then owns the WebTransport error codes of streams reset before their header named a session
+     * ([WtStreamRouter.headerless]).
+     */
+    val onlySessionOfItsConnection: Boolean get() = false
+
+    /** The stream id of the session's CONNECT: a client stream at or below it cannot be one of the session's. */
+    val sessionId: Long
+
+    /** The highest application code of the session's stream resets ([WtVersion.maxStreamErrorCode]). */
+    val maxStreamErrorCode: Long get() = WtErrorCodes.MAX_APPLICATION_CODE
 
     /**
      * Streams of this session the router rejected before the session existed ([bidi] and [uni] of them) and [bytes] of
@@ -115,6 +130,7 @@ internal class WtStreamRouter(
         typeLength: Int,
         headerRead: () -> Unit = {},
     ) {
+        var failure: Throwable? = null
         val read =
             try {
                 st.input.readVarIntSizedOrNull()
@@ -124,11 +140,14 @@ internal class WtStreamRouter(
                 throw e
             } catch (e: Throwable) {
                 if (H3Session.transportCause(e) !is QuicException.StreamError) throw e
+                failure = e
                 null
             }
         headerRead()
         val (sessionId, idLength) =
             read ?: run {
+                // reset before its Session ID: the only session may own its code (draft-02 section 4.3)
+                if (failure != null && headerless(st, bidi, typeLength, failure)) return
                 // ended or reset before its Session ID: nothing to route, but a peer doing only this spends glitch tokens
                 session.glitch("WebTransport stream ended before its Session ID")
                 return
@@ -182,6 +201,33 @@ internal class WtStreamRouter(
                     rejectCounted(b.sessionId, b.stream, b.bidi, b.headerLength)
                 }
             }
+    }
+
+    /**
+     * A peer's stream that [failure] ended before its header named a session, after [read] bytes of the header: when the
+     * failure is the peer's reset with a code in the WebTransport application error range and the connection's only
+     * session is one that keeps it to one session ([WtSessionSink.onlySessionOfItsConnection]), the stream goes to that
+     * session, whose application reads the reset and its code. draft-ietf-webtrans-http3-02 section 4.3: "If a
+     * WebTransport implementation intentionally allows only one session over a given HTTP/3 connection, it SHALL forward
+     * the error codes within WebTransport application error code range to the application that owns the only session on
+     * that connection." The range is the session's: 8 bits on draft-02 (section 4.3, [WtSessionSink.maxStreamErrorCode]).
+     * A client's bidirectional stream at or below the session's CONNECT stream (server) was opened before the session and
+     * is none of its streams. A connection whose session is not established yet has no owner for the code; the stream is
+     * then dropped as before. Returns whether the stream went to the session.
+     */
+    fun headerless(
+        st: QuicStream,
+        bidi: Boolean,
+        read: Int,
+        failure: Throwable,
+    ): Boolean {
+        val reset = H3Session.transportCause(failure) as? QuicException.StreamError.Reset ?: return false
+        if (reset.initiator != Initiator.Peer) return false
+        val only = sinks.values.singleOrNull()?.takeIf { it.onlySessionOfItsConnection } ?: return false
+        if (WtErrorCodes.fromHttp3(reset.code, only.maxStreamErrorCode) == null) return false
+        if (bidi && session.isServer && st.id <= only.sessionId) return false
+        only.onStream(st, bidi, read)
+        return true
     }
 
     /** A session that will never be established here: closed or refused, or (server) a CONNECT at or above our GOAWAY id. */

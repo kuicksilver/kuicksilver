@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
+  stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
+  later drafts.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.
@@ -1064,6 +1067,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- WebTransport (experimental), draft-02 sessions, which Chrome and Firefox negotiate (breaking strictness,
+  draft-ietf-webtrans-http3-02 section 4.3: stream codes are "limited to an unsigned 8-bit integer"): `reset(code)`,
+  `reset(code, reliableOffset)` and `stopSending(code)` with a code above 255 now throw IllegalArgumentException there,
+  and a peer's reset or STOP_SENDING code above 255 reads as no application code (`StreamReset.code` and
+  `StreamStopped.code` null). Before, any 32-bit code went out and came in. An application that serves browsers keeps its
+  stream codes within 0..255 (`WebTransportSession.maxStreamErrorCode`). Later drafts keep 0..2^32-1, and the code of a
+  session's close stays 32-bit in every draft (draft-02 section 5).
 - Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
   RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
   connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
@@ -1789,6 +1799,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
+  header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
+  implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error
+  codes within WebTransport application error code range to the application that owns the only session"). A draft-02
+  connection carries one session, so its application accepts the stream and reads the reset. Before, the stream was
+  dropped and its code lost.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.
