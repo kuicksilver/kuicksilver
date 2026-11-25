@@ -35,9 +35,6 @@ internal class NioDatagramIo private constructor(
             InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
         }
     private val caps = MutableStateFlow(IoCapabilities.Portable)
-
-    /** The leak sentinel's record of this socket (0 in production). */
-    private val leakId = LeakRegistry.open("udp.socket")
     override val capabilities: StateFlow<IoCapabilities> get() = caps
 
     /** ADR-0006: the portable socket marks every datagram ECT(0) through IP_TOS (no per-datagram control, no reading of marks). */
@@ -198,7 +195,19 @@ internal class NioDatagramIo private constructor(
     }
 
     /** Registered for OP_WRITE only; `send` waits on it when the socket buffer is full (the read selector belongs to `receive`). */
-    private val writeSelector: Selector = Selector.open().also { channel.register(it, SelectionKey.OP_WRITE) }
+    private val writeSelector: Selector =
+        Selector.open().also {
+            try {
+                writeSelectorOpenedForTest?.invoke(it)
+                channel.register(it, SelectionKey.OP_WRITE)
+            } catch (e: Throwable) {
+                closeAfter(it, e)
+                throw e
+            }
+        }
+
+    /** The leak sentinel's record of this socket (0 in production); the last to be set up, so a failed construction has none. */
+    private val leakId = LeakRegistry.open("udp.socket")
 
     override suspend fun send(batch: PacketBatch): Int {
         var sent = sendFrom(batch, 0)
@@ -424,15 +433,27 @@ internal class NioDatagramIo private constructor(
         @kotlin.concurrent.Volatile
         internal var channelOpenedForTest: ((DatagramChannel) -> Unit)? = null
 
-        /** Closes [ch] after [cause] ended its use; a failure of the close is added to [cause], never hides it. */
+        /** Tests: runs on the channel [open] drops (of the AF_INET and dual-stack ones) just before closing it; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var closingDroppedForTest: ((DatagramChannel) -> Unit)? = null
+
+        /** Tests: runs in [open] after the channel is registered with its selector, before the socket is made; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var registeredForTest: ((DatagramChannel, Selector) -> Unit)? = null
+
+        /** Tests: runs in the socket's construction on its new write selector, before the channel is registered; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var writeSelectorOpenedForTest: ((Selector) -> Unit)? = null
+
+        /** Closes [c] after [cause] ended its use; a failure of the close is added to [cause], never hides it. */
         private fun closeAfter(
-            ch: DatagramChannel,
+            c: java.io.Closeable,
             cause: Throwable,
         ) {
             try {
-                ch.close()
-            } catch (c: Throwable) {
-                cause.addSuppressed(c)
+                c.close()
+            } catch (f: Throwable) {
+                cause.addSuppressed(f)
             }
         }
 
@@ -500,7 +521,8 @@ internal class NioDatagramIo private constructor(
          *   peers only).
          * - Where a half of a dual-stack socket still has no DF, sends to that address family throw
          *   [QuicException.DontFragmentUnavailable] (the connection ends with no viable path); where no traffic can have DF
-         *   (the JVM without `ksl` below JDK 19; Android or a system refusing both modes) [open] throws it.
+         *   (the JVM without `ksl` below JDK 19; Android or a system refusing both modes; on the AF_INET channel too, for an
+         *   IPv4 bind) [open] throws it.
          * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it could
          * run here later. Returns the channel, the [dfProbe] bits and the address family without DF ([DF_ALL]: none).
          */
@@ -518,6 +540,7 @@ internal class NioDatagramIo private constructor(
                 // the AF_INET channel when DF took on it, else the dual-stack one (it also reaches IPv6 peers)
                 val (kept, dropped) = if (keepsInet(r.bits, r.jdk)) r to c else c to r
                 try {
+                    closingDroppedForTest?.invoke(dropped.ch)
                     dropped.ch.close()
                 } catch (e: Throwable) {
                     closeAfter(kept.ch, e)
@@ -596,16 +619,20 @@ internal class NioDatagramIo private constructor(
                 ch.configureBlocking(false)
                 selector = Selector.open()
             } catch (e: Throwable) {
-                // a failure of the close itself must not hide why the open failed
-                try {
-                    ch.close()
-                } catch (c: Throwable) {
-                    e.addSuppressed(c)
-                }
+                closeAfter(ch, e) // a failure of the close itself must not hide why the open failed
                 throw e
             }
-            ch.register(selector, SelectionKey.OP_READ)
-            return NioDatagramIo(ch, selector).also {
+            val io =
+                try {
+                    ch.register(selector, SelectionKey.OP_READ)
+                    registeredForTest?.invoke(ch, selector)
+                    NioDatagramIo(ch, selector)
+                } catch (e: Throwable) {
+                    closeAfter(selector, e)
+                    closeAfter(ch, e)
+                    throw e
+                }
+            return io.also {
                 it.dfProbeGranted = probe
                 it.noDf = noDf
                 it.enableEcn()

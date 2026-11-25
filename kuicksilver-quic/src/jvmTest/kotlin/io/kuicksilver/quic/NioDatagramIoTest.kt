@@ -509,20 +509,36 @@ class NioDatagramIoTest {
             } finally {
                 NioDatagramIo.dfForTest = null
             }
-            // both halves refused and AF_INET refused too: no DF on any traffic, the socket does not open
-            NioDatagramIo.dfForTest = { inet -> (if (inet) 0 else DF_INET6) to false }
+            // both halves refused and AF_INET refused too: no DF on any traffic, the socket does not open and leaves none open
+            val opened = java.util.Collections.synchronizedList(mutableListOf<java.nio.channels.DatagramChannel>())
+            var firstInet: Boolean? = null
+            NioDatagramIo.channelOpenedForTest = { opened += it }
+            NioDatagramIo.dfForTest = { inet ->
+                if (firstInet == null) firstInet = inet
+                (if (inet) 0 else DF_INET6) to false
+            }
             try {
                 assertFailsWith<QuicException.DontFragmentUnavailable> { DatagramIo.open(v4, IoPreference.Portable).close() }
             } finally {
                 NioDatagramIo.dfForTest = null
+                NioDatagramIo.channelOpenedForTest = null
             }
+            assertEquals(if (firstInet == true) 1 else 2, opened.size, "the dual-stack channel, then the AF_INET one")
+            assertTrue(opened.none { it.isOpen }, "no channel left open")
         }
 
-    /** A failure to open the AF_INET channel closes the dual-stack one too, and both are closed when it fails after opening. */
+    /**
+     * A failure to open the AF_INET channel closes the dual-stack one too, and both are closed when it fails after opening.
+     * Where the runtime has no IPv6 the first channel is already AF_INET and fails alone.
+     */
     @Test fun negative_aFailedInetChannelClosesTheDualStackOne() {
         val opened = java.util.Collections.synchronizedList(mutableListOf<java.nio.channels.DatagramChannel>())
+        var firstInet: Boolean? = null
         NioDatagramIo.channelOpenedForTest = { opened += it }
-        NioDatagramIo.dfForTest = { inet -> if (inet) throw java.io.IOException("Too many open files") else (DF_INET6 or DF_V6) to false }
+        NioDatagramIo.dfForTest = { inet ->
+            if (firstInet == null) firstInet = inet
+            if (inet) throw java.io.IOException("Too many open files") else (DF_INET6 or DF_V6) to false
+        }
         try {
             val e = assertFailsWith<java.io.IOException> { NioDatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }
             assertEquals("Too many open files", e.message)
@@ -530,8 +546,88 @@ class NioDatagramIoTest {
             NioDatagramIo.dfForTest = null
             NioDatagramIo.channelOpenedForTest = null
         }
-        assertEquals(2, opened.size, "the dual-stack channel, then the AF_INET one")
+        assertEquals(if (firstInet == true) 1 else 2, opened.size, "the dual-stack channel, then the AF_INET one")
         assertTrue(opened.none { it.isOpen }, "no channel left open")
+    }
+
+    /**
+     * When closing the channel [NioDatagramIo.open] drops fails, the one it kept is closed too and the failure propagates.
+     * Where the runtime has no IPv6 the first channel is already AF_INET: nothing is dropped and the socket opens.
+     */
+    @Test fun negative_aFailedCloseOfTheDroppedChannelClosesTheKeptOne() {
+        val opened = java.util.Collections.synchronizedList(mutableListOf<java.nio.channels.DatagramChannel>())
+        var firstInet: Boolean? = null
+        NioDatagramIo.channelOpenedForTest = { opened += it }
+        NioDatagramIo.dfForTest = { inet ->
+            if (firstInet == null) firstInet = inet
+            (if (inet) DF_V4 else DF_INET6 or DF_V6) to false
+        }
+        NioDatagramIo.closingDroppedForTest = { throw java.io.IOException("close failed") }
+        try {
+            val io = runCatching { NioDatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }
+            if (firstInet == true) {
+                io.getOrThrow().close()
+                assertEquals(1, opened.size, "no IPv6: one AF_INET channel, nothing dropped")
+            } else {
+                val e = assertFailsWith<java.io.IOException> { io.getOrThrow() }
+                assertEquals("close failed", e.message)
+                assertEquals(2, opened.size, "the dual-stack channel, then the AF_INET one")
+                assertFalse(opened[1].isOpen, "the kept channel is closed")
+            }
+        } finally {
+            NioDatagramIo.dfForTest = null
+            NioDatagramIo.channelOpenedForTest = null
+            NioDatagramIo.closingDroppedForTest = null
+            opened.forEach { runCatching { it.close() } } // the dropped one, whose close the hook stopped
+        }
+    }
+
+    /** A failure once the channel is registered closes the channel and its selector. */
+    @Test fun negative_aFailureAfterRegisteringClosesChannelAndSelector() {
+        var channel: java.nio.channels.DatagramChannel? = null
+        var selector: java.nio.channels.Selector? = null
+        NioDatagramIo.dfForTest = { inet -> (if (inet) DF_V4 else DF_INET6 or DF_V4 or DF_V6) to false }
+        NioDatagramIo.registeredForTest = { ch, sel ->
+            channel = ch
+            selector = sel
+            throw java.io.IOException("register failed")
+        }
+        try {
+            val e = assertFailsWith<java.io.IOException> { NioDatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }
+            assertEquals("register failed", e.message)
+        } finally {
+            NioDatagramIo.dfForTest = null
+            NioDatagramIo.registeredForTest = null
+        }
+        assertFalse(checkNotNull(channel).isOpen, "the channel is closed")
+        assertFalse(checkNotNull(selector).isOpen, "its selector is closed")
+    }
+
+    /** A failure in the socket's construction (its write selector's setup) closes the write selector, the selector and the channel. */
+    @Test fun negative_aFailedConstructionClosesBothSelectorsAndTheChannel() {
+        var channel: java.nio.channels.DatagramChannel? = null
+        var selector: java.nio.channels.Selector? = null
+        var writeSelector: java.nio.channels.Selector? = null
+        NioDatagramIo.dfForTest = { inet -> (if (inet) DF_V4 else DF_INET6 or DF_V4 or DF_V6) to false }
+        NioDatagramIo.registeredForTest = { ch, sel ->
+            channel = ch
+            selector = sel
+        }
+        NioDatagramIo.writeSelectorOpenedForTest = {
+            writeSelector = it
+            throw java.io.IOException("write selector failed")
+        }
+        try {
+            val e = assertFailsWith<java.io.IOException> { NioDatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }
+            assertEquals("write selector failed", e.message)
+        } finally {
+            NioDatagramIo.dfForTest = null
+            NioDatagramIo.registeredForTest = null
+            NioDatagramIo.writeSelectorOpenedForTest = null
+        }
+        assertFalse(checkNotNull(writeSelector).isOpen, "the write selector is closed")
+        assertFalse(checkNotNull(selector).isOpen, "the read selector is closed")
+        assertFalse(checkNotNull(channel).isOpen, "the channel is closed")
     }
 
     /**
