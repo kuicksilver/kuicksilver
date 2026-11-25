@@ -310,6 +310,7 @@ threats and limits: threat model 3.29.
 | `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
 | `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per target and 100 over the proxy, from the address the target sent to (`stats.packetTooBigNoSource` when a wildcard socket cannot tell it, `stats.packetTooBigFailed` when the raw socket does not send it); without the privilege the payload is only dropped (`stats.packetTooBig`) |
 | `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
+| `socketOpenTimeout` | `Duration` | 5 s | positive | 0.3.0 | a `socketFactory` call that takes longer is given up on (cancelled, or a late socket closed): that family failed, the other is tried, else 502 with `proxy_internal_error` and `details="socket open timed out"`; `Duration.INFINITE` turns the bound off |
 
 ## Http2Settings
 

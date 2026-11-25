@@ -320,6 +320,16 @@ public fun interface UdpProxyResolver {
  *   host"`; the other family is still served. The proxy remembers a family as without DF only for a permanent cause: a
  *   custom factory throws [io.kuicksilver.quic.QuicException.DontFragmentUnavailable] with `permanent = false` for a
  *   failure that may pass on a later attempt (out of descriptors, a bind refused under load), so later requests try again.
+ * @property socketOpenTimeout how long [socketFactory][UdpProxyConfig.socketFactory] may take to open one socket; then
+ *   that family counts as failed for the request, as a factory that throws does: the other family's candidate is tried,
+ *   and with none opened the answer is 502 with `proxy-status: <proxyName>; error=proxy_internal_error; details="socket
+ *   open timed out"`, not a request left waiting for the client to give up. `Duration.INFINITE` turns the bound off. A
+ *   factory call runs on a `Dispatchers.IO.limitedParallelism(16)` view of each proxy's own, so a factory that blocks
+ *   holds none of the request's threads; such a view is not counted against `Dispatchers.IO`'s 64 threads, so each proxy
+ *   may add up to 16 threads. A call that suspends is cancelled at the deadline (and when the [UdpProxy.serve] call is
+ *   cancelled), one that blocks its thread is given up on, not interrupted, and a socket it returns after either is
+ *   closed. A `CancellationException` the factory throws itself (its own `withTimeout`) fails the family as any other
+ *   exception does.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
@@ -342,11 +352,13 @@ public class UdpProxyConfig(
     public val proxyName: String = "proxy",
     public val packetTooBig: Boolean = true,
     public val socketFactory: suspend (InetSocketAddress) -> DatagramIo = { DatagramIo.open(it) },
+    public val socketOpenTimeout: Duration = 5.seconds,
 ) {
     internal val template: UdpUriTemplate = UdpUriTemplate.parsePath(pathTemplate)
 
     init {
         require(resolveTimeout.isPositive()) { "resolveTimeout must be positive" }
+        require(socketOpenTimeout.isPositive()) { "socketOpenTimeout must be positive" }
         require(idleTimeout >= 2.minutes) { "idleTimeout must be at least two minutes (RFC 9298 section 3.1)" }
         require(linkMtu in 1280..65_535) { "linkMtu must be 1280..65535" }
         require(maxTunnels >= 1) { "maxTunnels must be at least 1" }
@@ -399,6 +411,10 @@ public class UdpProxyConfig(
  *   to one address answers from that address.
  * @property packetTooBigFailed ICMP Packet Too Big messages the raw socket did not send (the family's socket did not open,
  *   the kernel refused the message, or the sender ruled out its addresses); their rate-limit tokens stay spent.
+ * @property socketFactoryUncaught throwables that escaped a [socketFactory][UdpProxyConfig.socketFactory] call outside the
+ *   request it served. It should stay 0: the proxy catches what the factory throws and what closing a socket returned
+ *   too late throws. The counter shows the case if it ever happens, which would otherwise reach the platform's uncaught
+ *   exception handler (the end of the process on Android and Kotlin/Native).
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyStats internal constructor(
@@ -421,6 +437,7 @@ public class UdpProxyStats internal constructor(
     public val packetTooBigSent: Long,
     public val packetTooBigNoSource: Long,
     public val packetTooBigFailed: Long,
+    public val socketFactoryUncaught: Long,
 ) {
     /** The counters, for logs. */
     override fun toString(): String =
@@ -431,7 +448,7 @@ public class UdpProxyStats internal constructor(
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
             "ignoredUnreachable=$ignoredUnreachable, " +
             "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent, packetTooBigNoSource=$packetTooBigNoSource, " +
-            "packetTooBigFailed=$packetTooBigFailed)"
+            "packetTooBigFailed=$packetTooBigFailed, socketFactoryUncaught=$socketFactoryUncaught)"
 }
 
 /** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */

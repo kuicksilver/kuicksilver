@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Library code must not depend on the host's name service where it only needs an address. A reverse lookup of a peer
 or of the local host costs a DNS query per call, blocks, and answers differently on every network: the JVM compatibility
-job failed on the cloud runners, whose resolver answers reverse queries slowly (2026-11). In the main sources of the
-kuicksilver-* modules (src/<set>Main/ Kotlin, kuicksilver-native/src/c/ C outside test/), comments and strings left out,
-this check reports every use of:
+job failed on the cloud runners, whose resolver answers reverse queries slowly (2026-11). Nor must the tests: a test
+socket factory reading the wildcard bind's `hostname` blocked in a reverse lookup of 0.0.0.0 for minutes in the local
+matrix's JDK 25 step (2026-11), the request it served hanging until the test's own timeout. In the main and test sources
+of the kuicksilver-* modules (src/<set>Main/ and src/<set>Test/ Kotlin and Java, kuicksilver-native/src/c/ C outside
+test/), comments and strings left out, this check reports every use of:
   hostname                       Ktor's InetSocketAddress.hostname, also through an implicit receiver (on the JVM it is
                                  java.net's getHostName, a reverse lookup); a declaration or a named argument is no use
   hostName, getHostName(         java.net's InetAddress / InetSocketAddress host name (a reverse lookup)
@@ -40,7 +42,7 @@ APIS = [
     ("GetNameInfoW", re.compile(r"\bGetNameInfoW?\b")),
     ("NSHost", re.compile(r"\bNSHost\b")),
 ]
-LIB_KT = re.compile(r"^kuicksilver-[\w-]+/src/[A-Za-z0-9]*Main/.*\.(?:kt|java)$")
+LIB_KT = re.compile(r"^kuicksilver-[\w-]+/src/[A-Za-z0-9]*(?:Main|Test)/.*\.(?:kt|java)$")
 LIB_C = re.compile(r"^kuicksilver-native/src/c/(?!test/).*\.[ch]$")
 
 
@@ -76,7 +78,7 @@ def main(argv):
                                 f"{ALLOW}:{line} allows {n}: check the new one; if it does no lookup either, raise the count")
             else:
                 for ln in lines:
-                    findings.append(f"{f}:{ln} | {api} | a name-service call in library code: use the address (its bytes, "
+                    findings.append(f"{f}:{ln} | {api} | a name-service call in library or test code: use the address (its bytes, "
                                     f"or the literal it was built from); if this use does no lookup, name it in {ALLOW} "
                                     "with the count and the reason")
     for (f, api), (n, line) in sorted(allow.items(), key=lambda x: x[1][1]):

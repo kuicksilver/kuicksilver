@@ -2,25 +2,25 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/check/env-apis.py on a scratch repository: library code without name-service calls passes
-# (a `hostname` parameter, a named argument, a comment, a string, test code and samples do not count); Ktor's .hostname
+# (a `hostname` parameter, a named argument, a comment, a string and samples do not count); Ktor's .hostname
 # (also through an implicit receiver, the H1Request case), java.net's hostName and canonicalHostName,
-# InetAddress.getLocalHost, the C gethostname / getnameinfo, a call inside a string template, a reference ::getHostName
-# and a Java source each fail; an allowlist entry with its count and reason lets that many uses of one file pass, one more
-# fails, and an entry without a count or a reason, with an unknown api or with more than the file has fails.
+# InetAddress.getLocalHost, the C gethostname / getnameinfo, a call inside a string template, a reference ::getHostName,
+# a Java source and a use in a test source set (commonTest, jvmTest) each fail; an allowlist entry with its count and
+# reason lets that many uses of one file pass, one more fails, and an entry without a count or a reason, with an unknown
+# api or with more than the file has fails.
 # Usage: env-apis-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0
 m="kuicksilver-x/src/commonMain/kotlin/x"
-mkdir -p "$r/tools/check" "$r/$m" "$r/kuicksilver-x/src/jvmMain/java/x" "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/samples/s/src/commonMain/kotlin" "$r/kuicksilver-native/src/c"
+mkdir -p "$r/tools/check" "$r/$m" "$r/kuicksilver-x/src/jvmMain/java/x" "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/kuicksilver-x/src/jvmTest/kotlin/x" "$r/samples/s/src/commonMain/kotlin" "$r/kuicksilver-native/src/c"
 git -C "$r" init -q
 cat > "$r/$m/Ok.kt" <<'EOF'
 // a.hostname in a comment
 fun connect(hostname: String, port: Int) = Target(hostname = "x", port = port).also { println("$port .hostName") }
 class Target(val hostname: String, val port: Int)
 EOF
-printf 'fun t(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname\n' > "$r/kuicksilver-x/src/commonTest/kotlin/x/T.kt"
 printf 'fun s(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname\n' > "$r/samples/s/src/commonMain/kotlin/S.kt"
 git -C "$r" add -A
 expect() { # <0|1> <what> <pattern>
@@ -33,7 +33,7 @@ case_() { # <0|1> <what> <pattern> <path> <content>
   expect "$1" "$2" "$3"
   git -C "$r" rm -q --cached "$4"; rm "$r/$4"
 }
-expect 0 "parameters, named arguments, comments, strings, tests and samples pass" "0 use(s), 0 allowed, 0 finding(s)"
+expect 0 "parameters, named arguments, comments, strings and samples pass" "0 use(s), 0 allowed, 0 finding(s)"
 case_ 1 "negative: Ktor's .hostname" "$m/A.kt:1 | hostname |" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname'
 case_ 1 "negative: hostname through an implicit receiver" "$m/A.kt:2 | hostname |" "$m/A.kt" \
 'class R(val a: io.ktor.network.sockets.InetSocketAddress) {
@@ -47,6 +47,9 @@ case_ 1 "negative: C getnameinfo" "| getnameinfo |" "kuicksilver-native/src/c/a.
 case_ 1 "negative: a call inside a string template" "$m/A.kt:1 | hostname |" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = error("peer ${a.hostname} is gone")'
 case_ 1 "negative: a reference ::getHostName" "| getHostName( |" "$m/A.kt" 'val f = java.net.InetAddress::getHostName'
 case_ 1 "negative: a Java source" "| getHostName( |" "kuicksilver-x/src/jvmMain/java/x/J.java" 'class J { String h(java.net.InetAddress a) { return a.getHostName(); } }'
+case_ 1 "negative: a test source set's .hostname (the wildcard bind's reverse lookup)" "kuicksilver-x/src/commonTest/kotlin/x/T.kt:1 | hostname | a name-service call in library or test code" \
+  "kuicksilver-x/src/commonTest/kotlin/x/T.kt" 'val f: suspend (io.ktor.network.sockets.InetSocketAddress) -> Boolean = { a -> ":" in a.hostname }'
+case_ 1 "negative: a jvmTest getHostName" "| getHostName( |" "kuicksilver-x/src/jvmTest/kotlin/x/J.kt" 'fun f(a: java.net.InetSocketAddress) = a.getHostName()'
 printf '%s | hostname | 1 | the address is always built from the literal text, so no lookup runs\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
 case_ 0 "an allowlisted use passes" "1 use(s), 1 allowed, 0 finding(s)" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname'
 case_ 1 "negative: a second use in an allowed file" "$m/A.kt:2 | hostname | 2 uses in the file (lines 1, 2), tools/check/env-apis.allow:1 allows 1" "$m/A.kt" \

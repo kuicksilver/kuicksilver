@@ -1662,6 +1662,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - CONNECT-UDP proxy: a target socket that failed to open for another reason than Don't Fragment (out of descriptors, a
   sandbox) answered 502 `proxy_internal_error` at once; the other address family's candidates are now tried first, and
   502 comes only when none opened (also when the other family lacked DF).
+- CONNECT-UDP proxy: a `socketFactory` call that did not return (one blocked in a lookup, a suspension that never
+  ends) left the request unanswered until the client gave up. The call is now bounded by `UdpProxyConfig.socketOpenTimeout`
+  (5 s by default, `Duration.INFINITE` turns it off): it runs on a `Dispatchers.IO.limitedParallelism(16)` view of each
+  proxy's own (up to 16 threads per proxy, beside `Dispatchers.IO`'s 64), a suspending one is cancelled at the deadline or
+  when the `serve` call is cancelled, a blocking one given up on, and a socket it returns late is closed; that family counts
+  as failed, so the other family is tried and the answer is 502 `proxy_internal_error` with `details="socket open timed
+  out"` when none opened. A `CancellationException` the factory throws itself now fails its family too (502), where it
+  cancelled the request without an answer. A throwable that would still escape a factory call (none should: a late
+  socket's throwing `close` is caught too) is counted in the new `UdpProxyStats.socketFactoryUncaught` rather than reaching
+  the platform's uncaught-exception handler, which ends the process on Android and Kotlin/Native. Found through a
+  test socket factory that read the wildcard bind's `hostname` (on the JVM `getHostName()`, a reverse lookup of `0.0.0.0`)
+  and hung for minutes in the local matrix's JDK 25 step; `tools/check/env-apis.py` now covers test sources too.
 - Android and Linux on AArch64: `libksl` died with SIGILL while it loaded (and the app's process with it) on a kernel
   that reports SVE2 without SVE, as an Android emulator on Apple M4 does (SME, no SVE; kernels without Linux's fix
   "arm64: Filter out SVE hwcaps when FEAT_SVE isn't implemented"): OpenSSL's CPU detection, run as the library loads,
