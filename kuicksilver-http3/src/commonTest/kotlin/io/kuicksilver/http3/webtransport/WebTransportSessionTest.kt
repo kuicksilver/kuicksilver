@@ -4,6 +4,7 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -642,6 +644,181 @@ class WebTransportSessionTest {
                 assertEquals(Http3ErrorCode.REQUEST_CANCELLED, resetCode(st))
                 // the slot is free again
                 assertEquals(0, withContext(client.session.dispatcher) { client.session.wtClientSessions })
+            }
+        }
+
+    /**
+     * A caller cancelled as the CONNECT's answer arrives (the deadline's wait ends with the session in hand, while its timer
+     * winds down) resets the CONNECT stream instead of leaving the session's stream open with no one to end it.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aCallerCancelledAsTheConnectIsAnsweredResetsTheStream() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val armed = kotlin.concurrent.atomics.AtomicInt(0)
+                val timerEnding = CompletableDeferred<Unit>()
+                val gate = CompletableDeferred<Unit>()
+                client.session.wtTimer = {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        // the CONNECT's timer, cancelled once the answer won: its end holds the deadline's scope open
+                        if (armed.load() == 1) {
+                            withContext(kotlinx.coroutines.NonCancellable) {
+                                timerEnding.complete(Unit)
+                                gate.await()
+                            }
+                        }
+                    }
+                }
+                val call = async { client.webTransport(wtReq()) }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st)
+                armed.store(1)
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                withTimeout(5.seconds) { timerEnding.await() }
+                call.cancel()
+                gate.complete(Unit)
+                call.join()
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resetCode(st) })
+                assertEquals(0, withContext(client.session.dispatcher) { client.session.wtClientSessions })
+            }
+        }
+
+    /**
+     * The capsules (type, value) in [bytes], what a CONNECT stream carried after its HEADERS: the payloads of its DATA frames
+     * (RFC 9297 section 3.2), other frames skipped.
+     */
+    private fun capsulesIn(bytes: ByteArray): List<Pair<Long, ByteArray>> {
+        val data = ArrayList<Byte>()
+        var off = 0
+        while (off < bytes.size) {
+            val type = VarInt.read(bytes, off, bytes.size)
+            off += VarInt.encodedLength(bytes[off])
+            val len = VarInt.read(bytes, off, bytes.size).toInt()
+            off += VarInt.encodedLength(bytes[off])
+            if (type == FrameType.DATA) data.addAll(bytes.copyOfRange(off, off + len).toList())
+            off += len
+        }
+        val payload = data.toByteArray()
+        val out = ArrayList<Pair<Long, ByteArray>>()
+        off = 0
+        while (off < payload.size) {
+            val type = VarInt.read(payload, off, payload.size)
+            off += VarInt.encodedLength(payload[off])
+            val len = VarInt.read(payload, off, payload.size).toInt()
+            off += VarInt.encodedLength(payload[off])
+            out += type to payload.copyOfRange(off, off + len)
+            off += len
+        }
+        return out
+    }
+
+    /** The client's WebTransport session count, read on the session's dispatcher. */
+    private suspend fun sessions(client: Http3Connection): Int = withContext(client.session.dispatcher) { client.session.wtClientSessions }
+
+    /**
+     * A caller cancelled as the session is counted (the count's withContext returns into a cancelled caller) takes it off
+     * the count again: a count left at one for good refuses the connection's next session without WebTransport flow control
+     * and lowers the limit with it (section 5.1).
+     */
+    @Test fun negative_aCallerCancelledAsItsSessionIsCountedLeavesTheCountAtZero() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                lateinit var call: kotlinx.coroutines.Job
+                client.session.wtClientStepForTest = { if (it == "counted") call.cancel() }
+                try {
+                    call = launch { client.webTransport(wtReq()) }
+                    call.join()
+                } finally {
+                    client.session.wtClientStepForTest = null
+                }
+                assertEquals(0, sessions(client), "the cancelled setup's count is given back")
+            }
+        }
+
+    /**
+     * A caller cancelled as its session is handed to the watcher of its end (the setup's last withContext returns into a
+     * cancelled caller): the started session nobody got is closed (WT_CLOSE_SESSION, FIN), and it is taken off the count
+     * once, by that watcher, not also by the setup (a count below zero lifts the section 5.1 limit by one).
+     */
+    @Test fun negative_aCallerCancelledAsItsSessionIsHandedOverCountsItOffOnce() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                lateinit var call: kotlinx.coroutines.Job
+                val ended = CompletableDeferred<Unit>()
+                client.session.wtClientStepForTest = {
+                    when (it) {
+                        "owned" -> call.cancel()
+                        "ended" -> ended.complete(Unit)
+                    }
+                }
+                try {
+                    call = launch { client.webTransport(wtReq()) }
+                    val st = withTimeout(5.seconds) { s.acceptBidi() }
+                    readHeaders(st)
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                    st.output.flush()
+                    call.join()
+                    // the started session nobody got is closed: WT_CLOSE_SESSION (code 0, no reason) and the client's FIN, then
+                    // the server's FIN
+                    val rest = withTimeout(5.seconds) { st.input.readBuffer().readByteArray() }
+                    val capsules = capsulesIn(rest)
+                    assertEquals(listOf(WtCloseCapsule.TYPE), capsules.map { it.first }, "one WT_CLOSE_SESSION before the FIN")
+                    assertEquals(0L to "", WtCloseCapsule.decode(capsules.single().second))
+                    st.output.flushAndClose()
+                    withTimeout(5.seconds) { ended.await() }
+                } finally {
+                    client.session.wtClientStepForTest = null
+                }
+                assertEquals(0, sessions(client), "the session is counted off exactly once")
+            }
+        }
+
+    /**
+     * A setup that fails after the CONNECT was answered, for a reason of its own (the session fails to start), resets the
+     * CONNECT stream with H3_INTERNAL_ERROR instead of leaving the server's session open, and takes it off the count.
+     */
+    @Test fun negative_aSessionThatFailsToStartResetsItsConnectStream() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                client.session.wtClientStepForTest = { if (it == "registered") throw IllegalStateException("the session did not start") }
+                val st =
+                    try {
+                        val call = async { runCatching { client.webTransport(wtReq()) } }
+                        val st = withTimeout(5.seconds) { s.acceptBidi() }
+                        readHeaders(st)
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                        st.output.flush()
+                        assertIs<IllegalStateException>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
+                        st
+                    } finally {
+                        client.session.wtClientStepForTest = null
+                    }
+                assertEquals(Http3ErrorCode.INTERNAL_ERROR, withTimeout(5.seconds) { resetCode(st) })
+                assertEquals(0, sessions(client))
             }
         }
 

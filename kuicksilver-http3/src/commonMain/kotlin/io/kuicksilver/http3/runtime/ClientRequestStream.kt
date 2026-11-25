@@ -321,23 +321,45 @@ private suspend fun H3Session.requestOnDispatcher(
  * shutdown into H3_EXCESSIVE_LOAD) nor sends any of them (RFC 9114 section 5.2). A stream the transport handed over
  * just as the GOAWAY won is ended in both directions.
  */
-private suspend fun H3Session.openUnlessGoAway(priority: io.kuicksilver.quic.StreamPriority): QuicStream? =
-    kotlinx.coroutines.coroutineScope {
-        val open = async { quic.openBidi(priority) }
-        val won =
-            kotlinx.coroutines.selects.select<QuicStream?> {
-                open.onAwait { it }
-                goAwaySeen.onAwait { null }
+@OptIn(ExperimentalCoroutinesApi::class)
+private suspend fun H3Session.openUnlessGoAway(priority: io.kuicksilver.quic.StreamPriority): QuicStream? {
+    // the open, kept outside the scope: a cancellation that reaches the scope before it ends (as it returns the stream, or
+    // during the select) makes coroutineScope throw instead of handing the stream over; coroutineScope throws only once
+    // every child has ended, so the open is settled when the catch looks at it
+    var opening: kotlinx.coroutines.Deferred<QuicStream>? = null
+    var settled = false // the stream a GOAWAY beat was ended below already
+    try {
+        return kotlinx.coroutines.coroutineScope {
+            val open = async { quic.openBidi(priority) }.also { opening = it }
+            val won =
+                kotlinx.coroutines.selects.select<QuicStream?> {
+                    open.onAwait { it }
+                    goAwaySeen.onAwait { null }
+                }
+            if (won != null) {
+                requestStreamOpenedForTest?.invoke(won)
+                return@coroutineScope won
             }
-        if (won != null) return@coroutineScope won
-        open.cancel()
-        val late = runCatching { open.await() }.getOrNull()
-        late?.let {
-            it.reset(Http3ErrorCode.REQUEST_CANCELLED)
-            it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+            open.cancel()
+            val late = runCatching { open.await() }.getOrNull()
+            settled = true
+            late?.let {
+                it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+            }
+            null
         }
-        null
+    } catch (e: Throwable) {
+        val o = opening
+        if (!settled && o != null && o.isCompleted) {
+            runCatching { o.getCompleted() }.getOrNull()?.let {
+                it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+            }
+        }
+        throw e
     }
+}
 
 /** A request that has not opened its stream yet when a GOAWAY was received or sent: never sent (RFC 9114 section 5.2). */
 private fun H3Session.unsentAfterGoAway(): Http3Exception.RequestNotProcessed? =

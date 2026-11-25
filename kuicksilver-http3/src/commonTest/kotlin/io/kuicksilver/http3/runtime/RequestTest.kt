@@ -88,6 +88,31 @@ class RequestTest {
             }
         }
 
+    /**
+     * A caller cancelled as the transport hands its request stream over (the stream is opened, nothing of the request sent
+     * yet) ends that stream in both directions instead of leaving it open, holding a stream of the peer's limit and its
+     * flow-control credit until the connection ends.
+     */
+    @Test fun aCallerCancelledAsItsStreamOpensEndsTheStream() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val opened = CompletableDeferred<io.kuicksilver.quic.QuicStream>()
+                lateinit var call: kotlinx.coroutines.Job
+                p.client.session.requestStreamOpenedForTest = { s ->
+                    opened.complete(s)
+                    call.cancel()
+                }
+                try {
+                    call = launch { p.client.request(get()) }
+                    call.join()
+                } finally {
+                    p.client.session.requestStreamOpenedForTest = null
+                }
+                val s = withTimeout(10.seconds) { opened.await() }
+                assertTrue(s.output.isClosedForWrite, "the stream the cancelled caller never got is reset")
+            }
+        }
+
     @Test fun getRoundTrip() =
         h3Test {
             H3Pair.open().useScoped { p ->

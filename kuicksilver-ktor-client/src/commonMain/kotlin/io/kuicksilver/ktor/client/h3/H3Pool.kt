@@ -1477,8 +1477,7 @@ internal class H3Pool(
                 val (ep, remote) = endpointFor(destination, proxyHop)
                 val step = QuicAttemptProgress(destination, viaProxy = true).also { a -> raced.update { it + a } }
                 proxyStep(step, data, started) { a ->
-                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                    withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+                    connectNoting(a) {
                         try {
                             ep.connect(remote, proxyTls, quic, config.http3.settings)
                         } catch (e: CancellationException) {
@@ -1537,8 +1536,7 @@ internal class H3Pool(
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
             val c =
                 proxyStep(QuicAttemptProgress(at, viaProxy = true), data, started) { a ->
-                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                    withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+                    connectNoting(a) {
                         withEchRetry(route) { offer ->
                             ep.connect(
                                 tunnel.remoteAddress,
@@ -1704,18 +1702,42 @@ internal class H3Pool(
         route: EchRoute,
     ): Http3Connection {
         val (ep, remote) = endpointFor(checkNotNull(a.destination) { "a direct attempt has its address" })
-        // the connection this very call creates tells the attempt its handle (by identity, not by address: two setups to
-        // one address from different origins never mix up)
-        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-        // the latest wins: should one connect call ever create a second connection (a retry inside it), the failure is the
-        // last one's
-        return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+        return connectNoting(a) {
             // ECH (RFC 9849): the endpoint's configuration (RFC 9848) or the origin's; a rejection is retried once on a new
             // connection to the same address with the retry configurations, or without ECH when the server sent none
             // (section 6.1.6)
             withEchRetry(route) { offer -> connectAttempt(t, ep, remote, data, wt, route, offer) }
         }
     }
+
+    /**
+     * [connect] with the connection it creates telling [a] its handle (by identity, not by address: two setups to one
+     * address from different origins never mix up; the latest wins: should one connect call ever create a second
+     * connection, a retry inside it, the failure is the last one's). The connection [connect] returned is kept outside
+     * the context's scope: a cancellation that reaches the scope before it ends makes withContext throw instead of
+     * returning it, and it is closed then, as nobody else has it (the race closes only the connections it was handed).
+     */
+    private suspend fun connectNoting(
+        a: QuicAttemptProgress,
+        connect: suspend () -> Http3Connection,
+    ): Http3Connection {
+        var made: Http3Connection? = null
+        try {
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            return withContext(io.kuicksilver.quic.ConnectionCreated { a.info.store(it) }) {
+                connect().also {
+                    made = it
+                    attemptConnectedForTest?.invoke(it)
+                }
+            }
+        } catch (e: Throwable) {
+            made?.close()
+            throw e
+        }
+    }
+
+    /** Test hook: runs once a QUIC attempt's connect returned its connection, still inside [connectNoting]'s context. */
+    internal var attemptConnectedForTest: (suspend (Http3Connection) -> Unit)? = null
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun connectAttempt(

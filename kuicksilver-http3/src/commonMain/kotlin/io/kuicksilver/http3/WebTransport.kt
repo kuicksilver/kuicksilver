@@ -259,6 +259,12 @@ public suspend fun awaitWebTransportExchangeEnd(session: WebTransportSession) {
  * flow control (section 5.1), up to `Http3Settings.webTransportMaxSessions`; one more, or a second without flow control,
  * throws [WebTransportException.ConnectionFull] before anything is sent, and a server that refuses one more (its limit,
  * section 5.2) answers with H3_REQUEST_REJECTED, [Http3Exception.RequestNotProcessed].
+ *
+ * A caller cancelled before it has the session ends the CONNECT one of two ways (both end the session as section 6
+ * allows): before the session is set up, the server sees RESET_STREAM and STOP_SENDING with H3_REQUEST_CANCELLED; once
+ * it has started and its end is watched (cancelled as this call returns), it is closed as [WebTransportSession.close]
+ * with code 0 would: WT_CLOSE_SESSION with code 0 and no reason, then FIN. A setup that fails there for a reason of its
+ * own resets the CONNECT with H3_INTERNAL_ERROR.
  */
 @ExperimentalKuicksilverApi
 public suspend fun Http3Connection.webTransport(

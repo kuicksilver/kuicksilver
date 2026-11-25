@@ -25,17 +25,26 @@ public suspend fun DatagramIo.Companion.open(
     local: InetSocketAddress,
     network: Network,
     prefer: IoPreference = IoPreference.Accelerated,
-): DatagramIo =
-    withContext(Dispatchers.IO) {
-        // the accelerated socket is bound already; its fd is borrowed through a dup that is closed again (the socket keeps the mark)
-        val accelerated =
-            if (prefer == IoPreference.Accelerated) {
-                KslDatagramIo.open(local) { fd -> ParcelFileDescriptor.fromFd(fd).use { network.bindSocket(it.fileDescriptor) } }
-            } else {
-                null
-            }
-        accelerated ?: NioDatagramIo.open(local) { channel -> network.bindSocket(channel.socket()) }
+): DatagramIo {
+    // the socket, kept outside withContext: a caller cancelled as it returns (the result dispatched back is then dropped)
+    // would leave the socket open with nobody to close it
+    var made: DatagramIo? = null
+    try {
+        return withContext(Dispatchers.IO) {
+            // the accelerated socket is bound already; its fd is borrowed through a dup that is closed again (the socket keeps the mark)
+            val accelerated =
+                if (prefer == IoPreference.Accelerated) {
+                    KslDatagramIo.open(local) { fd -> ParcelFileDescriptor.fromFd(fd).use { network.bindSocket(it.fileDescriptor) } }
+                } else {
+                    null
+                }
+            (accelerated ?: NioDatagramIo.open(local) { channel -> network.bindSocket(channel.socket()) }).also { made = it }
+        }
+    } catch (e: Throwable) {
+        made?.close()
+        throw e
     }
+}
 
 /**
  * The device's default network (`ConnectivityManager.registerDefaultNetworkCallback`, API 24) as a [NetworkMigrator]

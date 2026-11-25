@@ -262,6 +262,47 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * A request cancelled during the health check of the HTTP/2 connection it reserved a stream on (the race's TCP side when
+     * HTTP/3 wins, or its connect timeout) gives the stream back: a reservation kept for good holds a concurrent-stream slot
+     * and keeps the connection from ever being idle, so the pool never evicts it (it retires only connections without
+     * reserved streams).
+     */
+    @Test fun negative_aRequestCancelledDuringTheHealthCheckGivesItsStreamBack() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, _ ->
+                testClient().use { c ->
+                    val e = engine(c)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(0, e.h1.h2.streamCount)
+                    e.h1.h2HealthAfterIdleMillis = 0 // the next reuse is checked
+                    // the engine's coroutine of the call, in its health check: cancelling the caller reaches it through
+                    // Ktor's call job, so the test waits for that coroutine's end, not only the caller's
+                    val checking = CompletableDeferred<kotlinx.coroutines.Job>()
+                    e.h1.healthCheckForTest = {
+                        checking.complete(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!)
+                        kotlinx.coroutines.awaitCancellation() // the health check outlasts its caller
+                    }
+                    try {
+                        coroutineScope {
+                            val caller = launch { c.get("https://127.0.0.1:$port/") }
+                            val call = checking.await()
+                            assertEquals(1, e.h1.h2.streamCount, "the request reserved its stream before the check")
+                            caller.cancel()
+                            call.join()
+                            caller.join()
+                        }
+                    } finally {
+                        e.h1.healthCheckForTest = null
+                    }
+                    assertEquals(0, e.h1.h2.streamCount, "the cancelled request's stream is given back")
+                    assertEquals(1, e.h1.h2.connectionCount, "the connection stays, idle and so evictable")
+                    e.h1.h2HealthAfterIdleMillis = Long.MAX_VALUE
+                    assertEquals("h2", c.get("https://127.0.0.1:$port/").bodyAsText())
+                }
+            }
+        }
+
     /** The kill switch for HTTP/3 does not turn HTTP/2 off. */
     @Test fun http3SwitchedOffStillUsesH2() =
         clientTest {

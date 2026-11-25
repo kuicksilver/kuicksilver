@@ -373,6 +373,9 @@ internal class H1Pool(
      */
     internal var h2HealthAfterIdleMillis: Long = 10_000
 
+    /** Test hook: runs as a reserved stream's connection starts its health check ([answersHealthCheck]), before the PING. */
+    internal var healthCheckForTest: (suspend () -> Unit)? = null
+
     /**
      * Tests: the connection of a WebSocket that ended in order has sent everything it sends before the server closes its
      * side ("waiting"), then saw that close ("server closed") or gave up at T2 ("T2").
@@ -650,7 +653,7 @@ internal class H1Pool(
                         continue
                     }
                     if (!c.client.serverAllowsExtendedConnect || !c.client.tryReserve()) continue
-                    if (c.client.receivedIdleMillis >= h2HealthAfterIdleMillis && !c.client.checkHealth(healthTimeoutMillis(data))) {
+                    if (!answersHealthCheck(c, data)) {
                         c.client.unreserve()
                         if (c.client.reservedStreams > 0) {
                             c.client.shutdown()
@@ -798,9 +801,7 @@ internal class H1Pool(
                                     // a connection quiet for a while may be dead (a NAT that forgot it, a peer gone without a
                                     // FIN): one PING, bounded, before the request goes on it; a failed one retires it, and the
                                     // request, not sent there, looks again
-                                    if (found.client.receivedIdleMillis >= h2HealthAfterIdleMillis &&
-                                        !found.client.checkHealth(healthTimeoutMillis(data))
-                                    ) {
+                                    if (!answersHealthCheck(found, data)) {
                                         found.client.unreserve()
                                         // calls still running on it (a long poll, an upload) are not cut: GOAWAY, no new streams,
                                         // closed when they are done; a connection without any is closed at once
@@ -821,7 +822,13 @@ internal class H1Pool(
                                 }
                             }
                             waitingFor = io.kuicksilver.ktor.client.ConnectStage.PoolWait
-                            val got = acquireOrChange(key, signal, seen)
+                            // a connection the pool hands out is the request's at once, so obtain's catch below settles it
+                            // like any other: kept when the connect timeout fired as it came, else given back
+                            val got =
+                                acquireOrChange(key, signal, seen) {
+                                    conn = it
+                                    reused = true
+                                }
                             waitingFor = null
                             if (got === CHANGED) continue
                             if (got is H1Connection) {
@@ -951,48 +958,70 @@ internal class H1Pool(
         return Obtained(conn, reused, held, stream)
     }
 
+    /**
+     * Whether [c], on which the caller reserved a stream, may take the request: true at once unless it was quiet for
+     * [h2HealthAfterIdleMillis], else whether it answers a health PING, bounded ([healthTimeoutMillis]). The reservation
+     * is the caller's on a result; when the check throws (the caller cancelled: the race lost to HTTP/3, the connect
+     * timeout) it is given back here, as nobody else holds it yet: a stream left reserved would hold a concurrent-stream
+     * slot and keep the connection from ever being idle, and so from eviction, until the engine closes.
+     */
+    private suspend fun answersHealthCheck(
+        c: H2Conn,
+        data: HttpRequestData,
+    ): Boolean {
+        if (c.client.receivedIdleMillis < h2HealthAfterIdleMillis) return true
+        try {
+            healthCheckForTest?.invoke()
+            return c.client.checkHealth(healthTimeoutMillis(data))
+        } catch (e: Throwable) {
+            c.client.unreserve()
+            throw e
+        }
+    }
+
     /** The bound of a health PING: half the connect timeout (the rest is for a new connection), at most 5 s. */
     private fun healthTimeoutMillis(data: HttpRequestData): Long = (data.connectTimeoutMillis(config) / 2).coerceIn(1, 5_000)
 
     /**
      * [ConnectionPool.acquire] for [key] (an idle [H1Connection], or [PERMIT] to open one); with [signal], it gives up
      * with [CHANGED] as soon as the route's HTTP/2 state changes after [seen]. What the pool granted meanwhile is never
-     * lost: a grant that arrives with the change or a cancellation is handed back.
+     * lost: an idle connection goes to [taken] the moment the pool hands it out, so it is the caller's whatever ends the
+     * wait ([obtain] keeps one that came as its connect timeout fired, and gives back one that came as it was cancelled);
+     * a permit that came with a failure or a cancellation is given back here.
      */
     private suspend fun acquireOrChange(
         key: String,
         signal: StateFlow<Long>?,
         seen: Long?,
+        taken: (H1Connection) -> Unit,
     ): Any {
-        if (signal == null) return pool.acquire(key) ?: PERMIT
-        return coroutineScope {
-            var got: Any? = null
-            val a = launch(start = CoroutineStart.UNDISPATCHED) { got = pool.acquire(key) ?: PERMIT }
-            if (got != null) return@coroutineScope got
-            val watcher =
-                launch {
-                    signal.first { it > seen!! }
-                    a.cancel()
+        if (signal == null) return (pool.acquire(key)?.also(taken)) ?: PERMIT
+        // the grant, kept outside the scope: a cancellation that reaches the scope before it ends (as its block returns
+        // the grant, or while the watcher winds down) makes coroutineScope throw instead of returning it, which dropped an
+        // idle connection taken from the pool, open and out of it for good. coroutineScope throws only once every child has
+        // ended, so the grant is final when the catch looks at it
+        var got: Any? = null
+        try {
+            return coroutineScope {
+                val a =
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        got = pool.acquire(key)?.also(taken) ?: PERMIT
+                    }
+                if (got == null) {
+                    val watcher =
+                        launch {
+                            signal.first { it > seen!! }
+                            a.cancel()
+                        }
+                    a.join()
+                    watcher.cancel()
                 }
-            try {
-                a.join()
-            } catch (e: Throwable) {
-                a.cancel()
-                watcher.cancel()
-                withContext(NonCancellable) { a.join() }
-                got?.let { giveBack(key, it) }
-                throw e
+                got ?: CHANGED
             }
-            watcher.cancel()
-            got ?: CHANGED
+        } catch (e: Throwable) {
+            if (got === PERMIT) pool.releasePermit(key) // a connection went to taken: the caller's catch settles it
+            throw e
         }
-    }
-
-    private fun giveBack(
-        key: String,
-        got: Any,
-    ) {
-        if (got is H1Connection) pool.release(got) else pool.releasePermit(key)
     }
 
     /**

@@ -207,6 +207,13 @@ internal class H3Session(
     }
 
     /**
+     * Test hook: runs on the dispatcher at the steps of a client's WebTransport setup that change [wtClientSessions] or its
+     * owner: "counted" (the session counted), "registered" (before the session starts), "owned" (its end watcher launched),
+     * and "ended" (that watcher took it off the count).
+     */
+    internal var wtClientStepForTest: (suspend (String) -> Unit)? = null
+
+    /**
      * Client: WebTransport sessions being opened or open on this connection: one without flow control (section 5.1), up
      * to [Http3Settings.webTransportMaxSessions] with it. Dispatcher only.
      */
@@ -271,6 +278,9 @@ internal class H3Session(
      * request stream reset before its HEADERS are read surfaces no request).
      */
     internal var beforeRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
+
+    /** Test hook: runs on a client's request stream once the transport opened it, before it is handed to the request. */
+    internal var requestStreamOpenedForTest: (suspend (QuicStream) -> Unit)? = null
 
     /** Test hook: runs on a client's request stream once its HEADERS frame was written, before the flush (or FIN) after it. */
     internal var afterRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null

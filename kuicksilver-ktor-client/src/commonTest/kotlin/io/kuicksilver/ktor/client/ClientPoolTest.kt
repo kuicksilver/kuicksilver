@@ -8,7 +8,9 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.timeout
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
+import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.response.respondText
@@ -19,11 +21,14 @@ import io.kuicksilver.http3.beforeTransportClosedForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -394,6 +399,85 @@ class ClientPoolTest {
                         withTimeout(5.seconds) { conn.closed.await() } // the session took note once let go
                     }
                     assertEquals(HELD_ROUNDS, probed, "every round had the transport gone and `closed` not complete")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The race's HTTP/1.1 side takes the route's idle connection as its caller is cancelled (HTTP/3 won the race meanwhile):
+     * the connection goes back to the pool, idle, instead of staying out of it, open, with nobody to close it (the leak
+     * sentinel's tcp.socket and ksl.ssl in matrix steps 54 and 72). The pool's wait for a connection watches the route's
+     * HTTP/2 state (an https route may use HTTP/2), and a cancellation that reaches that wait's scope as it takes the
+     * connection made the scope throw and drop it; here the caller is cancelled as it starts to obtain the connection, so
+     * the scope always ends cancelled with the connection taken.
+     */
+    @Test fun negative_anIdleConnectionTakenAsTheCallerIsCancelledGoesBackToThePool() =
+        clientTest {
+            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H1Only).use { client ->
+                    val h1 = (client.engine as KuicksilverEngine).h1
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, client.get(url).also { assertEquals("ok", it.bodyAsText()) }.version)
+                    assertEquals(1, h1.pool.idleCount, "the first request's connection is idle in the pool")
+                    val data = HttpRequestBuilder().apply { url(url) }.build()
+                    try {
+                        coroutineScope {
+                            var caller: Job? = null
+                            h1.obtainBudgetForTest = { caller!!.cancel() }
+                            caller =
+                                launch(start = CoroutineStart.LAZY) {
+                                    h1.open(data)
+                                    error("the caller is cancelled before it gets the connection")
+                                }
+                            caller.start()
+                            caller.join()
+                        }
+                    } finally {
+                        h1.obtainBudgetForTest = null
+                    }
+                    assertEquals(1, h1.pool.liveCount, "one connection")
+                    assertEquals(1, h1.pool.idleCount, "the connection the cancelled caller took is idle in the pool again")
+                    assertEquals("ok", client.get(url).bodyAsText()) // and serves the next request
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A QUIC attempt whose connect returned as its caller is cancelled (the race lost, the connect timeout) closes the
+     * connection it made: the attempt's context ends cancelled, nobody receives the connection, and it stayed open until
+     * the engine closed.
+     */
+    @Test fun negative_aQuicConnectionMadeAsItsAttemptIsCancelledIsClosed() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val h3 = (client.engine as KuicksilverEngine).h3
+                    val made = CompletableDeferred<io.kuicksilver.http3.Http3Connection>()
+                    h3.attemptConnectedForTest = { c ->
+                        made.complete(c)
+                        kotlinx.coroutines.awaitCancellation() // the attempt is cancelled before its context ends
+                    }
+                    val conn =
+                        try {
+                            coroutineScope {
+                                val call = launch { client.get("https://127.0.0.1:$port/") }
+                                val c = made.await()
+                                call.cancel()
+                                call.join()
+                                c
+                            }
+                        } finally {
+                            h3.attemptConnectedForTest = null
+                        }
+                    withTimeout(10.seconds) { conn.quic.closed.await() }
+                    assertTrue(h3.connectionsForTest().none { it === conn }, "the connection is not in the pool")
+                    assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                 }
             } finally {
                 server.stop(100, 500)
