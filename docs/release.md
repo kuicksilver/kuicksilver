@@ -103,7 +103,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    the OkHttp one breaks (a skip fails the step).
 2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
    `## [<version>] - <date>`, merging the sections of the version's prereleases into it
-   ([Prereleases on GitHub only](#prereleases-on-github-only)); `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
+   ([Prereleases on GitHub only](#prereleases-on-github-only)), and at the end of the file adds the link definition
+   `[<X.Y.Z>]` and compares `[Unreleased]` from `v<X.Y.Z>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the four sample builds,
    `tools/check/consumer-smoke.sh`), normally set when the

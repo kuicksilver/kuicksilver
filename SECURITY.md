@@ -36,8 +36,8 @@ input and the stack trace are not published.
 |---|---|
 | Acknowledgement of your report | within 3 business days |
 | Initial assessment (valid or not, severity, affected versions) | within 14 days |
-| Fix released for Critical and High severity | a patch release within 30 days of the assessment |
-| Fix released for Medium severity, publicly known or to be disclosed within 60 days | a patch release within 60 days of the assessment or of its becoming publicly known, whichever is earlier |
+| Fix released for Critical and High severity | a patch release within 30 days of the assessment, and no later than 60 days after it becomes publicly known |
+| Fix released for Medium severity, publicly known or whose disclosure date is within 60 days of the assessment | a patch release within 60 days of the assessment or of its becoming publicly known, whichever is earlier |
 | Fix released for other vulnerabilities | the next minor release, or a patch release when it cannot wait |
 | Public disclosure | coordinated with you; by default no later than 90 days after the report |
 
@@ -69,9 +69,10 @@ a release with a security fix is coming, without details, and the release's `CHA
 Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
 supported major version will receive security fixes, and a major version will be supported for at least two years
 after the next major version is released. Fixes land on `main` and ship in the next minor release; a security fix that
-cannot wait for it ships in a patch release of the latest line ([version policy](docs/roadmap.md#version-policy)): a
-fix for a vulnerability of Medium or higher severity that is publicly known, or will be disclosed within 60 days, cannot
-wait, and ships as a patch release within 60 days ([What happens next](#what-happens-next)). Patch releases are made
+cannot wait for it ships in a patch release of the latest line ([version policy](docs/roadmap.md#version-policy)). A
+Critical or High vulnerability always cannot wait: its fix ships as a patch release within 30 days of the assessment.
+Nor can a fix for a Medium vulnerability that is publicly known, or whose disclosure date is within 60 days of the
+assessment: it ships as a patch release within 60 days ([What happens next](#what-happens-next)). Patch releases are made
 from the line's maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
 
 ## OpenSSL
