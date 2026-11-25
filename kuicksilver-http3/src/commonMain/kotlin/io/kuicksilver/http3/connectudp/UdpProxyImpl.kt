@@ -337,7 +337,7 @@ internal class UdpProxyImpl(
     /**
      * [UdpProxyConfig.socketFactory]'s socket on [bind], bounded by [UdpProxyConfig.socketOpenTimeout]: the call runs in
      * [opening] and this waits for it at most that long, then throws [SocketOpenTimeoutException] (the family failed).
-     * Ownership is decided once in [slot]: the call stores its outcome there unless the waiter gave up first, and then
+     * Ownership is decided once in `slot`: the call stores its outcome there unless the waiter gave up first, and then
      * closes the socket itself; a waiter that gives up (the deadline, or its own cancellation) cancels a call still running
      * and closes a socket that came as it gave up. A socket is never both handed over and closed, nor left open.
      */
