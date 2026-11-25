@@ -174,7 +174,7 @@ class NioDatagramIoTest {
                         assertEquals(if (jdk19) false else null, a.dontFragmentForTest(), "the JDK's DO mode not added")
                     }
 
-                    os.startsWith("mac") -> {
+                    onDarwin -> {
                         assertEquals(DF_INET6 or DF_V4_DO or DF_V6_DO, bits, "Darwin: IPV6_DONTFRAG through ksl, no modes")
                         // the JDK reads Darwin's IPV6_DONTFRAG back, which ksl set
                         assertEquals(if (jdk19) true else null, a.dontFragmentForTest())
@@ -449,26 +449,55 @@ class NioDatagramIoTest {
             }
         }
 
-    /** An IPv4 bind keeps the AF_INET channel when DF took on it, else the dual-stack one, whose IPv4 sends are refused. */
-    @Test fun anIpv4BindTakesAfInetOnlyWithDf() =
+    /**
+     * An IPv4 bind keeps the AF_INET channel when DF took on it, else the dual-stack one, whose IPv4 sends are refused. The
+     * JDK's option exists from JDK 19 only (`jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT`): below, a stub saying it took
+     * on the dual-stack channel cannot make the AF_INET channel be tried, which the runtime's own gate decides. [dfProbe]'s
+     * means (`ksl` here) are tried on the AF_INET channel on any JDK and on Apple too. Off Apple on JDK 19 and later the
+     * `ksl` cases passed before that, so their end-to-end guard is jdk-compat (17) on Linux and Windows, and for Apple the
+     * macOS runs (the pure gate is [inetChannelOnlyWhereItGetsDf]).
+     */
+    @Test fun anIpv4BindTakesAfInetOnlyWithDf(): Unit =
         runBlocking {
             val v4 = InetSocketAddress("127.0.0.1", 0)
-            NioDatagramIo.dfForTest = { inet -> if (inet) -1 to true else -1 to true } // no ksl, the JDK's option takes
+            val jdk19 = Runtime.version().feature() >= 19
+            assertEquals(jdk19, NioDatagramIo.hasJdkDontFragmentForTest(), "IP_DONTFRAGMENT exists from JDK 19 on")
+            NioDatagramIo.dfForTest = { -1 to true } // no ksl, the JDK's option takes
             try {
                 DatagramIo.open(v4, IoPreference.Portable).use {
-                    if ((System.getProperty("os.name") ?: "").lowercase().startsWith("mac")) {
+                    when {
                         // Apple: the JDK's option covers both halves of the dual-stack channel, which stays
-                        assertEquals(null, (it as NioDatagramIo).noDfFamily)
-                        return@use
+                        onDarwin -> {
+                            assertEquals(null, (it as NioDatagramIo).noDfFamily)
+                        }
+
+                        // below JDK 19 the runtime has no option to put on AF_INET: the dual-stack channel stays
+                        !jdk19 -> {
+                            assertEquals(IpFamily.V4, (it as NioDatagramIo).noDfFamily)
+                        }
+
+                        else -> {
+                            // AF_INET: DF on all it can send; IPv6 is refused as without DF (it cannot reach IPv6 at all)
+                            assertEquals(IpFamily.V6, (it as NioDatagramIo).noDfFamily)
+                            val six = batchOf(ByteArray(10), to = InetSocketAddress("::1", 9))
+                            assertEquals(1, it.send(six))
+                            assertEquals(listOf(InetSocketAddress("::1", 9)), it.takeDfRefusals())
+                        }
                     }
-                    // AF_INET: DF on all it can send; IPv6 is refused as without DF (it cannot reach IPv6 at all)
-                    assertEquals(IpFamily.V6, (it as NioDatagramIo).noDfFamily)
-                    val six = batchOf(ByteArray(10), to = InetSocketAddress("::1", 9))
-                    assertEquals(1, it.send(six))
-                    assertEquals(listOf(InetSocketAddress("::1", 9)), it.takeDfRefusals())
                 }
             } finally {
                 NioDatagramIo.dfForTest = null
+            }
+            // ksl whose dual-stack IPv4 half refused both modes, DF on AF_INET (Apple: IPV6_DONTFRAG refused, IP_DONTFRAG taken)
+            for ((dual, inet) in listOf((DF_INET6 or DF_V6) to DF_V4, DF_INET6 to DF_V4, DF_INET6 to DF_V4_DO)) {
+                NioDatagramIo.dfForTest = { isInet -> (if (isInet) inet else dual) to false }
+                try {
+                    DatagramIo.open(v4, IoPreference.Portable).use {
+                        assertEquals(IpFamily.V6, (it as NioDatagramIo).noDfFamily, "AF_INET kept: dual-stack $dual, AF_INET $inet")
+                    }
+                } finally {
+                    NioDatagramIo.dfForTest = null
+                }
             }
             NioDatagramIo.dfForTest = { inet -> if (inet) 0 to false else (DF_INET6 or DF_V6) to false } // AF_INET took nothing
             try {
@@ -480,29 +509,64 @@ class NioDatagramIoTest {
             } finally {
                 NioDatagramIo.dfForTest = null
             }
+            // both halves refused and AF_INET refused too: no DF on any traffic, the socket does not open
+            NioDatagramIo.dfForTest = { inet -> (if (inet) 0 else DF_INET6) to false }
+            try {
+                assertFailsWith<QuicException.DontFragmentUnavailable> { DatagramIo.open(v4, IoPreference.Portable).close() }
+            } finally {
+                NioDatagramIo.dfForTest = null
+            }
         }
 
+    /** A failure to open the AF_INET channel closes the dual-stack one too, and both are closed when it fails after opening. */
+    @Test fun negative_aFailedInetChannelClosesTheDualStackOne() {
+        val opened = java.util.Collections.synchronizedList(mutableListOf<java.nio.channels.DatagramChannel>())
+        NioDatagramIo.channelOpenedForTest = { opened += it }
+        NioDatagramIo.dfForTest = { inet -> if (inet) throw java.io.IOException("Too many open files") else (DF_INET6 or DF_V6) to false }
+        try {
+            val e = assertFailsWith<java.io.IOException> { NioDatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }
+            assertEquals("Too many open files", e.message)
+        } finally {
+            NioDatagramIo.dfForTest = null
+            NioDatagramIo.channelOpenedForTest = null
+        }
+        assertEquals(2, opened.size, "the dual-stack channel, then the AF_INET one")
+        assertTrue(opened.none { it.isOpen }, "no channel left open")
+    }
+
     /**
-     * The channel family: an AF_INET channel is tried for an IPv4 bind whose dual-stack channel has no DF on its IPv4 half
-     * (the JDK's option sets only the IPv6 half on Linux and Windows), and kept only when DF took on it.
+     * The channel family: an AF_INET channel is tried for an IPv4 bind whose dual-stack channel has no DF on its IPv4 traffic
+     * (the JDK's option sets only the IPv6 half on Linux and Windows; [dfProbe]'s IPv4 half refused, Apple included), and
+     * kept only when DF took on it.
      */
     @Test fun inetChannelOnlyWhereItGetsDf() {
         val tries = NioDatagramIo.Companion::triesInet
-        // (bits of the dual-stack channel, local is IPv6, Apple, the JDK has the option)
-        assertTrue(tries(-1, false, false, true), "no ksl, IPv4 bind: the JDK's option reaches IPv4 only on AF_INET")
-        assertTrue(tries(DF_INET6 or DF_V6, false, false, true), "ksl, IPv4 half refused both modes")
-        assertTrue(tries(DF_INET6 or DF_V6_DO, false, false, true))
-        assertFalse(tries(DF_INET6 or DF_V4 or DF_V6, false, false, true), "probe mode on both halves")
-        assertFalse(tries(DF_INET6 or DF_V4 or DF_V6_DO, false, false, true), "DF on both halves")
-        assertFalse(tries(DF_INET6 or DF_V4, false, false, true), "the IPv4 half has DF; the JDK's option covers the IPv6 half")
-        assertFalse(tries(-1, true, false, true), "an IPv6 bind stays dual-stack")
-        assertFalse(tries(-1, false, true, true), "Apple: its option covers v4-mapped traffic")
-        assertFalse(tries(-1, false, false, false), "no JDK option (below JDK 19, Android): AF_INET gains nothing")
-        assertFalse(tries(DF_V4, false, false, true), "already AF_INET with DF")
+        // (bits of the dual-stack channel, the JDK's option took on it, local is IPv6, Apple, the JDK has the option)
+        assertTrue(tries(-1, true, false, false, true), "no ksl, IPv4 bind: the JDK's option reaches IPv4 only on AF_INET")
+        assertTrue(tries(-1, false, false, false, true), "no ksl, the JDK's option did not take on the dual-stack channel")
+        assertTrue(tries(DF_INET6 or DF_V6, false, false, false, true), "ksl, IPv4 half refused both modes")
+        assertTrue(tries(DF_INET6 or DF_V6_DO, false, false, false, true))
+        assertFalse(tries(DF_INET6 or DF_V4 or DF_V6, false, false, false, true), "probe mode on both halves")
+        assertFalse(tries(DF_INET6 or DF_V4 or DF_V6_DO, false, false, false, true), "DF on both halves")
+        assertFalse(tries(DF_INET6 or DF_V4, true, false, false, true), "the IPv4 half has DF; the JDK's option covers the IPv6 half")
+        assertFalse(tries(DF_INET6 or DF_V4, false, false, false, true), "only the IPv6 half lacks DF: AF_INET would lose IPv6")
+        assertFalse(tries(-1, true, true, false, true), "an IPv6 bind stays dual-stack")
+        assertFalse(tries(DF_INET6, false, true, false, false), "an IPv6 bind stays dual-stack, ksl refused or not")
+        assertFalse(tries(-1, true, false, true, true), "Apple: the JDK's option covers v4-mapped traffic")
+        assertFalse(tries(DF_INET6 or DF_V4_DO or DF_V6_DO, false, false, true, false), "Apple: IPV6_DONTFRAG took")
+        assertTrue(tries(DF_INET6, false, false, true, false), "Apple, IPV6_DONTFRAG refused: ksl's IP_DONTFRAG on AF_INET")
+        assertTrue(tries(-1, false, false, true, true), "Apple, the JDK's option did not take: tried on AF_INET")
+        assertFalse(tries(-1, false, false, false, false), "no JDK option (below JDK 19, Android): AF_INET gains nothing")
+        assertFalse(tries(0, false, false, false, false), "ksl set nothing and no JDK option: nothing could take on AF_INET")
+        assertTrue(tries(DF_INET6 or DF_V6, false, false, false, false), "IPv4 half refused (ksl, or android.system.Os): on AF_INET")
+        assertTrue(tries(DF_INET6, false, false, false, false), "both halves refused (open threw before): ksl on AF_INET")
+        assertFalse(tries(DF_PROBE_FAILED, false, false, false, false), "Android, the probe failed: nothing to set on AF_INET")
+        assertFalse(tries(DF_NO_DESCRIPTOR, false, false, false, false), "Android without the descriptor: neither")
+        assertFalse(tries(DF_V4, false, false, false, true), "already AF_INET with DF")
         val keeps = NioDatagramIo.Companion::keepsInet
         assertTrue(keeps(-1, true), "no ksl: the JDK's option took")
         assertTrue(keeps(DF_V4, false), "ksl: probe mode on AF_INET")
-        assertTrue(keeps(DF_V4_DO, false), "ksl: DO mode on AF_INET")
+        assertTrue(keeps(DF_V4_DO, false), "ksl: DO mode on AF_INET (Apple: IP_DONTFRAG)")
         assertFalse(keeps(0, false), "both modes refused and no JDK option: the dual-stack channel stays")
         assertFalse(keeps(-1, false), "the JDK's option did not take")
     }

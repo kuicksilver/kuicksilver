@@ -2875,7 +2875,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   system refuse sends nor fragment them (quic-go CVE-2024-53259; section 14.2.1). Where probe mode is refused, DF is in DO
   mode (Apple: `IP_DONTFRAG` / `IPV6_DONTFRAG` through `ksl`; without `ksl` the JDK's `IP_DONTFRAGMENT`, JDK 19 and later;
   an IPv4 bind without `ksl` gets an AF_INET channel when DF takes on it, since the JDK's option sets only the IPv6 half of
-  a dual-stack one, so bound to 0.0.0.0 it reaches IPv4 peers only). In DO mode such a message can make the system refuse
+  a dual-stack one, so bound to 0.0.0.0 it reaches IPv4 peers only; where the system refused DF to `ksl` on the
+  dual-stack channel's IPv4 traffic, Apple's `IPV6_DONTFRAG` included, `ksl` is tried on an AF_INET channel too, on any
+  JDK). Android does the same with `android.system.Os`: an IPv4 bind whose dual-stack socket was refused DF on its IPv4
+  half tries an AF_INET socket, kept when DF takes on it, instead of refusing its IPv4 sends (or not opening, when neither
+  half had DF). In DO mode such a message can make the system refuse
   sends to the peer (EMSGSIZE; on Windows WSAEMSGSIZE, checked on a Windows 11 VM against a non-loopback peer): a datagram
   of at most 1200 bytes refused twice in a row now closes that path, or on the active path ends the connection with a
   CONNECTION_CLOSE of NO_VIABLE_PATH (an HTTP/3 client falls back to TCP), instead of losing datagrams until the idle

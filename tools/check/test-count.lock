@@ -5860,6 +5860,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.loopbackSendR
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.messageTooLongPerPlatform
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aCancelledReceiveEnds
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aDualStackSocketWithoutDfOnItsIpv4HalfRefusesIpv4Sends
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aFailedInetChannelClosesTheDualStackOne
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aRuntimeWithoutTheDescriptorSaysSoAndIsPermanent
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.negative_aSocketWithoutDfDoesNotOpen
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioClearsTosAfterValidationFailure
