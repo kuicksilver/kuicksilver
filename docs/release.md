@@ -214,7 +214,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 6. Only after the deployment is published: `TZ=UTC git -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s
    v<version> -m "Kuicksilver <version>"` on the release commit (the tagger is the release key's identity, the checkout's
    commit identity stays as it is; the script prints the command), push the
-   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
+   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag, with release notes that summarise the changelog section and link to it (GitHub refuses
+   a release body above 125,000 characters, and the section of a minor version is longer: 0.3.0's is about 385,000). Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
    `Kuicksilver.xcframework.zip` and their `.asc`. Attach as well the source tarballs the release build verified, from
    `build/openssl-work/src`: `openssl-<v>.tar.gz` and its `.asc`, `zlib-<v>.tar.gz` and its `.asc`, `brotli-<v>.tar.gz`
@@ -367,8 +368,9 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
 2. The signed tag `v<version>` and its push (`export TZ=UTC`, `git -c user.name=Kuicksilver -c
    user.email=hello@kuicksilver.io tag -s v<version> ...` with the tagger of `kuicksilver.privacy.tagger`,
    `git push origin <branch> v<version>`).
-3. `gh release create v<version> --draft --prerelease --verify-tag` with the CHANGELOG section (and the instructions
-   file) as notes and every asset attached, `Kuicksilver.xcframework.zip` among them.
+3. `gh release create v<version> --draft --prerelease --verify-tag` with notes that summarise
+   the CHANGELOG section and link to it (as in [Every release](#every-release), step 6), followed by the instructions
+   file, and every asset attached, `Kuicksilver.xcframework.zip` among them.
 4. `tools/release/swift-package-check.sh remote <version> --draft`: the draft's zip, fetched with `gh` (a draft's asset
    has no public URL), has the SHA-256 `Package.swift` names, so has GitHub's own digest of the asset, and it is the
    local zip. Then `gh release edit v<version> --draft=false` publishes the release, and

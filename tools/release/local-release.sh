@@ -567,7 +567,7 @@ order (docs/release.md, "Prereleases on GitHub only"; the Swift package tag is i
        git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
   3. The GitHub release as a draft (not public yet, and pages.yml does not run):
        gh release create v$version --draft --prerelease --verify-tag --title "Kuicksilver $version" \\
-         --notes-file <the CHANGELOG section of $version, with $repo_doc appended> \\
+         --notes-file <release notes that link the CHANGELOG section of $version (GitHub takes at most 125,000 characters), with $repo_doc appended> \\
          $(printf '%s ' "${assets[@]}")
   4. The draft's zip against Package.swift (gh download, GitHub's digest, SHA-256), then publish it, then the public URL:
        tools/release/swift-package-check.sh remote $version --draft
@@ -596,7 +596,8 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
   4. Then, and only then: TZ=UTC git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
-     and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
+     and the GitHub release from the tag with release notes that link the CHANGELOG section (a release body
+     takes at most 125,000 characters), with these six files attached:
      $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
   5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:
