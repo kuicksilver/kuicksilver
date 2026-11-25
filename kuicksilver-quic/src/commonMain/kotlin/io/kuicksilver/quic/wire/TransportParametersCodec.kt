@@ -37,8 +37,9 @@ internal object TransportParametersCodec {
     private const val RESET_STREAM_AT = 0x1dL
 
     /**
-     * The unregistered codepoint of earlier drafts (quic-go names it draft-07's and also sends and accepts both); sent and
-     * accepted next to [RESET_STREAM_AT]. No peer is known to need it; it stays until that is shown either way.
+     * The unregistered codepoint of earlier drafts, sent and accepted next to [RESET_STREAM_AT]: Google QUICHE (Chromium's QUIC
+     * stack) knows only this one, and quic-go (which names it draft-07's) and picoquic send and accept both. It stays until
+     * QUICHE announces 0x1d (docs/spec/compat-shims.md, shim 4).
      */
     private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
 
@@ -399,16 +400,27 @@ internal object VersionNegotiationValidator {
         receivedVnVersions: IntArray?,
         configured: List<VersionProfile>,
     ) {
-        val av = server.availableVersions
+        var av = server.availableVersions
+        var chosen = server.chosenVersion
+        if (av == null && receivedVnVersions != null && currentVersion == VersionProfile.V1.version) {
+            // RFC 9368 section 8: a client "starting a QUIC version 1 connection in response to a received Version Negotiation
+            // packet" without the server's version_information "SHALL proceed as if" it held Chosen Version 1 and Available
+            // Versions [1] (a server that only knows QUIC version 1; ngtcp2 does the same); the checks below then run on that
+            av = intArrayOf(VersionProfile.V1.version)
+            chosen = VersionProfile.V1.version
+        }
         if (av == null) {
             if (receivedVnVersions != null) fail("server sent Version Negotiation but no version_information")
+            // section 4: a client "MAY" complete the handshake otherwise; a server that upgraded our version (compatible version
+            // negotiation, section 2.3) implements RFC 9368, so its missing version_information is refused (ngtcp2 does the same)
+            if (sentInitialVersion != currentVersion) fail("server upgraded the version without version_information")
             return
         }
-        if (server.chosenVersion !=
+        if (chosen !=
             currentVersion
         ) {
             fail(
-                "server Chosen Version 0x${server.chosenVersion.toUInt().toString(
+                "server Chosen Version 0x${chosen.toUInt().toString(
                     16,
                 )} differs from its packet version 0x${currentVersion.toUInt().toString(16)}",
             )

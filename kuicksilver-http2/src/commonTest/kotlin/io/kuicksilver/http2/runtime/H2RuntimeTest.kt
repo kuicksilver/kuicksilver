@@ -1524,8 +1524,10 @@ class H2RuntimeTest {
             assertTrue(client.tryReserve())
             val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
             runCurrent()
-            // a SETTINGS from the server whose event (SettingsChanged, which calls onChange) waits for the next dispatcher
+            // a SETTINGS from the server whose event (SettingsChanged, which calls onChange) waits for the next dispatcher; the
+            // server takes the client's ACK of it as one of its own SETTINGS (an unexpected ACK is PROTOCOL_ERROR)
             client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            server.rt.lock.withLock { server.rt.core.settingsUnacked++ }
             armed = true
             val e =
                 withTimeout(10.seconds) {

@@ -1277,6 +1277,7 @@ class EndpointCoreTest {
                 .space
                 .spendForTest()
             assertTrue(c.cids.rotatePeerCid(), "the client retires the ID it used")
+            c.remoteCid = c.cids.activePeerCid() // as the rotation does (onOneRttPacketSealed): RFC 9000 section 19.16
             repeat(20) { p.step() }
             assertTrue(s.retiredByPeer >= 1, "the server saw the retirement")
             val live = localCids(s)
@@ -1304,6 +1305,9 @@ class EndpointCoreTest {
             val live = localCids(s)
             assertTrue(live.isNotEmpty() && live.all { (it[0].toInt() and 0xff) ushr 5 == 4 }, live.map { hexOf(it) }.toString())
             assertEquals(ConnectionState.Confirmed, c.state)
+            // the client retired the ID it was sending to only from packets sent to a new one: the server, which refuses a
+            // RETIRE_CONNECTION_ID naming the packet's own Destination Connection ID (RFC 9000 section 19.16), keeps the connection
+            assertEquals(ConnectionState.Confirmed, s.state)
         } finally {
             p.close()
         }
@@ -1464,6 +1468,7 @@ class EndpointCoreTest {
             p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 3))
             p.server.updateLoadBalancer(QuicLbFixtures.config(configId = 4, sid = byteArrayOf(7, 7, 7), plaintext = true))
             assertTrue(c.cids.rotatePeerCid(), "the client retires one ID while the plaintext change waits")
+            c.remoteCid = c.cids.activePeerCid() // as the rotation does (onOneRttPacketSealed): RFC 9000 section 19.16
             repeat(40) {
                 p.step()
                 record()

@@ -154,6 +154,36 @@ class StreamSchedulerTest {
         assertTrue(sch.isEmpty)
     }
 
+    /**
+     * A PTO probe takes only streams with a retransmission queued ([StreamScheduler.nextRetransmit], RFC 9002 section 6.2.4), in
+     * the scheduler's order (critical first, then by urgency), and leaves the others scheduled for [StreamScheduler.next].
+     */
+    @Test fun nextRetransmitTakesOnlyRetransmissionsInOrder() {
+        val sch = StreamScheduler()
+        listOf(
+            stream(0, urgency = 0),
+            stream(4, retransmit = true),
+            stream(8, urgency = 5, incremental = true, retransmit = true),
+            stream(11, critical = true, retransmit = true),
+            stream(3, critical = true),
+        ).forEach { sch.add(it) }
+        val taken = generateSequence { sch.nextRetransmit()?.also { sch.remove(it) } }.map { it.id }.toList()
+        assertEquals(listOf(11L, 4L, 8L), taken)
+        assertEquals(3L, sch.next()!!.id, "the streams with new data only stay scheduled")
+    }
+
+    /** A stream whose retransmission was acknowledged while it waited in a retransmission queue is refiled, not taken. */
+    @Test fun negative_nextRetransmitRefilesAStreamWhoseLossWasAcknowledged() {
+        val sch = StreamScheduler()
+        val a = stream(0, retransmit = true)
+        sch.add(a)
+        a.onAcked(0, 100)
+        assertEquals(null, sch.nextRetransmit())
+        assertEquals(false, a.hasRetransmit)
+        sch.remove(a)
+        assertTrue(sch.isEmpty)
+    }
+
     @Test fun urgencyOutOfRangeRejected() {
         assertFailsWith<IllegalArgumentException> { StreamPriority(8) }
         assertFailsWith<IllegalArgumentException> { StreamPriority(-1) }

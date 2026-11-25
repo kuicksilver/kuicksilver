@@ -34,9 +34,68 @@ class GoAwayTest {
         val end = c.events()
         assertEquals(ids[0], end.only<H2Event.HeadersReceived>().streamId)
         assertEquals(Http2ErrorCode.NO_ERROR, end.only<H2Event.Closed>().code)
-        // a later GOAWAY cannot raise the last stream identifier
-        c.send(FrameEncoder.goAway(5, 0, ByteArray(0)))
-        assertEquals(emptyList(), c.events().filterIsInstance<H2Event.GoAway>())
+    }
+
+    /**
+     * RFC 9113 section 6.8: "Endpoints MUST NOT increase the value they send in the last stream identifier"; a GOAWAY that does
+     * is a connection error of type PROTOCOL_ERROR (section 5.4.1), as in nghttp2 ("GOAWAY: invalid last_stream_id") and as
+     * our HTTP/3 does (RFC 9114 section 5.2, H3_ID_ERROR). A repeat of the same value, or a lower one, stays legal.
+     */
+    @Test
+    fun negative_goAwayRaisingTheLastStreamIdIsProtocolError() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        repeat(3) { c.core.openStream(GET, endStream = true) }
+        c.read()
+        c.send(FrameEncoder.goAway(5, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        c.send(FrameEncoder.goAway(5, Http2ErrorCode.NO_ERROR.code, ByteArray(0))) // the same again
+        c.send(FrameEncoder.goAway(3, Http2ErrorCode.NO_ERROR.code, ByteArray(0))) // lower
+        assertEquals(listOf(5, 5, 3), c.events().filterIsInstance<H2Event.GoAway>().map { it.lastStreamId })
+        assertEquals(false, c.core.isClosed)
+        c.send(FrameEncoder.goAway(5, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+    }
+
+    /**
+     * Section 6.8: the last stream identifier is "the highest-numbered stream identifier for which the sender of the GOAWAY
+     * frame might have taken some action", a stream the receiver initiated, or 0: a server's GOAWAY naming an even (server)
+     * stream is a connection error of type PROTOCOL_ERROR, as in nghttp2 (nghttp2_session_is_my_stream_id). A client's GOAWAY
+     * is not checked for parity: Go's ClientConn.Shutdown sends its own next (odd) stream ID, and the value names pushes we
+     * never make.
+     */
+    @Test
+    fun negative_goAwayLastStreamIdOfTheWrongParityIsProtocolError() {
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        c.core.openStream(GET, endStream = true)
+        c.read()
+        c.send(FrameEncoder.goAway(2, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        // a Go client's shutdown (an odd ID) leaves the request it waits for to finish
+        val s = RawH2Peer(Role.SERVER)
+        s.handshake()
+        s.send(s.headers(1, endStream = true))
+        s.send(FrameEncoder.goAway(3, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        assertEquals(
+            3,
+            s
+                .events()
+                .filterIsInstance<H2Event.GoAway>()
+                .single()
+                .lastStreamId,
+        )
+        assertEquals(false, s.core.isClosed)
+        s.send(FrameEncoder.goAway(5, Http2ErrorCode.NO_ERROR.code, ByteArray(0))) // but never raised
+        s.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        // 0 is accepted
+        val zero = RawH2Peer(Role.CLIENT)
+        zero.handshake()
+        zero.send(FrameEncoder.goAway(0, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
+        assertEquals(0, zero.events().only<H2Event.GoAway>().lastStreamId)
+        val odd = RawH2Peer(Role.CLIENT)
+        odd.handshake()
+        odd.send(FrameEncoder.goAway(H2.MAX_STREAM_ID, Http2ErrorCode.NO_ERROR.code, ByteArray(0))) // 2^31 - 1 is odd
+        assertEquals(H2.MAX_STREAM_ID, odd.events().only<H2Event.GoAway>().lastStreamId)
     }
 
     @Test

@@ -1103,6 +1103,33 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ("answered the authentication with version 5") before the CONNECT is sent; the compatibility shim that accepted it
   is removed (no proxy that needs it was ever named; Go refuses it too). A CONNECT reply whose reserved byte (RSV) is
   not X'00' fails with `ProxyException` ("non-zero reserved field") before any TLS.
+- QUIC (hardening): frames that RFC 9000 lets a receiver refuse and that ngtcp2, quic-go and picoquic refuse now close
+  the connection with PROTOCOL_VIOLATION; each could come only from a peer that broke a sender MUST. A RETIRE_CONNECTION_ID
+  in a 0-RTT packet (section 12.5: "A server MAY treat receipt of these frames in 0-RTT packets as a connection error");
+  a known frame type encoded in more bytes than it needs (section 12.4; an unknown type stays FRAME_ENCODING_ERROR,
+  the section's MUST); a RETIRE_CONNECTION_ID naming the connection ID the
+  packet carrying it was sent to (section 19.16: "MUST NOT refer to the Destination Connection ID field of the packet in
+  which the frame is contained"); a NEW_CONNECTION_ID that repeats a sequence number with another stateless reset token,
+  or an issued connection ID under another sequence number (section 19.15; before, the first was ignored and the second
+  taken as a new ID).
+- QUIC client (hardening): a server that upgraded the client's version through compatible version negotiation without
+  sending `version_information` fails the handshake with VERSION_NEGOTIATION_ERROR, as in ngtcp2 (RFC 9368 section 4
+  lets a client complete it, "MAY"; a server that upgrades implements RFC 9368). A server that keeps the client's version
+  may still omit the parameter.
+- QUIC: a PTO probe puts the stream data it resends ahead of DATAGRAM frames (RFC 9002 section 6.2.4). Datagrams without
+  an urgency went ahead of all stream data in every packet, so with datagrams queued a probe could carry datagrams, which
+  are never retransmitted, and leave the data it took over from its unacknowledged packets for later packets. Outside
+  probes datagrams still go first (`DatagramSender.nextUrgency`).
+- HTTP/2 (hardening): an unexpected SETTINGS ACK (no SETTINGS of ours outstanding) is a connection error of type
+  PROTOCOL_ERROR, as in nghttp2 and Go (RFC 9113 has no receiver rule; section 5.4.1); it was ignored. A GOAWAY whose last
+  stream identifier is above that of an earlier GOAWAY (section 6.8: "MUST NOT increase") is a PROTOCOL_ERROR, as in
+  nghttp2 and in our HTTP/3; it was clamped. On the client, a server's GOAWAY naming an even stream is one too; the server
+  does not check a client's GOAWAY for parity, since Go's `ClientConn.Shutdown` sends its own next (odd) stream ID.
+- HTTP/2 (hardening): a half-closed (local) stream's send window follows SETTINGS_INITIAL_WINDOW_SIZE changes and is
+  checked on WINDOW_UPDATE like any other (RFC 9113 section 6.9.2: "all stream flow-control windows that it maintains";
+  section 6.9.1: above 2^31 - 1 the stream or connection MUST be terminated): a WINDOW_UPDATE that takes it above the
+  maximum is a FLOW_CONTROL_ERROR stream error, a SETTINGS change that does a connection error, as in nghttp2 and Go.
+  Before, such a stream kept no window and its updates were ignored.
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
@@ -1421,8 +1448,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `["TLSv1.3"]`, stays TLS 1.3 only.
 - RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
   nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
-  no other. That is the hedged construction section 4.2 itself names against side-channel and fault attacks (Go and
-  BoringSSL sign the same way), so docs/spec/rfc/9325.md records it as met, not as a deviation.
+  no other. That is the hedged construction the same section names against the side-channel and fault attacks
+  deterministic ECDSA invites ("combining both randomness and determinism"), as Go and BoringSSL sign, so
+  docs/spec/rfc/9325.md records it as met, not as a deviation.
 - Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
   startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
@@ -1714,6 +1742,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.
+- QUIC client: after a Version Negotiation packet moved it to QUIC version 1, a server without `version_information` failed
+  the handshake with VERSION_NEGOTIATION_ERROR, so a client that started with v2 (`QuicConfig.versions`) could not reach a
+  server that knows only v1. RFC 9368 section 8: the client "SHALL proceed as if" the server had sent Chosen Version 1 and
+  Available Versions [1], and now does (as ngtcp2); after a Version Negotiation to another version the parameter is still
+  required.
 - QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
   `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every
   platform. On the JVM its datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's `PosixException`

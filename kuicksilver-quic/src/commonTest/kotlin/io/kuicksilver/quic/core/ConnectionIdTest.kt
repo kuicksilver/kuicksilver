@@ -29,9 +29,11 @@ class ConnectionIdTest {
         m: ConnectionIdManager,
         seq: Long,
         retire: Long = 0,
+        cidByte: Byte = seq.toByte(),
+        tokenByte: Byte = 0,
     ) {
         val b =
-            PacketBuffer.of(ByteArray(8) { seq.toByte() } + ByteArray(16))
+            PacketBuffer.of(ByteArray(8) { cidByte } + ByteArray(16) { tokenByte })
         ; try {
             m.onNewConnectionId(seq, retire, b, 0, 8, 8)
         } finally {
@@ -295,6 +297,86 @@ class ConnectionIdTest {
         newCid(m, 1)
         newCid(m, 1)
         assertEquals(2, m.peerCount)
+    }
+
+    /**
+     * RFC 9000 section 19.15: "If an endpoint receives a NEW_CONNECTION_ID frame that repeats a previously issued connection ID with a
+     * different Stateless Reset Token field value or a different Sequence Number field value, or if a sequence number is used for
+     * different connection IDs, the endpoint MAY treat that receipt as a connection error of type PROTOCOL_VIOLATION" (quic-go,
+     * picoquic). A repeat of the same frame stays legal ("MUST NOT be treated as a connection error").
+     */
+    @Test fun negative_newCidSameSequenceOtherTokenIsProtocolViolation() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        newCid(m, 1, tokenByte = 1)
+        newCid(m, 1, tokenByte = 1) // the same frame again
+        val e = assertFailsWith<QuicWireException> { newCid(m, 1, tokenByte = 2) }
+        assertEquals(0x0aL, e.code)
+        assertEquals(0x18L, e.frameType)
+    }
+
+    @Test fun negative_newCidSameIdOtherSequenceIsProtocolViolation() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        newCid(m, 1, cidByte = 7)
+        val e = assertFailsWith<QuicWireException> { newCid(m, 2, cidByte = 7) }
+        assertEquals(0x0aL, e.code)
+        assertEquals(0x18L, e.frameType)
+        assertEquals(2, m.peerCount, "the conflicting ID was not added")
+    }
+
+    /** The handshake's ID (sequence 0) counts as issued: a NEW_CONNECTION_ID repeating it under another sequence is refused. */
+    @Test fun negative_newCidRepeatingTheHandshakeIdIsProtocolViolation() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        val e = assertFailsWith<QuicWireException> { newCid(m, 1, cidByte = 0) }
+        assertEquals(0x0aL, e.code)
+    }
+
+    /** The check runs before Retire Prior To: an ID that this very frame retires is still a repeat under another sequence. */
+    @Test fun negative_newCidRepeatingAnIdItRetiresIsProtocolViolation() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        newCid(m, 1, cidByte = 7)
+        val e = assertFailsWith<QuicWireException> { newCid(m, 2, retire = 2, cidByte = 7) }
+        assertEquals(0x0aL, e.code)
+    }
+
+    /**
+     * RFC 9000 section 19.16: "The sequence number specified in a RETIRE_CONNECTION_ID frame MUST NOT refer to the Destination
+     * Connection ID field of the packet in which the frame is contained. The peer MAY treat this as a connection error of type
+     * PROTOCOL_VIOLATION" (ngtcp2, quic-go, picoquic).
+     */
+    @Test fun negative_retireOfThePacketsOwnDcidIsProtocolViolation() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            val seq =
+                p.client.cids.currentPeer!!
+                    .seq
+            p.client.testInjectFrames += 3 to byteArrayOf(0x19, seq.toByte())
+            p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
+            val r = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            assertEquals(0x0aL, r.code)
+            assertEquals(0x19L, r.frameType)
+        }
+    }
+
+    /** The positive control: a rotation retires the old ID in a packet sent to the new one, which the server accepts. */
+    @Test fun retireOfAnotherIdThanThePacketsDcidIsAccepted() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            p.runUntil(limit = 300.milliseconds) { p.client.peerCidCount >= 2 }
+            assertTrue(p.client.cids.rotatePeerCid())
+            p.client.remoteCid = p.client.cids.activePeerCid()
+            p.client.testInjectFrames += 3 to byteArrayOf(0x01) // a PING, so a packet goes out at once with the RETIRE
+            p.runUntil(limit = 300.milliseconds) { p.server!!.retiredByPeer >= 1 || p.closedReason(p.serverEvents) != null }
+            assertNull(p.closedReason(p.serverEvents), "the server keeps the connection")
+            assertNull(p.closedReason(p.clientEvents), "the client keeps the connection")
+            assertTrue(p.server!!.retiredByPeer >= 1, "the server took the retirement")
+        }
     }
 
     @Test fun retirePriorToRetiresOldOnes() {

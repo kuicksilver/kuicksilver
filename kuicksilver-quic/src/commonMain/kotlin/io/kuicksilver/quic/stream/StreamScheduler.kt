@@ -96,6 +96,31 @@ internal class StreamScheduler {
         return null
     }
 
+    /**
+     * Like [next], restricted to the queues of streams with bytes queued for retransmission (a PTO probe repairs loss first, RFC
+     * 9002 section 6.2.4); the tunnel turn is not taken here. Null when no stream has a retransmission queued.
+     */
+    fun nextRetransmit(): SendStream? {
+        while (true) {
+            val m = nonEmpty and RETRANSMIT_QUEUES
+            if (m == 0L) return null
+            var q = m.countTrailingZeroBits()
+            if (q and 1 == 0 && m and (1L shl (q + 1)) != 0L && lastIncremental and (1 shl (q shr 1)) == 0) q++
+            val s = if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
+            if (!s.hasPending) {
+                detach(s)
+                continue
+            }
+            val want = queueOf(s)
+            if (want != q) {
+                detach(s)
+                insert(s, want)
+                continue
+            }
+            return s
+        }
+    }
+
     /** Moves an incremental stream to the back of its queue after it sent a frame. */
     fun rotate(s: SendStream) {
         if (s.schedQueue < 0) return
@@ -258,5 +283,8 @@ internal class StreamScheduler {
          * urgent the other streams are: "some amount of bandwidths" (RFC 9218 section 10.1) that leaves urgency in charge.
          */
         const val TUNNEL_TURN = 16
+
+        /** The queues of streams with a retransmission queued: 0 (critical) and, per urgency, the first two of its four. */
+        private const val RETRANSMIT_QUEUES = 0x333333333L
     }
 }

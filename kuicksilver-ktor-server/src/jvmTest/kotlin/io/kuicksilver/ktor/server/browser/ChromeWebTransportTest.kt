@@ -18,6 +18,9 @@ import io.kuicksilver.ktor.server.serverTest
 import io.kuicksilver.ktor.server.tlsServer
 import io.kuicksilver.ktor.server.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicLbConfig
+import io.kuicksilver.tls.KslCrypto
+import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
@@ -53,7 +56,18 @@ class ChromeWebTransportTest {
     /** Chrome with draft-07 enabled falls back to draft-02: we do not announce draft-07's SETTINGS (0xc671706a). */
     @Test fun chromeWithDraft07EnabledFallsBackToDraft02() = runChrome(listOf("--enable-features=EnableWebTransportDraft07"))
 
-    private fun runChrome(extraFlags: List<String>) {
+    /**
+     * A QUIC-LB configuration change while the session is open: as soon as the echo session is accepted the server moves to
+     * another configuration (`updateLoadBalancer`) and sends NEW_CONNECTION_ID frames with Retire Prior To, so Chrome retires
+     * the connection ID it sends to. The server closes a connection whose RETIRE_CONNECTION_ID names the ID of the packet
+     * carrying it (RFC 9000 section 19.16); the page's later steps (the 1 MiB echo, datagrams, the closes) must still pass.
+     */
+    @Test fun chromeSessionOutlivesAQuicLbChange() = runChrome(emptyList(), lbChange = true)
+
+    private fun runChrome(
+        extraFlags: List<String>,
+        lbChange: Boolean = false,
+    ) {
         assumeTrue(System.getProperty("kuicksilver.browserTests") == "true", "browser tests run with -Pkuicksilver.browserTests=true")
         val chrome = findChrome()
         assumeTrue(chrome != null, "no Chrome or Chromium installed")
@@ -62,8 +76,14 @@ class ChromeWebTransportTest {
             val result = CompletableDeferred<String>()
             val clientClose = CompletableDeferred<WebTransportCloseInfo>()
             val draft02 = CompletableDeferred<Boolean>()
+            val lbChanged = CompletableDeferred<Unit>()
+            val lbKeys = if (lbChange) List(2) { KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16)) } else emptyList()
+            var changeLoadBalancer: (suspend () -> Unit)? = null
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({
+                    webTransport = true
+                    if (lbChange) quicLoadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0])
+                }) {
                     routing {
                         get("/wt/index.html") { call.respondText(page, ContentType.Text.Html) }
                         post("/result") {
@@ -72,6 +92,10 @@ class ChromeWebTransportTest {
                         }
                         webTransport("/wt/echo") { session ->
                             draft02.complete(session.headers["sec-webtransport-http3-draft02"] == "1")
+                            changeLoadBalancer?.let { change ->
+                                change()
+                                lbChanged.complete(Unit)
+                            }
                             coroutineScope {
                                 launch {
                                     runCatching {
@@ -97,6 +121,7 @@ class ChromeWebTransportTest {
                         webTransport("/wt/server-close") { session -> session.close(9, "server-bye") }
                     }
                 }
+            if (lbChange) changeLoadBalancer = { server.engine.updateLoadBalancer(QuicLbConfig(2, LB_SERVER_ID, 4, lbKeys[1])) }
             var profile: File? = null
             var process: Process? = null
             // Ctrl-C or a stopped Gradle daemon must not leave the browser running
@@ -131,6 +156,7 @@ class ChromeWebTransportTest {
                     val seen = withTimeout(10.seconds) { clientClose.await() }
                     assertEquals(7L to "bye", seen.code to seen.reason)
                     assertTrue(withTimeout(10.seconds) { draft02.await() }, "Chrome did not use draft-02")
+                    if (lbChange) assertTrue(lbChanged.isCompleted, "the QUIC-LB configuration changed during the session")
                 } catch (e: Throwable) {
                     throw AssertionError("Chrome WebTransport run failed; Chrome's output:\n${output.readText().takeLast(4000)}", e)
                 }
@@ -142,8 +168,14 @@ class ChromeWebTransportTest {
                 runCatching { Runtime.getRuntime().removeShutdownHook(reaper) }
                 profile?.deleteRecursively()
                 server.stop(100, 1000)
+                lbKeys.forEach { it.close() }
             }
         }
+    }
+
+    private companion object {
+        /** The server ID of the QUIC-LB configurations of [chromeSessionOutlivesAQuicLbChange]. */
+        val LB_SERVER_ID = byteArrayOf(0x31, 0x44, 0x1a)
     }
 
     /** Base64 of the SHA-256 of the test certificate's SubjectPublicKeyInfo, as Chrome's SPKI list takes it. */

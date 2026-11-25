@@ -754,6 +754,12 @@ internal class H2ConnectionCore(
 
     internal fun canSend(s: H2Stream): Boolean = s.state == StreamState.OPEN || s.state == StreamState.HALF_CLOSED_REMOTE
 
+    /**
+     * RFC 9113 section 6.9.2, "all stream flow-control windows that it maintains": a stream not closed (a half-closed (local)
+     * one too), or a closed one whose last DATA is still queued.
+     */
+    internal fun maintainsSendWindow(s: H2Stream): Boolean = s.state != StreamState.CLOSED || s.out.any { it is OutItem.Data }
+
     /** A CONNECT request (RFC 9113 section 8.5): its stream carries a tunnel ([H2Stream.tunnel]). */
     internal fun isConnect(fields: List<Pair<String, String>>): Boolean {
         for ((n, v) in fields) {

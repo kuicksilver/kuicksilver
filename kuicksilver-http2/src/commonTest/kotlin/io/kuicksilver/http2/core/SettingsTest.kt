@@ -32,6 +32,22 @@ class SettingsTest {
         assertEquals(7L, peer.core.peerMaxConcurrentStreams)
     }
 
+    /**
+     * RFC 9113 has no receiver rule for a SETTINGS ACK that acknowledges nothing; nghttp2 ("SETTINGS: unexpected ACK") and Go
+     * (server.go processSettings, transport.go processSettings) both end the connection with PROTOCOL_ERROR, so we do too
+     * (section 5.4.1). The ACK of our own SETTINGS is the positive control, for both roles.
+     */
+    @Test
+    fun negative_unexpectedSettingsAckIsProtocolError() {
+        for (role in Role.entries) {
+            val peer = RawH2Peer(role)
+            peer.handshake() // acknowledges our SETTINGS: accepted
+            assertEquals(false, peer.core.isClosed, "$role")
+            peer.send(FrameEncoder.settingsAck())
+            peer.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        }
+    }
+
     @Test
     fun negative_settingsAckTimeoutIsSettingsTimeout() {
         val peer = RawH2Peer(Role.SERVER)

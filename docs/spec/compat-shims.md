@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — compatibility shims
 
-Date: 2026-11-13; as of 0.3.0 (unreleased). Status: living document, updated with each change it describes.
+Date: 2026-11-24; as of 0.3.0 (unreleased). Status: living document, updated with each change it describes.
 
 Every place where Kuicksilver departs from, or goes beyond, the standard it implements only so that a specific peer that
 lags behind or breaks the standard still works with it. The [RFC compliance summary](rfc-compliance.md) and its details
@@ -22,9 +22,8 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 1 | [WebTransport draft-02 and draft-14 codepoints](#1-webtransport-draft-02-and-draft-14) | Chrome, Firefox (draft-02); Safari (draft-14) | no (`webTransport`) | older drafts next to draft-16 |
 | 2 | [The draft-02 response field `sec-webtransport-http3-draft`](#2-the-draft-02-response-field) | Chrome | no (`webTransport`) | a field no draft defines |
 | 3 | [Draft-02 session when a newer draft lacks `reset_stream_at`](#3-draft-02-session-when-a-newer-draft-lacks-reset_stream_at) | Safari (expected), any client announcing draft-02 and a newer draft | no (`webTransport`) | our reading of draft-16 §7.1 (borderline) |
-| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | none verified (quic-go sends both) | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
-| 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
-| 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks) | yes (client and server) | stricter than RFC 9113 (borderline) |
+| 4 | [Pre-IANA `reset_stream_at` codepoint](#4-pre-iana-reset_stream_at-codepoint) | Google QUICHE (knows only this one); quic-go and picoquic send both | no (`resetStreamAt`, on with WebTransport) | a second, unregistered codepoint |
+| 9 | [HTTP/2: a stream that depends on itself is a stream error](#9-http2-a-stream-that-depends-on-itself-is-a-stream-error) | h2spec 2.6.0 (RFC 7540 checks); nghttp2 and Go keep the same error | yes (client and server) | retained RFC 7540 error, stricter than RFC 9113 (borderline) |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
 
 ## 1. WebTransport draft-02 and draft-14
@@ -140,17 +139,21 @@ transport parameter its §3.1 requires.
 0x17f7586d2cb571, the codepoint of earlier versions of the draft, and either one received enables RESET_STREAM_AT (a
 non-empty value of either is `TRANSPORT_PARAMETER_ERROR`).
 
-**Peers.** None verified. quic-go (2bb41ed) sends and accepts both codepoints, naming the old one draft-07's, so it
-works with 0x1d alone; Cloudflare quiche 4ebd213 implements neither codepoint; Chrome was not checked (no Chromium source
-here). Earlier notes named Chrome and quiche without evidence.
+**Peers.** Google QUICHE, the QUIC stack of Chromium, knows only the old codepoint
+(`quiche/quic/core/crypto/transport_parameters.cc`, `kReliableStreamReset = 0x17F7586D2CB571`, sent and parsed there; its
+frame is 0x24; head 35cbd037 of 2026-11-05, checked again 2026-11-24): with 0x1d alone it never enables RESET_STREAM_AT,
+and a WebTransport draft-14 or draft-16 session to it fails §3.1. QUICHE has the extension off by default and its embedder
+turns it on; Chrome's setting was not checked (no Chromium source here). quic-go (`internal/wire/transport_parameters.go`,
+`legacyResetStreamAtParameterID`) and picoquic (`picoquic/transport.c`, "Advertise both codepoints until peers that only
+know draft-07 are gone") send and accept both, as we do. Cloudflare quiche 4ebd213 and ngtcp2 implement neither.
 
 **Standard text.** draft-ietf-quic-reliable-stream-reset-11 §3: "Support for receiving RESET_STREAM_AT frames is
 advertised by sending the reset_stream_at (0x1d) transport parameter (Section 7.4 of [RFC9000]) with an empty value." The
 old codepoint is not registered; RFC 9000 §7.4.2, "An endpoint MUST ignore transport parameters that it does not
 support", keeps it harmless to peers that do not know it.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43` (the
-codepoint), :132 (sent), :331 (accepted).
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:44` (the
+codepoint), :133 (sent), :332 (accepted).
 
 **On by default.** No: `QuicConfig.resetStreamAt` is false by default; WebTransport turns it on (server and client).
 
@@ -159,48 +162,19 @@ codepoint), :132 (sent), :331 (accepted).
 **Risk.** Low: nine more bytes in the transport parameters, and RESET_STREAM_AT frames (type 0x24) toward a peer that
 announced only the old codepoint, which must then read them as that draft's frame.
 
-**Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
+**Why it stays.** Google QUICHE (Chromium) knows only 0x17f7586d2cb571; quic-go and picoquic announce and accept both;
+RFC 9000 §7.4.2 makes the extra codepoint inert for everyone else.
+
+**Removal.** Once Google QUICHE announces 0x1d. The removal must mind remembered
 transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
 take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
 (`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273`); quic-go ties its own removal to a
 new ticket format for the same reason.
 
-## 6. A resent STREAM range never carries the FIN
-
-Borderline: RFC 9000 lets a sender put the FIN in a frame of its own; this is listed because the choice is made only for
-one peer's receiver.
-
-**What it does.** A lost range of stream data is resent without the FIN: a FIN still in flight needs no copy, a lost one
-goes as an empty STREAM frame with the FIN.
-
-**Peers.** quiche: its receiver took the final size from a frame whose bytes it had already read, dropped the frame as a
-duplicate and never woke the application for the FIN (`kuicksilver->quiche:handshakeloss` lost one request in 50, run
-20261015-170940; [RFC 9002 details](rfc/9002.md)). quiche 4ebd213 keeps the first FIN of such a frame
-(`RecvBuf::write`, "Discard consumed data unless it carries the first FIN", test `duplicate_data_first_fin`).
-
-**Standard text.** RFC 9000 §2.2: "Data that has already been received can be discarded."; §4.5: "The final size is the
-sum of the Offset and Length fields of a STREAM frame with a FIN flag" — the FIN of a duplicate frame still gives the
-final size.
-
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:203-206`.
-
-**On by default.** Yes; no switch.
-
-**Tests.** `stream.SendStreamTest.retransmittedDataDoesNotCarryAFinThatIsStillInFlight`,
-`.lostDataAndLostFinGoAsDataThenAnEmptyFin`.
-
-**Risk.** None for security; a lost FIN costs one small frame more.
-
-**Removal.** quiche has the fix: `RecvBuf::write` in `quiche/src/stream/recv_buf.rs` (4ebd213, 2026-10-27) keeps the
-first FIN of a frame whose bytes were already read ("Discard consumed data unless it carries the first FIN"), pinned by
-its test `duplicate_data_first_fin`. The shim can go once the interop runner's quiche image includes that change and
-`kuicksilver->quiche:handshakeloss` (the case that lost a request; required in `tools/interop/required.json`) stays
-green without the shim over several runs, as does `kuicksilver->quiche:transferloss`, which resends stream data too.
-
 ## 9. HTTP/2: a stream that depends on itself is a stream error
 
-Borderline: stricter, not lenient, and kept for a test tool built on the older RFC rather than for a peer; listed
-because it goes beyond RFC 9113 only to keep that check passing.
+Borderline: stricter, not lenient. A retained RFC 7540 error, as the reference stacks keep it, rather than a shim for a
+test tool; listed because RFC 9113 dropped the rule.
 
 **What it does.** A HEADERS frame whose priority fields make the stream depend on itself, or a PRIORITY frame that does,
 is a stream error of type PROTOCOL_ERROR; every other RFC 7540 priority signal is parsed and ignored. Each of the three
@@ -209,7 +183,13 @@ SETTINGS_NO_RFC7540_PRIORITIES = 1 (after it, RFC 9218 §2.1: "MUST ignore HTTP/
 
 **Peers.** h2spec 2.6.0, whose http2/5.3.1 cases ("Sends HEADERS frame that depends on itself", "Sends PRIORITY frame
 that depend on itself") expect the RFC 7540 error
-([interop.md](interop.md#h2spec-the-http2-server-h2spec-260-2026-11-06): 146 of 146 cases must pass).
+([interop.md](interop.md#h2spec-the-http2-server-h2spec-260-2026-11-06): 146 of 146 cases must pass). No real peer sends a
+self-dependency. The reference stacks still reject one: Go with a stream PROTOCOL_ERROR on HEADERS and PRIORITY
+(`x/net/http2/server.go`, quoting RFC 7540), nghttp2 with a connection error on request HEADERS
+(`lib/nghttp2_session.c`); a stream error sits between the two.
+
+**Why it stays.** RFC 9113 §5.3.2 keeps RFC 7540 priority handling for interoperability; nghttp2 and Go still treat a
+self-dependency as an error; it can only affect a peer that already broke RFC 7540.
 
 **Standard text.** RFC 7540 §5.3.1 made it an error. RFC 9113 §5.3.2: "This update to HTTP/2 deprecates the priority
 signaling defined in RFC 7540 [RFC7540]. The bulk of the text related to priority signals is not included in this
@@ -227,11 +207,14 @@ opening a stream), :203 (HEADERS on an open stream), :289 (PRIORITY).
 **Risk.** None for security: only the offending stream is reset. An RFC 9113 peer that sent such a signal (RFC 7540
 forbade it, so none should) would lose that stream.
 
-**Removal.** When h2spec drops its RFC 7540 §5.3.1 cases, or if a peer is found that sends such signals.
+**Removal.** When h2spec drops its RFC 7540 §5.3.1 cases and the reference stacks drop the error, or if a peer is found
+that sends such signals.
 
 ## Test-only
 
 ### T1. Interop client: request and FIN in one STREAM frame
+
+Not a deviation: ordinary coalescing in test code, listed for the peer whose behaviour it works around.
 
 **What it does.** The QUIC Interop Runner client writes each `hq-interop` request into the stream's buffer and closes it
 in one step, so the request and its FIN share one STREAM frame. The library's `flushAndClose` hands buffered data to the
@@ -256,7 +239,7 @@ the data.
 
 ## Removed
 
-- **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number is kept free so the anchors of the others stay). The
+- **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number, like that of shim 6, now under "Considered and not listed", is kept free so the anchors of the others stay). The
   client processed an Initial with nothing but ACK, PING and PADDING whose SCID was the DCID it sends to without letting
   it fix the server's SCID, so that an msquic server, which sends from the client's DCID until its listener accepts the
   connection and then switches to a new SCID that it also names in `initial_source_connection_id`, could finish the
@@ -294,6 +277,18 @@ the data.
 - **Following a client's NAT rebind during the handshake** (interop rebind cases with quiche and picoquic): RFC 9000 §9
   lets a server "proceed with path validation and allow the peer to migrate".
 - **Probing the other packet number spaces on a PTO** (quic-go `handshakeloss` stalls): RFC 9002 §6.2.4 SHOULD.
+- **A resent STREAM range never carries the FIN** (was shim 6; quiche): a lost range of stream data is resent without
+  the FIN, a FIN still in flight needs no copy and a lost one goes as an empty STREAM frame with the FIN
+  (`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt`, `nextRange`;
+  `stream.SendStreamTest.retransmittedDataDoesNotCarryAFinThatIsStillInFlight`, `.lostDataAndLostFinGoAsDataThenAnEmptyFin`).
+  RFC 9000 §2.2 and §19.8 leave the FIN's placement to the sender, so this is a sender choice, not a deviation; quic-go,
+  ngtcp2 and picoquic resend the original frame, FIN included, which conforms as well. It was made for quiche's receiver,
+  which took the final size from a frame whose bytes it had already read, dropped the frame as a duplicate and never woke
+  the application for the FIN (`kuicksilver->quiche:handshakeloss` lost one request in 50, run 20261015-170940); quiche
+  4ebd213 (2026-10-27) keeps that FIN (`RecvBuf::write`, test `duplicate_data_first_fin`). The cost is one small frame
+  per lost FIN. The special case may go once the interop runner's quiche image has that change and
+  `kuicksilver->quiche:handshakeloss` and `:transferloss` (required in `tools/interop/required.json`) stay green without it
+  over several runs.
 - **No glitch token for repeated MAX_STREAMS or DATA_BLOCKED** (quic-go, quiche): legal peer behaviour handled correctly.
 - **One lost range queued once** (quiche fails the handshake on bytes repeated in one packet): sending each byte once
   per packet is plain efficiency.
@@ -326,6 +321,12 @@ the data.
     SHOULD, both sides), and the client's invalid status code read as a 5xx (RFC 9110 §15 SHOULD).
   Where Ktor's own parser is more lenient (Unicode spaces, control characters, field names, chunk-size lines), both engines
   are stricter; nothing lenient is added for any client.
+- **HTTP/2: a client's GOAWAY is not checked for parity** (Go's `ClientConn.Shutdown`, `x/net/http2/transport.go`
+  `sendGoAway`, sends its own next, odd, stream identifier): peer tolerance, not a deviation. RFC 9113 §6.8 defines the
+  last stream identifier as one the receiver initiated but gives the receiver no rule for another value, and §5.4.1 only
+  permits an error. The server still refuses a GOAWAY that raises the identifier ("MUST NOT increase"), and the client
+  refuses a server's GOAWAY that names an even stream, as nghttp2 does; a server's value names pushes, which we never make,
+  and refusing Go's would reset the requests its shutdown waits for ([details](rfc/9113.md#s6-8-goaway)).
 - **SOCKS5 empty password**: refused (RFC 1929 §2, PASSWD has 1 to 255 octets), stricter than curl and Go.
 - **Greasing** (`Http3Settings.grease`, `grease_quic_bit`): excluded by definition.
 - **Android API levels** (`java.nio.file`, `DnsResolver.rawQuery`): platform APIs, not a peer's protocol.

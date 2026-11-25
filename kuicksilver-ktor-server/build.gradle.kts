@@ -40,9 +40,9 @@ tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
     // -Pkuicksilver.browserTests=true runs ChromeWebTransportTest against an installed Chrome (docs/guide/ktor.md)
     providers.gradleProperty("kuicksilver.browserTests").orNull?.let { systemProperty("kuicksilver.browserTests", it) }
-    // -Pkuicksilver.manualWebTransport=true (and .cert, .key, .port, .dir, .timeoutSeconds) runs ManualWebTransportServer
+    // -Pkuicksilver.manualWebTransport=true (and .cert, .key, .port, .dir, .timeoutSeconds, .lbChange) runs ManualWebTransportServer
     // for a by-hand browser check (tools/interop/wt-firefox-manual.sh)
-    for (name in listOf("", ".cert", ".key", ".port", ".dir", ".timeoutSeconds")) {
+    for (name in listOf("", ".cert", ".key", ".port", ".dir", ".timeoutSeconds", ".lbChange")) {
         val key = "kuicksilver.manualWebTransport$name"
         providers.gradleProperty(key).orNull?.let { systemProperty(key, it) }
     }

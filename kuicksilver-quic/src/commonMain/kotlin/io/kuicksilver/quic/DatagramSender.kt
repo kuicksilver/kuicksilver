@@ -23,7 +23,8 @@ public interface DatagramSender {
      * The RFC 9218 urgency (0..7) of the datagram the sender would write next, or -1 (the default) for none: the core then
      * writes stream data of strictly more urgent streams (a lower urgency, and the critical streams) before calling
      * [onTransmit] in a packet, so such a datagram never preempts them, while stream data of the same or a lower urgency
-     * still waits behind it. With -1 datagrams go first, ahead of every stream (RFC 9221 leaves the order to the sender).
+     * still waits behind it. With -1 datagrams go first, ahead of every stream (RFC 9221 leaves the order to the sender),
+     * except in a PTO probe, where stream data being resent goes ahead of any datagram (RFC 9002 section 6.2.4).
      */
     @ExperimentalKuicksilverApi
     public fun nextUrgency(): Int = -1

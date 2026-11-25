@@ -40,7 +40,7 @@ Quoted: "MUST NOT change the Application Error Code".
 
 **Peer interop notes.**
 
-- `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) does the same and names the old one draft-07's. No peer is known to need the old codepoint (Cloudflare quiche 4ebd213 implements neither; Chrome was not checked); it stays until one is shown to need it or not ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
+- `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) and picoquic do the same, quic-go naming the old one draft-07's. Google QUICHE (Chromium's QUIC stack) knows only the old codepoint, so it stays until QUICHE announces 0x1d (Cloudflare quiche 4ebd213 and ngtcp2 implement neither; Chrome's setting was not checked) ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
 
 **Scope.**
 

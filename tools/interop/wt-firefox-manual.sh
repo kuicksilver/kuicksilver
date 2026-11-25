@@ -18,7 +18,9 @@
 # server picks a free port), WT_HOST (the host in the URL, default localhost; 127.0.0.1 also matches the certificate),
 # WT_TIMEOUT (seconds to wait for the page's result, default 600), OPENSSL (default: openssl on PATH; LibreSSL works too),
 # KSL_GRADLE (default ~/.kuicksilver-tools/quiet-gradle, ./gradlew where that is missing), WT_KEEP=1 keeps the directory
-# on PASS too and WT_KEEP=0 removes it on FAIL too, WT_MOZ_LOG (Firefox's MOZ_LOG modules, default
+# on PASS too and WT_KEEP=0 removes it on FAIL too, WT_LB_CHANGE=1 runs the server with a QUIC-LB configuration that it
+# changes (updateLoadBalancer) as soon as the echo session is accepted, so Firefox retires the connection ID it sends to
+# while the session is open (the release check of docs/process.md, section 7), WT_MOZ_LOG (Firefox's MOZ_LOG modules, default
 # timestamp,sync,nsHttp:4,neqo_http3:5,neqo_transport:3; empty turns MOZ_LOG off).
 # Exit 0 on PASS, 1 on FAIL, 2 when something needed is missing.
 set -euo pipefail
@@ -154,6 +156,7 @@ set -m
   "-Pkuicksilver.manualWebTransport.port=$port" \
   "-Pkuicksilver.manualWebTransport.dir=$tmp" \
   "-Pkuicksilver.manualWebTransport.timeoutSeconds=$timeout" \
+  "-Pkuicksilver.manualWebTransport.lbChange=$([ "${WT_LB_CHANGE:-0}" = 1 ] && echo true || echo false)" \
   >"$tmp/gradle.log" 2>&1 &
 gradle_pid=$!
 set +m

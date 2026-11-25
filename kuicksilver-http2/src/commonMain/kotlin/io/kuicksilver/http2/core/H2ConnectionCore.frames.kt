@@ -339,7 +339,9 @@ internal fun H2ConnectionCore.onSettings(
     now: Long,
 ) {
     if (f.ack) {
-        if (settingsUnacked == 0) return
+        // RFC 9113 has no rule for an ACK that acknowledges nothing; nghttp2 ("SETTINGS: unexpected ACK") and Go end the
+        // connection with PROTOCOL_ERROR, which section 5.4.1 allows for any protocol error
+        if (settingsUnacked == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS ACK without SETTINGS outstanding")
         settingsUnacked--
         if (settingsSentAt >= 0) rttNanos = maxOf(1, now - settingsSentAt)
         ourSettingsAcknowledged()
@@ -374,11 +376,12 @@ internal fun H2ConnectionCore.onSettings(
                 peerInitialWindow = v
                 // our acknowledgement goes at once: queued DATA not written yet is charged again against the new window
                 if (delta < 0) unchargeQueuedData()
-                // section 6.9.2: the windows of streams we can still send on (open, half-closed (remote)), and of those whose
-                // last DATA is still queued, move by the difference, possibly below zero ("MUST NOT send new flow-controlled
-                // frames until it receives WINDOW_UPDATE frames that cause the flow-control window to become positive")
+                // section 6.9.2: "all stream flow-control windows that it maintains" move by the difference, possibly below zero
+                // ("MUST NOT send new flow-controlled frames until it receives WINDOW_UPDATE frames that cause the flow-control
+                // window to become positive"): every stream not closed, a half-closed (local) one too (nghttp2 and Go adjust
+                // every stream they hold), and a closed one whose last DATA is still queued
                 for (s in streams.values) {
-                    if (!canSend(s) && s.out.none { it is OutItem.Data }) continue
+                    if (!maintainsSendWindow(s)) continue
                     s.sendWindow += delta
                     if (s.sendWindow + chargedQueued(s) > H2.MAX_WINDOW) {
                         throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "stream ${s.id} window above 2^31 - 1")
@@ -481,9 +484,22 @@ internal fun H2ConnectionCore.onPing(
 }
 
 internal fun H2ConnectionCore.onGoAway(f: Frame.GoAway) {
+    // section 6.8: "Endpoints MUST NOT increase the value they send in the last stream identifier", and the identifier names a
+    // stream the receiver initiated, or is 0: a server's GOAWAY that raises it or names an even (server) stream is a connection
+    // error of type PROTOCOL_ERROR (section 5.4.1), as in nghttp2 ("GOAWAY: invalid last_stream_id") and in our HTTP/3 (RFC
+    // 9114 section 5.2, H3_ID_ERROR). A client's GOAWAY may not raise it either; its parity is not checked: Go's
+    // ClientConn.Shutdown sends its own next (odd) stream ID (x/net http2 transport.go sendGoAway), and refusing that would
+    // reset the requests the shutdown waits for, while a server's value names pushes we never make
+    val last = f.lastStreamId
+    if (client && last and 1 == 0 && last != 0) {
+        throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "GOAWAY last stream $last is not one we could have opened")
+    }
+    if (last > peerLastStreamId) {
+        throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "GOAWAY last stream raised from $peerLastStreamId to $last")
+    }
     goAwayReceived = true
-    // section 6.8: the last stream ID never grows; streams above it were not processed and may be retried
-    peerLastStreamId = minOf(peerLastStreamId, f.lastStreamId)
+    // streams above it were not processed and may be retried
+    peerLastStreamId = last
     val code = Http2ErrorCode.of(f.errorCode)
     emit(H2Event.GoAway(peerLastStreamId, code, f.debug.copyOf(minOf(f.debug.size, 1_024))))
     // and "Receivers of a GOAWAY frame MUST NOT open additional streams": a stream whose HEADERS are still queued was never
@@ -547,10 +563,11 @@ internal fun H2ConnectionCore.onWindowUpdate(
         return
     }
     if (f.increment == 0) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0", now) // section 6.9
-    // a stream we will never send on again (half-closed (local) or closed, with no DATA queued) has no active flow-control
-    // window (section 6.9.2): its WINDOW_UPDATEs are ignored, as SETTINGS_INITIAL_WINDOW_SIZE changes skip it, so a peer
-    // that adjusts every stream (nghttp2) cannot take our record of it above 2^31 - 1
-    if (!canSend(s) && s.out.none { it is OutItem.Data }) return
+    // section 6.9.1: "If a sender receives a WINDOW_UPDATE that causes a flow-control window to exceed this maximum, it MUST
+    // terminate either the stream or the connection", for every window we maintain, a half-closed (local) stream's too (as
+    // nghttp2 and Go do; SETTINGS_INITIAL_WINDOW_SIZE moves it as well, so our record matches the peer's). A closed stream
+    // the application has not released yet keeps no window: its updates are ignored, as for one already gone (section 5.1)
+    if (!maintainsSendWindow(s)) return
     s.sendWindow += f.increment
     if (s.sendWindow + chargedQueued(s) > H2.MAX_WINDOW) {
         return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)

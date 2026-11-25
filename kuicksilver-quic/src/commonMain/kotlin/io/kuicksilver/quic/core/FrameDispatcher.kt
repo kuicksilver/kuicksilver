@@ -232,6 +232,10 @@ internal class FrameDispatcher(
     }
 
     override fun retireConnectionId(seq: Long) {
+        // RFC 9000 section 19.16: the sequence number "MUST NOT refer to the Destination Connection ID field of the packet in which
+        // the frame is contained. The peer MAY treat this as a connection error of type PROTOCOL_VIOLATION" (ngtcp2, quic-go,
+        // picoquic); looked up only for this rare frame
+        if (r.packetDcidSeq() == seq) violation("RETIRE_CONNECTION_ID for the packet's own Destination Connection ID")
         c.onRetireConnectionId(seq)
     }
 
