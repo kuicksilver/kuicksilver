@@ -34,9 +34,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    secrets `SIGNING_KEY`, `SIGNING_KEY_ID`, `SIGNING_KEY_PASSWORD`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`).
    `local-release.sh` checks that they are present and never prints them.
 4. **Publishing limits**: Sonatype's default for a free namespace is 1167 files and 78 MB (30 days of grace above
-   that). On 2026-10-20 `io.kuicksilver` was granted 7 releases, 100 MB and 2620 files per month, and on 2026-11-14 7 releases,
-   150 MB and 3900 files per month. One release is
-   1404 files and 49.8 MB (0.2.x, seven modules), so one release fits in a month, and the project plans at most one release a month. A Kuicksilver release is
+   that). On 2026-10-20 `io.kuicksilver` was granted 7 releases, 100 MB and 2620 files per month, and on 2026-11-14
+   7 releases, 150 MB and 3900 files per month. One release of 0.2.x (seven modules) is 1404 files and 49.8 MB, so two
+   of that size fit in a month (2808 files, 99.6 MB); the project still plans at most one release a month. A Kuicksilver release is
    eight Kotlin Multiplatform modules from 0.3.0 (`kuicksilver-http2` joined, ADR-0017) with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
    `local-release.sh` counts it from a local publication before every upload and refuses above the limits
@@ -216,8 +216,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 6. Only after the deployment is published: `TZ=UTC git -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s
    v<version> -m "Kuicksilver <version>"` on the release commit (the tagger is the release key's identity, the checkout's
    commit identity stays as it is; the script prints the command), push the
-   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag, with release notes that summarise the changelog section and link to it (GitHub refuses
-   a release body above 125,000 characters, and the section of a minor version is longer: 0.3.0's is about 385,000). Attach the six files of
+   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the
+   GitHub release from the tag, with release notes that summarise the changelog section and link to it at the tag
+   (`https://github.com/kuicksilver/kuicksilver/blob/v<version>/CHANGELOG.md#<anchor>`). The section itself does not
+   fit: GitHub refuses a release body above 125,000 characters, and 0.3.0's section is about 385,000 (0.2.0's was about
+   94,800). Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
    `Kuicksilver.xcframework.zip` and their `.asc`. Attach as well the source tarballs the release build verified, from
    `build/openssl-work/src`: `openssl-<v>.tar.gz` and its `.asc`, `zlib-<v>.tar.gz` and its `.asc`, `brotli-<v>.tar.gz`
@@ -357,12 +360,14 @@ published file and the xcframework zip, the SBOM, the provenance and their signa
     provenance, `Kuicksilver.xcframework.zip` and their `.asc`; a signed run stops when one is missing), itself
     signed and scanned.
 
-The CHANGELOG across a prerelease. The prerelease's release commit moves `[Unreleased]` under
-`## [<X.Y.Z-rcN>] - <date>` (the script refuses the prerelease without that heading, as in [Every release](#every-release),
-step 2), and what lands after it goes under a new `[Unreleased]`. The final version's release commit merges the
-prerelease sections and `[Unreleased]` back into one `## [<X.Y.Z>] - <date>`: the final's section lists everything since
-the previous final version, and no `-rcN` section stays in the file. The prerelease's tag keeps its own section, which
-its GitHub release links.
+The CHANGELOG across a prerelease (`-alphaN`, `-betaN` or `-rcN`, written `<X.Y.Z-preN>` here). The prerelease's
+release commit moves `[Unreleased]` under `## [<X.Y.Z-preN>] - <date>` (the script refuses the prerelease without that
+heading, as in [Every release](#every-release), step 2), and what lands after it goes under a new `[Unreleased]`. The
+final version's release commit merges the prerelease sections and `[Unreleased]` back into one
+`## [<X.Y.Z>] - <date>`: the final's section lists everything since the previous final version, and no prerelease
+section stays in the file. So the prerelease's notes link its section at its tag,
+`https://github.com/kuicksilver/kuicksilver/blob/v<X.Y.Z-preN>/CHANGELOG.md#<anchor>`, never on `main`, where it is gone
+after the final.
 
 The script ends with the commands to run by hand, in this order. A tag of `kuicksilver/kuicksilver-swift` can never be
 moved or deleted, so everything SwiftPM will read is checked before that tag is pushed, and the GitHub release stays a
@@ -377,9 +382,9 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
 2. The signed tag `v<version>` and its push (`export TZ=UTC`, `git -c user.name=Kuicksilver -c
    user.email=hello@kuicksilver.io tag -s v<version> ...` with the tagger of `kuicksilver.privacy.tagger`,
    `git push origin <branch> v<version>`).
-3. `gh release create v<version> --draft --prerelease --verify-tag` with notes that summarise
-   the CHANGELOG section and link to it (as in [Every release](#every-release), step 6), followed by the instructions
-   file, and every asset attached, `Kuicksilver.xcframework.zip` among them.
+3. `gh release create v<version> --draft --prerelease --verify-tag` with notes that summarise the CHANGELOG section
+   and link to it at the tag (above; the section does not fit a release body, see [Every release](#every-release), step
+   6), followed by the instructions file, and every asset attached, `Kuicksilver.xcframework.zip` among them.
 4. `tools/release/swift-package-check.sh remote <version> --draft`: the draft's zip, fetched with `gh` (a draft's asset
    has no public URL), has the SHA-256 `Package.swift` names, so has GitHub's own digest of the asset, and it is the
    local zip. Then `gh release edit v<version> --draft=false` publishes the release, and
@@ -459,15 +464,16 @@ add the statically linked OpenSSL.
 - What Central accepts. A file with a classifier (`<artifactId>-<version>-cyclonedx.json`) is an ordinary artifact to
   the portal; it validates with its `.asc`, `.md5` and `.sha1`. So each SBOM file costs **4 files** of the deployment.
 - The limit. The 0.2.0 deployment was 1404 files against Sonatype's default of 1167 (30 days of grace while Sonatype
-  reviewed the limits; the grant of 2026-10-20 gave the namespace 2620 files per month, which left room for only one release a month;
-  since 2026-11-14 it has 3900).
+  reviewed the limits; the grant of 2026-10-20 gave the namespace 2620 files per month, which left room for only one
+  release a month).
   On Central the SBOMs would add: JSON per publication 64 × 4 = **256** (1660 files); JSON and XML per publication
-  **512** (1916); JSON on the eight root publications only **32** (1436); JSON and XML there **64** (1468). Any of these
-  grows a deployment that is already over the limit. On the GitHub release they cost **0** Central files; the count of
-  step 5 is unchanged.
+  **512** (1916); JSON on the eight root publications only **32** (1436); JSON and XML there **64** (1468). In October
+  each of these grew a deployment that was already over the limit. On the GitHub release they cost **0** Central files;
+  the count of step 5 is unchanged.
 
-Revisit when Central raises the limit: the cheapest useful form is one `-cyclonedx.json` on each root publication (the
-aggregate document, 32 files), which tools that read SBOMs from Maven coordinates can find.
+The grant of 2026-11-14 (3900 files a month) leaves room for any of these; the question is open again, and until it is
+decided the SBOM stays on the GitHub release only. The cheapest useful form is one `-cyclonedx.json` on each root
+publication (the aggregate document, 32 files), which tools that read SBOMs from Maven coordinates can find.
 
 ### Build provenance
 
