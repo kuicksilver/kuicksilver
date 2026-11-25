@@ -9,9 +9,9 @@ plugins {
     id("kuicksilver.docs")
 }
 
-// R8 for the keep-rule smoke runs (tools/check/android-keep-rules.sh, service-keep-rules.sh): AGP bundles its own copy and
-// downloads none, so a clean machine (a CI runner) had no r8 jar. `./gradlew -q ksR8Jar` prints the pinned one, verified
-// like every other dependency.
+// R8 for the keep-rule smoke runs (tools/check/android-keep-rules.sh, service-keep-rules.sh, r8-inlining.sh): AGP bundles
+// its own copy and downloads none, so a clean machine (a CI runner) had no r8 jar. `./gradlew -q ksR8Jar` prints the pinned
+// one, verified like every other dependency.
 val r8: Configuration = configurations.create("r8") {
     isCanBeConsumed = false
     isTransitive = false

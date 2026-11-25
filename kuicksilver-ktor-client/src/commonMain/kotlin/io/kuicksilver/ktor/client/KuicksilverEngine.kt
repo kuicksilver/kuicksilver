@@ -795,14 +795,28 @@ internal class KuicksilverEngine(
      * The one learner of [pendingAltSvcFrames]: takes them all, learns them in order of arrival, until none waits.
      *
      * This loop calls only this class's private functions and works on an array, never through an interface or an open
-     * method: the frames are taken in [takeAltSvcFrames] and the batch is finished in [finishAltSvcFrames], neither
-     * suspending. ART 7.0 (API 24) aborted in the GC here ("Tried to mark 0xebadde09 not contained by any spaces", run
-     * 45685880281, negative_altSvcFramesLearnedInOrderAndBounded) when the loop itself called `Map.isEmpty`, `List.last` and
-     * the logger: the JIT-compiled loop was deoptimized at such a call when a receiver of a class it had not seen came
-     * (an empty map after full ones, a batch of many frames after batches of one), the deoptimization filled the registers
-     * the compiled code had found dead with 0xEBADDE09 (kDeadValue), and the coroutine state machine's move-object copies at
-     * the loop's turn, run by the interpreter that went on, put one into the frame's references (as in ClientH2FloodTest's
-     * batchOf). The helpers are not inlined into this frame by that ART (each is too large, or has a try block).
+     * method: the frames are taken in [takeAltSvcFrames], learned in [learnAltSvcFrameBatch] and the batch is finished in
+     * [finishAltSvcFrames], none suspending. ART 7.0 (API 24) aborted in the GC here ("Tried to mark 0xebadde09 not
+     * contained by any spaces", run 45685880281, negative_altSvcFramesLearnedInOrderAndBounded) when the loop itself called
+     * `Map.isEmpty`, `List.last` and the logger: the JIT-compiled loop was deoptimized at such a call when a receiver of a
+     * class it had not seen came (an empty map after full ones, a batch of many frames after batches of one), the
+     * deoptimization filled the registers the compiled code had found dead with 0xEBADDE09, and the coroutine state
+     * machine's move-object copies at the loop's turn, run by the interpreter that went on, put one into the frame's
+     * references (as in ClientH2FloodTest's batchOf). android-7.1.2_r1 has the same code, so API 25 is exposed too; the run
+     * showed it on 24 only.
+     *
+     * The ART sources (AOSP android-7.0.0_r1, art/): the deoptimization writes kDeadValue
+     * (runtime/quick_exception_handler.cc:408); a loop phi only environments use is dropped as dead
+     * (compiler/optimizing/ssa_phi_elimination.cc:45); mterp's move-object copies the raw register into the frame's
+     * references (runtime/interpreter/mterp/x86_64/op_move.S, SET_VREG_OBJECT). That ART's inliner brings none of the
+     * helpers into this frame: it refuses a callee over 32 code units (compiler/optimizing/inliner.cc:792,
+     * kDefaultInlineMaxCodeUnits in compiler/driver/compiler_options.h:45, which the JIT passes,
+     * compiler/jit/jit_compiler.cc:98) and one with a try block (inliner.cc:801); [takeAltSvcFrames] is larger, the others
+     * have try blocks.
+     *
+     * An app's R8 could inline the helpers back into this loop. R8 9.3 inlines none of them here (it inlines
+     * [learnAltSvcFrameBatch] into its lambda, outside the loop); consumer-rules.pro keeps all three for a later R8 that
+     * would, and tools/check/r8-inlining.sh checks an app's R8 build, its negative control showing that it sees an inlining.
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private suspend fun learnAltSvcFrames() {

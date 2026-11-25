@@ -9,3 +9,14 @@
 -keep class io.kuicksilver.ktor.client.KuicksilverEngineContainer {
     public <init>();
 }
+
+# The ALTSVC frame learner (KuicksilverEngine.learnAltSvcFrames, its KDoc says why) keeps its work in these helpers so that
+# the coroutine's loop makes no call through an interface: ART 7.x aborted in the GC when that loop was deoptimized. An
+# application's R8 may inline a private function with one caller and bring those calls back into the loop; a kept member is
+# not inlined (renaming it, or removing it when unused, is fine). tools/check/r8-inlining.sh checks that an app's R8 keeps
+# each one called, not inlined.
+-keepclassmembers,allowobfuscation,allowshrinking class io.kuicksilver.ktor.client.KuicksilverEngine {
+    private *** takeAltSvcFrames();
+    private *** learnAltSvcFrameBatch(...);
+    private *** finishAltSvcFrames(...);
+}

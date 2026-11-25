@@ -824,6 +824,12 @@ jobs:
           [ $# -eq 1 ] && [ -f "$1" ] || { echo "::error::expected one kuicksilver-ktor-client JVM jar, found: $*"; exit 1; }
           bash tools/check/service-keep-rules.sh "$1" kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar
         env: { KSL_R8_REQUIRED: '1' }
+      - name: 'android: ALTSVC frame learner not inlined by R8'
+        # the learner's helpers stay functions of their own in an app's R8 build, its loop makes no interface call (ART 7.x);
+        # the dex does not depend on the emulator's API level: once
+        if: ${{ matrix.api == 35 }}
+        run: bash tools/check/r8-inlining.sh kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar
+        env: { KSL_R8_REQUIRED: '1' }
       - name: 'android: free disk for the emulator'
         # Run 38287900994: both emulators exited before adb saw them and the action only reported a boot timeout. The
         # OpenSSL work tree, three Android ABIs and the AAR fill the runner before the AVD's userdata partition is
