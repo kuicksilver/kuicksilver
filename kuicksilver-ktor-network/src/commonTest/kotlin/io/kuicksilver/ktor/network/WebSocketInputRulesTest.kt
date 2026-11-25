@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.Frame
@@ -18,6 +19,7 @@ import io.kuicksilver.ktor.network.WsTestFrames.frames
 import io.kuicksilver.ktor.network.WsTestFrames.header
 import io.kuicksilver.ktor.network.websocket.WebSocketInflate
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
@@ -127,6 +129,33 @@ class WebSocketInputRulesTest {
             assertTrue(out.none { it.fin && it.opcode < 8 })
         }
 
+    /**
+     * The bytes that break a text frame fail the connection as soon as they arrive, not when the frame is complete: the
+     * peer sends 6 of the 20 bytes its header claims, the last 4 above U+10FFFF (F4 90 80 80), and waits. RFC 6455 section
+     * 8.1: "When an endpoint is to interpret a byte stream as UTF-8 but finds that the byte stream is not, in fact, a valid
+     * UTF-8 stream, that endpoint MUST _Fail the WebSocket Connection_"; the guard held the rest of the frame first, so a
+     * peer that never sent it kept the connection open with the bad bytes read (Autobahn|Testsuite 6.4.3 and 6.4.4).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun negative_invalidUtf8FailsBeforeTheFrameIsComplete() =
+        runTest {
+            val raw = ByteChannel()
+            val payload = bytes(0x61, 0x62, 0xF4, 0x90, 0x80, 0x80) + ByteArray(14) { 'x'.code.toByte() }
+            val out = guardWebSocketInput(raw, 0, untilClose = false, peerMasks = true, context = coroutineContext)
+            try {
+                raw.writeFully(frame(0x81, payload, mask).copyOf(6 + 6)) // the 6-byte header and the first 6 bytes
+                raw.flush()
+                advanceUntilIdle()
+                assertTrue(out.availableForRead > 0, "the guard waits for the rest of the frame")
+                val got = frames(out)
+                assertEquals(listOf(0x88), got.map { it.b0 }, "nothing of the text is handed on")
+                assertEquals(1007, got[0].closeCode)
+            } finally {
+                raw.flushAndClose()
+            }
+        }
+
     @Test fun negative_overlongSurrogateAndOutOfRangeSequencesClose1007() {
         for (bad in listOf(bytes(0xE0, 0x80, 0x80), bytes(0xED, 0xA0, 0x80), bytes(0xF4, 0x90, 0x80, 0x80), bytes(0xF5), bytes(0x80))) {
             guarded(frame(0x81, bad)) { out -> assertEquals(1007, out.last().closeCode, bad.toList().toString()) }
@@ -160,6 +189,38 @@ class WebSocketInputRulesTest {
             assertEquals(1007, out[0].closeCode)
         }
     }
+
+    /**
+     * The same for a compressed text frame: the bad bytes fail it as soon as they are inflated. A frame claiming 20 bytes
+     * sends a stored block's header (10 bytes, not the last block) and 6 bytes of it, the last 4 above U+10FFFF, and waits.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun negative_invalidUtf8InACompressedTextFailsBeforeTheFrameIsComplete() =
+        runTest {
+            val raw = ByteChannel()
+            val out =
+                guardWebSocketInput(
+                    raw,
+                    WS_RSV1,
+                    untilClose = false,
+                    peerMasks = false,
+                    context = coroutineContext,
+                    inflate = WebSocketInflate(noContextTakeover = false, maxMessageSize = 1024),
+                    perMessageDeflate = true,
+                )
+            try {
+                raw.writeFully(header(0xC1, 20) + bytes(0x00, 10, 0, 0xf5, 0xff, 0x61, 0x62, 0xF4, 0x90, 0x80, 0x80))
+                raw.flush()
+                advanceUntilIdle()
+                assertTrue(out.availableForRead > 0, "the guard waits for the rest of the frame")
+                val got = frames(out)
+                assertEquals(listOf(0x88), got.map { it.b0 }, "nothing of the text is handed on")
+                assertEquals(1007, got[0].closeCode)
+            } finally {
+                raw.flushAndClose()
+            }
+        }
 
     // ---------------------------------------------------------------- RFC 6455 sections 5.5.1 and 7.4: Close frames
 

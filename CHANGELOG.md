@@ -1789,6 +1789,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebSocket (both Ktor engines): a text frame whose bytes are not UTF-8 fails the connection with 1007 as soon as those
+  bytes arrive (RFC 6455 section 8.1), compressed or not. Before, the check waited for the rest of the frame, up to 16 KiB,
+  so a peer that sent the bad bytes and then nothing kept the connection open (Autobahn|Testsuite 6.4.3 and 6.4.4).
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.

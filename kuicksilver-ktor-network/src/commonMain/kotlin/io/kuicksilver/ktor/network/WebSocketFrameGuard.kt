@@ -7,6 +7,7 @@ package io.kuicksilver.ktor.network
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeByte
@@ -443,7 +444,12 @@ private class InputGuard(
         out.flush()
     }
 
-    /** An uncompressed text frame: its payload checked as UTF-8 piece by piece and handed on re-framed. */
+    /**
+     * An uncompressed text frame: its payload checked as UTF-8 piece by piece and handed on re-framed. Each piece is what
+     * has arrived (at most [INPUT_CHUNK]), not a full chunk: bytes that are not UTF-8 fail the connection as soon as they
+     * are read (RFC 6455 section 8.1: an endpoint that "finds that the byte stream is not, in fact, a valid UTF-8 stream ...
+     * MUST _Fail the WebSocket Connection_"), never after the rest of the frame, which a peer may never send.
+     */
     private suspend fun textFrame(
         length: Long,
         mask: ByteArray?,
@@ -453,8 +459,9 @@ private class InputGuard(
         var left = length
         var position = 0L
         while (left > 0) {
-            val n = minOf(left, buf.size.toLong()).toInt()
-            input.readFully(buf, 0, n)
+            val n = input.readAvailable(buf, 0, minOf(left, buf.size.toLong()).toInt())
+            // ktor-io's readAvailable answers an input that ended, or failed with a cause, with -1
+            if (n < 0) throw input.closedCause ?: EOFException("the stream ended inside a frame")
             if (mask != null) unmask(buf, n, mask, position)
             position += n
             left -= n
@@ -479,7 +486,10 @@ private class InputGuard(
         }
     }
 
-    /** A compressed frame: its payload (unmasked) inflated and handed on re-framed (RFC 7692 section 7.2.2). */
+    /**
+     * A compressed frame: its payload (unmasked) inflated and handed on re-framed (RFC 7692 section 7.2.2). As in
+     * [textFrame], each piece is what has arrived, so inflated bytes that are not UTF-8 fail the connection at once.
+     */
     private suspend fun inflateFrame(
         length: Long,
         mask: ByteArray?,
@@ -491,8 +501,8 @@ private class InputGuard(
         var position = 0L
         try {
             while (left > 0) {
-                val n = minOf(left, buf.size.toLong()).toInt()
-                input.readFully(buf, 0, n)
+                val n = input.readAvailable(buf, 0, minOf(left, buf.size.toLong()).toInt())
+                if (n < 0) throw input.closedCause ?: EOFException("the stream ended inside a frame")
                 if (mask != null) unmask(buf, n, mask, position)
                 position += n
                 left -= n
