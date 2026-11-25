@@ -188,8 +188,9 @@ self-dependency. The reference stacks still reject one: Go with a stream PROTOCO
 (`x/net/http2/server.go`, quoting RFC 7540), nghttp2 with a connection error on request HEADERS
 (`lib/nghttp2_session.c`); a stream error sits between the two.
 
-**Why it stays.** RFC 9113 §5.3.2 keeps RFC 7540 priority handling for interoperability; nghttp2 and Go still treat a
-self-dependency as an error; it can only affect a peer that already broke RFC 7540.
+**Justification (kept, QUIC and HTTP/2 hardening 2026-11-24).** RFC 9113 §5.3.2 keeps RFC 7540 priority handling for
+interoperability; nghttp2 and Go still treat a self-dependency as an error; it can only affect a peer that already broke
+RFC 7540.
 
 **Standard text.** RFC 7540 §5.3.1 made it an error. RFC 9113 §5.3.2: "This update to HTTP/2 deprecates the priority
 signaling defined in RFC 7540 [RFC7540]. The bulk of the text related to priority signals is not included in this
@@ -254,7 +255,7 @@ the data.
   `webtransport.WebTransportSessionTest.negative_withoutResetStreamAtBothSidesNoSessionIsOpened`,
   `.negative_draft16And02ClientWithoutResetStreamAtIsMalformedInDraft02FormToo`,
   `.negative_draft02FormConnectOnANewerDraftIsMalformed`.
-- **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number, like that of shim 6, now under "Considered and not listed", is kept free so the anchors of the others stay). The
+- **msquic's provisional Initial SCID** (shim 5, 0.3.0; its number, like those of shims 6 and 7, now under "Considered and not listed", is kept free so the anchors of the others stay). The
   client processed an Initial with nothing but ACK, PING and PADDING whose SCID was the DCID it sends to without letting
   it fix the server's SCID, so that an msquic server, which sends from the client's DCID until its listener accepts the
   connection and then switches to a new SCID that it also names in `initial_source_connection_id`, could finish the
@@ -326,13 +327,13 @@ the data.
     (§11.2), as llhttp; the chunk-size line takes CRLF alone on both sides;
   - the request-line whitespace §3 lets a recipient accept (HTAB, VT, FF, a bare CR as SP, whitespace around the line): not
     accepted since 0.3.0, the server takes exactly one SP, as Go and llhttp;
-  - the status line without the SP before an absent reason phrase (`HTTP/1.1 204`): the client accepts it. A server MUST
-    send that SP, but §4 says "recipients MAY instead parse on whitespace-delimited word boundaries and, aside from the
-    line terminator, treat any form of whitespace as the SP separator while ignoring preceding or trailing whitespace",
-    and word-boundary parsing takes exactly this line; Go, curl ("the browsers do not so let's not insist") and OkHttp
-    accept it, llhttp does not. The rest of the status line is strict (`HTTP/1.x SP 3DIGIT`), so the leniency cannot
-    shift the status code or the framing (`h1.H1ResponseHeadTest.statusLineWithoutReasonPhraseIsAccepted`; a numbered
-    shim until 0.3.0);
+  - the status line without the SP before an absent reason phrase (`HTTP/1.1 204`, was shim 7): the client accepts it. A
+    server MUST send that SP, but §4 says "recipients MAY instead parse on whitespace-delimited word boundaries and,
+    aside from the line terminator, treat any form of whitespace as the SP separator while ignoring preceding or
+    trailing whitespace", and word-boundary parsing takes exactly this line; Go, curl ("the browsers do not so let's not
+    insist") and OkHttp accept it, llhttp does not. The rest of the status line is strict (`HTTP/1.x SP 3DIGIT`), so the
+    leniency cannot shift the status code or the framing
+    (`h1.H1ResponseHeadTest.statusLineWithoutReasonPhraseIsAccepted`; a numbered shim until 0.3.0);
   - Content-Length as a list of equal values or repeated equal lines: both sides take it as one length (§6.3 item 5 and
     RFC 9110 §8.6 allow it; Go takes repeats only, curl both, llhttp neither); unequal values fail;
   - Transfer-Encoding with Content-Length: the client frames by the coding and does not reuse the connection (§6.3 item 3,
