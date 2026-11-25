@@ -2,8 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Fuzzing campaign on GitHub-hosted runners: tools/fuzz/campaign.sh (CONTRIBUTING.md, "Fuzzing"), one runner per target.
 #
-#   prepare: target list, OpenSSL linux-x64 ── fuzz (one job per target, campaign.sh run --goal H --fork <cpus>) ── summary
-#                                                                                                              └─ corpus-cache
+#   prepare: target list, OpenSSL linux-x64 ──┬─ fuzz (one job per target, campaign.sh run --goal H --fork <cpus>) ── summary
+#   gradle-deps: the Gradle dependencies ─────┘                                              └─ corpus-cache, gradle-deps-cleanup
+#
+# gradle-deps resolves, once, what the Gradle of every fuzz job needs (build-logic and the plugins in the setup action's
+# `help`, the jvmTest and Kotlin compiler class paths: classpath.init.gradle's resolveFuzzDependencies) in a Gradle user
+# home of its own, empty at the start (GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home, setup-gradle's cache disabled), and
+# saves its dependency cache, about 330 MB of files (2026-11), as fuzz-gradle-deps-<run>-<attempt>; each fuzz job
+# restores it into the same path before its setup, so the matrix does not ask Maven Central for the same files at once
+# (run 44892895905: four fuzz jobs refused with 429 Too Many Requests in setup, also on the retry). The fuzz jobs'
+# setup-gradle cache is read-only: no job of the matrix writes a Gradle user home entry. Without the entry (gradle-deps
+# failed, the restore missed or hung) a fuzz job resolves as before, through tools/ci/gradlew-retry.sh. Every file still
+# passes gradle/verification-metadata.xml when it is used; gradle-deps-cleanup deletes the entry at the end of the run,
+# whatever became of the other jobs.
 #
 # Each fuzz job owns its runner, so campaign.sh runs without its laptop manners: nice 0, no gap between slices, and
 # libFuzzer/Jazzer fork mode with one worker per CPU on the job's one target (slices stay at the 20-minute maximum; every
@@ -101,8 +112,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  gradle-deps:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: 'fuzz: a Gradle user home of its own (the path the fuzz jobs restore into)'
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup   # its `help` resolves build-logic and the plugins, through gradlew-retry.sh
+        with: { gradle-cache: disabled }   # an empty home: the entry holds only what this job resolves
+      - name: 'fuzz: resolve the Gradle dependencies of every fuzz job'
+        run: |
+          # campaign.sh builds the jvmTest classes of every module with a Jazzer target in every fuzz job (snapshot_classpath)
+          tasks=$(awk '/^targets_table\(\) \{/ { t = 1; next } /^EOF/ { t = 0 } t && $2 == "jvm" { print ":" $3 ":resolveFuzzDependencies" }' tools/fuzz/campaign.sh | sort -u)
+          [ -n "$tasks" ] || { echo "::error::no jvm target in tools/fuzz/campaign.sh's table"; exit 1; }
+          # shellcheck disable=SC2086 # one task per word
+          bash tools/ci/gradlew-retry.sh --max-workers=2 -q -I tools/fuzz/classpath.init.gradle $tasks
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/gradle-home/caches/modules-2
+            !${{ runner.temp }}/gradle-home/caches/modules-2/*.lock
+          key: fuzz-gradle-deps-${{ github.run_id }}-${{ github.run_attempt }}
+
   fuzz:
-    needs: prepare
+    needs: [prepare, gradle-deps]
+    # gradle-deps only saves downloads: without it the fuzz jobs still run, and resolve on their own
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +154,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      - name: 'fuzz: the Gradle user home gradle-deps resolved into'
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+      - name: 'fuzz: the Gradle dependencies gradle-deps resolved (before the setup, see the header)'
+        if: needs.gradle-deps.result == 'success'
+        timeout-minutes: 5
+        continue-on-error: true   # no entry, or a cache service that hangs: this job resolves on its own
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/gradle-home/caches/modules-2
+            !${{ runner.temp }}/gradle-home/caches/modules-2/*.lock
+          key: fuzz-gradle-deps-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: ./.github/actions/setup
+        with: { gradle-cache: read-only }   # the matrix never writes a Gradle user home entry
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
       - name: 'fuzz: clang with libFuzzer (ksl harness)'
@@ -143,6 +194,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # the corpus directory exists from here on, also when no artifact is found and the run starts from the seeds
+          mkdir -p "build/fuzz-campaign/corpus/$TARGET"
           # only runs of this workflow, on main, of this repository (not a fork), started by the schedule or by hand: the
           # artifacts API is repository-wide, and a fork's pull request can upload an artifact of the same name
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/fuzz.yml/runs?branch=main&status=completed&per_page=50" \
@@ -158,7 +211,7 @@ jobs:
           # refuse names that leave the directory; extract aside and keep regular files only (no links, devices, fifos)
           names=$(unzip -Z1 "$RUNNER_TEMP/corpus.zip")
           if grep -Eq '(^/|(^|/)\.\.(/|$))' <<< "$names"; then echo "::warning::artifact $id has paths outside its directory; not used"; exit 0; fi
-          x="$RUNNER_TEMP/corpus-x"; rm -rf "$x"; mkdir -p "$x" "build/fuzz-campaign/corpus/$TARGET"
+          x="$RUNNER_TEMP/corpus-x"; rm -rf "$x"; mkdir -p "$x"
           # unzip refuses to write through a link it made (exit 2): such an archive is not used, the run starts from the seeds
           unzip -q "$RUNNER_TEMP/corpus.zip" -d "$x" || { echo "::warning::artifact $id did not unpack cleanly; not used"; rm -rf "$x"; exit 0; }
           find "$x" ! -type f ! -type d -delete
@@ -168,14 +221,19 @@ jobs:
         env:
           HOURS: ${{ needs.prepare.outputs.hours }}
         run: |
-          n=$(find "build/fuzz-campaign/corpus/$TARGET" -type f 2>/dev/null | wc -l | tr -d ' '); echo "restored corpus: $n inputs"
+          # a first run has neither a cache entry nor an artifact, and a restore that hung or failed leaves nothing either: the
+          # directory is made here, and the count never fails the step (bash -e -o pipefail: a find of a missing directory
+          # exits 1, which ended every run of this job before campaign.sh started; campaign.sh adds tools/fuzz/corpus/ and the seeds)
+          c="build/fuzz-campaign/corpus/$TARGET"; mkdir -p "$c"
+          n=$({ find "$c" -type f 2>/dev/null || true; } | wc -l | tr -d ' '); echo "restored corpus: $n inputs"
           bash tools/fuzz/campaign.sh run --targets "$TARGET" --goal "$HOURS" --jobs 1 --fork "$(nproc)" --nice 0 --gap 0 --slice 20
       - name: 'fuzz: prune the ${{ matrix.target }} corpus'   # what the cache keeps: inputs beyond the committed corpus and the seeds
         if: always()
         timeout-minutes: 20
         continue-on-error: true   # a prune that fails or times out is no finding: the corpus is then cached as it grew
         run: |
-          [ -d "build/fuzz-campaign/corpus/$TARGET" ] || { echo "no corpus to prune"; exit 0; }
+          # an empty corpus (the fuzz step ended before its first slice) has nothing to prune, and no classpath snapshot to prune with
+          [ -n "$(find "build/fuzz-campaign/corpus/$TARGET" -type f -print -quit 2>/dev/null || true)" ] || { echo "no corpus to prune"; exit 0; }
           bash tools/fuzz/campaign.sh prune --no-build --nice 0 --targets "$TARGET" \
             || echo "::warning::$TARGET: the corpus could not be pruned, it is cached as it grew"
       - name: 'fuzz: restore a corpus replacement the prune did not finish'
@@ -195,8 +253,9 @@ jobs:
         if: always() && steps.restore.outcome != 'success'
         run: echo "::warning::corpus not restored; this run's corpus is not cached"
       - name: 'fuzz: save the ${{ matrix.target }} corpus'
-        # a first run finds no entry and still succeeds: its corpus is saved
-        if: always() && steps.restore.outcome == 'success' && steps.finding.outputs.found == 'false'
+        # a first run finds no entry and still succeeds: its corpus is saved. An empty corpus is not: its entry would be the
+        # newest, restored next time in place of the artifact fallback (and the path may not exist when the job ended early)
+        if: always() && steps.restore.outcome == 'success' && steps.finding.outputs.found == 'false' && hashFiles(format('build/fuzz-campaign/corpus/{0}/**', matrix.target)) != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/fuzz-campaign/corpus/${{ matrix.target }}
@@ -295,3 +354,20 @@ jobs:
             for id in $old; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
             echo "$t: $(wc -w <<< "$old" | tr -d ' ') older entr(y/ies) deleted"
           done
+
+  gradle-deps-cleanup:
+    # this run's Gradle dependency entry (gradle-deps), which no later run reads: deleted once no fuzz job can still restore
+    # it, also when prepare or the fuzz jobs failed, were skipped or the run was cancelled
+    needs: [gradle-deps, fuzz]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions: { actions: write }
+    timeout-minutes: 10
+    steps:
+      - name: 'fuzz: delete the Gradle dependency entry of this run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deps=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key "fuzz-gradle-deps-$GITHUB_RUN_ID-" --limit 100 --json id --jq '.[].id')
+          for id in $deps; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
+          echo "gradle-deps: $(wc -w <<< "$deps" | tr -d ' ') entr(y/ies) of run $GITHUB_RUN_ID deleted"

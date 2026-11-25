@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Gradle init script for tools/fuzz/campaign.sh and .clusterfuzzlite/build.sh: compiles the jvmTest classes of every module
 // with a Jazzer target in campaign.sh's target table (its third column for the rows of kind jvm) and prints their test
-// runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`.
+// runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`. resolveFuzzDependencies only
+// downloads the external modules those builds need (the jvmTest class paths and the Kotlin compiler's), building nothing:
+// .github/workflows/fuzz.yml's gradle-deps job runs it once, and the fuzz jobs restore what it downloaded, so a matrix of
+// jobs does not ask Maven Central for the same files at once (429 Too Many Requests, run 44892895905).
 // (an included build, build-logic, has no such table and no such module)
 def fuzzModules = { File root ->
     def table = new File(root, 'tools/fuzz/campaign.sh')
@@ -22,6 +25,20 @@ allprojects {
                 def out = layout.buildDirectory.get().asFile
                 def own = files("$out/classes/kotlin/jvm/test", "$out/processedResources/jvm/test")
                 doLast { println("FUZZ_CP ${module}=" + (own.files + cp.files).join(':')) }
+            }
+            tasks.register('resolveFuzzDependencies') {
+                def wanted = ['jvmCompileClasspath', 'jvmTestCompileClasspath', 'jvmTestRuntimeClasspath']
+                def confs = configurations.matching { c ->
+                    c.canBeResolved && (c.name in wanted || c.name.startsWith('kotlinCompiler') || c.name.startsWith('kotlinBuildToolsApi'))
+                }
+                doLast {
+                    // external modules only: a project dependency would need its jar built; any failure fails the task
+                    def n = 0
+                    confs.each { c ->
+                        n += c.incoming.artifactView { componentFilter { it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier } }.files.files.size()
+                    }
+                    println("FUZZ_DEPS ${module}: ${confs.size()} configurations, ${n} files")
+                }
             }
         }
     }

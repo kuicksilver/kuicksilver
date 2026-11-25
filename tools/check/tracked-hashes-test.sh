@@ -58,11 +58,18 @@ done
 if [ "$diffs" = 0 ]; then echo "ok: one scan on 300 random texts"; else echo "FAIL: the scans differ on $diffs random texts"; rc=1; fi
 # the scratch repository: $old is a commit from before the rewrite of topic (the reflog keeps it), $new its rewrite
 r="$tmp/repo"; git init -q -b main "$r"
+# every date is fixed, so the hashes are the same on every run (a hash prefix of digits only is a weak word the scan
+# does not report, which made the comment case fail in about 1.5 % of runs while the dates were the current time)
+export GIT_AUTHOR_DATE='2026-01-01T00:00:00+0000' GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
 cm() { git -C "$r" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty "$@"; }
 cm -m "chore: start"; git -C "$r" checkout -q -b topic
 GIT_COMMITTER_DATE='2026-01-01T00:00:00+0300' cm -m "fix(x): one"; old=$(git -C "$r" rev-parse HEAD)
 git -C "$r" -c user.name=t -c user.email=t@example.invalid commit -q --amend --allow-empty --no-edit --date='2026-01-01T00:00:00+0000'
 new=$(git -C "$r" rev-parse HEAD); old9=${old:0:9}; new9=${new:0:9}
+for h in "$old9" "${old:0:12}" "$new9"; do # the cases below need strong words: a digit and a letter each
+  case "$h" in *[0-9]*) ;; *) echo "FAIL: scratch hash $h has no digit"; exit 1 ;; esac
+  case "$h" in *[a-f]*) ;; *) echo "FAIL: scratch hash $h has no letter"; exit 1 ;; esac
+done
 mkdir -p "$r/tools/check" "$r/src" "$r/docs"
 expect() { # <0|1> <what> <pattern> [root]
   python3 -I "$here/tracked-hashes.py" "${4:-$r}" > "$tmp/out.txt" 2>&1; local got=$?
