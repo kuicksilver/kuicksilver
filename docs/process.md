@@ -162,8 +162,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator, an API 24 emulator of its own and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **77 steps**; a release needs `--with-interop --with-windows`, which makes **82** (and `--with-browser`
-adds a Chrome WebTransport run, 83). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
+default it has **79 steps**; a release needs `--with-interop --with-windows`, which makes **84** (and `--with-browser`
+adds a Chrome WebTransport run, 85). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
 race tests the branch added or changed 10 times under load ([Race tests repeated under load](#repository-checks)), and it
 refuses to start if any of them fails. What the steps cover:
 
@@ -171,7 +171,7 @@ refuses to start if any of them fails. What the steps cover:
 |---|---|
 | Lint and documentation | action and image pins, documentation references, the [repository checks](#repository-checks) (tests that cannot run, the test-count floor, sleeps in tests, name-service calls in library code, the tests behind ✅ rows, the selects that race started work, race tests that force their order, the numbers behind wall-clock bounds, the commit types of the branch) and their negative controls (with the selection of `tools/ci/race-repeat.sh` on stubs), the fuzz campaign script on stubs, the reliability report on fixtures, RFC table, links, no local path in what the documentation site is built from (`tools/check/site-paths.sh`: the guide, the main source sets whose KDoc is the API reference, the files the verification pages read, `llms.txt` and `llms-full.txt`; `pages.yml` scans the built pages only after a push; with its negative controls), guide samples (with their negative controls), configuration tables, troubleshooting messages and `llms-full.txt` against the code (with their negative controls), HPACK tables and vectors, ktlint |
 | Build integrity | dependency verification of every configuration, SPDX headers, module layers, ABI dumps, sans-IO architecture checks, shared source sets, the API reference and documentation site built with Dokka warnings as errors |
-| JVM on macOS | every module's JVM tests, the same suites on JDK 17 and on JDK 25 with restricted native access denied (the hosted CI's `jdk-compat` job; see [old platforms](#old-platforms-jdk-17-and-25-android-api-24) for the modules they cover), the coverage report (no threshold), the engine interop bench (the Ktor client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs; [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), the samples (`realtime-telemetry`; the Compose demo's build, its iOS framework and its tests), the JNI library and its export whitelist, the Intel-Mac library |
+| JVM on macOS | every module's JVM tests, the same suites on JDK 17 and on JDK 25 with restricted native access denied (the hosted CI's `jdk-compat` job; see [old platforms](#old-platforms-jdk-17-and-25-android-api-24) for the modules they cover), the coverage report (no threshold), the engine interop bench (the Ktor client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs; [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), the samples (`realtime-telemetry`, `webtransport-chat` and `http3-server`, their tests, the chat's common code compiled for macOS and the iOS simulator; the Compose demo's build, its iOS framework and its tests), the JNI library and its export whitelist, the Intel-Mac library |
 | JVM on Linux | every module's JVM suite against the manylinux `libksl.so`, x64 and arm64, in Docker; the system-OpenSSL build mode |
 | JVM on Windows | every module's JVM suite in the Windows 11 VM against the mingw-w64 dll (`--with-windows`) |
 | Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the ALTSVC frame learner's R8 inlining, the exports and OpenSSL of `libksl.so`, the device tests on the emulator (`androidConnectedCheck`), the connection migration tests against a server on the host (`androidMigrationDeviceTest`, and the Compose demo's `migrationDemoDeviceTest`), and the device tests again on an API 24 emulator, the minimum SDK (the hosted CI's `android (24)` job) |
@@ -255,7 +255,7 @@ tests on API 24 (emulator)`, so that a failure on an old runtime shows up before
 Bug classes that came back after review are checked by scripts under `tools/check/`, each with negative controls on a
 scratch repository (`<name>-test.sh`), in step 3 of the local gate (step 4 runs the negative controls) and in the hosted
 CI's lint job; `test-bytecode.py` reads compiled classes, so it runs in the gate's JVM test step (which also compiles the
-Android host and device tests) and after the sample builds, after the JVM tests and the realtime-telemetry sample of the
+Android host and device tests) and after the sample builds, after the JVM tests and each sample of the
 CI `apple` job and on the Android host and device tests in the CI `android` job. Each takes a few seconds at most. Where a check keeps a lock file, the lock changes in the same
 commit as the code it records, so the change is in the diff a reviewer reads.
 
