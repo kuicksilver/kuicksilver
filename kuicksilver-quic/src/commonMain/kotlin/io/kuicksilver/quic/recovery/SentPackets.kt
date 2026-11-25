@@ -12,8 +12,8 @@ package io.kuicksilver.quic.recovery
  * (`ngtcp2_rtb`); a flat array keeps the hot path allocation-free.
  */
 internal class SentPackets : Iterable<SentPacket> {
-    private var pns = LongArray(16)
-    private var slots = arrayOfNulls<SentPacket>(16)
+    private var pns = LongArray(INITIAL_SLOTS)
+    private var slots = arrayOfNulls<SentPacket>(INITIAL_SLOTS)
     private var head = 0
     private var tail = 0
 
@@ -81,6 +81,18 @@ internal class SentPackets : Iterable<SentPacket> {
         return touched
     }
 
+    /** The arrays grew past their first size. */
+    val grown: Boolean get() = slots.size != INITIAL_SLOTS
+
+    /** Empty with arrays grown past their first size: back to it (a burst's in-flight count does not stay with an idle space). */
+    fun shrinkIfEmpty() {
+        if (size != 0 || slots.size == INITIAL_SLOTS) return
+        pns = LongArray(INITIAL_SLOTS)
+        slots = arrayOfNulls(INITIAL_SLOTS)
+        head = 0
+        tail = 0
+    }
+
     fun clear() {
         slots.fill(null, head, tail)
         head = 0
@@ -139,3 +151,5 @@ internal class SentPackets : Iterable<SentPacket> {
         return moved
     }
 }
+
+private const val INITIAL_SLOTS = 16

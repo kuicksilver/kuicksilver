@@ -11,6 +11,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.idleSentRecords
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.testing.MemoryNetwork
 import io.kuicksilver.tls.TlsIdentity
@@ -25,13 +26,17 @@ import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
 import kotlin.math.roundToLong
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The memory benchmark (P.5): idle footprint of the process, what an idle QUIC connection holds (core alone and through the
@@ -40,7 +45,7 @@ import kotlin.time.Duration.Companion.minutes
  * so the accelerated socket's packet path is measured too), so it runs on a busy host; the RSS figures are the noisiest (the JVM's heap grows and does not give memory back). Run it with
  * `bash tools/bench/memory.sh` (docs/benchmarks.md, "Memory").
  */
-@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 public object MemoryBench {
     /** The parts [run] can be limited to; each one in its own process keeps one part's heap growth out of the next one's RSS. */
     public val sections: List<String> = listOf("core", "endpoint", "http3", "transfer", "udp")
@@ -144,6 +149,14 @@ public object MemoryBench {
                     }
                 }
             }
+            // idle as a connection between requests far apart: every space has given back the sent-packet records the busiest
+            // moment of the exchange left beyond the two it keeps (LossDetection.settleIdle, a halving per idle period of 1 s or more)
+            try {
+                withTimeout(IDLE_SETTLE) { while (held.any { c -> c!!.idleSentRecords().any { it < 0 } }) delay(20.milliseconds) }
+            } catch (e: TimeoutCancellationException) {
+                val left = held.map { it!!.idleSentRecords().joinToString(prefix = "[", postfix = "]") }
+                throw IllegalStateException("connections still settling after $IDLE_SETTLE (records per space, -1 settling): $left", e)
+            }
             val both = snapshot()
             perConnection("$label, idle, client and server", before, both, n, out)
             // the client's side goes without a word to the server: its datagrams are cut, its endpoint closes its connections
@@ -160,6 +173,8 @@ public object MemoryBench {
             val last = if (h3) h3s[h3s.size - 1]!! else held[held.size - 1]!!
             val prev = if (h3) h3s[h3s.size - 3]!! else held[held.size - 3]!!
             inventory("$label server connection", last, prev, out)
+            val records = held[held.size - 1]!!.idleSentRecords()
+            out("  sent-packet records kept (Initial, Handshake, Application): ${records.joinToString()}")
             held.clear(); h3s.clear()
         } finally {
             serving.cancel(); client?.close(); server.close(); identity.close()
@@ -255,6 +270,9 @@ public object MemoryBench {
     private const val WARMUP = 64L shl 20
     private const val TICK = 256L shl 10 // Kotlin/Native: a forced collection this often leaves the collector little room for its own
     private const val HISTOGRAM_ROWS = 15
+
+    /** The bound on the wait for idle connections to give back their records: a few idle periods of 1 s, with a loaded host's margin. */
+    private val IDLE_SETTLE = 30.seconds
 }
 
 /** The per-connection inventory of the runtime object [a] (a connection), [b]'s objects counted as shared (JVM only). */

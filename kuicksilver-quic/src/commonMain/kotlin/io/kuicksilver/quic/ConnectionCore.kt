@@ -1227,6 +1227,13 @@ public class ConnectionCore internal constructor(
     @io.kuicksilver.annotations.InternalKuicksilverApi
     public val sniSelectedFor: String? get() = handshake.session.sniSelectedFor
 
+    /** See [io.kuicksilver.quic.idleSentRecords]: the core's side, on the thread that runs the core. */
+    internal fun idleSentRecords(): IntArray =
+        IntArray(3) { i ->
+            val sp = loss.space(SpaceId.entries[i])
+            if (!sp.sent.isEmpty() || sp.emptySince != TimeMark.NEVER) -1 else sp.pooledForTest
+        }
+
     /**
      * Opens a local stream and returns its id, or -1 while the peer's stream limit is reached (a STREAMS_BLOCKED goes out, RFC 9000 section
      * 4.6); retry after later input, since no event announces the peer's MAX_STREAMS in this version.

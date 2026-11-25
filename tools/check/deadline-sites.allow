@@ -2,7 +2,7 @@
 # means. <path> | <function> | <form> | <count> | <verdict> | <reason>. The question for each: what happens when the
 # deadline fires as the bounded work returns (the timeout lands on another thread after the block returned and before
 # the timeout's scope completed)? A new site, or one more in a function, fails until it is judged here.
-kuicksilver-bench/src/commonMain/kotlin/io/kuicksilver/bench/MemoryBench.kt | endpointIdle | withTimeout | 2 | side-effect-free | harness bound: the timeout fails the run or the iteration, nothing of the library depends on the result
+kuicksilver-bench/src/commonMain/kotlin/io/kuicksilver/bench/MemoryBench.kt | endpointIdle | withTimeout | 3 | side-effect-free | harness bound: the timeout fails the run or the iteration, nothing of the library depends on the result (the third only polls the cores' idle records)
 kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt | awaitAnswer | withTimeoutOrNull | 1 | pure-wait | joins the stream's answered Deferred; the caller goes on either way, the answer stays in the stream
 kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt | closeWithinBound | withTimeoutOrNull | 1 | pure-wait | both branches end alike: a transport whose close completed as the bound fires is closed hard, and closeTransportOnce does nothing to a closed one
 kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/runtime/H2Runtime.kt | runHealthCheck | withTimeoutOrNull | 1 | made-flag | a PING acknowledgement read as the bound fires is taken from acked.isCompleted, not from the dropped result (CHANGELOG: "a health PING answered as its bound fires keeps the connection")
