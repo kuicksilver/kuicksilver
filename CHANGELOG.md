@@ -3080,6 +3080,14 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   TargetName's CNAME path was not filed at all. The KDoc of `HttpsRecordSource.Exchange` and the guide now say that the
   engine matches a response by its question, not its ID (the queries carry ID 0), so an exchange over plain UDP or TCP
   must set and check a random ID of its own.
+- Interop tooling: the simulator's captures lost their last 0.1-0.25 s. `dumpcap` reads through libpcap with a 250 ms
+  timeout, and on Linux packets reach it a block at a time; `tools/interop/sim-entrypoint.sh` forwarded the runner's
+  SIGTERM (0.1-0.2 s after the client exits) at once, so the open block was never written. Most cells' captures ended
+  18-72 ms before the client's last qlog event (the quic-go client's), and `kuicksilver-native->quic-go:zerortt` (the
+  0.3.0 integration matrix) and `kuicksilver->quic-go:zerortt` went red when the whole second connection (about 55 ms)
+  fell in that gap ("Expected exactly 2 handshakes. Got: 1"; 1 of 3 runs before the fix). The wrapper now waits 0.5 s
+  before forwarding the signal, and a second signal neither shortens the wait nor is forwarded again: 8 of 8 runs of
+  that cell green, every capture ending 8-628 ms after the quic-go client's last qlog event.
 
 ### Security
 

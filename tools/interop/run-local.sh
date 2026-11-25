@@ -15,9 +15,10 @@
 # --perf runs only the runner's measurements (goodput, crosstraffic; -t narrows them) against the peers of tools/interop/perf-thresholds.json
 # (unless peers are given) and then tools/interop/check-perf.sh on the results: exit 1 on a measurement below its threshold or missing.
 # The sim container runs tools/interop/sim-entrypoint.sh (a compose override written next to the runner's docker-compose.yml) so its
-# dumpcaps finish writing before the container is torn down, and in the rebind cases opens the clients' ready port only
-# after the first rebind (rebind-port 1.25 s, rebind-addr 0.3 s after it, KSL_INTEROP_START_GATE overrides), so transfers end
-# away from the next rebinds (see the script). A cell whose verdict rests on the environment (tools/interop/environment.sh)
+# dumpcaps finish writing before the container is torn down (it forwards the teardown signal 0.5 s late, so their last block of
+# packets is written too), and in the rebind cases opens the clients' ready port only after the first rebind (rebind-port 1.25 s,
+# rebind-addr 0.3 s after it, KSL_INTEROP_START_GATE overrides), so transfers end away from the next rebinds (see the script). A cell
+# whose verdict rests on the environment (tools/interop/environment.sh)
 # is reported as ENVIRONMENT and rerun into <peer>-<role>-rerun-<case>/, again into rerun<N>-<case>/ while the rerun hits the
 # environment too, at most KSL_INTEROP_ENV_RERUNS (5) times: a sim output still lacking a dumpcap summary (an unflushed,
 # incomplete pcap: the runner's verdict does not stand either way; not when the runner timed the cell out, which cuts the output

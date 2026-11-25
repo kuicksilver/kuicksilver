@@ -6,6 +6,16 @@
 # may still be writing its last block: the pcap then lacks its tail and the runner's checks read an incomplete trace (the 0.2.0
 # gate failed kuicksilver->ngtcp2:amplificationlimit on a server-side pcap holding 49 of 71 packets; eth1's dumpcap never
 # printed its "Packets captured" summary). This wrapper stays alive until every dumpcap has exited (compose allows 10 s).
+# Nor does a dumpcap that exits cleanly hold the last packets: it reads through libpcap with a 250 ms timeout (dumpcap.c
+# CAP_READ_TIMEOUT), and on Linux TPACKET_V3 hands packets over a block at a time, a block retiring when full or when that
+# timeout passes; the runner's compose (--abort-on-container-exit) signals the sim 0.1-0.2 s after the client exits, and that
+# signal, forwarded at once, stopped the dumpcaps with their open block undelivered. The captures then ended 18-72 ms before the
+# client's last qlog event in most cells (the quic-go client's, in the cells measured), and a cell went red when a whole short
+# connection fell in that gap: zerortt's second connection lasts about 55 ms (kuicksilver-native->quic-go:zerortt in the 0.3.0
+# integration matrix, run 20261125-041158, 63 and 36 packets captured, "Expected exactly 2 handshakes. Got: 1";
+# kuicksilver->quic-go:zerortt, 20261120-234311). The wrapper waits 0.5 s before forwarding the signal, twice that timeout:
+# every block holding a packet that reached the sim before the signal is delivered by then, and 0.5 s plus the 8 s dumpcap wait
+# below stay within compose's 10 s. A second TERM or INT neither shortens the wait nor signals run.sh again.
 #
 # Rebind scenarios move the client's binding first-rebind (1 s) after the simulator starts, and the client starts when the sim's
 # port 57832 answers, polling it once a second (wait-for-it): its first Initial lands within milliseconds of that rebind. When it
@@ -60,8 +70,18 @@ if [[ "${SCENARIO:-}" == rebind* ]]; then
 fi
 ./run.sh "$@" &
 child=$!
-trap 'kill -TERM "$child" 2>/dev/null' TERM INT
-wait "$child"   # returns as soon as the trap fires
+stopping=""
+# shellcheck disable=SC2329   # the trap below invokes it
+# bash runs on_stop once wait returns; a TERM/INT during its sleep runs it again as the sleep ends (bash 5) or once it returns
+# (bash 3.2), and the guard returns at once
+on_stop() {
+  [ -z "$stopping" ] || return 0
+  stopping=1
+  sleep 0.5   # dumpcap's open block times out (250 ms) and is written before run.sh stops it (see above)
+  kill -TERM "$child" 2>/dev/null
+}
+trap on_stop TERM INT
+wait "$child"   # returns as soon as a signal arrives; the handler then runs before the next line
 while kill -0 "$child" 2>/dev/null; do sleep 0.1; done
 # the dumpcaps are reparented to this shell (PID 1) when run.sh exits: let them flush and print their summaries
 for _ in $(seq 1 80); do pidof dumpcap >/dev/null 2>&1 || break; sleep 0.1; done

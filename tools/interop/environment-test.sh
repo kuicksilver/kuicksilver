@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, closing-challenge.py,
 # clienthello-lost.py, prohibited-port-rebind.py, msquic-probe-budget.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
-# and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
+# and for sim-entrypoint.sh's rebind start gate and teardown grace on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
 # closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6); KSL_INTEROP_TIMEOUT_CELL
@@ -586,6 +586,50 @@ check "run-local.sh refuses an option without its value"            2 "--out nee
 check "run-local.sh refuses an image it does not build"             2 "--image takes native" -- bash "$here/run-local.sh" --image natve quic-go
 sim "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" > "$tmp/p2p.log"
 check "other scenarios: the port is never touched"                0 "" -- bash -c "! grep -q INPUT '$tmp/p2p.log'"
+
+# sim-entrypoint.sh at teardown: a TERM reaches run.sh only after the 0.5 s grace for dumpcap's open block, and once, however many
+# TERMs follow: some inside the grace, one after the forward while run.sh is still up (the stub run.sh logs every TERM it gets and
+# exits 1 s after the first). The stub sleep really sleeps the grace. Checked as the order of the calls, not as the time that
+# passed; the first TERM goes out 0.3 s after run.sh is up, and one that came before the trap kills the wrapper (exit 143), which is
+# reported apart.
+mkdir -p "$tmp/term/bin"
+cat > "$tmp/term/bin/sleep" <<'SH'
+#!/bin/bash
+echo "sleep $*" >> "$SIM_LOG"
+case "$1" in 0.05|0.5) command -p sleep "$1" ;; esac
+exit 0
+SH
+printf '#!/bin/bash\nexit 1\n' > "$tmp/term/bin/pidof"   # no dumpcap left
+cat > "$tmp/term/run.sh" <<'SH'
+#!/bin/bash
+got=0
+trap 'echo "run.sh TERM" >> "$SIM_LOG"; got=1' TERM
+echo "run.sh up" >> "$SIM_LOG"
+left=20
+for _ in $(seq 1 600); do command -p sleep 0.05; [ "$got" = 0 ] || { left=$((left - 1)); [ "$left" -gt 0 ] || exit 0; }; done
+echo "run.sh never signalled" >> "$SIM_LOG"
+SH
+chmod +x "$tmp/term/bin/"* "$tmp/term/run.sh"
+term() {   # TERMs inside the grace, [after] -> the log of the grace and of the TERMs run.sh got, then the wrapper's exit status
+  rm -f "$tmp/term/log"
+  ( cd "$tmp/term" && SIM_LOG="$tmp/term/log" PATH="$tmp/term/bin:$PATH" SCENARIO="simple-p2p --delay=15ms" exec bash "$here/sim-entrypoint.sh" > /dev/null 2>&1 ) &
+  local e=$! st
+  for _ in $(seq 1 200); do grep -q "run.sh up" "$tmp/term/log" 2> /dev/null && break; command -p sleep 0.05; done
+  command -p sleep 0.3   # the wrapper sets its trap right after starting run.sh
+  for _ in $(seq 1 "$1"); do kill -TERM "$e" 2> /dev/null; command -p sleep 0.15; done
+  if [ "${2:-}" = after ]; then   # once run.sh got the forwarded TERM, while it is still up
+    for _ in $(seq 1 100); do grep -q "run.sh TERM" "$tmp/term/log" 2> /dev/null && break; command -p sleep 0.05; done
+    kill -TERM "$e" 2> /dev/null
+  fi
+  wait "$e"; st=$?
+  grep -v -e "^sleep 0.1$" "$tmp/term/log" | tr '\n' '|'; echo " exit $st"   # without the kill -0 polls
+}
+term 1 > "$tmp/term1.log"
+check "teardown: no TERM came before the wrapper's trap"            1 "" -- grep -q "exit 143" "$tmp/term1.log"
+check "teardown: run.sh gets the TERM after the 0.5 s grace"       0 "" -- grep -qxF "run.sh up|sleep 0.5|run.sh TERM| exit 0" "$tmp/term1.log"
+term 3 after > "$tmp/term4.log"
+check "teardown: (4 TERMs) no TERM came before the wrapper's trap"  1 "" -- grep -q "exit 143" "$tmp/term4.log"
+check "teardown: more TERMs neither skip the grace nor resend it"   0 "" -- grep -qxF "run.sh up|sleep 0.5|run.sh TERM| exit 0" "$tmp/term4.log"
 
 if [ -n "${KSL_INTEROP_CELL:-}" ]; then   # the real gate cell: pcaps and key log through tshark
   cell=${KSL_INTEROP_CELL%/}; res=$(dirname "$(dirname "$cell")")
