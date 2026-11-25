@@ -24,6 +24,7 @@ import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -92,34 +93,52 @@ class ServerEchTest {
                 .port
     }
 
+    /**
+     * A handshake on a session cache of its own, closed before this returns: the tickets the server sends after the handshake
+     * (six per connection) are released whenever the connection's reader stores them, before or after. A cache left open kept
+     * them for the rest of the process, which the leak sentinel reported as `ksl.session x12` when both accepted handshakes'
+     * tickets were read before the socket closed (seen on Windows).
+     */
     private suspend fun handshake(
         port: Int,
         list: EchConfigList,
     ): TlsConnection {
         val selector = SelectorManager(Dispatchers.IO)
+        val cache = SessionCache()
         val tcp =
             io.kuicksilver.ktor.network
                 .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
         return try {
             withTimeout(10.seconds) {
-                TlsConnection.client(
-                    tcp.openReadChannel(),
-                    tcp.openWriteChannel(autoFlush = true),
-                    io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
-                        alpn = kotlin.collections.listOf("http/1.1")
-                        serverName = "server.test"
-                        trust =
-                            io.kuicksilver.tls.TrustConfig
-                                .AnchoredCa(kotlin.collections.listOf(ServerFixtures.testCa))
-                        echConfigList = list
-                    },
-                    EmptyCoroutineContext,
-                    SessionCache(),
-                )
+                val tls =
+                    TlsConnection.client(
+                        tcp.openReadChannel(),
+                        tcp.openWriteChannel(autoFlush = true),
+                        io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                            alpn = kotlin.collections.listOf("http/1.1")
+                            serverName = "server.test"
+                            trust =
+                                io.kuicksilver.tls.TrustConfig
+                                    .AnchoredCa(kotlin.collections.listOf(ServerFixtures.testCa))
+                            echConfigList = list
+                        },
+                        EmptyCoroutineContext,
+                        cache,
+                    )
+                // the server's six tickets (TlsConnection.TCP_TICKETS) stored before the socket closes, as Windows read them:
+                // every run then has tickets for the cache to release
+                try {
+                    while (cache.size() < 6) delay(5)
+                } catch (t: Throwable) {
+                    tls.close()
+                    throw t
+                }
+                tls
             }
         } finally {
             tcp.close()
             selector.close()
+            cache.close()
         }
     }
 

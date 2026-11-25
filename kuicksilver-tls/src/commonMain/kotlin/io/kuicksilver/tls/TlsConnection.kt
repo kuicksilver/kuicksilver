@@ -1335,7 +1335,9 @@ public enum class TlsVersion {
  * entries expire after 7 days and the cache holds at most [maxEntries] sessions (the least recently stored one goes first).
  * A session is a native `ksl_session` handle: the ticket and its resumption secret stay in native memory and are cleansed
  * when the entry is used, replaced, evicted, expired or [clear]ed (threat model 3.7). Each engine owns an instance and clears
- * it when it closes; [TlsConnection.client] without an explicit cache uses [Default].
+ * it when it closes; [TlsConnection.client] without an explicit cache uses [Default]. A cache the caller creates is the
+ * caller's to [close]: nothing else frees its sessions, and closing it also releases the tickets a connection's reader
+ * stores in it later.
  */
 @InternalKuicksilverApi
 public class SessionCache(

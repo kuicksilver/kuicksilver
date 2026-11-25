@@ -63,6 +63,7 @@ kuicksilver-ktor-network/src/nativeTest/kotlin/io/kuicksilver/ktor/network/TcpSo
 kuicksilver-ktor-network/src/posixTest/kotlin/io/kuicksilver/ktor/network/HardStopCloseTest.kt	1
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/CloseWithinTest.kt	2
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/H2StreamReleaseTest.kt	1
+kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerEchTest.kt	1
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerFixtures.kt	1
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH1Test.kt	2
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH1TimeoutTest.kt	1

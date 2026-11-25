@@ -155,6 +155,65 @@ static int df_opt(SOCKET s, int level, int opt, const BOOL *v, int *transient) {
     return 0;
 }
 
+#define DF_STEP "Don't Fragment setsockopt"
+#ifdef KSL_TEST
+static int no_df_v4_mapped_for_test; /* simulates a system refusing IP_DONTFRAGMENT on the v4-mapped half, for good */
+void ksl_udp_no_df_v4_mapped_for_test(int on) {
+    no_df_v4_mapped_for_test = on;
+}
+static int no_df_inet_for_test; /* simulates a system refusing IP_DONTFRAGMENT on an AF_INET socket, for good */
+void ksl_udp_no_df_inet_for_test(int on) {
+    no_df_inet_for_test = on;
+}
+static int
+    transient_df_inet_for_test; /* simulates a transient refusal (WSAENOBUFS) of IP_DONTFRAGMENT on an AF_INET socket */
+void ksl_udp_transient_df_inet_for_test(int on) {
+    transient_df_inet_for_test = on;
+}
+static int no_inet_for_test; /* simulates WSASocketW(AF_INET) failing */
+void ksl_udp_no_inet_for_test(int on) {
+    no_inet_for_test = on;
+}
+#endif
+/* DF on, and where the system has it PROBE: no path MTU cache drives the sizes (quic-go CVE-2024-53259). Per half the socket
+   carries (v4_half: IPv4 traffic, AF_INET or v4-mapped; an AF_INET6 socket always has the IPv6 half): DF (IP_DONTFRAGMENT /
+   IPV6_DONTFRAG) must take; PROBE where the system takes it, else that half is in DO mode. DF is set before bind, as msquic does;
+   PROBE too (msquic never sets it), as the JDK's socket gets both, unbound, from ksl_udp_fd_df_probe. Observed on Windows
+   Server 2025: a socket bound to ::1 got no DF when both halves were asked for after the bind, though one on :: got both;
+   which option it refused was not reported. 0 on a transient refusal (*transient, see
+   df_opt): not a verdict on DF, the open fails as that error (KslException, not a refused bind), so the caller's lack of DF is
+   not permanent. Not covered by tools/c-test.sh: Winsock offers no way to make setsockopt fail so, and the mingw test binary
+   runs only on a Windows host. */
+static int set_df(ksl_udp *u, SOCKET fd, int v4_half, int *transient) {
+    BOOL yes = TRUE;
+    int probe = IP_PMTUDISC_PROBE, df = 1, p4 = 1, p6 = 1;
+    u->granted &= ~(uint32_t)(KSL_UDP_DF | KSL_UDP_DF_DO); /* nothing left from a dual-stack attempt that failed */
+    u->df_probe = 0;
+    if (u->family == AF_INET6) {
+        df = df_opt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &yes, transient);
+        p6 = setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+    }
+    if (v4_half) {
+        int df4 = df_opt(fd, IPPROTO_IP, IP_DONTFRAGMENT, &yes, transient);
+#ifdef KSL_TEST
+        if ((u->family == AF_INET6 && no_df_v4_mapped_for_test) || (u->family == AF_INET && no_df_inet_for_test))
+            df4 = 0;
+        if (u->family == AF_INET && transient_df_inet_for_test) {
+            df4 = 0;
+            *transient = WSAENOBUFS;
+        }
+#endif
+        df = df4 && df;
+        p4 = setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
+    }
+    if (!df && *transient)
+        return 0;
+    u->df_probe = p4 && p6;
+    if (df) /* DF alone where PROBE is refused on a half: what msquic runs with, reported as DO */
+        u->granted |= KSL_UDP_DF | (u->df_probe ? 0 : KSL_UDP_DF_DO);
+    return 1;
+}
+
 static void fail(uint32_t *err, uint32_t code, char *msg, size_t msglen, const char *what, int wsa) {
     if (err)
         *err = code;
@@ -292,7 +351,7 @@ static SOCKET open_bound(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int d
     u->dual = dual;
     *step = "WSASocketW";
 #ifdef KSL_TEST
-    if (u->family == AF_INET6 && no_ipv6_for_test) {
+    if ((u->family == AF_INET6 && no_ipv6_for_test) || (u->family == AF_INET && no_inet_for_test)) {
         *wsa = WSAEAFNOSUPPORT;
         return INVALID_SOCKET;
     }
@@ -323,9 +382,21 @@ static SOCKET open_bound(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int d
     BOOL yes = TRUE, no = FALSE;
     setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&yes,
                sizeof yes); /* nobody binds over this port (msquic does the same) */
-    if (u->family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&no, sizeof no) != 0 && dual) {
+    int v6only_off =
+        u->family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&no, sizeof no) == 0;
+    if (u->family == AF_INET6 && !v6only_off && dual) {
         *wsa = WSAGetLastError();
         *step = "IPV6_V6ONLY";
+        closesocket(fd);
+        return INVALID_SOCKET;
+    }
+    /* the IPv4 half: an AF_INET socket, or an AF_INET6 one that takes v4-mapped traffic (on ::, or on a v4-mapped address); one bound
+       to another IPv6 address (::1) carries IPv6 alone, as ksl_udp.c counts it */
+    int v4_half = u->family == AF_INET || (v6only_off && (dual || is_wildcard(addr) || is_mapped(addr + 3)));
+    int transient = 0;
+    if ((u->requested & KSL_UDP_DF) && !set_df(u, fd, v4_half, &transient)) {
+        *wsa = transient;
+        *step = DF_STEP;
         closesocket(fd);
         return INVALID_SOCKET;
     }
@@ -369,10 +440,31 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     int dual = addr[0] == 4 && is_wildcard(addr), wsa = 0;
     const char *step = "WSASocketW";
     u->fd = open_bound(u, addr, dual, &wsa, &step);
-    if (u->fd == INVALID_SOCKET && dual)
+    if (u->fd == INVALID_SOCKET && dual && strcmp(step, DF_STEP) != 0) /* a transient DF refusal is no missing IPv6 */
         u->fd = open_bound(u, addr, 0, &wsa, &step);
+    else if (u->fd != INVALID_SOCKET && dual && (flags & KSL_UDP_DF) && !(u->granted & KSL_UDP_DF)) {
+        /* the dual-stack socket has no DF for good (a transient refusal fails the open above): IPv4 alone on an AF_INET socket
+           when DF takes there, as NioDatagramIo's AF_INET channel when the dual-stack IPv4 half has no DF, so IPv4 QUIC still
+           works (IPv6 destinations are then unreachable from it, as on a host without IPv6). The dual-stack socket is closed
+           first, so an explicit port is free for the AF_INET one. Where that does not open, or opens without DF for good, the
+           dual-stack socket is opened again (IPv6 stays reachable) and reported without DF, so the caller does not use it
+           (RFC 9000 section 14); a transient refusal on the AF_INET socket fails the open as that error. Another process may
+           take an explicit port between the close and a bind: the open then fails with KSL_E_BIND instead of reporting no DF.
+           Windows only for now: ksl_udp.c keeps a dual-stack socket without DF on Linux and Apple. */
+        closesocket(u->fd);
+        u->fd = open_bound(u, addr, 0, &wsa, &step);
+        if (u->fd != INVALID_SOCKET && !(u->granted & KSL_UDP_DF)) {
+            closesocket(u->fd);
+            u->fd = open_bound(u, addr, 1, &wsa, &step);
+        } else if (u->fd == INVALID_SOCKET && strcmp(step, DF_STEP) != 0)
+            u->fd = open_bound(u, addr, 1, &wsa, &step);
+    }
     if (u->fd == INVALID_SOCKET) {
-        fail(err, strcmp(step, "bind") == 0 ? KSL_E_BIND : KSL_E_NOT_SUPPORTED, msg, msglen, step, wsa);
+        fail(err,
+             strcmp(step, "bind") == 0                         ? KSL_E_BIND
+             : strcmp(step, DF_STEP) == 0 && wsa == WSAENOBUFS ? KSL_E_NO_MEMORY
+                                                               : KSL_E_NOT_SUPPORTED,
+             msg, msglen, step, wsa);
         free(u);
         return NULL;
     }
@@ -397,34 +489,6 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
             u->granted |= KSL_UDP_ECN;
             u->ecn_cmsg_on = 1;
         }
-    }
-    if (flags &
-        KSL_UDP_DF) { /* DF on, and where the system has it PROBE: no path MTU cache drives the sizes (quic-go CVE-2024-53259) */
-        /* per half: DF (IP_DONTFRAGMENT / IPV6_DONTFRAG) must take; PROBE where the system takes it, else that half is in DO mode */
-        int probe = IP_PMTUDISC_PROBE, df, p4, p6 = 1, transient = 0;
-        if (u->family == AF_INET) {
-            df = df_opt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, &yes, &transient);
-            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
-        } else {
-            int df6 = df_opt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &yes, &transient);
-            int df4 = df_opt(u->fd, IPPROTO_IP, IP_DONTFRAGMENT, &yes, &transient); /* the v4-mapped half */
-            df = df6 && df4;
-            p6 = setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
-            p4 = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, (const char *)&probe, sizeof probe) == 0;
-        }
-        if (!df && transient) {
-            /* not a verdict on DF: the open fails as the transient error (KslException, not a refused bind), so the caller's
-               lack of DF is not permanent. Not covered by tools/c-test.sh: Winsock offers no way to make setsockopt fail so,
-               and the mingw test binary runs only on a Windows host. */
-            fail(err, transient == WSAENOBUFS ? KSL_E_NO_MEMORY : KSL_E_NOT_SUPPORTED, msg, msglen,
-                 "Don't Fragment setsockopt", transient);
-            closesocket(u->fd);
-            free(u);
-            return NULL;
-        }
-        u->df_probe = p4 && p6;
-        if (df) /* DF alone where PROBE is refused on a half: what msquic runs with, reported as DO */
-            u->granted |= KSL_UDP_DF | (u->df_probe ? 0 : KSL_UDP_DF_DO);
     }
     if (flags & KSL_UDP_GSO) {
         DWORD v = 0;
@@ -1221,15 +1285,15 @@ static int win_fd_family(SOCKET s) {
         return -1;
     return pi.iAddressFamily == AF_INET || pi.iAddressFamily == AF_INET6 ? pi.iAddressFamily : -1;
 }
-/* as the KSL_UDP_DF branch of ksl_udp_open: DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the JDK's),
-   bound or not */
+/* as set_df does for ksl_udp_open (from open_bound): DF on and PROBE where the system takes it, on a SOCKET ksl did not open (the
+   JDK's), bound or not */
 int ksl_udp_fd_df_probe(int64_t fd) {
     SOCKET s = (SOCKET)(UINT_PTR)fd;
     int yes = 1, probe = IP_PMTUDISC_PROBE, granted = 0;
     int family = fd < 0 || (uint64_t)fd > (uint64_t)UINTPTR_MAX ? -1 : win_fd_family(s);
     if (family < 0)
         return KSL_ERROR;
-    /* DF always: IP_DONTFRAGMENT / IPV6_DONTFRAG first, as ksl_udp_open does; then PROBE where the system takes it (some Windows 11
+    /* DF always: IP_DONTFRAGMENT / IPV6_DONTFRAG first, as set_df does on each half; then PROBE where the system takes it (some Windows 11
        builds and older Windows refuse IP_MTU_DISCOVER: the DF bit alone then works as DO, a send above a cached path MTU refused) */
     int df4 = setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT, (const char *)&yes, sizeof yes) ==
               0; /* on AF_INET6: the v4-mapped half */
@@ -1304,6 +1368,14 @@ int ksl_udp_df_bit_for_test(int fd) {
     DWORD v = 0;
     int l = (int)sizeof v;
     if (getsockopt((SOCKET)(UINT_PTR)(uint32_t)fd, IPPROTO_IP, IP_DONTFRAGMENT, (char *)&v, &l) != 0)
+        return -1;
+    return v ? 1 : 0;
+}
+/* IPV6_DONTFRAG of an AF_INET6 socket: 1 when set, 0 when clear, -1 when it cannot be read */
+int ksl_udp_df6_bit_for_test(int fd) {
+    DWORD v = 0;
+    int l = (int)sizeof v;
+    if (getsockopt((SOCKET)(UINT_PTR)(uint32_t)fd, IPPROTO_IPV6, IPV6_DONTFRAG, (char *)&v, &l) != 0)
         return -1;
     return v ? 1 : 0;
 }

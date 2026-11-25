@@ -27,19 +27,22 @@ class ClientH3EndpointCloseTest {
             val s6 = runCatching { testServer(host = "::1") { routing { get("/") { call.respondText("ok") } } } }.getOrNull()
             try {
                 val chosen = LinkedHashMap<String, Http3Endpoint>()
-                val c = testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds })
-                val engine = c.engine as KuicksilverEngine
-                engine.h3.endpointChosenForTest = { _, ep -> chosen[ep.localAddress.ipLiteral()] = ep }
-                assertEquals("ok", c.get("https://127.0.0.1:$p4/").bodyAsText())
-                s6?.let { (_, p6) -> assertEquals("ok", c.get("https://[::1]:$p6/").bodyAsText()) }
-                assertFails { c.get("https://192.0.2.1:443/") }
-                assertEquals(setOfNotNull("127.0.0.1", "0.0.0.0", s6?.let { "::1" }), chosen.keys)
-                c.close()
-                withTimeout(10.seconds) { engine.cleanup.join() }
-                val tls = engine.config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
-                for ((local, ep) in chosen) {
-                    assertFailsWith<QuicException.EndpointClosing>(local) {
-                        withTimeout(5.seconds) { ep.connect(InetSocketAddress(if (local == "::1") "::1" else "127.0.0.1", 9), tls) }
+                // closed also when a request or a check fails: the leak sentinel would otherwise wait for its endpoints and
+                // report them beside the failure, in this test and in the class's check
+                testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.h3.endpointChosenForTest = { _, ep -> chosen[ep.localAddress.ipLiteral()] = ep }
+                    assertEquals("ok", c.get("https://127.0.0.1:$p4/").bodyAsText())
+                    s6?.let { (_, p6) -> assertEquals("ok", c.get("https://[::1]:$p6/").bodyAsText()) }
+                    assertFails { c.get("https://192.0.2.1:443/") }
+                    assertEquals(setOfNotNull("127.0.0.1", "0.0.0.0", s6?.let { "::1" }), chosen.keys)
+                    c.close()
+                    withTimeout(10.seconds) { engine.cleanup.join() }
+                    val tls = engine.config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+                    for ((local, ep) in chosen) {
+                        assertFailsWith<QuicException.EndpointClosing>(local) {
+                            withTimeout(5.seconds) { ep.connect(InetSocketAddress(if (local == "::1") "::1" else "127.0.0.1", 9), tls) }
+                        }
                     }
                 }
             } finally {
