@@ -5,6 +5,7 @@
 package io.kuicksilver.http3.webtransport
 
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.WebTransportException
@@ -19,6 +20,7 @@ import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -243,6 +245,14 @@ class WtReliableResetTest {
      * A draft-02 session has no RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3: "An endpoint MUST NOT
      * send a RESET_STREAM_AT frame unless the peer advertised support"): an offset above 0 is refused with
      * IllegalStateException and resets nothing; offset 0 is the plain reset, RESET_STREAM.
+     *
+     * Every packet of the client is lost until the packet carrying the stream's bytes was lost (awaited after the refused
+     * call; the packets are plaintext, so the drop sees the bytes): only retransmission brings the header and the bytes
+     * then, and they reach the server because nothing was reset (the refused call's code, 4, never arrives either). The plain reset
+     * goes only once the server has the stream: RESET_STREAM ends the retransmission of the header too (RFC 9000 section
+     * 3.1), and draft-ietf-webtrans-http3-02 section 4.3 accepts that: "resetting a stream may result in that data being
+     * discarded. Because of that, WebTransport application error codes are best effort, as the WebTransport stack is not
+     * always capable of associating the reset code with a session."
      */
     @Test fun negative_aReliableOffsetWithoutResetStreamAtIsRefused() =
         h3Test {
@@ -254,12 +264,25 @@ class WtReliableResetTest {
                     .useScoped { p ->
                         val (client, server) = sessions(p)
                         assertEquals(WtVersion.Draft02, (client as WtSessionImpl).version)
+                        val clientAddr =
+                            p.client.quic.paths
+                                .first()
+                                .localAddress
+                        val bytes = "refused-offset".encodeToByteArray()
+                        val lost = CompletableDeferred<Unit>()
+                        p.quic.net.drop = { from, _, datagram ->
+                            (from == clientAddr).also { if (it && datagram.holds(bytes)) lost.complete(Unit) }
+                        }
                         val out = client.openUni()
-                        out.output.writeFully("abc".encodeToByteArray())
+                        out.output.writeFully(bytes)
                         out.output.flush()
-                        assertFailsWith<IllegalStateException> { out.reset(3, reliableOffset = 2) }
+                        assertFailsWith<IllegalStateException> { out.reset(4, reliableOffset = 2) }
+                        withTimeout(10.seconds) { lost.await() }
+                        p.quic.net.drop = null
+                        val st = withTimeout(10.seconds) { server.acceptUni() }
+                        assertContentEquals(bytes, withTimeout(10.seconds) { st.input.readByteArray(bytes.size) })
                         out.reset(3, reliableOffset = 0)
-                        val (_, code) = prefixAndReset(withTimeout(10.seconds) { server.acceptUni() })
+                        val (_, code) = prefixAndReset(st)
                         assertEquals(3L, code)
                     }
             } finally {
@@ -277,3 +300,6 @@ private suspend fun io.ktor.utils.io.ByteReadChannel.readAllBytesOf(): ByteArray
         all += buf.copyOf(n)
     }
 }
+
+/** Whether [part] occurs in this array. */
+private fun ByteArray.holds(part: ByteArray): Boolean = (0..size - part.size).any { i -> part.indices.all { this[i + it] == part[it] } }
