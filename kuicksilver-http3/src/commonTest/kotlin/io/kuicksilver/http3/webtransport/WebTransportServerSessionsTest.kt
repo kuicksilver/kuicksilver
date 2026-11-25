@@ -357,17 +357,12 @@ class WebTransportServerSessionsTest {
             r.refusedConnect()
         }
 
-    /** draft-02 has no flow control: a draft-02 session keeps the connection to itself, and joins no other. */
+    /** draft-02 has no flow control: a draft-02 client's session keeps the connection to itself. */
     @Test fun negative_draft02SessionDoesNotShare() =
-        serverTest { r ->
+        serverTest(clientSettings = listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L)) { r ->
             val accepted = rawLegacySession(r)
             assertTrue(accepted.flow == null)
-            r.refusedConnect()
-        }
-
-    @Test fun negative_draft02SessionDoesNotJoin() =
-        serverTest { r ->
-            rawSession(r.c, r.server, r.raw)
+            assertEquals(WtVersion.Draft02, (accepted as WtSessionImpl).version)
             r.refusedConnect(WtTokens.LEGACY, WtTokens.DRAFT02_REQUEST_FIELD to "1")
         }
 

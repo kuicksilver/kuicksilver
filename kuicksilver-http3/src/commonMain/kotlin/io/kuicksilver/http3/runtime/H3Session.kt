@@ -176,27 +176,23 @@ internal class H3Session(
     val wt = WtStreamRouter(this)
 
     /**
-     * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over, each with
-     * whether it is a draft-02 request (which picks its version, [io.kuicksilver.http3.webtransport.wtServerVersion]).
-     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
-     * [wtSessionEnded]. The map is made with the first session: a connection without one holds none.
+     * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over. Another one is
+     * admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
+     * [wtSessionEnded]. The set is made with the first session: a connection without one holds none.
      */
-    val wtSessions: Map<Long, Boolean> get() = wtSessionMap ?: emptyMap()
+    val wtSessions: Set<Long> get() = wtSessionSet ?: emptySet()
 
-    private var wtSessionMap: LinkedHashMap<Long, Boolean>? = null
+    private var wtSessionSet: LinkedHashSet<Long>? = null
 
-    /** Server: the CONNECT on [streamId] ([draft02]: a draft-02 request) holds a slot from now on. Session dispatcher only. */
-    fun wtSessionAdmitted(
-        streamId: Long,
-        draft02: Boolean,
-    ) {
-        (wtSessionMap ?: LinkedHashMap<Long, Boolean>().also { wtSessionMap = it })[streamId] = draft02
+    /** Server: the CONNECT on [streamId] holds a slot from now on. Session dispatcher only. */
+    fun wtSessionAdmitted(streamId: Long) {
+        (wtSessionSet ?: LinkedHashSet<Long>().also { wtSessionSet = it }).add(streamId)
         wtSessionsChanged()
     }
 
     /** Server: the CONNECT on [streamId] gave its slot back; false when it held none. Session dispatcher only. */
     fun wtSessionRemoved(streamId: Long): Boolean {
-        if (wtSessionMap?.remove(streamId) == null) return false
+        if (wtSessionSet?.remove(streamId) != true) return false
         wtSessionsChanged()
         return true
     }
@@ -622,11 +618,20 @@ internal class H3Session(
         }
 
     /**
-     * The highest WebTransport draft both sides announce (draft-16 section 7.1); null before the peer's SETTINGS arrived or
-     * when there is none. Not necessarily the version a session runs: that is `WtSessionImpl.version`, which can fall back
-     * to draft-02 ([io.kuicksilver.http3.webtransport.wtClientVersion], [io.kuicksilver.http3.webtransport.wtServerVersion]).
+     * The highest WebTransport draft both sides announce, or a server's draft-17 when its client announces none (draft-17
+     * section 7.1, [WtVersion.common]); null before the peer's SETTINGS arrived or, on a client, when there is none. Not
+     * necessarily one this connection can run: a session needs the transport parameters of its version too
+     * ([io.kuicksilver.http3.webtransport.wtClientVersion], [io.kuicksilver.http3.webtransport.wtServerVersion]).
      */
     fun highestCommonWtVersion(): WtVersion? = wtCommonVersions.firstOrNull()
+
+    /**
+     * The connection error for a misplaced `WT_STREAM` signal: the code of the connection's WebTransport draft
+     * ([WtVersion.misplacedWtStreamCode]; H3_FRAME_UNEXPECTED from draft-17 on, H3_FRAME_ERROR before). Before the peer's
+     * SETTINGS name it (a server may read a request stream first) it is draft-17's, the version a server selects when
+     * its client names none (draft-17 section 7.1) and the highest we speak.
+     */
+    fun wtMisplacedSignalCode(): Long = (highestCommonWtVersion() ?: WtVersion.Draft17).misplacedWtStreamCode
 
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()
@@ -664,7 +669,7 @@ internal class H3Session(
 
     /**
      * A WebTransport session with flow control started ([up]) or ended: the connection's receive window is kept at what
-     * the open sessions may have in flight together (draft-16 section 8: a session nobody reads must not hold the whole
+     * the open sessions may have in flight together (draft-17 section 8: a session nobody reads must not hold the whole
      * connection credit while the others wait), and shrinks back as they end. Session dispatcher only.
      */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -689,13 +694,13 @@ internal class H3Session(
     private var wtFloorSender: Job? = null
 
     /**
-     * Server: the rate of incoming WebTransport sessions (draft-16 section 5.2, "Servers SHOULD limit the rate of incoming
+     * Server: the rate of incoming WebTransport sessions (draft-17 section 5.2, "Servers SHOULD limit the rate of incoming
      * WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources"): a burst of
      * [WT_SESSION_BURST] CONNECTs, then [WT_SESSIONS_PER_SECOND] a second, on [glitchClock]. Session dispatcher only.
      */
     internal val wtSessionRate: GlitchLimiter get() = wtShared.sessionRate
 
-    /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
+    /** The fair queues the WebTransport sessions of this connection take turns in (draft-17 section 8). */
     internal val wtFairness: io.kuicksilver.http3.webtransport.WtFairness get() = wtShared.fairness
 
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
@@ -803,7 +808,7 @@ internal class H3Session(
 
     /**
      * Client with WebTransport: a server-initiated bidirectional stream is a WebTransport stream, which starts with the
-     * `WT_STREAM` signal (draft-ietf-webtrans-http3-16 section 4.3); anything else is H3_STREAM_CREATION_ERROR as without
+     * `WT_STREAM` signal (draft-ietf-webtrans-http3-17 section 4.3); anything else is H3_STREAM_CREATION_ERROR as without
      * WebTransport (RFC 9114 section 6.1). One that ends or is reset before its first bytes is dropped.
      */
     private suspend fun serverBidi(st: QuicStream) {

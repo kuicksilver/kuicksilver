@@ -315,6 +315,37 @@ internal object QuicQlogSchema {
                     data["old"]?.let { require(it in connectionStates) { "old $it" } }
                 }
 
+                // 5.3, Figure 11: "this event can contain any number of unspecified fields" (ours: max_datagram_frame_size,
+                // reset_stream_at, grease_quic_bit)
+                "transport:parameters_set" -> {
+                    val cids = setOf("original_destination_connection_id", "initial_source_connection_id", "retry_source_connection_id")
+                    val counts =
+                        setOf(
+                            "max_idle_timeout",
+                            "max_udp_payload_size",
+                            "ack_delay_exponent",
+                            "max_ack_delay",
+                            "active_connection_id_limit",
+                            "initial_max_data",
+                            "initial_max_stream_data_bidi_local",
+                            "initial_max_stream_data_bidi_remote",
+                            "initial_max_stream_data_uni",
+                            "initial_max_streams_bidi",
+                            "initial_max_streams_uni",
+                            "max_datagram_frame_size",
+                        )
+                    val flags = setOf("disable_active_migration", "reset_stream_at", "grease_quic_bit")
+                    members(data, setOf("owner"), cids + counts + flags + setOf("stateless_reset_token", "preferred_address"))
+                    require(data["owner"] in owners) { "owner ${data["owner"]}" }
+                    for (k in cids) data[k]?.let { require(it is String && HEX.matches(it)) { "$k $it" } }
+                    for (k in counts) data[k]?.let { uint(it) }
+                    for (k in flags) data[k]?.let { require(it is Boolean) { "$k $it" } }
+                    data["stateless_reset_token"]?.let { require(it is String && Regex("[0-9a-f]{32}").matches(it)) { "token $it" } }
+                    (data["preferred_address"] as Map<*, *>?)?.let {
+                        members(it, setOf("ip_v4", "ip_v6", "port_v4", "port_v6", "connection_id", "stateless_reset_token"), emptySet())
+                    }
+                }
+
                 // 5.7, Figure 15
                 "transport:packet_dropped" -> {
                     members(data, emptySet(), setOf("header", "raw", "datagram_id", "details", "trigger"))
@@ -568,6 +599,9 @@ internal object QuicQlogSchema {
     }
 
     private val CRYPTO = Regex("crypto_error_0x1[0-9a-f][0-9a-f]")
+
+    /** A ConnectionID (section 8.4): hex, up to 20 bytes. */
+    private val HEX = Regex("([0-9a-f]{2}){0,20}")
     private val APPLICATION = Regex("application_error_0x[0-9a-f]+")
 
     /** `$ApplicationError / uint32` (section 8.11.23): a uint32, or our `application_error_0x<hex>` extension of the socket. */

@@ -61,7 +61,7 @@ class ConnectionEndTest {
             buildList {
                 if (s.activeServerRequests.isNotEmpty()) add("requests ${s.activeServerRequests.keys}")
                 if (s.datagrams.registeredCount > 0) add("${s.datagrams.registeredCount} datagram channel(s)")
-                if (s.wtSessions.isNotEmpty()) add("WebTransport sessions ${s.wtSessions.keys}")
+                if (s.wtSessions.isNotEmpty()) add("WebTransport sessions ${s.wtSessions}")
             }.joinToString().ifEmpty { null }
         }
 

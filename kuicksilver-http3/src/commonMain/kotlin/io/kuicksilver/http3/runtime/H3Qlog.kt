@@ -10,6 +10,7 @@ import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
+import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.quic.QlogRecorder
 
 /**
@@ -93,6 +94,29 @@ internal class H3Qlog(
         if (name == "unknown") sb.append(",\"stream_type_value\":").append(type)
         if (sessionId != null) sb.append(",\"session_id\":").append(sessionId)
         recorder.record("http:stream_type_set", sb.toString())
+    }
+
+    /**
+     * `http:capsule_created` or, with [parsed], `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6): a
+     * capsule of [type] with a value of [valueLength] bytes on [streamId]. Section 7.1's HTTPCapsuleDatagram for DATAGRAM,
+     * HTTPCapsuleUnknown (with `capsule_type_value`) for every other type, WebTransport's included; the value is never
+     * written (a WT_CLOSE_SESSION reason is application data). The events are those of h3-events-13 and later: -04, which
+     * the other HTTP/3 events follow, has none for capsules.
+     */
+    fun capsule(
+        parsed: Boolean,
+        streamId: Long,
+        type: Long,
+        valueLength: Long,
+    ) {
+        val raw = "\"raw\":{\"length\":${VarInt.size(type) + VarInt.size(valueLength) + valueLength},\"payload_length\":$valueLength}"
+        val capsule =
+            if (type == io.kuicksilver.http3.CapsuleProtocol.DATAGRAM) {
+                "{\"capsule_type\":\"datagram\",$raw}"
+            } else {
+                "{\"capsule_type\":\"unknown\",\"capsule_type_value\":$type,$raw}"
+            }
+        recorder.record(if (parsed) "http:capsule_parsed" else "http:capsule_created", "\"stream_id\":$streamId,\"capsule\":$capsule")
     }
 
     /** `http:frame_created`: [frame] (a qlog HTTPFrame object) of [payloadLength] bytes, written on [streamId]. */
@@ -309,7 +333,11 @@ internal class H3Qlog(
          */
         val TOKEN_VALUES: Set<String> = setOf(":method", ":scheme", ":status", ":protocol")
 
-        /** The settings' names in their IANA registries (as quiche's qlog writes them); others go by their number. */
+        /**
+         * The settings' names in their IANA registries (as quiche's qlog writes them); others go by their number. A name is
+         * a JSON key of `http:parameters_set`, so it names one codepoint: `SETTINGS_WT_ENABLED` is draft-17's (its section
+         * 9.2), and draft-16's 0x2c7cf000 goes by its number.
+         */
         val SETTING_NAMES: Map<Long, String> =
             mapOf(
                 SettingsId.QPACK_MAX_TABLE_CAPACITY to "QPACK_MAX_TABLE_CAPACITY",
@@ -317,7 +345,7 @@ internal class H3Qlog(
                 SettingsId.QPACK_BLOCKED_STREAMS to "QPACK_BLOCKED_STREAMS",
                 SettingsId.ENABLE_CONNECT_PROTOCOL to "SETTINGS_ENABLE_CONNECT_PROTOCOL",
                 SettingsId.H3_DATAGRAM to "H3_DATAGRAM",
-                SettingsId.WT_ENABLED to "SETTINGS_WT_ENABLED",
+                SettingsId.WT_ENABLED_DRAFT17 to "SETTINGS_WT_ENABLED",
                 SettingsId.WT_MAX_SESSIONS_DRAFT14 to "SETTINGS_WT_MAX_SESSIONS",
                 SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to "SETTINGS_ENABLE_WEBTRANSPORT",
                 SettingsId.WT_INITIAL_MAX_STREAMS_UNI to "SETTINGS_WT_INITIAL_MAX_STREAMS_UNI",

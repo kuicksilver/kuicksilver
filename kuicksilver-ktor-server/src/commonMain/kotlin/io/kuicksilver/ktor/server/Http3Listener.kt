@@ -392,7 +392,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
 /**
  * The QUIC settings of the HTTP/3 listeners: [quic][KuicksilverApplicationEngine.Configuration.quic] with `quicMaxIdleTimeout`
  * and `qlog`, and `resetStreamAt` with [webTransport][KuicksilverApplicationEngine.Configuration.webTransport] (its streams keep
- * their header when reset, draft-ietf-webtrans-http3-16 section 4.4).
+ * their header when reset, draft-ietf-webtrans-http3-17 section 4.4).
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.Configuration.http3Quic(): QuicConfig {

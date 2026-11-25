@@ -53,6 +53,11 @@ Original row: draft-ietf-quic-qlog-*.
   `qlog.QlogLifecycleTest.aSecondEndWhileClosingLogsNoSecondClose`, `qlog.QlogFramesTest.aPacketSentWhileOneIsReceivedKeepsBothFrameLists`,
   `endpoint.StatelessResetTest.aStatelessResetEndsTheTraceAfterTheDrainingPeriod`,
   `qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts`
+- `transport:parameters_set` (quic-events-04 section 5.3) for our transport parameters (`owner` local) and the peer's
+  (`owner` remote), "two separate event instances", once the peer's are accepted, on both roles: connection IDs, the
+  stateless reset token, limits and timers, the preferred address; `max_datagram_frame_size`, `reset_stream_at` and
+  `grease_quic_bit` as the "unspecified fields" the section allows (0.3.0; before, no transport parameters, so a trace
+  could not show whether the peer sent `reset_stream_at`) — `qlog.QlogLifecycleTest.bothSidesLogTheirOwnAndThePeersTransportParameters`
 
 ## <a id="qlog-h3"></a>qlog HTTP/3 and QPACK events
 
@@ -96,6 +101,12 @@ model 3.26).
   `runtime.H3QlogTest.qpackStateAndBlockedStreamsAreLogged`,
   `runtime.EarlyDataTest.storedSettingsAreLoggedAsRestored`,
   `webtransport.WebTransportSessionTest.webTransportStreamsAreInTheQlogTrace`
+- every capsule sent or read on an Extended CONNECT stream as `http:capsule_created` / `http:capsule_parsed`
+  (draft-ietf-quic-qlog-h3-events-14 section 6; -04, which the other events follow, has no capsule events): DATAGRAM as
+  `capsule_type` "datagram", every other type, WebTransport's WT_CLOSE_SESSION (0x2843) included, as "unknown" with
+  `capsule_type_value`, each with its `raw` lengths and never its value (a close reason is application data) (0.3.0;
+  before, a capsule showed only as the DATA frame carrying it, so a trace could not tell a browser's WT_CLOSE_SESSION) —
+  `webtransport.WebTransportSessionTest.capsulesAreInTheQlogTrace`
 - unknown, reserved, oversized and refused frames, a stream ending inside a frame — `runtime.H3QlogTest.unknownFramesAndStreamTypesAreLoggedByNumber`,
   `runtime.H3QlogTest.aHeadersFrameTooLargeIsLoggedWithoutFields`, `runtime.H3QlogTest.anErrorMidStreamLeavesAValidTrace`,
   `runtime.H3QlogTest.aStreamEndingInsideAFrameLeavesAValidTrace`

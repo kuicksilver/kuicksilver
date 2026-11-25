@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * The capsules and settings of WebTransport flow control (draft-ietf-webtrans-http3-16 section 5; draft-14 uses the same
+ * The capsules and settings of WebTransport flow control (draft-ietf-webtrans-http3-17 section 5; draft-14 uses the same
  * codepoints) and the two HTTP/2 capsules it prohibits.
  */
 internal object WtFlow {
@@ -100,7 +100,7 @@ internal object WtFlow {
 }
 
 /**
- * The flow control of one WebTransport session (draft-ietf-webtrans-http3-16 section 5), once both sides declared it.
+ * The flow control of one WebTransport session (draft-ietf-webtrans-http3-17 section 5), once both sides declared it.
  * Sending: the peer's stream limits and session data limit, initially its `SETTINGS_WT_INITIAL_*` (section 5.5) and raised
  * by its WT_MAX_STREAMS and WT_MAX_DATA capsules; opening a stream takes one, sending body bytes takes as many, and a
  * sender that has to wait announces it with WT_STREAMS_BLOCKED or WT_DATA_BLOCKED once per limit (sections 5.6.3,
@@ -130,9 +130,11 @@ internal class WtSessionFlow(
     peerUni: Long,
     peerData: Long,
     /**
-     * draft-16 closes the session on a WT_MAX_DATA or WT_MAX_STREAMS "that does not increase" the value previously
-     * received (sections 5.6.2, 5.6.4); draft-14 only on one "less than a previously received value" (its sections 5.6.2,
-     * 5.6.4), so an equal one is accepted and changes nothing.
+     * draft-16 and -17 close the session on a WT_MAX_DATA or WT_MAX_STREAMS "that does not increase" the value previously
+     * received (sections 5.6.2, 5.6.4), the peer's initial SETTINGS value counting as received (draft-17 says so: "or the
+     * value of SETTINGS_WT_INITIAL_MAX_DATA if no WT_MAX_DATA capsule has been received", and the same for the stream
+     * limits); draft-14 only on one "less than a previously received value" (its sections 5.6.2, 5.6.4), so an equal one
+     * is accepted and changes nothing.
      */
     private val equalLimitIsViolation: Boolean = true,
     /** A sender just started waiting at a limit of 0. */
@@ -319,14 +321,14 @@ internal class WtSessionFlow(
      * Hands free credit to the streams that ask for it: one that waits for credit, or writes what it was just given (a
      * chunk is written in parts as credit comes), asks up to [LOOKAHEAD] kept for it; one that asks nothing (idle, or
      * ended) holds no place. How follows the session's RFC 9218 priority, the `incremental` parameter of its CONNECT
-     * stream, read at every grant (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data):
+     * stream, read at every grant (draft-17 section 3.4 recommends RFC 9218's scheduling for all of a session's data):
      * - non-incremental: in [senders] order (RFC 9218 section 10: "serving one response at a time" in order): each
      *   stream gets what it asks before any stream after it gets anything;
      * - incremental: shared ("interleaved", the same section): each grant starts one stream further along the ring of
      *   the streams that ask and goes on in order from there, so with any credit at all each of n streams that keep
      *   asking leads, and gets some, within n grants, and a busy stream never holds the others. A grant is not split
      *   evenly: the stream it starts with gets what it asks first, so a stream nobody reads still gets all its bytes out
-     *   and ends, and a receiver that gives credit back only for ended streams (draft-16 section 5.6) moves.
+     *   and ends, and a receiver that gives credit back only for ended streams (draft-17 section 5.6) moves.
      */
     private fun distribute() {
         if (free() <= 0 || over != null) return

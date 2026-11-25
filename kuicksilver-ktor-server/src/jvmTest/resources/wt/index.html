@@ -71,8 +71,14 @@ const withDeadline = (p, ms, what) =>
     if (text !== "uni-hello") return `got "${text}"`;
   });
   await step("datagrams", async () => {
-    const reader = wt.datagrams.readable.getReader();
-    const writer = wt.datagrams.writable.getWriter();
+    // the current W3C API (Safari) replaced datagrams.writable by createWritable(); Chrome and Firefox still have
+    // writable. The readable side is the same in both, checked so a missing one names itself
+    const dg = wt.datagrams;
+    const writable = typeof dg.createWritable === "function" ? dg.createWritable() : dg.writable;
+    if (!writable) throw new Error("no datagram writable (neither createWritable() nor writable)");
+    if (!dg.readable) throw new Error("no datagram readable");
+    const reader = dg.readable.getReader();
+    const writer = writable.getWriter();
     for (let i = 0; i < 100; i++) await writer.write(new Uint8Array([i]));
     let got = 0;
     try {

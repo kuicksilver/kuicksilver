@@ -1,0 +1,520 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
+package io.kuicksilver.http3.webtransport
+
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.H3Fixtures
+import io.kuicksilver.http3.H3Pair
+import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
+import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.awaitAbandoned
+import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.frame.SettingsId
+import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.runtime.GET
+import io.kuicksilver.http3.runtime.RawPeer
+import io.kuicksilver.http3.runtime.acceptBidi
+import io.kuicksilver.http3.runtime.h3Test
+import io.kuicksilver.http3.runtime.peerMayHaveClosed
+import io.kuicksilver.http3.runtime.peerSawClose
+import io.kuicksilver.http3.useScoped
+import io.kuicksilver.http3.webTransport
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicStream
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * One peer per WebTransport draft we speak, as the field has them: draft-17 (this library and the draft of November
+ * 2026), draft-16 (webtransport-go and picoquic, `SETTINGS_WT_ENABLED` 0x2c7cf000), draft-14 (Safari 26.4, second-hand:
+ * `SETTINGS_WT_MAX_SESSIONS`) and draft-02 (Chrome and Firefox: `SETTINGS_ENABLE_WEBTRANSPORT`). Each meets our server
+ * as a raw client, and the server ones meet our client as a raw server: the version both select (draft-17 section 7.1),
+ * the token and the fields on the wire.
+ */
+
+/** The WT_CLOSE_SESSION value the tests' clients send: code 7, reason "bye". */
+private val CLOSE_VALUE: ByteArray = WtCloseCapsule.encode(7, "bye")
+
+class WtDraftVersionsTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private class Draft(
+        val settings: List<Pair<Long, Long>>,
+        val token: String,
+        val fields: List<Pair<String, String>>,
+        val version: WtVersion,
+    ) {
+        override fun toString() = version.toString()
+    }
+
+    private val drafts =
+        listOf(
+            Draft(listOf(SettingsId.WT_ENABLED_DRAFT17 to 1L), WtTokens.H3, emptyList(), WtVersion.Draft17),
+            Draft(listOf(SettingsId.WT_ENABLED_DRAFT16 to 1L), WtTokens.H3, emptyList(), WtVersion.Draft16),
+            Draft(listOf(SettingsId.WT_MAX_SESSIONS_DRAFT14 to 1L), WtTokens.LEGACY, emptyList(), WtVersion.Draft14),
+            Draft(
+                listOf(SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L),
+                WtTokens.LEGACY,
+                listOf(WtTokens.DRAFT02_REQUEST_FIELD to "1"),
+                WtVersion.Draft02,
+            ),
+        )
+
+    /**
+     * The client sends WT_CLOSE_SESSION (code 7, "bye") with the FIN of its CONNECT stream [st], then [then] (its
+     * CONNECTION_CLOSE, or STOP_SENDING for our side), and the server's transport gets them back to back, as in one packet:
+     * the client's datagrams are held until one carries the capsule (a lone ACK before it does not count) and the next
+     * one went out, then delivered together.
+     */
+    private suspend fun closeCapsuleThen(
+        q: QuicPair,
+        c: QuicConnection,
+        s: QuicConnection,
+        st: QuicStream,
+        then: suspend () -> Unit,
+    ) {
+        val held = AtomicReference<List<ByteArray>>(emptyList())
+        val clientAddr = c.paths.first().localAddress
+        val serverAddr = s.paths.first().localAddress
+        q.net.drop = { from, _, b ->
+            (from == clientAddr).also {
+                if (it) {
+                    while (true) {
+                        val now = held.load()
+                        if (held.compareAndSet(now, now + b)) break
+                    }
+                }
+            }
+        }
+        st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, CLOSE_VALUE)))
+        st.output.flushAndClose()
+        withTimeout(5.seconds) { while (held.load().none { it.contains(CLOSE_VALUE) }) kotlinx.coroutines.yield() }
+        val before = held.load().size
+        then()
+        withTimeout(5.seconds) { while (held.load().size <= before) kotlinx.coroutines.yield() }
+        q.net.drop = null
+        for (b in held.load()) q.net.deliver(clientAddr, serverAddr, b)
+    }
+
+    /** Whether [part] occurs in these bytes (the null crypto of the test pair leaves payloads readable). */
+    private fun ByteArray.contains(part: ByteArray): Boolean =
+        (0..size - part.size).any { i -> part.indices.all { this[i + it] == part[it] } }
+
+    /** A raw client of [settings] sends a WebTransport CONNECT of [token] and [fields]; returns the response and the session. */
+    private suspend fun kotlinx.coroutines.CoroutineScope.serve(
+        settings: List<Pair<Long, Long>>,
+        token: String,
+        fields: List<Pair<String, String>> = emptyList(),
+    ): Pair<Map<String, String>, Result<WtSessionImpl>> {
+        var out: Pair<Map<String, String>, Result<WtSessionImpl>>? = null
+        QuicPair.open(H3Fixtures.quic).useScoped { q ->
+            val (c, s) = q.connect(H3Fixtures.quic)
+            val server = Http3Connection.server(s, wtOn)
+            val raw = RawPeer(c)
+            raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + settings)
+            val accepted = async { runCatching { server.acceptRequest().acceptWebTransport() as WtSessionImpl } }
+            val st = c.openBidi()
+            st.output.writeFully(raw.wtConnect(st, token, *fields.toTypedArray()))
+            st.output.flush()
+            val h = readHeaders(st)
+            out = h to withTimeout(5.seconds) { accepted.await() }
+        }
+        return out!!
+    }
+
+    /**
+     * The client's WT_CLOSE_SESSION reaches the server's `closed` with its code and reason in every draft (draft-17, -16
+     * and -14 section 6; draft-02 section 5 has the same capsule, 0x2843), also when the client closes the QUIC connection
+     * right behind it, as Firefox does: its CONNECT stream's capsule, FIN and CONNECTION_CLOSE (H3_NO_ERROR) came in one
+     * packet, and the session ended with code 0 as if the FIN had come without a capsule.
+     */
+    @Test fun negative_theClientsCloseCapsuleReachesTheServerAlsoWithTheConnectionsCloseBehindIt() =
+        h3Test {
+            for (d in drafts) {
+                for (closeConnection in listOf(false, true)) {
+                    QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                        val (c, s) = q.connect(H3Fixtures.quic)
+                        val server = Http3Connection.server(s, wtOn)
+                        val raw = RawPeer(c)
+                        raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                        val accepted = async { server.acceptRequest().acceptWebTransport() }
+                        val st = c.openBidi()
+                        st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                        st.output.flush()
+                        assertEquals("200", readHeaders(st)[":status"], "$d")
+                        val session = withTimeout(5.seconds) { accepted.await() }
+                        // the capsule with the FIN, and the CONNECTION_CLOSE, reach the server's transport back to back (as
+                        // Firefox's one packet does): the client's datagrams are held, then delivered together
+                        if (closeConnection) {
+                            closeCapsuleThen(q, c, s, st) { c.close(Http3ErrorCode.NO_ERROR, "") }
+                        } else {
+                            st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, CLOSE_VALUE)))
+                            st.output.flushAndClose()
+                        }
+                        val info = withTimeout(10.seconds) { session.closed.await() }
+                        assertEquals(7L, info.code, "$d, connection closed behind: $closeConnection, cause ${info.cause}")
+                        assertEquals("bye", info.reason, "$d, connection closed behind: $closeConnection")
+                    }
+                }
+            }
+        }
+
+    /**
+     * Safari 27.2's close (draft-14; the server's qlog of 2026-11-25): WT_CLOSE_SESSION in a DATA frame, the CONNECT
+     * stream's FIN and STOP_SENDING (H3_NO_ERROR) for our side of it, in one packet, while the connection stays up. The
+     * server answers the STOP_SENDING with RESET_STREAM. The STOP_SENDING is part of the client's close, not an abandoned
+     * request ([awaitAbandoned], which the Ktor engine cancels a handler on, its route then closing the session with code
+     * 0): `closed` reports the client's code and reason, in every draft (before: code 0, no reason, in Safari's runs).
+     */
+    @Test fun negative_theClientsCloseCapsuleWinsOverItsStopSending() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val request = async { server.acceptRequest() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    val r = withTimeout(5.seconds) { request.await() }
+                    val session = r.acceptWebTransport()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    // as the Ktor engine does: a request the client abandoned cancels its handler, and the WebTransport route
+                    // then closes the session with code 0
+                    val engine =
+                        launch {
+                            r.awaitAbandoned()
+                            session.close(0)
+                        }
+                    // the capsule, the FIN and the STOP_SENDING reach the server back to back, as in Safari's one packet
+                    closeCapsuleThen(q, c, s, st) { st.stopSending(Http3ErrorCode.NO_ERROR) }
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(7L to "bye", info.code to info.reason, "$d, cause ${info.cause}")
+                    // the request was not abandoned by the client's close: only the connection's end would
+                    assertTrue(engine.isActive, "$d")
+                    engine.cancel()
+                }
+            }
+        }
+
+    /**
+     * draft-17 and -16 section 6: a session "is terminated when ... the CONNECT stream is closed, either cleanly or
+     * abruptly, on either side", and then the endpoint "MUST reset the send side and abort reading on the receive side of
+     * all ... streams associated with the session ... using the WT_SESSION_GONE error code". A client's STOP_SENDING alone
+     * (no capsule, no FIN) makes our transport reset our side of the CONNECT stream, which closes it abruptly: the
+     * session ends as ended by the peer, with code 0 and no reason, and its streams are reset with WT_SESSION_GONE, in
+     * every draft. Before, it never ended.
+     */
+    @Test fun negative_aStopSendingAloneOnTheConnectStreamEndsTheSession() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    val session = withTimeout(5.seconds) { accepted.await() }
+                    val wt = c.wtBidi(st.id, "x".encodeToByteArray(), fin = false)
+                    val serverSide = withTimeout(5.seconds) { session.acceptBidi() }
+                    st.stopSending(Http3ErrorCode.NO_ERROR)
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(0L to "", info.code to info.reason, "$d")
+                    assertEquals(null, info.cause, "$d: ended by the peer")
+                    assertEquals(Http3ErrorCode.WT_SESSION_GONE, resetCode(wt), "$d")
+                    assertTrue(serverSide.streamId == wt.id, "$d")
+                }
+            }
+        }
+
+    /**
+     * The application closes the session (or its route's handler is cancelled, which closes it with code 0) after the
+     * connection ended but before the capsule reader handled the client's WT_CLOSE_SESSION, which came with the connection's
+     * close (as Firefox sends it): nothing can be sent any more, so the local close must not win; `closed` reports the
+     * client's code and reason, in every draft. The reader is held at the capsule ([WtSessionImpl.beforeCapsuleForTest]);
+     * before, the local close completed `closed` with code 0.
+     */
+    @Test fun negative_aLocalCloseAfterTheConnectionEndedLeavesThePeersCloseCapsule() =
+        h3Test {
+            for (d in drafts) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val accepted = async { server.acceptRequest().acceptWebTransport() }
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.wtConnect(st, d.token, *d.fields.toTypedArray()))
+                    st.output.flush()
+                    assertEquals("200", readHeaders(st)[":status"], "$d")
+                    val session = withTimeout(5.seconds) { accepted.await() } as WtSessionImpl
+                    val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    session.beforeCapsuleForTest = { type -> if (type == WtCloseCapsule.TYPE) gate.await() }
+                    st.output.writeFully(RawPeer.dataFrame(capsuleBytes(WtCloseCapsule.TYPE, WtCloseCapsule.encode(7, "bye"))))
+                    st.output.flushAndClose()
+                    c.close(Http3ErrorCode.NO_ERROR, "")
+                    withTimeout(10.seconds) { server.closed.await() }
+                    val local = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { session.close(0) }
+                    gate.complete(Unit)
+                    val info = withTimeout(10.seconds) { session.closed.await() }
+                    assertEquals(7L to "bye", info.code to info.reason, "$d")
+                    withTimeout(10.seconds) { local.join() }
+                }
+            }
+        }
+
+    /** Every draft's client is served in its own draft; only a draft-02 one is answered with the draft-02 field (shim 2). */
+    @Test fun eachDraftClientIsServedInItsDraft() =
+        h3Test {
+            for (d in drafts) {
+                val (h, session) = serve(d.settings, d.token, d.fields)
+                assertEquals("200", h[":status"], "$d")
+                assertEquals(d.version, session.getOrThrow().version, "$d")
+                assertEquals(
+                    if (d.version ==
+                        WtVersion.Draft02
+                    ) {
+                        WtTokens.DRAFT02_RESPONSE_VALUE
+                    } else {
+                        null
+                    },
+                    h[WtTokens.DRAFT02_RESPONSE_FIELD],
+                    "$d",
+                )
+            }
+        }
+
+    /**
+     * draft-17 section 7.1: "If the client sends the codepoint in Section 9.2, the server selects the version described in
+     * this document", whatever else it sends; otherwise "the highest of those versions".
+     */
+    @Test fun serverSelectsTheHighestDraftTheClientSends() =
+        h3Test {
+            val all = drafts.flatMap { it.settings }
+            assertEquals(WtVersion.Draft17, serve(all, WtTokens.H3).second.getOrThrow().version)
+            assertEquals(WtVersion.Draft16, serve(all - drafts[0].settings.toSet(), WtTokens.H3).second.getOrThrow().version)
+        }
+
+    /**
+     * draft-17 section 7.1: "Otherwise, the server selects the version described in this document. For example, a client
+     * that supports only the version described in this document does not send SETTINGS_WT_ENABLED, so the server selects
+     * that version." Before draft-17 such a client was refused.
+     */
+    @Test fun clientWithoutWtSettingGetsDraft17() =
+        h3Test {
+            val (h, session) = serve(emptyList(), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft17, session.getOrThrow().version)
+        }
+
+    /**
+     * Each draft names its own `:protocol` token: draft-17 and draft-16 section 3.2, "the :protocol pseudo-header field
+     * MUST be set to webtransport-h3" (a request with another is not a WebTransport request of that draft); draft-02 and
+     * draft-14, `webtransport`. A CONNECT whose token is not the selected draft's is malformed: 400 and STOP_SENDING
+     * H3_MESSAGE_ERROR. Compared without regard to case (RFC 9110 section 7.8).
+     */
+    @Test fun negative_tokenOfAnotherDraftIsMalformed() =
+        h3Test {
+            for (d in drafts) {
+                val other = if (d.token == WtTokens.H3) WtTokens.LEGACY else WtTokens.H3
+                val (h, session) = serve(d.settings, other, d.fields)
+                assertEquals("400", h[":status"], "$d")
+                val e = assertFailsWith<Http3Exception.Settings>("$d") { session.getOrThrow() }
+                assertTrue(d.token in e.message.orEmpty(), e.message)
+            }
+            // the right token in another case is the token
+            assertEquals(WtVersion.Draft17, serve(drafts[0].settings, "WebTransport-H3").second.getOrThrow().version)
+        }
+
+    /**
+     * The same client with the token of draft-02 to -14: section 7.1 selected draft-17, whose token is `webtransport-h3`
+     * (section 3.1), and the older drafts need their own setting (draft-02 and draft-14 section 3.1), so the request is
+     * no WebTransport request of any version it could run: malformed, 400.
+     */
+    @Test fun negative_clientWithoutWtSettingAndTheOlderTokenIsMalformed() =
+        h3Test {
+            val (h, session) = serve(emptyList(), WtTokens.LEGACY, listOf(WtTokens.DRAFT02_REQUEST_FIELD to "1"))
+            assertEquals("400", h[":status"])
+            val e = assertFailsWith<Http3Exception.Settings> { session.getOrThrow() }
+            assertTrue("webtransport-h3" in e.message.orEmpty(), e.message)
+        }
+
+    /**
+     * draft-17 section 3.1: "SETTINGS_WT_ENABLED has no meaning when sent by a client; a server MUST ignore it" (the
+     * draft exception of section 7.1 reads only a 1 as a version): a client's 2 is no connection error and names no
+     * version, so its draft-16 setting decides.
+     */
+    @Test fun negative_serverIgnoresAClientsDraft17ValueAboveOne() =
+        h3Test {
+            val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT17 to 2L, SettingsId.WT_ENABLED_DRAFT16 to 1L), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft16, session.getOrThrow().version)
+        }
+
+    /**
+     * draft-16 binds only clients too ("Clients MUST treat values greater than "1" as a connection error"): a server takes
+     * a client's draft-16 value of 2 as no version and no error, and selects from the rest of its SETTINGS.
+     */
+    @Test fun negative_serverIgnoresAClientsDraft16ValueAboveOne() =
+        h3Test {
+            val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT16 to 2L, SettingsId.WT_ENABLED_DRAFT17 to 1L), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft17, session.getOrThrow().version)
+        }
+
+    /**
+     * A client that sends draft-17's codepoint with 0 names no version (0 is the setting's default, "the server does not
+     * support WebTransport"), so section 7.1's last branch selects draft-17.
+     */
+    @Test fun clientWithDraft17SettingZeroGetsDraft17() =
+        h3Test {
+            val (h, session) = serve(listOf(SettingsId.WT_ENABLED_DRAFT17 to 0L), WtTokens.H3)
+            assertEquals("200", h[":status"])
+            assertEquals(WtVersion.Draft17, session.getOrThrow().version)
+        }
+
+    /**
+     * A client without WebTransport does not interpret the WebTransport settings: RFC 9114 section 7.2.4, "Endpoints MUST
+     * ignore any settings with identifiers they do not understand". A server's `SETTINGS_WT_ENABLED` of 2, draft-17's or
+     * draft-16's, is no error for it.
+     */
+    @Test fun negative_aClientWithoutWebTransportIgnoresWtEnabledAboveOne() =
+        h3Test {
+            for (id in listOf(SettingsId.WT_ENABLED_DRAFT17, SettingsId.WT_ENABLED_DRAFT16)) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    RawPeer(s).openControl(listOf(id to 2L))
+                    val client = Http3Connection.client(c, http3Settings { })
+                    // applied without an error: the settings reach the application
+                    val ps = withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                    assertTrue(!ps.webTransport, "0x${id.toString(16)}")
+                    assertTrue(!client.closed.isCompleted, "0x${id.toString(16)}")
+                }
+            }
+        }
+
+    /** A server without WebTransport selects no version, not even section 7.1's draft-17 for a client that names none. */
+    @Test fun negative_aServerWithoutWebTransportSelectsNoVersion() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val server = Http3Connection.server(s, http3Settings { enableConnectProtocol = true })
+                RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                assertNull(server.session.highestCommonWtVersion())
+            }
+        }
+
+    /** draft-17 section 3.1: "Clients MUST treat values greater than "1" as a connection error of type H3_SETTINGS_ERROR". */
+    @Test fun negative_draft17SettingAboveOneFromTheServerIsSettingsError() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                RawPeer(s).openControl(listOf(SettingsId.WT_ENABLED_DRAFT17 to 2L))
+                runCatching { Http3Connection.client(c, wtOn) } // may already fail with the error it sent
+                assertEquals(Http3ErrorCode.SETTINGS_ERROR, withTimeout(5.seconds) { peerSawClose(s) })
+            }
+        }
+
+    /**
+     * Every server draft our client offers gets a CONNECT of its own draft: `webtransport-h3` without the draft-02 field
+     * for draft-17 and draft-16, `webtransport` with it for draft-02 (draft-17 section 7.1 "The highest version supported
+     * by both endpoints is selected").
+     */
+    @Test fun eachDraftServerGetsACONNECTOfItsDraft() =
+        h3Test {
+            for (d in drafts.filter { it.version in WtVersion.ours(isServer = false) }) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val raw = RawPeer(s)
+                    raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L, SettingsId.H3_DATAGRAM to 1L) + d.settings)
+                    val client = Http3Connection.client(c, wtOn)
+                    val session = async { client.webTransport(wtReq()) }
+                    val st = withTimeout(5.seconds) { s.acceptBidi() }
+                    val h = readHeaders(st)
+                    assertEquals(d.token, h[":protocol"], "$d")
+                    assertEquals(if (d.version == WtVersion.Draft02) "1" else null, h[WtTokens.DRAFT02_REQUEST_FIELD], "$d")
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                    st.output.flush()
+                    assertEquals(d.version, (withTimeout(5.seconds) { session.await() } as WtSessionImpl).version, "$d")
+                }
+            }
+        }
+
+    /** Our client and server both speak every version: they select draft-17 and announce draft-17, -16 and -02 (client). */
+    @Test fun ourClientAndServerSelectDraft17() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                assertEquals(WtVersion.Draft17, (client as WtSessionImpl).version)
+                assertEquals(WtVersion.Draft17, (server as WtSessionImpl).version)
+                assertNull(server.headers[WtTokens.DRAFT02_REQUEST_FIELD])
+                val ps =
+                    withTimeout(5.seconds) {
+                        p.server.peerSettings
+                            .filterNotNull()
+                            .first()
+                    }
+                assertTrue(ps.webTransport)
+            }
+        }
+
+    /**
+     * draft-17 section 4.3: WT_STREAM "in any other circumstances MUST be treated as a connection error of type
+     * H3_FRAME_UNEXPECTED" (draft-16 and draft-14: H3_FRAME_ERROR). The connection's version decides: the signal on the
+     * control stream, and inside a request stream after its HEADERS, of a draft-17 client and of a draft-16 one.
+     */
+    @Test fun negative_misplacedWtStreamSignalIsTheCodeOfTheConnectionsDraft() =
+        h3Test {
+            for ((setting, code) in listOf(
+                SettingsId.WT_ENABLED_DRAFT17 to Http3ErrorCode.FRAME_UNEXPECTED,
+                SettingsId.WT_ENABLED_DRAFT16 to Http3ErrorCode.FRAME_ERROR,
+            )) {
+                for (onControl in listOf(true, false)) {
+                    QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                        val (c, s) = q.connect(H3Fixtures.quic)
+                        val server = Http3Connection.server(s, wtOn)
+                        val raw = RawPeer(c)
+                        val control = raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L, setting to 1L))
+                        // the SETTINGS are applied before the signal is read: the version is known by then
+                        withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                        val signal = VarInt.encode(FrameType.WT_STREAM) + VarInt.encode(0)
+                        // the request's body is read, so the frame after its HEADERS is
+                        if (!onControl) launch { runCatching { server.acceptRequest().body.readAllBytes() } }
+                        val st = if (onControl) control else c.openBidi()
+                        // the server may close the connection before our flush returns
+                        peerMayHaveClosed {
+                            st.output.writeFully(if (onControl) signal else raw.headers(st.id, GET) + signal)
+                            st.output.flush()
+                        }
+                        assertEquals(code, withTimeout(5.seconds) { peerSawClose(c) }, "0x${setting.toString(16)} control $onControl")
+                    }
+                }
+            }
+        }
+}

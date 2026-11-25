@@ -145,7 +145,7 @@ internal class UniHeader {
     /**
      * H3_STREAM_CREATION_ERROR for a type that never arrived (RFC 9114 section 6.2: "If reading is aborted, the recipient
      * SHOULD use the H3_STREAM_CREATION_ERROR error code"); WT_BUFFERED_STREAM_REJECTED for a WebTransport stream whose
-     * Session ID never came (it reached no session, draft-ietf-webtrans-http3-16 section 4.6).
+     * Session ID never came (it reached no session, draft-ietf-webtrans-http3-17 section 4.6).
      */
     var rejectCode = Http3ErrorCode.STREAM_CREATION_ERROR
 }
@@ -292,7 +292,7 @@ private suspend fun H3Session.readControl(st: QuicStream) {
         val len = st.input.readVarInt()
         val action =
             try {
-                FrameRules.checkControl(type, first, isServer, settings.webTransport)
+                FrameRules.checkControl(type, first, isServer, settings.webTransport, wtMisplacedSignalCode())
             } catch (e: H3ProtocolError) {
                 // a frame the control stream must not carry: what was parsed of it (its header) is in the trace
                 qlog { it.frameParsed(st.id, type, len, it.controlFrame(type, null)) }
@@ -402,9 +402,18 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     // value other than 0 or 1 one (checked by the codec). HTTP/3 Datagrams are QUIC DATAGRAM frames (section 2.1), which
     // RFC 9221 section 3 forbids sending to such a peer, so none is sent ([DatagramDemux.unsupported])
     // draft-ietf-webtrans-http3-02 section 3.1: "an endpoint that receives a value other than "0" or "1" MUST close the
-    // connection with the H3_SETTINGS_ERROR error code" (SETTINGS_WT_ENABLED is checked by the codec for every draft)
+    // connection with the H3_SETTINGS_ERROR error code"
     if (settings.webTransport && (m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) > 1L) {
         throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
+    }
+    // draft-ietf-webtrans-http3-17 and -16 section 3.1: "Clients MUST treat values greater than "1" as a connection error
+    // of type H3_SETTINGS_ERROR"; draft-17: "SETTINGS_WT_ENABLED has no meaning when sent by a client; a server MUST
+    // ignore it" (a server reads only a 1 as a version, section 7.1: [WtVersion.offeredIn]). A client without
+    // WebTransport does not interpret them (RFC 9114 section 7.2.4: settings it does not understand are ignored)
+    if (!isServer && settings.webTransport) {
+        for ((id, draft) in listOf(SettingsId.WT_ENABLED_DRAFT17 to "draft-17", SettingsId.WT_ENABLED_DRAFT16 to "draft-16")) {
+            if ((m[id] ?: 0L) > 1L) throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_WT_ENABLED ($draft) must be 0 or 1")
+        }
     }
     if (!isServer) {
         // RFC 9114 section 7.2.4.2: after an accepted 0-RTT, SETTINGS that lower or omit what the client relied on are
@@ -419,7 +428,7 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
         quic.rememberWithTickets(SettingsCodec.encode(StoredSettings.kept(m)))
     }
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
-    wtCommonVersions = WtVersion.common(m, isServer)
+    wtCommonVersions = WtVersion.common(m, isServer, settings.webTransport)
     wtPeerSettings = m.filterKeys { it in WtSettings.ALL }.ifEmpty { emptyMap() } // no map held when the peer has none
     qlog { it.parametersSet("remote", m) }
     peerSettings.value = ps

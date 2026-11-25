@@ -193,6 +193,7 @@ abstract interface io.kuicksilver.http3/WebTransportSendStream { // io.kuicksilv
         abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/WebTransportSendStream.streamId.<get-streamId>|<get-streamId>(){}[0]
 
     abstract fun reset(kotlin/Long) // io.kuicksilver.http3/WebTransportSendStream.reset|reset(kotlin.Long){}[0]
+    open fun reset(kotlin/Long, kotlin/Long) // io.kuicksilver.http3/WebTransportSendStream.reset|reset(kotlin.Long;kotlin.Long){}[0]
 }
 
 abstract interface io.kuicksilver.http3/WebTransportSession { // io.kuicksilver.http3/WebTransportSession|null[0]

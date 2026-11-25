@@ -51,7 +51,7 @@ internal suspend fun ByteReadChannel.readVarInt(): Long = readVarIntOrNull() ?: 
 
 /**
  * [readVarIntOrNull] with the number of bytes the integer took on the wire, which a non-minimal encoding makes larger
- * than its value needs (WebTransport counts a stream's body without its header, draft-ietf-webtrans-http3-16 section 5.4).
+ * than its value needs (WebTransport counts a stream's body without its header, draft-ietf-webtrans-http3-17 section 5.4).
  */
 internal suspend fun ByteReadChannel.readVarIntSizedOrNull(): Pair<Long, Int>? {
     val first = ByteArray(1)
@@ -168,8 +168,10 @@ internal class RequestFrames(
     private val onBuffered: (Long) -> Unit = {},
     /** The first frame type, when the caller already read it to tell a request from a WebTransport stream. */
     firstType: Long? = null,
-    /** WebTransport is on: its `WT_STREAM` signal is a frame error here (see [FrameRules.checkRequest]). */
+    /** WebTransport is on: its `WT_STREAM` signal is a connection error here (see [FrameRules.checkRequest]). */
     private val webTransport: Boolean = false,
+    /** That error's code, the one of the connection's WebTransport draft when the signal is met ([H3Session.wtMisplacedSignalCode]). */
+    private val wtMisplacedCode: () -> Long = { Http3ErrorCode.FRAME_ERROR },
     /**
      * Runs with a HEADERS payload's encoded Required Insert Count (its QPACK prefix, RFC 9204 section 4.5.1) before the
      * rest of the payload is read: a section that waits for inserts waits there, its bytes left in the stream's window.
@@ -242,7 +244,12 @@ internal class RequestFrames(
             // checked before the length is read: after the WT_STREAM signal comes a Session ID, not a length
             val action =
                 try {
-                    FrameRules.checkRequest(type, isServerSide, webTransport)
+                    FrameRules.checkRequest(
+                        type,
+                        isServerSide,
+                        webTransport,
+                        if (webTransport) wtMisplacedCode() else Http3ErrorCode.FRAME_ERROR,
+                    )
                 } catch (e: H3ProtocolError) {
                     // a frame a request stream must not carry; its length is not read (WT_STREAM has none)
                     parsed(type, null) { it.controlFrame(type, null) }

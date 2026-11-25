@@ -16,14 +16,16 @@ import kotlin.concurrent.atomics.AtomicReference
  * The application's side of a WebTransport stream's input: chunks the stream's pump took from the transport, handed
  * over one at a time through a single slot ([deliver] waits while it is full), so at most a chunk waits here besides what
  * the application has not read yet. [onRead] hears how many bytes the application took into its buffer, as it asks for
- * them: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-16 section 5.6: "Endpoints
+ * them: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-17 section 5.6: "Endpoints
  * SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data"), not what only arrived.
  *
  * The slot is taken atomically and the wake-ups are conflated signals that carry no data, so a reader cancelled while it
  * waits (a timeout around a read) loses nothing: the chunk stays in the slot for its next read.
  *
  * Like the channel it replaces: only a clean end ([finish], every byte read) is `isClosedForRead`; a failure ([fail],
- * or [cancel]) fails every read at once with its cause, dropping what was not read.
+ * or [cancel]) fails every read at once with its cause, dropping what was not read. The peer's reset ([failAfterData])
+ * fails the reads only after the bytes the transport handed over before it: with RESET_STREAM_AT those are the reliable
+ * prefix the peer asked to deliver (draft-ietf-webtrans-http3-17 section 4.4).
  */
 @OptIn(io.ktor.utils.io.InternalAPI::class)
 internal class WtInput(
@@ -48,6 +50,12 @@ internal class WtInput(
 
     @Volatile private var ended = false
 
+    /** Set by [failAfterData]: the reads fail with it once the slot and the buffer are empty. */
+    @Volatile private var endedBy: Throwable? = null
+
+    /** Test hook: runs once the reader found the slot empty, before it looks at the end or the reset. */
+    internal var afterEmptySlotForTest: (suspend () -> Unit)? = null
+
     /** Pump: hands [chunk] over, waiting while the slot is full; throws once the input failed. */
     suspend fun deliver(chunk: ByteArray) {
         while (true) {
@@ -66,7 +74,14 @@ internal class WtInput(
         filled.trySend(Unit)
     }
 
-    /** Pump: the stream failed with [cause] (a reset, a stop, the session's end). */
+    /** Pump: the peer reset the stream with [cause]; what was delivered is still read first. */
+    fun failAfterData(cause: Throwable) {
+        if (endedBy == null) endedBy = cause
+        filled.trySend(Unit)
+        freed.trySend(Unit)
+    }
+
+    /** Pump: the stream failed with [cause] (a stop, the session's end). */
     fun fail(cause: Throwable) {
         if (failure == null) failure = cause
         filled.trySend(Unit)
@@ -85,8 +100,10 @@ internal class WtInput(
     override suspend fun awaitContent(min: Int): Boolean {
         while (buf.size < min) {
             failure?.let { throw it }
-            // the end is read before the slot: a last chunk put there before finish() is still taken
+            // the end and the peer's reset are read before the slot: a last chunk put there before finish() or
+            // failAfterData() is still taken (the pump delivers, then ends)
             val done = finished
+            val reset = endedBy
             val chunk = slot.exchange(null)
             if (chunk != null) {
                 freed.trySend(Unit)
@@ -97,10 +114,12 @@ internal class WtInput(
                 onRead(chunk.size.toLong())
                 continue
             }
+            afterEmptySlotForTest?.invoke()
             if (done) {
                 ended = true
                 break
             }
+            reset?.let { if (buf.exhausted()) throw it else return false }
             filled.receive() // cancellable: nothing is lost, the chunk stays in the slot
         }
         failure?.let { throw it }

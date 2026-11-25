@@ -686,8 +686,8 @@ WebSockets over HTTP/1.1 on the same port.
 
 ### WebTransport over HTTP/3 (experimental)
 
-With `webTransport = true` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-16, plus the SETTINGS of
-draft-02 and draft-14 that browsers send; see the [HTTP/3 guide](http3.md#webtransport-experimental)), and a
+With `webTransport = true` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-17, plus the SETTINGS of
+draft-16, which other libraries send, and of draft-02 and draft-14, which browsers send; see the [HTTP/3 guide](http3.md#webtransport-experimental)), and a
 `webTransport("/path") { session -> }` route serves the sessions. It matches only a WebTransport Extended CONNECT over
 HTTP/3, never an HTTP/1.1 request (a request of another method to the path gets Ktor's 405); a WebTransport request
 no route matches gets Ktor's 404, and one that another route answers with a 2xx gets 501 instead, since no session
@@ -2186,7 +2186,7 @@ val client = HttpClient(Kuicksilver) {
 
 ### WebTransport on the client (experimental)
 
-`HttpClient.webTransport(url)` opens a WebTransport session (draft-ietf-webtrans-http3-16) to an `https` URL and
+`HttpClient.webTransport(url)` opens a WebTransport session (draft-ietf-webtrans-http3-17) to an `https` URL and
 returns the `WebTransportSession` of `kuicksilver-http3` (streams, datagrams, close; see the
 [HTTP/3 guide](http3.md#webtransport-experimental)). Sessions share the engine's pooled HTTP/3 connection to the URL's
 host and port with each other and with requests (RFC 9114 section 3.3: one connection per address and port): a pooled

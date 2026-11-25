@@ -314,6 +314,28 @@ internal object QlogSchema {
                 frame(data["frame"] as Map<*, *>)
             }
 
+            // h3-events-14 section 6, Figures 29 to 34: the capsule by its type and lengths (its value is not written)
+            "capsule_created", "capsule_parsed" -> {
+                members(data, setOf("stream_id", "capsule"), emptySet())
+                uint(data["stream_id"])
+                val c = data["capsule"] as Map<*, *>
+                when (c["capsule_type"]) {
+                    "datagram" -> {
+                        members(c, setOf("capsule_type"), setOf("raw"))
+                    }
+
+                    "unknown" -> {
+                        members(c, setOf("capsule_type", "capsule_type_value"), setOf("raw"))
+                        uint(c["capsule_type_value"])
+                    }
+
+                    else -> {
+                        error("capsule_type ${c["capsule_type"]}")
+                    }
+                }
+                (c["raw"] as Map<*, *>?)?.let { raw(it) }
+            }
+
             // section 4.6 (push_resolved) is not written: no server push
             else -> {
                 error("an http event we do not write")

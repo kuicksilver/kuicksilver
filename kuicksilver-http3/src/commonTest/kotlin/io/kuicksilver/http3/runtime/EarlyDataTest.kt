@@ -989,15 +989,17 @@ class EarlyDataTest {
     /**
      * draft-ietf-webtrans-http3-16 section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS
      * frame received in the resumed connection reduces any flow control values from the cached previous values": a
-     * server that accepted 0-RTT and then sends a lower SETTINGS_WT_INITIAL_MAX_DATA, or omits it.
+     * server of draft-16 (it no longer announces draft-17, whose section 3.2 lifts the rule) that accepted 0-RTT and then
+     * sends a lower SETTINGS_WT_INITIAL_MAX_DATA, or omits it.
      */
     @Test fun negative_webTransportFlowControlLoweredAfter0RttIsSettingsError(): Unit =
         runBlocking {
             val data = io.kuicksilver.http3.frame.SettingsId.WT_INITIAL_MAX_DATA
+            val draft16 = { l: List<Pair<Long, Long>> -> l.filter { it.first != io.kuicksilver.http3.frame.SettingsId.WT_ENABLED_DRAFT17 } }
             val changes =
                 listOf<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>>(
-                    { l -> l.map { if (it.first == data) it.first to it.second - 1 else it } },
-                    { l -> l.filter { it.first != data } },
+                    { l -> draft16(l).map { if (it.first == data) it.first to it.second - 1 else it } },
+                    { l -> draft16(l).filter { it.first != data } },
                 )
             for (change in changes) {
                 Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
@@ -1026,6 +1028,51 @@ class EarlyDataTest {
                             }
                         val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "${end::class.simpleName}: $end")
                         assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code, "$e")
+                    } finally {
+                        H3Session.createdForTest = null
+                    }
+                }
+            }
+        }
+
+    /**
+     * draft-ietf-webtrans-http3-17 section 3.2: "a client MUST discard any values for the settings defined in this document
+     * (Section 9.2) that it retained from a previous connection and use the values received on the current connection ...
+     * the requirements in Section 7.2.4.2 of [HTTP3] to treat incompatible or omitted settings as a connection error do
+     * not apply to these settings": a draft-17 server that accepted 0-RTT and then lowers or omits
+     * SETTINGS_WT_INITIAL_MAX_DATA, or stops announcing draft-17 while it keeps draft-16, keeps the connection, and its new
+     * value is the one used.
+     */
+    @Test fun webTransportSettingsChangedAfter0RttAreTakenAsSentInDraft17(): Unit =
+        runBlocking {
+            val data = io.kuicksilver.http3.frame.SettingsId.WT_INITIAL_MAX_DATA
+            val changes =
+                listOf<Pair<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>, Long?>>(
+                    { l: List<Pair<Long, Long>> -> l.map { if (it.first == data) it.first to it.second - 1 else it } } to 3_932_159L,
+                    { l: List<Pair<Long, Long>> -> l.filter { it.first != data } } to null,
+                )
+            for ((change, expected) in changes) {
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
+                    enableConnectProtocol = true
+                    webTransport = true
+                }.use { f ->
+                    withTimeout(20.seconds) {
+                        f.start()
+                        f.warmUp()
+                    }
+                    H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                    try {
+                        withTimeout(20.seconds) {
+                            val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                            c.quic.awaitHandshake()
+                            assertEquals(true, c.quic.earlyDataAccepted, "the server did not accept 0-RTT")
+                            val ps = c.peerSettings.first { it != null }!!
+                            assertTrue(ps.webTransport)
+                            assertEquals(expected, c.session.wtPeerSettings[data])
+                            assertEquals(200, c.request(f.get()).also { it.body.readAllBytes() }.status)
+                            assertTrue(!c.closed.isCompleted, "the connection closed")
+                            c.close()
+                        }
                     } finally {
                         H3Session.createdForTest = null
                     }

@@ -138,6 +138,7 @@ internal class CapsuleStreamImpl(
                     var got: Capsule? = null
                     p +=
                         parser.feedOne(buf, p, n - p) { type, value ->
+                            stream.qlogCapsule(parsed = true, type = type, valueLength = value.size)
                             if (type == CapsuleProtocol.DATAGRAM) datagramQueue.trySend(value) else got = Capsule(type, value)
                         }
                     got?.let { incoming.send(it) } // waits for the collector: one capsule held at a time
@@ -207,6 +208,7 @@ internal class CapsuleStreamImpl(
     override suspend fun send(capsule: Capsule) {
         check(!closing.load()) { "the capsule stream ${stream.streamId} is closed" }
         enqueue(CapsuleRules.encode(capsule.type, capsule.value))
+        stream.qlogCapsule(parsed = false, type = capsule.type, valueLength = capsule.value.size)
     }
 
     private suspend fun enqueue(bytes: ByteArray) {
@@ -229,6 +231,7 @@ internal class CapsuleStreamImpl(
         if (closing.load() || failure.load() != null || !stream.sendOpen) return DatagramSendResult.Closed
         if (!viaCapsule()) return stream.trySendDatagram(payload) // TooLarge stays TooLarge (RFC 9297 section 3.5)
         val r = outgoing.trySend(CapsuleRules.encode(CapsuleProtocol.DATAGRAM, payload))
+        if (r.isSuccess) stream.qlogCapsule(parsed = false, type = CapsuleProtocol.DATAGRAM, valueLength = payload.size)
         return when {
             r.isSuccess -> DatagramSendResult.Sent
             r.isClosed -> DatagramSendResult.Closed
@@ -243,6 +246,7 @@ internal class CapsuleStreamImpl(
             stream.sendOpen,
         ) { "the send side of stream ${stream.streamId} is closed: HTTP datagrams are no longer sent (RFC 9297 section 2.1)" }
         enqueue(CapsuleRules.encode(CapsuleProtocol.DATAGRAM, payload))
+        stream.qlogCapsule(parsed = false, type = CapsuleProtocol.DATAGRAM, valueLength = payload.size)
     }
 
     override suspend fun close() {

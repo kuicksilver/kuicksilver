@@ -46,7 +46,7 @@ internal interface WtSessionSink {
 }
 
 /**
- * Routes WebTransport streams to their sessions (draft-ietf-webtrans-http3-16 sections 4.2, 4.3, 4.6). A unidirectional
+ * Routes WebTransport streams to their sessions (draft-ietf-webtrans-http3-17 sections 4.2, 4.3, 4.6). A unidirectional
  * stream of type `0x54` and a bidirectional stream that starts with the `WT_STREAM` signal `0x41` both carry the Session ID
  * next: the stream id of the session's Extended CONNECT, so always a client-initiated bidirectional stream (anything
  * else is H3_ID_ERROR).

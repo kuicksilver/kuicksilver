@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.io.IOException
 
 /**
- * A WebTransport session over HTTP/3 (draft-ietf-webtrans-http3-16): an Extended CONNECT stream that groups
+ * A WebTransport session over HTTP/3 (draft-ietf-webtrans-http3-17): an Extended CONNECT stream that groups
  * WebTransport streams and datagrams. With WebTransport flow control (section 5, on when both sides declare it in their
  * SETTINGS) its streams and stream data stay within the peer's limits and a violation by the peer closes the session
  * ([WebTransportException.FlowControl]); without it a connection carries one session (section 5.1).
@@ -93,7 +93,8 @@ public interface WebTransportSession {
      * FIN answered, which ends the CONNECT stream both ways; a peer that does not answer within five seconds is stopped
      * with STOP_SENDING WT_SESSION_GONE. Writing the capsule waits at most five seconds for the peer's flow-control
      * credit, after which the CONNECT stream is reset instead. Cancelling the call stops only its wait. Calling it on a
-     * closed session does nothing.
+     * closed session does nothing; once the connection is gone nothing can be sent, and it waits for the session's end,
+     * which the peer's last capsule decides (a WT_CLOSE_SESSION that came with the connection's close is reported).
      */
     public suspend fun close(
         code: Long = 0,
@@ -157,6 +158,34 @@ public interface WebTransportSendStream {
 
     /** Abandons sending with the application [code], 0..2^32-1 (RESET_STREAM); [output] then fails. */
     public fun reset(code: Long)
+
+    /**
+     * Abandons sending with the application [code], 0..2^32-1, but still delivers the first [reliableOffset] bytes of the
+     * stream to the peer's application, however many packets are lost, before it sees the reset: the "abort send side"
+     * with an offset of draft-ietf-webtrans-overview section 4.3, carried by RESET_STREAM_AT whose Reliable Size is the
+     * stream's header plus [reliableOffset] (draft-ietf-webtrans-http3-17 section 4.4). [output] fails at once for new
+     * writes; the bytes written before the call are sent up to [reliableOffset] (as the session's flow control lets them),
+     * then the reset goes, also when [output] was already closed (its FIN not yet acknowledged). Sending those bytes can
+     * wait indefinitely for the peer's flow-control credit; the offset is never cut on a deadline, as that would break the
+     * reliability asked for. A later [reset] (one argument), or the session's end, takes over at once: it resets with the
+     * bytes already sent kept (Reliable Size = header + bytes sent). The call closes [output], so cancelling [output]
+     * afterwards does nothing: a later [reset] or the session's end is the way to take over. A [reliableOffset] beyond the bytes written before
+     * the call is cut to them; 0 is [reset].
+     *
+     * Throws IllegalArgumentException for a negative [reliableOffset], and IllegalStateException, without resetting, for
+     * an offset above 0 on a session without RESET_STREAM_AT (draft-02, which browsers speak: the transport must not send
+     * the frame to a peer that did not advertise `reset_stream_at`, draft-ietf-quic-reliable-stream-reset section 3, and a
+     * RESET_STREAM would not keep the bytes). The default, for implementations outside this library, takes 0 only and
+     * throws UnsupportedOperationException for any other offset.
+     */
+    public fun reset(
+        code: Long,
+        reliableOffset: Long,
+    ) {
+        require(reliableOffset >= 0) { "reliableOffset $reliableOffset is negative" }
+        if (reliableOffset == 0L) return reset(code)
+        throw UnsupportedOperationException("this stream does not keep a reliable offset")
+    }
 }
 
 /** A bidirectional WebTransport stream: both sides, each ending on its own. */
@@ -204,7 +233,7 @@ public sealed class WebTransportException(
     ) : WebTransportException(message)
 
     /**
-     * The session broke WebTransport flow control (draft-ietf-webtrans-http3-16 section 5): the peer opened more streams or
+     * The session broke WebTransport flow control (draft-ietf-webtrans-http3-17 section 5): the peer opened more streams or
      * sent more data than our limits allowed, or sent a flow-control capsule that lowered a limit or went beyond 2^60
      * streams, or a WT_MAX_STREAM_DATA or WT_STREAM_DATA_BLOCKED capsule. The session was closed by resetting its CONNECT
      * stream with WT_FLOW_CONTROL_ERROR. A session the peer closed that way ends with the peer's reset as the cause instead.

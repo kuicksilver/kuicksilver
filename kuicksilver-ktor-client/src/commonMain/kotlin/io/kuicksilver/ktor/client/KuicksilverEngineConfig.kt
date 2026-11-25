@@ -231,7 +231,7 @@ public class Http3ClientConfig {
     /**
      * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, over all its connections (they
      * share the pooled ones, up to `settings.webTransportMaxSessions` a connection); one more fails at once with
-     * IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-16 section 8: "a
+     * IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-17 section 8: "a
      * WebTransport client SHOULD limit the number of outgoing sessions it will open").
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi

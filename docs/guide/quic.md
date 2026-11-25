@@ -1107,7 +1107,7 @@ size of each half of a stream (RFC 9000 section 4.5), the flow-control credit it
 sending half's size is known once its reset is queued (`reset`, the reset that answers the peer's STOP_SENDING, or
 `resetAt` once its frame goes out) or once its FIN first went out; the receiving half's as soon as the peer's FIN,
 RESET_STREAM or RESET_STREAM_AT arrives, also when the bytes were never read or after `stopSending`. A protocol that
-counts data across streams, such as WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.4), needs it for a
+counts data across streams, such as WebTransport flow control (draft-ietf-webtrans-http3-17 section 5.4), needs it for a
 stream that was reset. The size counts every byte of the stream, an application's own header too: WebTransport
 subtracts its stream header itself. A stream sent in 0-RTT reports its size only after the server accepted the early
 data; a rejection fails both with `QuicException.StreamError.EarlyDataRejected`, a lost connection with its
@@ -1161,7 +1161,7 @@ ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender
 both ways: more urgent bulk streams hold such datagrams back, and the datagrams go ahead of streams of the same or a
 lower urgency, so a flood of them starves those. The send queue keeps one FIFO per urgency: a datagram never waits
 behind a less urgent one, and datagrams of one urgency leave in the order they were queued (all RFC 9221 asks). HTTP/3
-sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-16
+sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-17
 section 3.4).
 
 ## Testing your application

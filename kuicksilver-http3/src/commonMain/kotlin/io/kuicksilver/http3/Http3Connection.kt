@@ -255,7 +255,7 @@ public interface Http3ServerRequest {
     public val isWebTransport: Boolean get() = false
 
     /**
-     * The application protocols a WebTransport client offers in `WT-Available-Protocols` (draft-ietf-webtrans-http3-16
+     * The application protocols a WebTransport client offers in `WT-Available-Protocols` (draft-ietf-webtrans-http3-17
      * section 3.3), in its order of preference; empty when it offers none or the field is not a valid list of Strings.
      */
     @ExperimentalKuicksilverApi
@@ -401,7 +401,8 @@ public fun Http3ServerRequest.holdStreamUntilHandled() {
  * than with H3_NO_ERROR (RFC 9114 section 4.1.1), or the connection is gone. A server engine cancels the request's handler then, so the stream it
  * holds ([holdStreamUntilHandled]) goes back to the client at once (as Go's CVE-2023-44487 fix cancels the handler's
  * context). Never returns for a request the client keeps, once the response was sent in full, nor for requests of other
- * implementations.
+ * implementations. A request accepted as a WebTransport session is abandoned only by the connection's end: the client's
+ * STOP_SENDING on its CONNECT stream belongs to the session's close, which the session's `closed` reports.
  */
 @InternalKuicksilverApi
 public suspend fun Http3ServerRequest.awaitAbandoned() {

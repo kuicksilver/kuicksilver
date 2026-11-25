@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 
@@ -44,12 +45,14 @@ internal class WtStreamImpl(
     /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
     private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,
-    /** The session's flow control (draft-ietf-webtrans-http3-16 section 5) for our bytes, or null when it is not enabled. */
+    /** The session's flow control (draft-ietf-webtrans-http3-17 section 5) for our bytes, or null when it is not enabled. */
     private val flow: WtSessionFlow? = null,
     /** The count of the peer's bytes on [input] against the session's limit, or null without flow control. */
     private val inCount: WtInCount? = null,
-    /** The session's turns at, and its share of, the connection's send buffer (draft-16 section 8), with flow control. */
+    /** The session's turns at, and its share of, the connection's send buffer (draft-17 section 8), with flow control. */
     private val turns: WtSendTurns? = null,
+    /** RESET_STREAM_AT is on for the connection (`reset_stream_at` on both sides): a reset may keep a reliable offset. */
+    private val reliableResets: Boolean = false,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
     private val outCh = ByteChannel()
@@ -75,6 +78,23 @@ internal class WtStreamImpl(
 
     /** Body bytes taken from the session's credit (flow control; session dispatcher only). */
     private var outCounted = 0L
+
+    /** Body bytes the output pump handed to the transport (written by the pump only; read by a reset). */
+    @Volatile private var pumped = 0L
+
+    /** A reset with a reliable offset ([reset] with two arguments) that the output pump carries out once it got there. */
+    private class PendingReset(
+        val code: Long,
+        val reliableOffset: Long,
+    )
+
+    @Volatile private var pendingReset: PendingReset? = null
+
+    /** Test hook: the output pump ended (the FIN went, or a reset). */
+    internal val outputEndedForTest: Boolean get() = outPump?.isCompleted ?: true
+
+    /** Body bytes the pump may still hand to the transport: up to a pending reset's offset, else any. */
+    private fun room(): Long = pendingReset?.let { it.reliableOffset - pumped } ?: Long.MAX_VALUE
 
     /**
      * This stream's place in the session's data credit, made now, when the session hands the stream to the application:
@@ -144,11 +164,14 @@ internal class WtStreamImpl(
             throw e
         } catch (e: Throwable) {
             inCount?.abandon() // reset by the peer, or stopped: nobody reads the rest
-            if (H3Session.transportCause(e) == null) {
+            val cause = H3Session.transportCause(e)
+            if (cause == null) {
                 // the application cancelled its input while the pump wrote into it: stop the peer (code 0)
                 runCatching { st.stopSending(WtErrorCodes.toHttp3(0)) }
             }
-            inCh.fail(map(e))
+            // the peer's reset: the bytes the transport delivered before it (with RESET_STREAM_AT, the reliable prefix,
+            // draft-17 section 4.4) are still read, then the reset
+            if (cause is QuicException.StreamError.Reset) inCh.failAfterData(map(e)) else inCh.fail(map(e))
         }
     }
 
@@ -158,15 +181,18 @@ internal class WtStreamImpl(
             while (true) {
                 // everything given was written: the place in the session's credit stays only if more bytes are here at once
                 credit?.idle()
-                val n = outCh.readAvailable(buf, 0, buf.size)
-                if (n < 0) break
+                if (room() <= 0) break // a pending reset's reliable bytes are all handed over
+                val read = outCh.readAvailable(buf, 0, buf.size)
+                if (read < 0) break
+                val n = minOf(read.toLong(), room()).toInt()
                 if (credit == null) {
                     st.output.writeFully(buf, 0, n)
+                    pumped += n
                 } else {
                     var off = 0
                     while (off < n) {
                         // counted before the write: a reset that cuts the write short is settled by the final size
-                        val k = credit.take(n - off)
+                        val k = credit.take(minOf((n - off).toLong(), room()).toInt())
                         // the sending half is over (reset, or stopped by the peer): its own failure tells why
                         if (k == 0) throw st.output.closedCause ?: IOException("WebTransport stream $streamId: sending ended")
                         outCounted += k
@@ -179,11 +205,15 @@ internal class WtStreamImpl(
                         }
                         if (turns != null && account != null) turns.run(account, k.toLong(), write) else write()
                         off += k
+                        pumped += k
+                        if (room() <= 0) break
                     }
                 }
                 st.output.flush()
             }
-            if (outCh.closedCause != null) {
+            if (pendingReset != null) {
+                // the reset with a reliable offset goes once the pump ended ([reset] with two arguments): no FIN
+            } else if (outCh.closedCause != null) {
                 // the application cancelled its output: the stream is abandoned, not ended
                 abandon(WtErrorCodes.toHttp3(0))
             } else {
@@ -231,6 +261,30 @@ internal class WtStreamImpl(
         outCh.cancel(IOException("WebTransport stream $streamId reset locally with $code"))
     }
 
+    override fun reset(
+        code: Long,
+        reliableOffset: Long,
+    ) {
+        require(reliableOffset >= 0) { "reliableOffset $reliableOffset is negative" }
+        if (reliableOffset == 0L) return reset(code)
+        val h = WtErrorCodes.toHttp3(code)
+        check(writable) { "stream $streamId is receive-only" }
+        check(reliableResets) {
+            "stream $streamId: a reliable offset needs RESET_STREAM_AT, which this connection does not have (draft-02, or no " +
+                "reset_stream_at on both sides)"
+        }
+        // the output takes no more; the pump hands over what was written up to the offset, then the reset goes (draft-17
+        // section 4.4: the header plus the application's offset, cut to what was written before the call). Also when the
+        // pump had already ended (the output closed, the FIN sent but not all acknowledged). A later reset, or the
+        // session's end, takes over ([abandon]) and this one no longer goes
+        val p = PendingReset(h, reliableOffset)
+        pendingReset = p
+        outCh.close()
+        outPump!!.invokeOnCompletion {
+            if (pendingReset === p) runCatching { st.resetAt(p.code, headerLength + minOf(p.reliableOffset, pumped)) }
+        }
+    }
+
     override fun stopSending(code: Long) {
         val h = WtErrorCodes.toHttp3(code)
         check(readable) { "stream $streamId is send-only" }
@@ -252,17 +306,23 @@ internal class WtStreamImpl(
     }
 
     /**
-     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-16
-     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] with a Reliable Size
-     * set to at least the size of the WebTransport header when resetting a WebTransport data stream"), so the peer can
-     * still tell which session the reset belongs to; on a stream the peer opened our side carries no header (size 0). A
+     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-17
+     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] when resetting a
+     * WebTransport data stream, with a Reliable Size set to the size of the WebTransport header on that stream plus any
+     * offset provided by the application"; without one ([reset] with an offset) it is the header alone, which also meets
+     * draft-16 and -14's "at least the size of the WebTransport header"), so the peer can still tell which session the
+     * reset belongs to; on a stream the peer opened our side carries no header (size 0). A
      * session of draft-14 or later exists only with `reset_stream_at` on both sides (section 3.1, [wtTransportGap]), so
      * the frame always goes; only a draft-02 session (browsers), whose draft predates the frame, may lack it, and the
      * transport then sends the RESET_STREAM that draft-02 uses.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun abandon(code: Long) {
-        runCatching { st.resetAt(code, headerLength.toLong()) }
+        // over a reset with a reliable offset still waiting for credit: it resets now and keeps what was already sent
+        val p = pendingReset
+        pendingReset = null
+        val kept = if (p != null) minOf(p.reliableOffset, pumped) else 0L
+        runCatching { st.resetAt(code, headerLength + kept) }
     }
 
     private companion object {

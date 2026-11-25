@@ -1141,6 +1141,23 @@ class WebTransportFlowControlTest {
             assertFlowControlClose(connect, session)
         }
 
+    /**
+     * draft-17 sections 5.6.2 and 5.6.4 spell out what "previously received" is before any capsule: WT_MAX_STREAMS that
+     * does not increase "the corresponding initial value (SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI or
+     * SETTINGS_WT_INITIAL_MAX_STREAMS_UNI) if no WT_MAX_STREAMS capsule of that type has been received", and WT_MAX_DATA
+     * that does not increase "the value of SETTINGS_WT_INITIAL_MAX_DATA if no WT_MAX_DATA capsule has been received", close
+     * a draft-17 session with WT_FLOW_CONTROL_ERROR.
+     */
+    @Test fun negative_draft17FirstLimitCapsuleMustExceedTheInitialSetting() {
+        for ((type, value) in listOf(WtFlow.MAX_DATA to 100_000L, WtFlow.MAX_STREAMS_BIDI to 10L, WtFlow.MAX_STREAMS_UNI to 10L)) {
+            rawFlowTest(clientSettings = wtClientFlowSettings() + (SettingsId.WT_ENABLED_DRAFT17 to 1L)) { _, _, connect, session ->
+                assertEquals(WtVersion.Draft17, (session as WtSessionImpl).version)
+                connect.capsule(type, VarInt.encode(value))
+                assertFlowControlClose(connect, session)
+            }
+        }
+    }
+
     /** Section 5.6.2: "Recipients of a capsule with a Maximum Streams value larger than this limit". */
     @Test fun negative_wtMaxStreamsBeyond2To60ClosesTheSession() =
         rawFlowTest { _, _, connect, session ->
@@ -1219,7 +1236,7 @@ class WebTransportFlowControlTest {
     @Test fun negative_resumedSettingsThatLowerFlowControlAreIncompatible() {
         val stored =
             mapOf(
-                SettingsId.WT_ENABLED to 1L,
+                SettingsId.WT_ENABLED_DRAFT16 to 1L,
                 SettingsId.WT_INITIAL_MAX_DATA to 1000L,
                 SettingsId.WT_INITIAL_MAX_STREAMS_BIDI to 10L,
             )

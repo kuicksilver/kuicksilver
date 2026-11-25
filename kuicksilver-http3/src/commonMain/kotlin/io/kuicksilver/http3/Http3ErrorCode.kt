@@ -4,7 +4,7 @@ package io.kuicksilver.http3
 
 /**
  * HTTP/3, QPACK and WebTransport application error codes (RFC 9114 section 8.1, RFC 9204 section 6, RFC 9297 section 5.2,
- * draft-ietf-webtrans-http3-16 section 9.5). They travel in
+ * draft-ietf-webtrans-http3-17 section 9.5). They travel in
  * CONNECTION_CLOSE 0x1d, RESET_STREAM and STOP_SENDING; an unknown code means [NO_ERROR] (RFC 9114 section 9).
  */
 public object Http3ErrorCode {
@@ -64,7 +64,7 @@ public object Http3ErrorCode {
 
     /**
      * WT_BUFFERED_STREAM_REJECTED: a WebTransport stream whose session is not there, over the buffering limits, or of a
-     * closed session (draft-ietf-webtrans-http3-16 section 4.6). Experimental, as WebTransport is.
+     * closed session (draft-ietf-webtrans-http3-17 section 4.6). Experimental, as WebTransport is.
      */
     public const val WT_BUFFERED_STREAM_REJECTED: Long = 0x3994bd84
 

@@ -5,7 +5,7 @@ package io.kuicksilver.http3.webtransport
 import io.kuicksilver.http3.message.sfParametersEnd
 
 /**
- * The application protocol fields of a WebTransport session (draft-ietf-webtrans-http3-16 section 3.3):
+ * The application protocol fields of a WebTransport session (draft-ietf-webtrans-http3-17 section 3.3):
  * `WT-Available-Protocols`, a Structured Field List of Strings the client offers, and `WT-Protocol`, the String the
  * server chose (RFC 9651 sections 3.1, 3.3.3). Parameters on the members are allowed and ignored.
  */

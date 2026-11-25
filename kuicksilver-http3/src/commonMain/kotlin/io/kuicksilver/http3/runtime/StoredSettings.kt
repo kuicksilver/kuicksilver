@@ -43,15 +43,20 @@ internal object StoredSettings {
      * is non-zero, the server MUST send the same non-zero value in its SETTINGS frame. If it specifies any other value, or
      * omits SETTINGS_QPACK_MAX_TABLE_CAPACITY from SETTINGS, the encoder must treat this as a connection error of type
      * QPACK_DECODER_STREAM_ERROR": a larger value too, and with that code rather than H3_SETTINGS_ERROR.
+     *
+     * The settings of [WtSettings.discardedOnResumption] are not compared: draft-ietf-webtrans-http3-17 section 3.2 has
+     * the client discard what it kept of them and take what the resumed connection sends.
      */
     fun incompatibility(
         stored: Map<Long, Long>,
         now: Map<Long, Long>,
     ): Incompatible? {
+        val discarded = WtSettings.discardedOnResumption(now)
         // every setting we understand, stored or not: one stored with its default (or not stored at all) binds too, so a
         // server that now sends a lower value than the default it had (an unlimited SETTINGS_MAX_FIELD_SECTION_SIZE
         // now limited) is incompatible as well
         for (id in DEFAULTS.keys) {
+            if (id in discarded) continue
             val name = "0x${id.toString(16)}"
             val was = if (id in stored) stored[id] else DEFAULTS[id] // null: unlimited (MAX_FIELD_SECTION_SIZE)
             val v = now[id]

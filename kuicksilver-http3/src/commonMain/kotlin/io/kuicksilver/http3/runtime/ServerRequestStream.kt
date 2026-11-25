@@ -33,6 +33,7 @@ import io.kuicksilver.http3.webtransport.WtFlow
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
+import io.kuicksilver.http3.webtransport.WtVersion
 import io.kuicksilver.http3.webtransport.wtServerVersion
 import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.Initiator
@@ -84,7 +85,7 @@ private suspend fun readRequestStream(
     st: QuicStream,
     onDelivered: () -> Unit,
 ) = with(session) {
-    // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
+    // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-17 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
     // nothing of the request head is taken from the stream's flow-control window before the connection's header budget
     // granted it (RFC 9114 section 10.5); RFC 9204 section 2.2.1: with blocked sections possible, nor before it may decode
@@ -125,7 +126,7 @@ private class HeadState {
 
     /**
      * H3_REQUEST_REJECTED while the stream may be a request (RFC 9114 section 4.1.1); once it is a WebTransport stream,
-     * WT_BUFFERED_STREAM_REJECTED: it reached no session (draft-ietf-webtrans-http3-16 section 4.6).
+     * WT_BUFFERED_STREAM_REJECTED: it reached no session (draft-ietf-webtrans-http3-17 section 4.6).
      */
     var rejectCode = Http3ErrorCode.REQUEST_REJECTED
 }
@@ -185,6 +186,7 @@ private suspend fun H3Session.handleArmedRequestStream(
                 onBuffered = { bufferedHeaderBytes += it },
                 firstType = firstType,
                 webTransport = settings.webTransport,
+                wtMisplacedCode = { wtMisplacedSignalCode() },
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
                 beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { insertsWatch(st) } },
                 limitReadAhead = { st.readAhead = it },
@@ -276,8 +278,6 @@ private suspend fun H3Session.handleArmedRequestStream(
             return
         }
         if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
-            val draft02 =
-                parsed.protocol.equals(WtTokens.LEGACY, ignoreCase = true) && parsed.regular[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
             // refused before the application: section 5.1 without flow control, section 5.2 (draft-14 section 5.2) over the
             // limit; the connection stays (draft-14: "The server MUST NOT close the connection if the client opens sessions
             // exceeding this limit")
@@ -288,12 +288,12 @@ private suspend fun H3Session.handleArmedRequestStream(
                 glitch("WebTransport sessions above the rate")
                 return
             }
-            if (!wtAdmits(draft02)) {
+            if (!wtAdmits()) {
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)
                 return
             }
-            wtSessionAdmitted(st.id, draft02)
+            wtSessionAdmitted(st.id)
         }
         val req = ServerRequestImpl(this, st, parsed)
         // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
@@ -400,10 +400,10 @@ internal fun H3Session.wtSessionEnded(
 }
 
 /**
- * Server: whether another WebTransport CONNECT ([draft02]: a draft-02 request) may join the sessions already on this
- * connection. The first always may (its acceptance checks the client's SETTINGS). Another one needs flow control on for
- * it and for every session already there, which the client's SETTINGS tell, so they are awaited first (bounded by
- * [H3Session.wtDeadline]; draft-16 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
+ * Server: whether another WebTransport CONNECT may join the sessions already on this connection. The first always may (its
+ * acceptance checks the client's SETTINGS). Another one needs flow control on in the connection's draft (every session
+ * on it runs the draft section 7.1 selected, [wtServerVersion]), which the client's SETTINGS tell, so they are awaited first (bounded by
+ * [H3Session.wtDeadline]; draft-17 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
  * client's SETTINGS have been received"); then: section 5.1, "A server that receives more than one session on an
  * underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a
  * H3_REQUEST_REJECTED status", and section 5.2, "Servers SHOULD limit the rate of incoming WebTransport sessions",
@@ -411,15 +411,12 @@ internal fun H3Session.wtSessionEnded(
  * all of the CONNECT streams it is not willing to process with the H3_REQUEST_REJECTED status"). Session dispatcher only;
  * the caller records an admitted session before it suspends again.
  */
-internal suspend fun H3Session.wtAdmits(draft02: Boolean): Boolean {
+internal suspend fun H3Session.wtAdmits(): Boolean {
     if (wtSessions.isEmpty()) return true
     withinWtDeadline { awaitPeerSettings() } ?: return false
     if (wtSessions.isEmpty()) return true // the others ended meanwhile
-
-    fun flowControlled(d02: Boolean): Boolean = wtServerVersion(this, d02).first?.let { WtFlow.enabled(this, it) } == true
     return wtSessions.size < settings.webTransportMaxSessions &&
-        flowControlled(draft02) &&
-        wtSessions.values.all { flowControlled(it) }
+        wtServerVersion(this).first?.let { WtFlow.enabled(this, it) } == true
 }
 
 /**
@@ -587,7 +584,9 @@ internal class ServerRequestImpl(
      * aborting the stream with H3_REQUEST_CANCELLED"), or the connection is gone. An engine cancels the request's
      * handler then, so a cancelled long poll gives its stream back at once instead of when it would have answered. Never
      * returns for a request kept on a live connection, nor once the response was sent in full (a handler that answered
-     * and goes on with other work is not cancelled by a late STOP_SENDING or the connection's end).
+     * and goes on with other work is not cancelled by a late STOP_SENDING or the connection's end). A request accepted as
+     * a WebTransport session is abandoned only by the connection's end: a STOP_SENDING on its CONNECT stream belongs to
+     * the session's close (draft-ietf-webtrans-http3-17 section 6), which `closed` reports.
      */
     suspend fun awaitAbandoned() {
         abandonedBeforeTheFullResponse()
@@ -608,7 +607,11 @@ internal class ServerRequestImpl(
                         } catch (_: io.kuicksilver.quic.QuicException) {
                             null
                         }
-                    if (code != null) peerAbandoned.complete(Unit)
+                    // a WebTransport session's CONNECT stream: the client's STOP_SENDING is part of its close (Safari sends
+                    // WT_CLOSE_SESSION, FIN and STOP_SENDING together), which the session's own end reports (section 6); an
+                    // engine that cancelled the handler here made its route close the session with code 0 ahead of the
+                    // client's capsule. Only the connection's end abandons it
+                    if (code != null && wtSession == null) peerAbandoned.complete(Unit)
                 }
             val lost =
                 launch {
@@ -728,7 +731,7 @@ internal class ServerRequestImpl(
         )
     }
 
-    /** `acceptWebTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 7.1). */
+    /** `acceptWebTransport` (draft-ietf-webtrans-http3-17 sections 3.2, 3.3, 7.1). */
     suspend fun acceptWebTransport(
         headers: Http3Headers,
         protocol: String?,
@@ -741,28 +744,28 @@ internal class ServerRequestImpl(
         // section 3.1: "If the server receives SETTINGS that do not have correct values for every required setting, or
         // transport parameters that do not have correct values for every required transport parameter, the server MUST treat
         // all established and newly incoming WebTransport sessions as malformed"; a session is established only here, once
-        // the client's SETTINGS arrived, so none was before. The client's own WebTransport setting is required too: "For
-        // draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with the draft-specific codepoint"
-        // (draft-14: SETTINGS_WT_MAX_SESSIONS above 0, draft-02: SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send)
-        // A client that announces a newer draft without its transport parameters but also draft-02 is served only when this
-        // CONNECT is a draft-02 request ([wtServerVersion]).
-        val draft02Request =
-            this@ServerRequestImpl.protocol.equals(WtTokens.LEGACY, ignoreCase = true) &&
-                this.headers[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
-        val (version, refusal) = wtServerVersion(session, draft02Request)
+        // the client's SETTINGS arrived, so none was before. The version is the one section 7.1 selects from the client's
+        // codepoints (draft-17 and -16 SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS above 0, draft-02
+        // SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send): the highest, or draft-17 when it sent none ("Otherwise,
+        // the server selects the version described in this document"). The CONNECT must carry that version's token
+        // (draft-17 and -16 section 3.2: ":protocol pseudo-header field MUST be set to webtransport-h3"; draft-02 and -14:
+        // webtransport), compared without regard to case (RFC 9110 section 7.8); another is malformed. A
+        // client whose selected draft its transport parameters cannot carry is malformed, whatever the form of this
+        // CONNECT ([wtServerVersion])
+        val (version, refusal) = wtServerVersion(session)
         val missing =
             when {
                 ps == null -> {
                     "no SETTINGS from the client within ${session.wtDeadline}"
                 }
 
-                session.highestCommonWtVersion() == null -> {
-                    "the client sent no WebTransport setting (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
-                        "draft-02 SETTINGS_ENABLE_WEBTRANSPORT), which WebTransport needs"
-                }
-
                 !ps.h3Datagram -> {
                     "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
+                }
+
+                version != null && !this@ServerRequestImpl.protocol.equals(version.protocolToken, ignoreCase = true) -> {
+                    "the session's version is $version (draft-ietf-webtrans-http3-17 section 7.1), whose :protocol is " +
+                        "${version.protocolToken}, not '${this@ServerRequestImpl.protocol}'"
                 }
 
                 else -> {
@@ -783,8 +786,10 @@ internal class ServerRequestImpl(
             buildList {
                 addAll(headers.fields)
                 if (protocol != null) add(WtProtocols.SELECTED_FIELD to WtProtocols.quote(protocol))
-                // Chrome's draft-02 client refuses a 2xx without it
-                if (this@ServerRequestImpl.headers[WtTokens.DRAFT02_REQUEST_FIELD] != null) {
+                // Chrome's draft-02 client refuses a 2xx without it (compatibility shim 2). Only for a session that runs
+                // draft-02 and a client that asked with the field's one value, `1`: a draft-17 or draft-16 session never
+                // answers with a draft-02 marker
+                if (version == WtVersion.Draft02 && this@ServerRequestImpl.headers[WtTokens.DRAFT02_REQUEST_FIELD] == "1") {
                     add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
                 }
             }
@@ -818,7 +823,7 @@ internal class ServerRequestImpl(
         // the stream first, then the flow: an application that sees the new value finds the stream already scheduled by it
         if (serverPriority == null) {
             st.priority = p
-            wtSession?.priorityChanged() // a WebTransport session's streams go with its CONNECT stream (draft-16 section 3.4)
+            wtSession?.priorityChanged() // a WebTransport session's streams go with its CONNECT stream (draft-17 section 3.4)
         }
         priorityFlow.value = p
     }
@@ -1054,6 +1059,20 @@ internal class ResponseWriterImpl(
 
     /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
     @Volatile private var abandoned: Throwable? = null
+
+    /** The cause the channel is cancelled with once the stream's owner reset its send side ([sendSideReset]). */
+    private class SendSideReset : kotlinx.io.IOException("the stream's send side was reset")
+
+    /**
+     * The stream's owner reset its send side (`Http3Stream.reset`): the pump stops waiting for content that can no longer
+     * go out, so the exchange ends; it sends no reset of its own, which would carry another code (RFC 9000 section 19.4:
+     * the error code cannot change). A tunnel whose session ended with a reset (WebTransport's failed or flow-control end)
+     * left the pump waiting until the connection closed, and its exchange, with the connection's session slot, held.
+     */
+    internal fun sendSideReset() {
+        channel.cancel(SendSideReset())
+    }
+
     internal val pump: Job =
         session.scope.launch {
             val buf = ByteArray(CHUNK)
@@ -1091,7 +1110,9 @@ internal class ResponseWriterImpl(
                 // the application's content failed mid-body, a channel cancelled with a CancellationException included: the
                 // response is abandoned after partial processing, "it SHOULD abort its response stream with the error code
                 // H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1); never left without a FIN or a reset
-                if (H3Session.transportCause(e) == null) runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                if (H3Session.transportCause(e) == null && channel.closedCause !is SendSideReset) {
+                    runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                }
                 abandoned = session.map(e)
                 channel.cancel(abandoned)
                 request?.done()

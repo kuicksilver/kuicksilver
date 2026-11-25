@@ -37,6 +37,7 @@ import io.kuicksilver.native.LeakRegistry
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -61,7 +62,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * One WebTransport session (draft-ietf-webtrans-http3-16): the Extended CONNECT [stream], spoken as the Capsule Protocol,
+ * One WebTransport session (draft-ietf-webtrans-http3-17): the Extended CONNECT [stream], spoken as the Capsule Protocol,
  * and the WebTransport streams routed to it.
  *
  * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read; with flow control
@@ -196,6 +197,9 @@ internal class WtSessionImpl(
      */
     @Volatile private var connectionEnd: DisposableHandle? = null
 
+    /** The CONNECT stream's end that a local close started ([terminate]); close() waits for it, cancellably. */
+    @Volatile private var localEnd: Job? = null
+
     /** The peer's FIN was read (session dispatcher only). */
     private var peerFinished = false
     override val drainRequested: StateFlow<Boolean> get() = drainFlow
@@ -216,6 +220,7 @@ internal class WtSessionImpl(
         // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
         // CONNECTION_CLOSE (Firefox) still ends the session with its code
         watchers += h3.drains(h3.scope.launch { readCapsules() })
+        watchers += h3.scope.launch { watchConnectStopped() }
         if (flow != null) {
             watchers +=
                 h3.scope.launch {
@@ -305,9 +310,13 @@ internal class WtSessionImpl(
         h3.scope.launch { terminate(WebTransportCloseInfo(0, "", WtSessionFlow.error(reason)), End.FlowControl) }
     }
 
+    /** Test hook: runs before the capsule reader handles a capsule of the type it is given. */
+    internal var beforeCapsuleForTest: (suspend (Long) -> Unit)? = null
+
     private suspend fun readCapsules() {
         try {
             capsules.capsules.collect { c ->
+                beforeCapsuleForTest?.invoke(c.type)
                 when (c.type) {
                     WtCloseCapsule.TYPE -> {
                         val (code, reason) =
@@ -368,6 +377,8 @@ internal class WtSessionImpl(
     private suspend fun terminate(
         info: WebTransportCloseInfo,
         end: End,
+        /** A local close waits for the CONNECT stream's end here; [close] waits outside its non-cancellable part instead. */
+        awaitLocalEnd: Boolean = true,
     ): Boolean {
         if (!closedInfo.complete(info)) return false
         connectionEnd?.dispose()
@@ -423,8 +434,31 @@ internal class WtSessionImpl(
                     }
                 }
             }
-        if (end == End.Locally) connectEnd?.join()
+        localEnd = connectEnd
+        if (end == End.Locally && awaitLocalEnd) connectEnd?.join()
         return true
+    }
+
+    /**
+     * The peer stopped our side of the CONNECT stream (STOP_SENDING): our transport resets it, so the stream is "closed ...
+     * abruptly" and the session terminated (draft-17 and -16 section 6). What the peer sent before still decides first:
+     * Safari's WT_CLOSE_SESSION and FIN come in the same packet as its STOP_SENDING, and the capsule reader gets
+     * [STOP_GRACE] to read them. Without them the session ends as ended by the peer, code 0 and no reason, and its streams
+     * are reset with WT_SESSION_GONE ([terminate]).
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private suspend fun watchConnectStopped() {
+        val st = (stream as? io.kuicksilver.http3.runtime.Http3StreamImpl)?.quicStream ?: return
+        val code =
+            try {
+                st.awaitSendStopped()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null // the connection's end: the session ends through connectionEnd
+            } ?: return
+        if (withTimeoutOrNull(STOP_GRACE) { closedInfo.await() } != null) return
+        terminate(WebTransportCloseInfo(0, "", null), End.ByPeer)
     }
 
     /**
@@ -556,6 +590,8 @@ internal class WtSessionImpl(
                     flow,
                     inCount,
                     sendTurns,
+                    // RESET_STREAM_AT goes only where both sides advertised it (draft-ietf-quic-reliable-stream-reset section 3)
+                    reliableResets = h3.quic.resetStreamAtEnabled,
                 )
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -712,7 +748,25 @@ internal class WtSessionImpl(
     ) {
         require(code in 0..WtErrorCodes.MAX_APPLICATION_CODE) { "WebTransport error code $code is not in 0..2^32-1" }
         val (c, r) = WtCloseCapsule.decode(WtCloseCapsule.encode(code, reason))!!
-        terminate(WebTransportCloseInfo(c, r, null), End.Locally)
+        // the connection is gone: no capsule can be sent, and the session ends as its connection's end decides (the
+        // capsule reader reads on to what the peer sent before, H3Session.drains): the peer's WT_CLOSE_SESSION that came
+        // with its CONNECTION_CLOSE (Firefox sends them in one packet) is its end, not this close, which would report code
+        // 0 for a session the peer closed with its own code (draft-17 section 6). A handler cancelled by the connection's
+        // end closes this way
+        // decided on the session's dispatcher, where the connection's end is taken note of (H3Session.onTransportClosed),
+        // and the local end is recorded in the same turn (terminate completes `closed` before it suspends): a connection
+        // that ends meanwhile cannot slip between the check and the close. Not cancellable: a cancelled close still ends
+        // the session
+        val local =
+            withContext(NonCancellable + h3.dispatcher) {
+                if (h3.closed.isCompleted || h3.quic.closed.isCompleted) {
+                    false
+                } else {
+                    terminate(WebTransportCloseInfo(c, r, null), End.Locally, awaitLocalEnd = false)
+                }
+            }
+        // cancellable: cancelling close() stops only this wait, the CONNECT is ended all the same
+        if (local) localEnd?.join() else closedInfo.await()
     }
 
     override fun toString(): String = "WebTransportSession($sessionId, protocol=$protocol)"
@@ -746,12 +800,18 @@ internal class WtSessionImpl(
         /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
         val CLOSE_TIMEOUT: Duration = 5.seconds
 
+        /**
+         * How long a session whose peer stopped our side of the CONNECT stream waits for what the peer sent before (its
+         * WT_CLOSE_SESSION and FIN, which Safari sends in the same packet) before it ends as ended by the peer.
+         */
+        val STOP_GRACE: Duration = 1.seconds
+
         /** QUIC's default `maxSendBuffer`, for a transport that does not tell its own. */
         const val DEFAULT_SEND_BUFFER: Long = 4_194_304
     }
 }
 
-/** The client side of `Http3Connection.webTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 5.1). */
+/** The client side of `Http3Connection.webTransport` (draft-ietf-webtrans-http3-17 sections 3.2, 3.3, 5.1). */
 internal suspend fun H3Session.webTransport(
     r: Http3Request,
     protocols: List<String>,
@@ -764,12 +824,14 @@ internal suspend fun H3Session.webTransport(
         withinWtDeadline { awaitPeerSettings() }
             ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtDeadline")
     if (highestCommonWtVersion() == null) {
-        throw Http3Exception.Settings("the server does not offer WebTransport in a draft we speak (draft-16 or draft-02) in its SETTINGS")
+        throw Http3Exception.Settings(
+            "the server does not offer WebTransport in a draft we speak (draft-17, draft-16 or draft-02) in its SETTINGS",
+        )
     }
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
     // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
     // every required setting or if the server's transport parameters do not have correct values for every required
-    // transport parameter"; a server that also announces draft-02 gets a draft-02 CONNECT ([wtClientVersion])
+    // transport parameter" ([wtClientVersion])
     val (chosen, refusal) = wtClientVersion(this)
     val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     // counted: set with the count, on the dispatcher, so a caller cancelled as that withContext returns gives it back;
@@ -806,7 +868,7 @@ internal suspend fun H3Session.webTransport(
         val fields =
             buildList {
                 addAll(r.headers.fields)
-                if (version != WtVersion.Draft16) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
+                if (version == WtVersion.Draft02) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
                 if (protocols.isNotEmpty()) add(WtProtocols.AVAILABLE_FIELD to WtProtocols.formatList(protocols))
             }
         val ended = CompletableDeferred<Unit>()

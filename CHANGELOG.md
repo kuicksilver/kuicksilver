@@ -14,6 +14,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
+  capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
+  shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.
+- QUIC qlog: `transport:parameters_set` (quic-events-04 section 5.3) for our transport parameters and the peer's, on both
+  roles, once the peer's arrive. It carries `max_datagram_frame_size`, `reset_stream_at` and `grease_quic_bit` as the
+  unspecified fields the section allows. Before, a trace could not show what the peer sent, `reset_stream_at`
+  included.
+- WebTransport (experimental): `WebTransportSendStream.reset(code, reliableOffset)` resets a stream but still delivers
+  its first `reliableOffset` bytes to the peer's application, however many packets are lost. This is "abort send side"
+  with an offset (draft-ietf-webtrans-overview section 4.3), carried by RESET_STREAM_AT with the stream's header plus
+  the offset as its Reliable Size (draft-ietf-webtrans-http3-17 section 4.4).
+  - An offset beyond the bytes written before the call is cut to them. The reset goes also after `output` was closed.
+  - Sending the reliable bytes may wait for the peer's flow-control credit without a deadline. A later `reset(code)`
+    takes over at once and keeps only the bytes already sent.
+  - On a draft-02 session, which has no RESET_STREAM_AT, an offset above 0 throws IllegalStateException.
+  - A stream reset by the peer now reads the bytes the transport delivered before the reset, then fails with
+    `StreamReset`. Before, a reset that arrived before the application read them dropped them.
 - QUIC: a configurable datagram size for tunnels such as WireGuard and NAT paths (experimental; `docs/guide/quic.md`,
   "Tunnels and NAT paths"): `QuicConfig.initialUdpPayloadSize` (1200 by default; less is refused, RFC 9000 section 14) is the
   size a connection's first path starts with on a socket that sets DF, Initial padding included, and
@@ -1130,6 +1147,39 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 6.9.1: above 2^31 - 1 the stream or connection MUST be terminated): a WINDOW_UPDATE that takes it above the
   maximum is a FLOW_CONTROL_ERROR stream error, a SETTINGS change that does a connection error, as in nghttp2 and Go.
   Before, such a stream kept no window and its updates were ignored.
+- WebTransport (experimental) speaks draft-ietf-webtrans-http3-17 (November 2026), the highest version both sides speak
+  (draft-17 section 7.1), next to draft-16 (webtransport-go and picoquic), draft-14 (Safari) and draft-02 (Chrome,
+  Firefox). A server announces `SETTINGS_WT_ENABLED` of draft-17 (0x20b8933b) and draft-16 (0x2c7cf000),
+  `SETTINGS_WT_MAX_SESSIONS` (draft-14) and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02). A client announces draft-17,
+  draft-16 and draft-02, so two Kuicksilver endpoints speak draft-17. What draft-17 changed, each from this release:
+  - A server whose client announces no draft selects draft-17 and accepts its `webtransport-h3` CONNECT ("Otherwise,
+    the server selects the version described in this document"). Before, such a request was refused with 400. The
+    older `webtransport` token from such a client is still malformed.
+  - A WebTransport client takes a server's `SETTINGS_WT_ENABLED` above 1, draft-17's or draft-16's, as
+    `H3_SETTINGS_ERROR`. A server ignores the value a client sends and reads only a 1 as a version (section 3.1). An
+    endpoint without WebTransport ignores both, as RFC 9114 section 7.2.4 asks of a setting it does not understand.
+    Before, every endpoint closed on draft-16's value above 1.
+  - A server takes only the selected draft's `:protocol` token: `webtransport-h3` for draft-17 and draft-16,
+    `webtransport` for draft-14 and draft-02 (draft-17 section 3.2). Another token is answered with 400. Before,
+    either token went with any draft.
+  - A `WT_STREAM` signal out of place closes a draft-17 connection with `H3_FRAME_UNEXPECTED` (section 4.3). Draft-16
+    and draft-14 keep `H3_FRAME_ERROR`.
+  - After 0-RTT, a client takes a draft-17 server's WebTransport settings as the resumed connection sends them (section
+    3.2: "a client MUST discard any values ... retained from a previous connection"). Before, it closed the connection
+    with `H3_SETTINGS_ERROR` when they were lowered or omitted, whether the client used WebTransport or not. A draft-16
+    or draft-14 server is still held to its earlier values.
+  - The client sends the draft-02 request field only on a draft-02 CONNECT.
+  - qlog names `SETTINGS_WT_ENABLED` for draft-17's codepoint; draft-16's goes by its number.
+
+  Capsule types, error codes, stream types and the other settings are the same in draft-17. The reset's reliable size
+  (the header, section 4.4) and the first WT_MAX_* floor (the initial SETTINGS value, sections 5.6.2 and 5.6.4) already
+  met draft-17's wording. RESET_STREAM_AT follows draft-ietf-quic-reliable-stream-reset-11, which keeps 0x1d and frame
+  0x24. `docs/spec/compat-shims.md` §1 to §4 have the hardening audit's verdicts:
+  - draft-02 and draft-14 kept;
+  - the draft-02 response field kept and narrowed;
+  - the draft-02 fallback without `reset_stream_at` removed (below);
+  - the pre-IANA `reset_stream_at` codepoint kept for Google QUICHE.
+
 - QUIC, DPLPMTUD: a connection's first path MTU search begins with its first application data (a STREAM or DATAGRAM
   frame) sent after the handshake is confirmed, no longer right at confirmation (RFC 8899 sections 4.3 and 5.1.1: probes
   "MAY" wait for application data). A connection that only acknowledges, or idles or closes after its handshake, sends no
@@ -1747,6 +1797,40 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   server that knows only v1. RFC 9368 section 8: the client "SHALL proceed as if" the server had sent Chosen Version 1 and
   Available Versions [1], and now does (as ngtcp2); after a Version Negotiation to another version the parameter is still
   required.
+- HTTP/3: resetting an Extended CONNECT stream (`Http3Stream.reset`) now ends its writer too. Before, the tunnel's
+  writer kept waiting for content, so the exchange never ended until the connection closed. A WebTransport client
+  session that ended because the server broke it (a malformed WT_CLOSE_SESSION, a capsule section 5.4 prohibits) kept
+  its slot in the connection's session count, so `webTransportMaxSessions` sessions failed that way blocked new ones on
+  that connection. The server side was not affected.
+
+- WebTransport no longer runs a draft-02 session when the selected draft lacks `reset_stream_at` (compatibility shim 3,
+  removed; hardening audit S3). Its one expected user, Safari, sends the parameter: Safari 27.2 ran its draft-14
+  session without the shim (`docs/spec/interop.md`). The draft-17 section 7.1 selection decides, and nothing else:
+  - A client that announced a newer draft without the transport parameter but also draft-02 got a draft-02 session for
+    a draft-02 request. It now gets 400 with `H3_MESSAGE_ERROR` (section 3.1).
+  - Our client no longer sends a draft-02 CONNECT to such a server; it throws `Http3Exception.Settings`.
+  - A draft-02-form CONNECT from a client whose selected draft is newer is now malformed, since its token is not the
+    selected draft's. Before, it ran draft-02.
+
+- WebTransport: a peer's WT_CLOSE_SESSION that arrived with its CONNECTION_CLOSE (Firefox 160 sends both in one packet)
+  is reported in `closed` with its code and reason, also when the application, or a Ktor route whose handler the
+  connection's end cancelled, calls `close()` first. Once the connection is gone `close()` sends nothing and waits for
+  the session's end. Before, it completed `closed` with code 0 ahead of the peer's capsule.
+- WebTransport server: a client's STOP_SENDING on a session's CONNECT stream no longer counts as an abandoned request
+  (`awaitAbandoned`). Safari 27.2 sends it with its WT_CLOSE_SESSION and FIN in one packet. The Ktor engine cancelled
+  the route's handler on it, and the route then closed the session with code 0 ahead of Safari's capsule (code 7 and
+  "bye" in the manual check). Only the connection's end abandons such a request now; the session's `closed` reports
+  the client's close.
+- WebTransport: a session whose peer stops our side of its CONNECT stream (STOP_SENDING) ends, as draft-17 section 6
+  asks of a CONNECT stream closed abruptly. What the peer sent before decides first, as Safari's WT_CLOSE_SESSION and
+  FIN in the same packet do; it gets one second. Otherwise the session ends as ended by the peer, with code 0, and its
+  streams are reset with WT_SESSION_GONE. A cancelled `close()` again stops only its wait.
+
+- WebTransport server: `sec-webtransport-http3-draft: draft02`, the response field Chrome's draft-02 client needs, goes
+  only to a session that runs draft-02 and whose client sent `sec-webtransport-http3-draft02: 1`. Before, any request
+  that carried the request field got it, with any value and in any draft. So a draft-16 session whose
+  `webtransport-h3` CONNECT carried the field was answered with a draft-02 marker.
+
 - QUIC `connect` / `connectEarly` to a target whose name does not resolve fails at once with
   `QuicException.ConnectionLost.NoViablePath`, its cause a `kotlinx.io.IOException` naming the target, the same on every
   platform. On the JVM its datagrams were lost until the handshake timeout; on Kotlin/Native the lookup's `PosixException`
