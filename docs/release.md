@@ -102,7 +102,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `:androidApp:migrationDemoDeviceTest`, an HTTP/3 download that must survive the switch of the default network while
    the OkHttp one breaks (a skip fails the step).
 2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
-   `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
+   `## [<version>] - <date>`, merging the sections of the version's prereleases into it
+   ([Prereleases on GitHub only](#prereleases-on-github-only)); `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the four sample builds,
    `tools/check/consumer-smoke.sh`), normally set when the
@@ -355,6 +356,13 @@ published file and the xcframework zip, the SBOM, the provenance and their signa
   - `kuicksilver-<version>-SHA256SUMS`: the SHA-256 of every asset (the two files above, the SBOM archive, the
     provenance, `Kuicksilver.xcframework.zip` and their `.asc`; a signed run stops when one is missing), itself
     signed and scanned.
+
+The CHANGELOG across a prerelease. The prerelease's release commit moves `[Unreleased]` under
+`## [<X.Y.Z-rcN>] - <date>` (the script refuses the prerelease without that heading, as in [Every release](#every-release),
+step 2), and what lands after it goes under a new `[Unreleased]`. The final version's release commit merges the
+prerelease sections and `[Unreleased]` back into one `## [<X.Y.Z>] - <date>`: the final's section lists everything since
+the previous final version, and no `-rcN` section stays in the file. The prerelease's tag keeps its own section, which
+its GitHub release links.
 
 The script ends with the commands to run by hand, in this order. A tag of `kuicksilver/kuicksilver-swift` can never be
 moved or deleted, so everything SwiftPM will read is checked before that tag is pushed, and the GitHub release stays a
