@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
-private val darwin =
+/** Whether this JVM runs on Darwin (macOS), by `os.name`: the one check of the JVM sources and their tests. */
+internal val onDarwin =
     System
         .getProperty("os.name")
         .orEmpty()
@@ -16,7 +17,7 @@ private val darwin =
  */
 internal actual fun isDefunctErrno(errno: Int): Boolean =
     errno == 9 || errno == 32 || isDefunctWsa(errno) ||
-        if (darwin) {
+        if (onDarwin) {
             errno == 38 || errno == 50 || errno == 51 || errno == 57 || errno == 65
         } else {
             errno == 88 || errno == 100 || errno == 101 || errno == 107 || errno == 113

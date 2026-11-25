@@ -35,9 +35,6 @@ internal class NioDatagramIo private constructor(
             InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
         }
     private val caps = MutableStateFlow(IoCapabilities.Portable)
-
-    /** The leak sentinel's record of this socket (0 in production). */
-    private val leakId = LeakRegistry.open("udp.socket")
     override val capabilities: StateFlow<IoCapabilities> get() = caps
 
     /** ADR-0006: the portable socket marks every datagram ECT(0) through IP_TOS (no per-datagram control, no reading of marks). */
@@ -198,7 +195,19 @@ internal class NioDatagramIo private constructor(
     }
 
     /** Registered for OP_WRITE only; `send` waits on it when the socket buffer is full (the read selector belongs to `receive`). */
-    private val writeSelector: Selector = Selector.open().also { channel.register(it, SelectionKey.OP_WRITE) }
+    private val writeSelector: Selector =
+        Selector.open().also {
+            try {
+                writeSelectorOpenedForTest?.invoke(it)
+                channel.register(it, SelectionKey.OP_WRITE)
+            } catch (e: Throwable) {
+                closeAfter(it, e)
+                throw e
+            }
+        }
+
+    /** The leak sentinel's record of this socket (0 in production); the last to be set up, so a failed construction has none. */
+    private val leakId = LeakRegistry.open("udp.socket")
 
     override suspend fun send(batch: PacketBatch): Int {
         var sent = sendFrom(batch, 0)
@@ -274,6 +283,9 @@ internal class NioDatagramIo private constructor(
 
         private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
 
+        /** Whether this runtime has the JDK's `IP_DONTFRAGMENT` (the gate [triesInet] is given) (test hook). */
+        internal fun hasJdkDontFragmentForTest(): Boolean = dontFragmentOption() != null
+
         /**
          * Whether [to] is of the address family [noDf] whose traffic this socket cannot give DF (the other half of a dual-stack
          * socket has it), or IPv6 on an AF_INET socket ([noDf] 6). An IPv4-mapped literal counts as IPv4: java.net makes it an
@@ -342,7 +354,7 @@ internal class NioDatagramIo private constructor(
             java.util.concurrent.atomic
                 .AtomicBoolean(false)
 
-        private val apple = (System.getProperty("os.name") ?: "").lowercase().let { it.contains("mac") || it.contains("darwin") }
+        private val apple = onDarwin
 
         /** [noDfFamily]: every half of the socket has DF. */
         internal const val DF_ALL = 0
@@ -417,6 +429,34 @@ internal class NioDatagramIo private constructor(
         @kotlin.concurrent.Volatile
         internal var dfForTest: ((inet: Boolean) -> Pair<Int, Boolean>)? = null
 
+        /** Tests: every channel [open] opens, as soon as it is open (before its buffers and DF are set). */
+        @kotlin.concurrent.Volatile
+        internal var channelOpenedForTest: ((DatagramChannel) -> Unit)? = null
+
+        /** Tests: runs on the channel [open] drops (of the AF_INET and dual-stack ones) just before closing it; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var closingDroppedForTest: ((DatagramChannel) -> Unit)? = null
+
+        /** Tests: runs in [open] after the channel is registered with its selector, before the socket is made; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var registeredForTest: ((DatagramChannel, Selector) -> Unit)? = null
+
+        /** Tests: runs in the socket's construction on its new write selector, before the channel is registered; may throw. */
+        @kotlin.concurrent.Volatile
+        internal var writeSelectorOpenedForTest: ((Selector) -> Unit)? = null
+
+        /** Closes [c] after [cause] ended its use; a failure of the close is added to [cause], never hides it. */
+        private fun closeAfter(
+            c: java.io.Closeable,
+            cause: Throwable,
+        ) {
+            try {
+                c.close()
+            } catch (f: Throwable) {
+                cause.addSuppressed(f)
+            }
+        }
+
         /** A channel with its DF state: the [dfProbe] bits, whether the JDK's option took, whether it is AF_INET. */
         private class ChannelDf(
             val ch: DatagramChannel,
@@ -443,6 +483,7 @@ internal class NioDatagramIo private constructor(
                     }
                 }
             try {
+                channelOpenedForTest?.invoke(ch)
                 ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
                 ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
                 dfForTest?.let { f ->
@@ -453,7 +494,7 @@ internal class NioDatagramIo private constructor(
                 val jdk = usesJdkDontFragment(bits) && jdkDontFragment(ch)
                 return ChannelDf(ch, bits, jdk, isInet)
             } catch (e: Throwable) {
-                ch.close()
+                closeAfter(ch, e)
                 throw e
             }
         }
@@ -474,34 +515,49 @@ internal class NioDatagramIo private constructor(
          *   bytes, repeated on the retry, is [PathMtuRefusedException]: the endpoint loop closes that path, or the connection
          *   with NO_VIABLE_PATH (an HTTP/3 client falls back to TCP).
          * - The JDK's option on a dual-stack (AF_INET6) channel sets only the IPv6 half on Linux and Windows. So when the IPv4
-         *   half has no DF and [local] is IPv4, an AF_INET channel is tried and kept if DF took on it (bound to 0.0.0.0 it then
-         *   reaches IPv4 peers only).
+         *   traffic of the dual-stack channel has no DF and [local] is IPv4, an AF_INET channel is tried ([triesInet]: through
+         *   the JDK's option, or through [dfProbe] where its bits say it refused the IPv4 half, `ksl` on the JVM and
+         *   `android.system.Os` on Android, Apple included) and kept if DF took on it (bound to 0.0.0.0 it then reaches IPv4
+         *   peers only).
          * - Where a half of a dual-stack socket still has no DF, sends to that address family throw
          *   [QuicException.DontFragmentUnavailable] (the connection ends with no viable path); where no traffic can have DF
-         *   (the JVM without `ksl` below JDK 19; Android or a system refusing both modes) [open] throws it.
+         *   (the JVM without `ksl` below JDK 19; Android or a system refusing both modes; on the AF_INET channel too, for an
+         *   IPv4 bind) [open] throws it.
          * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it could
          * run here later. Returns the channel, the [dfProbe] bits and the address family without DF ([DF_ALL]: none).
          */
         private fun openWithDf(local: InetSocketAddress): Triple<DatagramChannel, Int, Int> {
             val localV6 = local.ipBytesNoDns()?.size == 16
             var c = newChannel(inet = false)
-            if (!c.inet && triesInet(c.bits, localV6, apple, dontFragmentOption() != null)) {
-                val r = newChannel(inet = true)
-                if (keepsInet(r.bits, r.jdk)) {
-                    c.ch.close()
-                    c = r
-                } else {
-                    r.ch.close() // DF did not take on it either: the dual-stack channel stays (it also reaches IPv6 peers)
+            if (!c.inet && triesInet(c.bits, c.jdk, localV6, apple, dontFragmentOption() != null)) {
+                val r =
+                    try {
+                        newChannel(inet = true)
+                    } catch (e: Throwable) {
+                        closeAfter(c.ch, e) // out of descriptors, say: the dual-stack channel must not leak
+                        throw e
+                    }
+                // the AF_INET channel when DF took on it, else the dual-stack one (it also reaches IPv6 peers)
+                val (kept, dropped) = if (keepsInet(r.bits, r.jdk)) r to c else c to r
+                try {
+                    closingDroppedForTest?.invoke(dropped.ch)
+                    dropped.ch.close()
+                } catch (e: Throwable) {
+                    closeAfter(kept.ch, e)
+                    throw e
                 }
+                c = kept
             }
             val missing = noDfFamily(c.bits, c.jdk, c.inet, apple)
             if (missing == DF_NONE) {
-                c.ch.close()
-                throw QuicException.DontFragmentUnavailable(
-                    null,
-                    dfUnavailableDetail(c.bits, dontFragmentOption() != null),
-                    permanent = dfLackPermanent(c.bits),
-                )
+                val e =
+                    QuicException.DontFragmentUnavailable(
+                        null,
+                        dfUnavailableDetail(c.bits, dontFragmentOption() != null),
+                        permanent = dfLackPermanent(c.bits),
+                    )
+                closeAfter(c.ch, e)
+                throw e
             }
             if ((c.bits > 0 || (c.bits == 0 && linuxKernel)) && !probeComplete(c.bits) && probeMissingLogged.compareAndSet(false, true)) {
                 printWarning(
@@ -515,18 +571,26 @@ internal class NioDatagramIo private constructor(
 
         /**
          * Whether to try an AF_INET channel for a bind address that is not IPv6 ([localV6] false): the dual-stack channel's
-         * IPv4 half has no DF ([bits] from [dfProbe]: no `ksl`, or `ksl` whose IPv4 half refused both modes), and the JDK's
-         * option, which on Linux and Windows sets only the IPv6 half of a dual-stack channel, exists ([jdkOption]). Not on
-         * Apple ([onApple]), where it covers v4-mapped traffic.
+         * IPv4 traffic has no DF ([noDfFamily] of its [bits] from [dfProbe] and [jdkSet], whether the JDK's option took, is 4
+         * or [DF_NONE]; on Apple ([onApple]) the JDK's option and `IPV6_DONTFRAG` cover v4-mapped traffic, so there only when
+         * they did not take), and something can put DF on the AF_INET channel: [dfProbe] where it had means here ([bits]
+         * positive: `ksl` on the JVM, `android.system.Os` on Android; its IPv4 half was refused, so it is tried on AF_INET,
+         * on any JDK), else the JDK's option ([jdkOption], JDK 19 and later; on Linux and Windows it sets only the IPv6 half of
+         * a dual-stack channel). Whether a system takes on AF_INET what it refused on the IPv4 half of an AF_INET6 socket is
+         * not known for any system (a sandbox or a Windows build refusing IPPROTO_IP options on dual-stack sockets would; not
+         * observed): trying costs one more channel, and RFC 9000 section 14 asks for DF "if possible".
          */
         internal fun triesInet(
             bits: Int,
+            jdkSet: Boolean,
             localV6: Boolean,
             onApple: Boolean,
             jdkOption: Boolean,
         ): Boolean {
-            if (localV6 || onApple || !jdkOption || dfComplete(bits)) return false
-            return bits <= 0 || (bits and DF_INET6 != 0 && bits and (DF_V4 or DF_V4_DO) == 0)
+            if (localV6) return false
+            val missing = noDfFamily(bits, jdkSet, inet = false, onApple = onApple)
+            if (missing != 4 && missing != DF_NONE) return false
+            return bits > 0 || jdkOption
         }
 
         /** Whether the AF_INET channel [triesInet] opened is kept: only when DF took on it ([inetBits] from [dfProbe], [inetJdk]). */
@@ -555,16 +619,20 @@ internal class NioDatagramIo private constructor(
                 ch.configureBlocking(false)
                 selector = Selector.open()
             } catch (e: Throwable) {
-                // a failure of the close itself must not hide why the open failed
-                try {
-                    ch.close()
-                } catch (c: Throwable) {
-                    e.addSuppressed(c)
-                }
+                closeAfter(ch, e) // a failure of the close itself must not hide why the open failed
                 throw e
             }
-            ch.register(selector, SelectionKey.OP_READ)
-            return NioDatagramIo(ch, selector).also {
+            val io =
+                try {
+                    ch.register(selector, SelectionKey.OP_READ)
+                    registeredForTest?.invoke(ch, selector)
+                    NioDatagramIo(ch, selector)
+                } catch (e: Throwable) {
+                    closeAfter(selector, e)
+                    closeAfter(ch, e)
+                    throw e
+                }
+            return io.also {
                 it.dfProbeGranted = probe
                 it.noDf = noDf
                 it.enableEcn()
