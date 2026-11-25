@@ -34,13 +34,14 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    secrets `SIGNING_KEY`, `SIGNING_KEY_ID`, `SIGNING_KEY_PASSWORD`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`).
    `local-release.sh` checks that they are present and never prints them.
 4. **Publishing limits**: Sonatype's default for a free namespace is 1167 files and 78 MB (30 days of grace above
-   that). On 2026-10-20 `io.kuicksilver` was granted 7 releases, 100 MB and 2620 files per month. One release is
+   that). On 2026-10-20 `io.kuicksilver` was granted 7 releases, 100 MB and 2620 files per month, and on 2026-11-14 7 releases,
+   150 MB and 3900 files per month. One release is
    1404 files and 49.8 MB (0.2.x, seven modules), so one release fits in a month, and the project plans at most one release a month. A Kuicksilver release is
    eight Kotlin Multiplatform modules from 0.3.0 (`kuicksilver-http2` joined, ADR-0017) with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
    `local-release.sh` counts it from a local publication before every upload and refuses above the limits
-   (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (2620 files,
-   100000000 bytes; `KSL_CENTRAL_MAX_FILES` and `KSL_CENTRAL_MAX_BYTES` override them). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
+   (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (3900 files,
+   150000000 bytes; `KSL_CENTRAL_MAX_FILES` and `KSL_CENTRAL_MAX_BYTES` override them). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
    `kuicksilver-native` JVM jar carries the five JNI libraries.
 5. **Toolchains** of `gradle/toolchains.toml` on the Mac: the pinned NDK (`sdkmanager --install "ndk;<pin>"`) and Xcode
    (`xcode-select -s`); Docker with the `tools/openssl/docker` images (built on first use); a Windows 11 VM (Parallels)
@@ -450,8 +451,8 @@ add the statically linked OpenSSL.
 - What Central accepts. A file with a classifier (`<artifactId>-<version>-cyclonedx.json`) is an ordinary artifact to
   the portal; it validates with its `.asc`, `.md5` and `.sha1`. So each SBOM file costs **4 files** of the deployment.
 - The limit. The 0.2.0 deployment was 1404 files against Sonatype's default of 1167 (30 days of grace while Sonatype
-  reviewed the limits; since the grant of 2026-10-20 the namespace has 2620 files per month, which still leaves room
-  for only one release a month).
+  reviewed the limits; the grant of 2026-10-20 gave the namespace 2620 files per month, which left room for only one release a month;
+  since 2026-11-14 it has 3900).
   On Central the SBOMs would add: JSON per publication 64 × 4 = **256** (1660 files); JSON and XML per publication
   **512** (1916); JSON on the eight root publications only **32** (1436); JSON and XML there **64** (1468). Any of these
   grows a deployment that is already over the limit. On the GitHub release they cost **0** Central files; the count of
