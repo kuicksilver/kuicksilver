@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, the engine interop bench (the Ktor engines against other HTTP implementations on the JVM) and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors. What Kuicksilver does only to work with a peer that lags behind or breaks a standard is listed, with its removal condition, in [compat-shims.md](compat-shims.md).
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, the engine interop bench (the Ktor engines against other HTTP implementations on the JVM), the browser WebTransport checks and the weekly check of the client against public HTTP/3 servers, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors. What Kuicksilver does only to work with a peer that lags behind or breaks a standard is listed, with its removal condition, in [compat-shims.md](compat-shims.md).
 
 ## msquic's provisional SCID: the cells expected red (2026-11-21)
 
@@ -369,3 +369,14 @@ direction against webtransport-go is run here (it belongs to the gate's interop 
 2026-11-09) and picoquic (f506de8, 2026-11-19) speak draft-15/-16 (`SETTINGS_WT_ENABLED` 0x2c7cf000), which we announce
 next to draft-17; no public source found on 2026-11-24 says a browser ships draft-15 or later.
 
+## Public HTTP/3 servers (weekly in hosted CI; targets checked 2026-11-25)
+
+`.github/workflows/public-h3.yml` runs the Ktor client against six public deployments, each a different QUIC
+implementation (Cloudflare quiche, Google QUICHE, mvfst, quicly, LSQUIC, nginx QUIC): HTTP/3 with `H3Only`, `Alt-Svc`
+discovery from an HTTP/2 first contact, 0-RTT, a migration to a new local port, and ECH over HTTP/3 on Cloudflare. The
+targets, the checks and the policy that tells a server that changed (a warning) from a client that is wrong (a red job)
+are in [how-we-verify.md, Public HTTP/3 servers](../how-we-verify.md#public-http3-servers). Each run's table is the job
+summary of that run; no run is recorded here yet.
+
+- TODO(measure): the first runs of `public-h3.yml` on `main`, then their table here, with the analysis of every warning
+  that repeats.

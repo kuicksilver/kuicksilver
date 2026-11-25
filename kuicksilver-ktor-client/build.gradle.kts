@@ -191,3 +191,22 @@ tasks.register("androidMigrationDeviceTest") {
 tasks.withType<Test>().configureEach {
     providers.gradleProperty("kuicksilver.liveEch").orNull?.let { systemProperty("kuicksilver.liveEch", it) }
 }
+
+// The public HTTP/3 check (.github/workflows/public-h3.yml, weekly; docs/how-we-verify.md, "Public HTTP/3 servers"): PublicH3Main
+// (jvmTest) against public deployments over the network, never part of `check` or `jvmTest` (its verdict logic is unit-tested
+// there, PublicH3VerdictsTest). Writes summary.md, results.json and the qlog traces of failed checks to build/public-h3 (or
+// -Pkuicksilver.publicH3.out=<dir>); fails when a verdict blames the client, not when a server changed or was unreachable.
+// A JavaExec with no declared outputs is never up to date: every invocation runs the checks. Run it only where the network may
+// be used for it (GitHub's runners), never in the release gate.
+tasks.register<JavaExec>("publicH3Check") {
+    group = "verification"
+    description = "Checks the client against public HTTP/3 servers (network; not part of check)"
+    val jvmTest = kotlin.jvm().compilations.getByName("test")
+    classpath(jvmTest.output.allOutputs, jvmTest.runtimeDependencyFiles)
+    mainClass.set("io.kuicksilver.ktor.client.publich3.PublicH3Main")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+    // read when the task runs, not when the build is configured
+    val outDir = providers.gradleProperty("kuicksilver.publicH3.out").orElse(layout.buildDirectory.dir("public-h3").map { it.asFile.path })
+    argumentProviders.add(CommandLineArgumentProvider { listOf(outDir.get()) })
+    systemProperty("kuicksilver.version", project.version.toString()) // the User-Agent names it
+}

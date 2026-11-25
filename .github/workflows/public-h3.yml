@@ -1,0 +1,103 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The client against public HTTP/3 servers, weekly and by hand (docs/how-we-verify.md, "Public HTTP/3 servers"):
+# :kuicksilver-ktor-client:publicH3Check runs PublicH3Main (jvmTest sources) against Cloudflare, Google, Meta, Fastly,
+# LiteSpeed and nginx, each a different QUIC implementation: HTTP/3 with H3Only (ALPN h3, the QUIC version), Alt-Svc
+# discovery from an HTTP/2 first contact, 0-RTT resumption, a migration to a new local port, and ECH over HTTP/3 where the
+# HTTPS record publishes a configuration (Cloudflare). Each verdict comes from the client's own diagnostics.
+#
+# Failure policy: a server that changed or could not be reached (no name, no TCP, no QUIC answer, a close that blames the
+# server, no h3 in Alt-Svc any more) is a warning annotation, never a red job: external flakiness must not block main. The
+# job fails only when our client is wrong: a server closed blaming the client, our client closed with an error of its
+# own, a server answered and the handshake never completed, our diagnostics contradict themselves, twice in a row; or a
+# check (HTTP/3, Alt-Svc, 0-RTT; Migration among the targets that did not refuse it) passed on none of three or more
+# reachable targets, unless no target answered the UDP control (a hand-built Version Negotiation probe to port 443: the
+# runner's network blocks QUIC). The policy and its tests:
+# kuicksilver-ktor-client/src/jvmTest/kotlin/io/kuicksilver/ktor/client/publich3/ (PublicH3Verdicts.kt, PublicH3VerdictsTest.kt).
+#
+# Not in the local matrix: network verdicts come from hosted runners only. Nothing here publishes or reads a secret; the
+# qlog traces of the checks that did not pass are an artifact (they name the runner's address and connection IDs, both
+# of a throwaway runner).
+name: public-h3
+on:
+  schedule:
+    - cron: '41 4 * * 3'   # Wednesday 04:41 UTC, off the hour and away from build.yml's Monday and fuzz.yml's Saturday
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: public-h3
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  # a Gradle step that failed on a dependency Central answered "not found" for runs once more (tools/ci/gradlew-retry.sh)
+  G: bash tools/ci/gradlew-retry.sh --stacktrace
+
+jobs:
+  public-h3:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 90   # PublicH3Main stops starting checks after 40 minutes and writes what it has
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with: { gradle-cache: read-only }   # this job never writes a Gradle user home entry
+      # the linux-x64 OpenSSL of build.yml's openssl-docker job (same cache key), read only: build.yml owns the entry
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/openssl-work/cache
+            build/openssl-work/src/*.tar.gz
+            build/openssl-work/src/*.tar.gz.asc
+          key: openssl-docker-linux-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/compression-libs.toml', 'tools/openssl/**') }}
+      - name: 'openssl: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl: build linux-x64'
+        run: bash tools/openssl/build-docker.sh linux-x64
+      # the build may be retried (a dependency Central did not have); the check itself runs once: a retry would contact the
+      # servers again and hide a red verdict behind a second run. The policy's own tests run here, before any server is
+      # contacted, and resolve the runtime class path the --offline run below needs.
+      - name: 'public-h3: compile and the verdict policy tests'
+        run: $G --max-workers=2 :kuicksilver-ktor-client:jvmTest --tests '*PublicH3Verdicts*'
+      - name: 'public-h3: the client against public HTTP/3 servers'
+        id: check
+        run: ./gradlew --offline --max-workers=2 :kuicksilver-ktor-client:publicH3Check "-Pkuicksilver.publicH3.out=$RUNNER_TEMP/public-h3"
+      - name: 'public-h3: summary and annotations'
+        if: '!cancelled()'
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          out="$RUNNER_TEMP/public-h3"
+          if [ ! -f "$out/results.json" ]; then
+            # no verdicts at all: the build or the harness failed before the checks ended, which says nothing about the servers
+            echo "::error title=public-h3::no results ($OUTCOME): the build or the harness failed; see the check step's log"
+            exit 1
+          fi
+          cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          # one annotation per target and level (GitHub shows at most 10 of each type per step): its checks' reasons joined;
+          # a reason can carry a server's text, so newlines and % are escaped
+          jq -r '[.[] | select(.verdict == "Warn" or .verdict == "Fail")]
+            | group_by([.target, .verdict])[]
+            | "::\(if .[0].verdict == "Fail" then "error" else "warning" end) title=public-h3 \(.[0].target)::\(
+                map("\(.check): \(.reason)") | join("; ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))"' "$out/results.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with:
+          name: public-h3-results
+          path: |
+            ${{ runner.temp }}/public-h3/summary.md
+            ${{ runner.temp }}/public-h3/results.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # the qlog traces of every attempt that did not pass (the passing ones are deleted as they finish)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with:
+          name: public-h3-qlog
+          path: ${{ runner.temp }}/public-h3/qlog/
+          if-no-files-found: ignore
+          retention-days: 14

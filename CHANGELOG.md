@@ -447,6 +447,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. Each framework of the
   xcframework carries Kuicksilver's `LICENSE` and `NOTICE` and OpenSSL's licence. `KuicksilverInfo.VERSION`
   in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
+- CI: `.github/workflows/public-h3.yml` (weekly and by hand) runs the Ktor client against public HTTP/3 servers, each a
+  different QUIC implementation: Cloudflare, Google, Meta, Fastly, LiteSpeed and nginx. Per target: HTTP/3 with `H3Only`
+  (ALPN `h3`, the negotiated QUIC version), `Alt-Svc` discovery from an HTTP/2 first contact, 0-RTT resumption, a
+  migration to a new local port, and on Cloudflare ECH over HTTP/3 with the configuration of its HTTPS record, each judged
+  from the client's diagnostics. A server that changed or could not be reached is a warning annotation; the job fails only
+  when a verdict blames the client twice in a row, or when a check passes on none of three or more reachable targets
+  while a hand-built Version Negotiation probe shows that UDP to port 443 gets through (docs/how-we-verify.md, "Public
+  HTTP/3 servers"). The job summary has a table per run, and the qlog traces of the
+  checks that did not pass are an artifact. By hand where UDP/443 is open:
+  `./gradlew --max-workers=2 :kuicksilver-ktor-client:publicH3Check`; not part of `check` or `jvmTest`, and not in the
+  release gate. Targets checked 2026-11-25.
 - CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
   releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
 - WebSockets over HTTP/2 (RFC 8441, Extended CONNECT; `docs/guide/ktor.md`, "WebSockets over HTTP/2"), in both Ktor
