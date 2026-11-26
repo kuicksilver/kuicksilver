@@ -207,12 +207,18 @@ public class ClientTlsConfig {
         ech.block()
     }
 
-    /** Applies these settings (not ECH, which the connection decides) to [b]. */
+    /**
+     * Applies these settings (not ECH, which the connection decides) to [b]. [versions] is for TCP; [tls13Only] makes it
+     * `Tls13`, for a QUIC connection (RFC 9001 section 4.2).
+     */
     @OptIn(DelicateKuicksilverApi::class)
-    internal fun applyTo(b: TlsConfig.Builder) {
+    internal fun applyTo(
+        b: TlsConfig.Builder,
+        tls13Only: Boolean = false,
+    ) {
         b.trust = trust
         b.identity = identity
-        b.versions = versions
+        b.versions = if (tls13Only) TlsVersions.Tls13 else versions
         b.cipherSuites = cipherSuites
         b.keyExchangeGroups = keyExchangeGroups
         b.revocation = revocation

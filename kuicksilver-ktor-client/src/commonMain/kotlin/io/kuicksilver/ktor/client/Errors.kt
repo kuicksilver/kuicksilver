@@ -55,11 +55,13 @@ internal fun HttpRequestData.socketTimeoutMillis(): Long? =
 internal fun KuicksilverEngineConfig.tlsConfigFor(
     host: String,
     alpn: List<String>,
+    // the transport: QUIC is TLS 1.3 only (RFC 9001 section 4.2), whatever tls { versions } says
+    quic: Boolean,
     // what the connection offers for ECH (RFC 9849), from its EchRoute; null: none, GREASE as configured
     ech: EchRoute.Offer? = null,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
-        this@tlsConfigFor.tls.applyTo(this)
+        this@tlsConfigFor.tls.applyTo(this, tls13Only = quic)
         // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
         this.alpn = alpn
         serverName = host
@@ -100,6 +102,8 @@ internal fun proxyTrustOf(trust: TrustConfig): TrustConfig =
 internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
     host: String,
     alpn: List<String> = listOf(PROXY_ALPN),
+    // a CONNECT-UDP proxy is reached over QUIC, TLS 1.3 only (RFC 9001 section 4.2); an https:// proxy over TCP
+    quic: Boolean = false,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
         val own = this@proxyTlsConfigFor.proxies.tlsBlock
@@ -110,7 +114,7 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             val proxy = origin.copy()
             proxy.trust = proxyTrustOf(origin.trust)
             proxy.identity = null
-            proxy.applyTo(this)
+            proxy.applyTo(this, tls13Only = quic)
             ech {
                 configList = null
                 grease = origin.ech.grease
@@ -120,7 +124,7 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             proxy.trust = proxyTrustOf(origin.trust)
             proxy.ech.grease = origin.ech.grease
             proxy.own()
-            proxy.applyTo(this)
+            proxy.applyTo(this, tls13Only = quic)
             val offered = proxy.ech.listFor(host)
             ech {
                 configList = offered

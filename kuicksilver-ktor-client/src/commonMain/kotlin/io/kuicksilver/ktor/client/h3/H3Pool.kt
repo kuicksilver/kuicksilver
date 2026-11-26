@@ -1061,7 +1061,14 @@ internal class H3Pool(
                         // ECH (RFC 9849), retried once on a new connection after a rejection (section 6.1.6)
                         withEchRetry(
                             route,
-                        ) { offer -> ep.connect(to, config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3), offer), q, wtSettings) }
+                        ) { offer ->
+                            ep.connect(
+                                to,
+                                config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3), quic = true, ech = offer),
+                                q,
+                                wtSettings,
+                            )
+                        }
                     }
             }
         } catch (e: TimeoutCancellationException) {
@@ -1578,7 +1585,15 @@ internal class H3Pool(
                 c.quic.handshakeEchStatus == io.kuicksilver.tls.EchStatus.Accepted,
                 e.hosts,
             )
-        return config.checkCoalescing(peer, t.originHost, t.port, dns, listOf(Http3Endpoint.H3), lookupHost = t.host) { own, forHost ->
+        return config.checkCoalescing(
+            peer,
+            t.originHost,
+            t.port,
+            dns,
+            listOf(Http3Endpoint.H3),
+            lookupHost = t.host,
+            quic = true,
+        ) { own, forHost ->
             events.coalescingRetired(e.origin, t.originHost, own, forHost)
         }
     }
@@ -1805,7 +1820,7 @@ internal class H3Pool(
         val raced = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
         // (proxies { tls }, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
-        val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
+        val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3), quic = true)
         val outer =
             raceQuic(p.host, p.port, dns, failures, { c, a ->
                 val at = InetSocketAddress(a.hostText, a.port)
@@ -1879,7 +1894,7 @@ internal class H3Pool(
                         withEchRetry(route) { offer ->
                             ep.connect(
                                 tunnel.remoteAddress,
-                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
+                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), quic = true, ech = offer),
                                 tunnelled,
                                 h3Settings,
                             )
@@ -2088,7 +2103,7 @@ internal class H3Pool(
         route: EchRoute,
         offer: EchRoute.Offer,
     ): Http3Connection {
-        val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
+        val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), quic = true, ech = offer)
         return if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-17 section 3.2)
             ep.connect(remote, tls, quic, wtSettings)

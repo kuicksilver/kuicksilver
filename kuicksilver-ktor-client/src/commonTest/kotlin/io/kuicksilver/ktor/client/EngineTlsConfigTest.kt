@@ -19,7 +19,7 @@ class EngineTlsConfigTest {
      * (a 0.2 block that set them made every HTTP/3 handshake fail on ALPN, or verified the certificate against another name).
      */
     @Test fun alpnAndServerNameComeFromTheRequest() {
-        val tls = KuicksilverEngineConfig().tlsConfigFor("origin.example", listOf("h3"))
+        val tls = KuicksilverEngineConfig().tlsConfigFor("origin.example", listOf("h3"), quic = true)
         assertEquals(listOf("h3"), tls.alpn)
         assertEquals("origin.example", tls.serverName)
     }
@@ -38,11 +38,31 @@ class EngineTlsConfigTest {
                     certificateCompression = false
                 }
             }
-        val built = config.tlsConfigFor("origin.example", listOf("http/1.1"))
+        val built = config.tlsConfigFor("origin.example", listOf("http/1.1"), quic = false)
         assertSame(anchored, built.trust)
         assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, built.versions)
         assertSame(suites, built.cipherSuites)
         assertEquals(io.kuicksilver.tls.RevocationPolicy.Off, built.revocation)
         assertEquals(false, built.certificateCompression)
+    }
+
+    /**
+     * QUIC is TLS 1.3 only (RFC 9001 section 4.2; the TLS layer refuses anything else for QUIC): the HTTP/3 configurations,
+     * the origin's and a CONNECT-UDP proxy's, take `Tls13` whatever `tls { versions }` says, so `Tls12And13` (the engine's or a
+     * proxy block's) never fails an HTTP/3 connection; the TCP ones keep the option.
+     */
+    @Test fun negative_quicConfigurationsAreTls13Only() {
+        val config =
+            KuicksilverEngineConfig().apply {
+                tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 }
+                proxies { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }
+            }
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, config.tlsConfigFor("origin.example", listOf("h3"), quic = true).versions)
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, config.tlsConfigFor("origin.example", listOf("h2"), quic = false).versions)
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, config.proxyTlsConfigFor("proxy.example", listOf("h3"), quic = true).versions)
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, config.proxyTlsConfigFor("proxy.example").versions)
+        val inherited = KuicksilverEngineConfig().apply { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, inherited.proxyTlsConfigFor("proxy.example", listOf("h3"), quic = true).versions)
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, inherited.proxyTlsConfigFor("proxy.example").versions)
     }
 }

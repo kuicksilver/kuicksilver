@@ -2055,6 +2055,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: with `tls { versions = TlsVersions.Tls12And13 }` every HTTP/3 connection failed before it started (the TLS
+  layer refuses TLS 1.2 for QUIC, RFC 9001 section 4.2), so such a client fell back to TCP with `FallbackReason.TlsFailure`,
+  and the QUIC hop to a CONNECT-UDP proxy whose TLS allowed TLS 1.2 failed likewise. The engine now gives its QUIC
+  connections TLS 1.3 only, whatever `tls { versions }` says, as the server engine did.
 - WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
   header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
   implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error

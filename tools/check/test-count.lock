@@ -2309,6 +2309,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.system
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineSessionCacheTest.engineCloseDropsItsSessions
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.alpnAndServerNameComeFromTheRequest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.everyOptionOfTheBlockApplies
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_quicConfigurationsAreTls13Only
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.entriesSurviveANewInstance
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.expiredAndMalformedLinesAreDroppedOnLoad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.identicalPutDoesNotRewrite

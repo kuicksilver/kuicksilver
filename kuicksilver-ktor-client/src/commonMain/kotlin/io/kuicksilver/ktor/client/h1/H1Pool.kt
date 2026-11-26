@@ -1976,7 +1976,7 @@ internal class H1Pool(
                             TlsConnection.client(
                                 rawIn,
                                 rawOut,
-                                config.tlsConfigFor(url.host, alpn, ech),
+                                config.tlsConfigFor(url.host, alpn, quic = false, ech = ech),
                                 callContextOrEmpty(),
                                 sessions,
                             )

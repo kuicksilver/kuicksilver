@@ -100,7 +100,7 @@ class ClientConfigMappingTest {
                     ech { grease = false }
                 }
             }
-        val t = c.tlsConfigFor("origin.test", listOf("h2", "http/1.1"))
+        val t = c.tlsConfigFor("origin.test", listOf("h2", "http/1.1"), quic = false)
         assertSame(ca, t.trust)
         assertEquals(TlsVersions.Tls12And13, t.versions)
         assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), t.keyExchangeGroups.groups)

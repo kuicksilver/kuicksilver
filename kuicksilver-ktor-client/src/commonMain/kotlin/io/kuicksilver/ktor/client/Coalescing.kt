@@ -198,6 +198,8 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
     dns: RequestDns,
     alpn: List<String>,
     lookupHost: String = host,
+    // the connection's transport: an HTTP/3 one is QUIC (RFC 9001 section 4.2: TLS 1.3 only)
+    quic: Boolean = false,
     onRetire: (own: VerifyReason, forHost: VerifyReason) -> Unit = { _, _ -> },
 ): Coalesce {
     val hosts = peer.hosts
@@ -210,7 +212,7 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
                 .echRoute(host) { tls.ech.listFor(it) }
                 .offer.list
                 ?.isUsable == true
-        return when (val v = tlsConfigFor(host, alpn).verifyForReuse(peer.chain, peer.stapleUntil, hidden)) {
+        return when (val v = tlsConfigFor(host, alpn, quic).verifyForReuse(peer.chain, peer.stapleUntil, hidden)) {
             is VerifyResult.Accepted -> {
                 hosts.record(host, accepted = true)
                 // a 421 recorded while the check ran wins
@@ -227,7 +229,7 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
                         .echRoute(peer.ownHost) { tls.ech.listFor(it) }
                         .offer.list
                         ?.isUsable == true
-                when (val own = tlsConfigFor(peer.ownHost, alpn).verifyForReuse(peer.chain, peer.stapleUntil, ownHidden)) {
+                when (val own = tlsConfigFor(peer.ownHost, alpn, quic).verifyForReuse(peer.chain, peer.stapleUntil, ownHidden)) {
                     is VerifyResult.Accepted -> {
                         Coalesce.No
                     }

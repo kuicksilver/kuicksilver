@@ -138,7 +138,7 @@ class ClientH3EndpointChoiceTest {
             val ep = bound ?: fail("$case: no endpoint was bound")
             assertEquals(0, attempts, "$case: no connection is attempted")
             assertFalse(pool.endpointBoundForTest, "$case: the pool holds no endpoint")
-            val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+            val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3), quic = true)
             assertFailsWith<QuicException.EndpointClosing>("$case: the endpoint bound during the close is closed") {
                 withTimeout(5.seconds) { ep.connect(sinkAddress, tls) }
             }
