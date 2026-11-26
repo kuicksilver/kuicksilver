@@ -1462,6 +1462,63 @@ class H2RuntimeTest {
         }
 
     /**
+     * A stream reserved before the transport failed and opened after it fails with that failure, not with "the connection is
+     * going away" (the GOAWAY this side sends at the loss): over TLS 1.3 the client's handshake completes before the server
+     * checks its certificate, and the server's certificate_required alert ends the input as the request opens its stream.
+     */
+    @Test fun negative_aStreamOpenedAfterTheTransportFailedNamesTheFailure() =
+        runTest {
+            val w = Wire()
+            val srv = RawServer(w)
+            val client =
+                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, Duration.INFINITE, {
+                    w.close()
+                }, clock = clock())
+            srv.settings()
+            runCurrent()
+            assertTrue(client.tryReserve())
+            val alert = IOException("TLS alert received from the peer: certificate_required (116)")
+            w.toClient.cancel(alert)
+            runCurrent()
+            assertFalse(client.isUsable)
+            val e =
+                assertFailsWith<Http2Exception.ConnectionClosed> {
+                    client.open("GET", "https", "example.com", "/", get, endStream = true)
+                }
+            assertTrue(e.message.orEmpty().startsWith("the connection was lost: "), e.message)
+            assertTrue(e.message.orEmpty().endsWith("certificate_required (116)"), e.message)
+            assertTrue(generateSequence<Throwable>(e) { it.cause }.any { it === alert }, "the transport's failure under $e")
+            assertTrue(e.notProcessed, "the stream never went out")
+            client.unreserve()
+        }
+
+    /** The same after the connection ended by its own error (a peer's malformed frame): the stream names that end. */
+    @Test fun negative_aStreamOpenedAfterTheConnectionEndedNamesTheEnd() =
+        runTest {
+            val w = Wire()
+            val srv = RawServer(w)
+            val client =
+                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, Duration.INFINITE, {
+                    w.close()
+                }, clock = clock())
+            srv.settings()
+            runCurrent()
+            assertTrue(client.tryReserve())
+            // a PING on stream 1: a connection error of type PROTOCOL_ERROR (RFC 9113 section 6.7)
+            srv.write(byteArrayOf(0, 0, 8, 6, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0))
+            runCurrent()
+            assertFalse(client.isUsable)
+            val e =
+                assertFailsWith<Http2Exception.ConnectionClosed> {
+                    client.open("GET", "https", "example.com", "/", get, endStream = true)
+                }
+            assertEquals(Http2ErrorCode.PROTOCOL_ERROR, e.code, e.message)
+            assertTrue(e.message.orEmpty().startsWith("the connection ended (PROTOCOL_ERROR)"), e.message)
+            assertTrue(e.notProcessed, "the stream never went out")
+            client.unreserve()
+        }
+
+    /**
      * [H2Runtime.lost] in order on a connection that ended already (its own GOAWAY still to be written): nothing is closed at
      * once, which would cut that GOAWAY and the TLS close behind it; the writer drains it and closes the transport in order.
      */

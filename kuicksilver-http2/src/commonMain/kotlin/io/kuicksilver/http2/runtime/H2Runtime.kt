@@ -359,16 +359,12 @@ internal class H2Runtime(
 
     /** Why the connection ended with [e]: the transport's loss when that came first, else the core's end. */
     private fun closedCause(e: H2Event.Closed): Http2Exception.ConnectionClosed =
-        transportLost?.let {
-            Http2Exception.ConnectionClosed(
-                goAwayCode,
-                byPeer = true,
-                notProcessed = false,
-                "the connection was lost: ${it.message}",
-                it,
-            )
-        }
+        transportLost?.let(::lostCause)
             ?: Http2Exception.ConnectionClosed(e.code, e.byPeer, notProcessed = false, "the connection ended (${e.code}): ${e.reason}")
+
+    /** The connection's end when its transport failed with [lost]. */
+    private fun lostCause(lost: Throwable): Http2Exception.ConnectionClosed =
+        Http2Exception.ConnectionClosed(goAwayCode, byPeer = true, notProcessed = false, "the connection was lost: ${lost.message}", lost)
 
     /**
      * Wakes the writer when the core has something to write (only then: the writer's own poll would wake it forever) and
@@ -862,6 +858,10 @@ internal class H2Runtime(
             lock.withLock {
                 if (transportLost == null && !core.isClosed) {
                     transportLost = cause
+                    // at once, with the loss: whoever finds the connection unusable from now on (a stream opened on a
+                    // reservation taken before, a new connection that takes no stream) reports why, before the GOAWAY below
+                    // closes the core and its Closed event would set it
+                    if (closeCause == null) closeCause = lostCause(cause)
                     true
                 } else {
                     false
@@ -977,11 +977,25 @@ internal class H2Runtime(
                 e.message ?: "stream limit",
             )
         } catch (e: H2ConnectionUnusable) {
-            throw Http2Exception.ConnectionClosed(goAwayCode, byPeer = goAwayReceived, notProcessed = true, e.message ?: "unusable")
+            throw unusable(e)
         } catch (e: H2HeaderListTooLarge) {
             throw Http2Exception.FieldSectionTooLarge("the request's ${e.message}")
         }
         return s!!
+    }
+
+    /**
+     * Why [open] found the connection unusable. When the connection ended (its transport failed, a connection error), that
+     * end, as the streams open at the time get it ([closeCause]): a reservation taken before the transport failed met the
+     * GOAWAY this side sends at the loss ([lost]) and reported only "the connection is going away", without the reason (a
+     * client's TLS 1.3 handshake completes on its side before the server checks its certificate, and the server's alert,
+     * certificate_required, ends the input as the request opens its stream). The stream was never sent either way.
+     */
+    private fun unusable(e: H2ConnectionUnusable): Http2Exception.ConnectionClosed {
+        (closeCause as? Http2Exception.ConnectionClosed)?.let { ended ->
+            return Http2Exception.ConnectionClosed(ended.code, ended.byPeer, notProcessed = true, ended.message ?: "", ended.cause)
+        }
+        return Http2Exception.ConnectionClosed(goAwayCode, byPeer = goAwayReceived, notProcessed = true, e.message ?: "unusable")
     }
 
     /** Waits until the peer ended its side of [s] in order (true) or the stream failed (false). */
