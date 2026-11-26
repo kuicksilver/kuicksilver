@@ -101,10 +101,10 @@ internal fun ConnectionCore.release() {
 
 /**
  * RFC 9000 section 10.2.2: "Retaining packet protection keys is unnecessary once a connection is in the draining state". A
- * draining connection sends nothing and reads nothing ([handleDatagram] drops every datagram, [poll] builds none), so its
+ * draining connection sends nothing and reads nothing ([ConnectionCore.handleDatagram] drops every datagram, [ConnectionCore.poll] builds none), so its
  * packet protectors and TLS session are freed at once instead of 3 x PTO later (about 3 s before the first RTT sample);
  * what the period needs, the connection IDs that route the peer's late packets to this connection so they are dropped
- * without a Stateless Reset, stays until [markClosed]. Run from [poll], after the application side read what the session
+ * without a Stateless Reset, stays until `markClosed`. Run from [ConnectionCore.poll], after the application side read what the session
  * reported (the peer's certificates, the ALPN) with the events of the datagram that started draining; a TLS step still
  * running when the CONNECTION_CLOSE was parsed has ended by then. The closing state keeps both: its CONNECTION_CLOSE is
  * built anew each time it is repeated (§10.2.1), and the keys authenticate the packets it answers and find the peer's

@@ -1180,7 +1180,7 @@ public class ConnectionCore internal constructor(
 
     internal var released = false
 
-    /** The TLS session and the packet protectors were freed: at [markClosed], or once draining ([releaseCryptoIfDraining]). */
+    /** The TLS session and the packet protectors were freed: at `markClosed`, or once draining ([releaseCryptoIfDraining]). */
     internal var cryptoReleased = false
 
     /** What the TLS session said when it was freed ([cryptoReleased]); null while it exists. */
