@@ -10,8 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 </head>
 <body>
 <h1>Kuicksilver WebTransport check</h1>
-<p>Runs each step against this server's <code>/wt/echo</code> and <code>/wt/server-close</code> routes and posts the
-result to <code>/result</code>. With <code>?hash=&lt;base64 SHA-256 of the certificate&gt;</code> the sessions use
+<p>Runs each step against this server's <code>/wt/echo</code> and <code>/wt/server-close</code> routes, then the
+error code stage against <code>/wt/codes</code>, <code>/wt/close-probe</code> and <code>/wt/server-close-32</code>
+(WtCodesProbe), and posts the code table to <code>/codes</code> and the result to <code>/result</code>. With <code>?hash=&lt;base64 SHA-256 of the certificate&gt;</code> the sessions use
 <code>serverCertificateHashes</code> (a certificate valid for at most 14 days, not RSA).</p>
 <pre id="log"></pre>
 <script>
@@ -48,6 +49,230 @@ const readAll = async (readable) => {
 };
 const withDeadline = (p, ms, what) =>
   Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(what + " timed out")), ms))]);
+
+// The error code stage (WtCodesProbe): draft-02 section 4.3 limits a stream's error code to 8 bits, section 5 gives the
+// session's close a 32-bit code. Each case is recorded as "<case>\t<what the page did locally>\t<what the page saw>".
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+const VALUES = [0, 42, 255, 256, 1000, 4294967295];
+const SERVER_VALUES = [0, 1, 42, 127, 128, 254, 255, 256, 1000];
+const rows = [];
+const desc = (e) => {
+  if (e === undefined || e === null) return String(e);
+  const code = e.streamErrorCode === undefined ? "" : ` streamErrorCode=${e.streamErrorCode}`;
+  const source = e.source === undefined ? "" : ` source=${e.source}`;
+  return `${e.name}${code}${source} "${e.message}"`;
+};
+// what the browser does with the code when the error object is built: throws, clamps or keeps it. Chrome's constructor
+// takes one dictionary (WebTransportErrorInit), the W3C one a message and then the options: both are tried
+const makeError = (v) => {
+  const notes = [];
+  let err = null;
+  const attempt = (name, build) => {
+    try {
+      const e = build();
+      notes.push(`${name}: streamErrorCode=${e.streamErrorCode}`);
+      if (err === null && e.streamErrorCode !== null && e.streamErrorCode !== undefined) err = e;
+    } catch (x) {
+      notes.push(`${name}: threw ${x.name} "${x.message}"`);
+    }
+  };
+  attempt("new WebTransportError({streamErrorCode})", () => new WebTransportError({ streamErrorCode: v, message: "probe" }));
+  attempt("new WebTransportError(msg, {streamErrorCode})", () => new WebTransportError("probe", { streamErrorCode: v }));
+  let verdict;
+  if (err === null) verdict = "THROWS (no error object carries the code)";
+  else if (err.streamErrorCode === v) verdict = "KEEPS " + v;
+  else verdict = "CLAMPS to " + err.streamErrorCode;
+  return { err, ctor: `${verdict} [${notes.join("; ")}]` };
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const runCodes = async () => {
+  const wt = new WebTransport(url("/wt/codes"), options);
+  await withDeadline(wt.ready, 10000, "codes ready");
+  const control = await wt.createBidirectionalStream();
+  const say = control.writable.getWriter();
+  const lines = [];
+  (async () => {
+    const r = control.readable.getReader();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await r.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      for (let i; (i = buf.indexOf("\n")) >= 0; ) { lines.push(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+  })().catch(() => {});
+  const waitLine = async (prefix, ms) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const i = lines.findIndex((l) => l.startsWith(prefix));
+      if (i >= 0) return lines.splice(i, 1)[0];
+      if (Date.now() > deadline) throw new Error(`no "${prefix.trim()}" from the server within ${ms} ms`);
+      await sleep(10);
+    }
+  };
+  const serverDone = async (label) =>
+    (await waitLine(`done ${label} `, 12000).catch((e) => "done " + label + " " + e.message)).slice(`done ${label} `.length);
+  await say.write(enc.encode("control\n"));
+  const incoming = wt.incomingUnidirectionalStreams.getReader();
+  // the next stream the server opens, read until its header line: [reader, header]
+  const nextUni = async (label) => {
+    const { value } = await withDeadline(incoming.read(), 5000, "incoming uni");
+    const r = value.getReader();
+    let text = "";
+    while (!text.includes("\n")) {
+      const { value: chunk, done } = await withDeadline(r.read(), 5000, "uni header");
+      if (done) break;
+      text += dec.decode(chunk, { stream: true });
+    }
+    if (!text.startsWith(label + "\n")) throw new Error(`expected "${label}", got "${text.slice(0, 40)}"`);
+    return r;
+  };
+  // reads until the end; the error the read fails with is what the page saw
+  const readOutcome = async (r, ms) => {
+    try {
+      await withDeadline((async () => { for (;;) { const { done } = await r.read(); if (done) return; } })(), ms, "read");
+      return "FIN (no error)";
+    } catch (e) {
+      return "read failed: " + desc(e);
+    }
+  };
+  // writes until the write fails, as after the server's STOP_SENDING
+  const writeOutcome = async (w, ms) => {
+    const chunk = new Uint8Array(1024);
+    const deadline = Date.now() + ms;
+    try {
+      while (Date.now() < deadline) { await w.write(chunk); await sleep(10); }
+    } catch (e) {
+      return "write failed: " + desc(e);
+    }
+    await w.close().catch(() => {});
+    return `no error within ${ms} ms (writer closed)`;
+  };
+  // the table row; the server's own line ("done <case> ...") goes to the log only: the server's table has it
+  const record = (label, local, seen, server) => {
+    rows.push([label, local, seen].join("\t"));
+    log(`  ${label}: ${local} | ${seen}${server === undefined ? "" : " | server: " + server}`);
+  };
+
+  // 1. the page aborts its writable side: RESET_STREAM
+  for (const kind of ["abort-bidi", "abort-uni"]) {
+    for (const v of VALUES) {
+      const label = `${kind} ${v}`;
+      try {
+        const writable = kind === "abort-bidi" ? (await wt.createBidirectionalStream()).writable : await wt.createUnidirectionalStream();
+        const w = writable.getWriter();
+        await w.write(enc.encode(label + "\n"));
+        await waitLine(`got ${label}`, 5000);
+        const { err, ctor } = makeError(v);
+        let local = ctor;
+        if (err) {
+          try { await w.abort(err); local += "; writer.abort(error) resolved"; } catch (x) { local += "; writer.abort(error) rejected " + desc(x); }
+        } else {
+          await w.close().catch(() => {});
+          local += "; nothing to abort with: writer closed (FIN)";
+        }
+        record(label, local, "-", await serverDone(label));
+      } catch (e) {
+        record(label, "failed: " + desc(e), "-");
+      }
+    }
+  }
+  // 2. the page cancels its readable side: STOP_SENDING
+  for (const kind of ["cancel-bidi", "cancel-uni"]) {
+    for (const v of VALUES) {
+      const label = `${kind} ${v}`;
+      try {
+        let r;
+        if (kind === "cancel-bidi") {
+          const s = await wt.createBidirectionalStream();
+          const w = s.writable.getWriter();
+          await w.write(enc.encode(label + "\n"));
+          await w.close();
+          await waitLine(`got ${label}`, 5000);
+          r = s.readable.getReader();
+          await withDeadline(r.read(), 5000, "first chunk");
+        } else {
+          await say.write(enc.encode(label + "\n"));
+          r = await nextUni(label);
+        }
+        const { err, ctor } = makeError(v);
+        let local = ctor;
+        if (err) {
+          try { await r.cancel(err); local += "; reader.cancel(error) resolved"; } catch (x) { local += "; reader.cancel(error) rejected " + desc(x); }
+        } else {
+          await r.cancel().catch(() => {});
+          local += "; nothing to cancel with: reader.cancel() without a reason";
+        }
+        record(label, local, "-", await serverDone(label));
+      } catch (e) {
+        record(label, "failed: " + desc(e), "-");
+      }
+    }
+  }
+  // 3. the server resets (RESET_STREAM) and stops (STOP_SENDING) the page's streams; 256 and 1000 show the server's own
+  // strictness (it refuses them locally)
+  for (const kind of ["srv-reset-bidi", "srv-reset-uni", "srv-stop-bidi", "srv-stop-uni"]) {
+    for (const v of SERVER_VALUES) {
+      const label = `${kind} ${v}`;
+      try {
+        let seen;
+        if (kind === "srv-reset-bidi") {
+          const s = await wt.createBidirectionalStream();
+          const w = s.writable.getWriter();
+          await w.write(enc.encode(label + "\n"));
+          await w.close();
+          seen = await readOutcome(s.readable.getReader(), 5000);
+        } else if (kind === "srv-reset-uni") {
+          await say.write(enc.encode(label + "\n"));
+          const r = await nextUni(label);
+          await say.write(enc.encode(`have ${label}\n`));
+          seen = await readOutcome(r, 5000);
+        } else {
+          const writable = kind === "srv-stop-bidi" ? (await wt.createBidirectionalStream()).writable : await wt.createUnidirectionalStream();
+          const w = writable.getWriter();
+          await w.write(enc.encode(label + "\n"));
+          seen = await writeOutcome(w, 2000);
+        }
+        const expected = v <= 255 ? (seen.includes(`streamErrorCode=${v} `) ? "SAME CODE" : "DIFFERENT CODE") : "server refuses";
+        record(label, expected, seen, await serverDone(label));
+      } catch (e) {
+        record(label, "failed: " + desc(e), "-");
+      }
+    }
+  }
+  wt.close({ closeCode: 0, reason: "codes done" });
+  await withDeadline(wt.closed, 10000, "codes closed").catch(() => {});
+
+  // 4. the session's close, 32-bit both ways (section 5): the page closes /wt/close-probe with 2^32-1 and, on another
+  // session, with 2^32 (out of range: what the browser does with it locally and on the wire); the server closes
+  // /wt/server-close-32 with 2^32-2
+  const pageClose = async (code, reason) => {
+    const s = new WebTransport(url("/wt/close-probe"), options);
+    await withDeadline(s.ready, 10000, "close-probe ready");
+    let local;
+    try {
+      s.close({ closeCode: code, reason });
+      local = `close({closeCode: ${code}}) did not throw`;
+    } catch (e) {
+      local = `close({closeCode: ${code}}) threw ${desc(e)}`;
+      s.close();
+    }
+    const seen = await withDeadline(s.closed, 10000, "close-probe closed")
+      .then((i) => `closed resolved: closeCode=${i.closeCode} reason="${i.reason}"`, (e) => "closed rejected " + desc(e));
+    record(`page-close ${reason}`, local, seen);
+    return local + "; " + seen;
+  };
+  const local = await pageClose(4294967295, "page-bye-32");
+  result.pageClose2to32 = await pageClose(4294967296, "page-2^32");
+  const wt4 = new WebTransport(url("/wt/server-close-32"), options);
+  await withDeadline(wt4.ready, 10000, "server-close-32 ready");
+  const info4 = await withDeadline(wt4.closed, 10000, "server-close-32 closed").then((i) => `closeCode=${i.closeCode} reason="${i.reason}"`, (e) => "closed rejected " + desc(e));
+  record("server-close-32", "-", info4);
+  result.pageClose32 = local;
+  result.serverClose32 = info4;
+};
 
 (async () => {
   const wt = new WebTransport(url("/wt/echo"), options);
@@ -101,11 +326,14 @@ const withDeadline = (p, ms, what) =>
     const info = await withDeadline(wt2.closed, 10000, "closed");
     result.closeInfo = { code: info.closeCode, reason: info.reason };
   });
+  await step("codes", runCodes);
+  await fetch("/codes", { method: "POST", headers: { "content-type": "text/plain" }, body: rows.join("\n") + "\n" });
   await fetch("/result", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) });
   log("result posted");
 })().catch(async (e) => {
   result.fatal = String(e);
   log("fatal: " + e);
+  await fetch("/codes", { method: "POST", headers: { "content-type": "text/plain" }, body: rows.join("\n") + "\n" }).catch(() => {});
   await fetch("/result", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) });
 });
 </script>

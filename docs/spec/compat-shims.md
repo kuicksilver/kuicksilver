@@ -286,6 +286,18 @@ the data.
   Firefox draft-02 with `webtransport`, Safari draft-14 with `webtransport`, webtransport-go, picoquic and Kuicksilver
   draft-16 or draft-17 with `webtransport-h3`. A CONNECT whose token is not the selected draft's is malformed (400,
   `H3_MESSAGE_ERROR`) — `webtransport.WtDraftVersionsTest.negative_tokenOfAnotherDraftIsMalformed`.
+- **Receiving draft-02 stream error codes above 255** (a receive-only shim that would map a RESET_STREAM or STOP_SENDING
+  whose HTTP/3 code carries a WebTransport code above 255 to that code on a draft-02 session): not kept. Draft-02 §4.3
+  limits a stream's application code to "an unsigned 8-bit integer" (the session's close code, §5, is 32-bit), and on a
+  draft-02 session `WebTransportException.StreamReset.code` / `StreamStopped.code` are null for such a code, and our own
+  `reset` / `stopSending` refuse one with IllegalArgumentException (`WebTransportSession.maxStreamErrorCode` = 255). The
+  premise, that browsers keep to 0..255, was checked on the wire on 2026-11-26 (the page's error code stage,
+  [interop.md](interop.md#stream-error-codes-on-draft-02-2026-11-26)): Chrome 158 clamps `streamErrorCode` 256, 1000
+  and 2^32-1 to 255 when the `WebTransportError` is built, so `writer.abort` and `reader.cancel` send WebTransport code
+  255 at most, on bidirectional and unidirectional streams alike, and it reads our codes 0..255 back unchanged; no code
+  above 255 reached the server — `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`) fails loudly
+  should one ever arrive. Firefox is to be checked with `tools/interop/wt-firefox-manual.sh` (it prints the same
+  table); the shim is reconsidered if a browser is seen sending a code above 255.
 - **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
   among them): the RFC 9000 §7.2 MUST itself.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC

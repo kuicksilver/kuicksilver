@@ -8,10 +8,15 @@
 # ManualWebTransportServer (kuicksilver-ktor-server jvmTest, through ~/.kuicksilver-tools/quiet-gradle) on 127.0.0.1, and
 # once it listens opens https://localhost:<port>/wt/index.html?hash=<hash> in Firefox with a throw-away profile. Accept
 # Firefox's certificate warning for the page once ("Advanced", "Accept the Risk and Continue"): the hash covers only the
-# WebTransport sessions, not the page. The page runs its steps and posts the result; the script prints PASS or FAIL with
-# the page's JSON, stops Firefox and the Gradle run it started (only those, by process group) and removes the directory
-# on PASS; on FAIL it keeps it and lists what to look at. Diagnostics in that directory: server-events.txt (the server's
-# timeline: connections, request headers, the client's SETTINGS, how each session ended and why), qlog/ (the server's
+# WebTransport sessions, not the page. The page runs its steps and posts the result; the script prints the stream error
+# code table (the page's error code stage, WtCodesProbe: per value and direction what Firefox did locally, what reached
+# the server as the raw HTTP/3 code and the mapped WebTransport code, and what the page saw of the server's resets and
+# STOP_SENDINGs; a line starting with "!!!" names a draft-02 stream code above 255 that Firefox sent), then PASS or FAIL
+# with the page's JSON, stops Firefox and the Gradle run it started (only those, by process group) and removes the directory
+# on PASS; on FAIL it keeps it and lists what to look at. Diagnostics in that directory: codes-table.txt (the table above),
+# server-events.txt (the server's timeline: connections, request headers, the client's SETTINGS, how each session ended
+# and why, and per stream of the error code stage each RESET_STREAM / STOP_SENDING with its raw HTTP/3 code and the
+# WebTransport code it maps to), qlog/ (the server's
 # qlog), firefox-qlog/ (Firefox's own qlog, network.http.http3.enable_qlog, with the frames it sent and received),
 # firefox-moz.log* (MOZ_LOG), gradle.log, result.json and server.txt.
 # Env: FIREFOX (the firefox executable; default: Firefox.app in /Applications or ~/Applications), WT_PORT (default 0: the
@@ -113,7 +118,7 @@ cleanup() {
   collect_firefox_qlog
   if [ "${WT_KEEP:-}" = 1 ] || { [ "$rc" -ne 0 ] && [ "${WT_KEEP:-}" != 0 ]; }; then
     echo "wt-firefox-manual: kept $tmp"
-    for f in server-events.txt server.txt result.json qlog firefox-qlog firefox-moz.log gradle.log; do
+    for f in codes-table.txt server-events.txt server.txt result.json qlog firefox-qlog firefox-moz.log gradle.log; do
       if compgen -G "$tmp/$f*" >/dev/null; then echo "  $tmp/$f"; fi
     done
   else
@@ -230,6 +235,14 @@ echo
 if [ -f "$tmp/result.json" ]; then
   echo "Page result: $(cat "$tmp/result.json")"
   cat "$tmp/server.txt" 2>/dev/null || true
+  if [ -f "$tmp/codes-table.txt" ]; then
+    echo
+    cat "$tmp/codes-table.txt"
+    if grep -q '^!!!' "$tmp/codes-table.txt"; then
+      echo "wt-firefox-manual: NOTE: Firefox sent a draft-02 stream error code above 255 (see the line starting with !!!)"
+    fi
+    echo
+  fi
   if [ -f "$tmp/server-events.txt" ]; then
     echo "Server events (how each session and connection ended):"
     grep -E 'ended:|closed:' "$tmp/server-events.txt" || true

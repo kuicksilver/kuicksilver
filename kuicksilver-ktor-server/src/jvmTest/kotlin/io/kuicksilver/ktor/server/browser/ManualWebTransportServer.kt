@@ -53,25 +53,29 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The server half of a by-hand WebTransport check in a browser that cannot be driven headless with a pinned certificate
  * (Firefox; `tools/interop/wt-firefox-manual.sh` runs both halves). It serves the page `wt/index.html` of
- * [ChromeWebTransportTest] with the same `/result`, `/wt/echo` and `/wt/server-close` routes, on `127.0.0.1` (HTTP/1.1
+ * [ChromeWebTransportTest] with the same `/result`, `/wt/echo` and `/wt/server-close` routes, and the error code
+ * stage's `/codes`, `/wt/codes`, `/wt/close-probe` and `/wt/server-close-32` ([WtCodesProbe]), on `127.0.0.1` (HTTP/1.1
  * over TLS for the page, HTTP/3 for the sessions, one port), with a certificate given as PEM files: valid for at most
  * 14 days and not RSA, so the page's `?hash=` admits it through `serverCertificateHashes`.
  *
  * Opt-in: runs only with `-Pkuicksilver.manualWebTransport=true`. Properties (Gradle `-P`, forwarded to the test JVM):
  * `kuicksilver.manualWebTransport.cert` and `.key` (PEM chain and PKCS#8 key, required), `.port` (0, the default, picks a
- * free one), `.dir` (where `ready` is written with the port once the server listens, and `result.json` and `server.txt`
- * once the page has posted), `.timeoutSeconds` (how long to wait for the page, 600 by default), `.lbChange` (`true`: the
- * server runs with a QUIC-LB configuration and moves to another one, `updateLoadBalancer`, as soon as the echo session is
- * accepted, so the browser retires the connection ID it sends to while the session is open; the page's later steps must
- * still pass). It prints the URL, waits
- * for the page's POST, prints the JSON, checks every step and stops.
+ * free one), `.dir` (where `ready` is written with the port once the server listens, and `result.json`, `server.txt` and
+ * `codes-table.txt`, the error code table, once the page has posted), `.timeoutSeconds` (how long to wait for the page,
+ * 600 by default), `.lbChange` (`true`: the server runs with a QUIC-LB configuration and moves to another one,
+ * `updateLoadBalancer`, as soon as the echo session is accepted, so the browser retires the connection ID it sends to
+ * while the session is open; the page's later steps must still pass). It prints the URL, waits for the page's POST,
+ * prints the JSON and the error code table, checks every step of the first part and stops; the error code table is
+ * recorded, not asserted (each browser's outcomes are its own; [ChromeWebTransportTest] asserts Chrome's).
  *
  * Diagnostics, with `.dir` only: a qlog trace per QUIC connection in `<dir>/qlog`, and `<dir>/server-events.txt`, a
  * timeline (wall clock in microseconds, comparable with Firefox's qlog) of each connection's open, handshake and close
  * (who closed, the code, its stats), each session's request headers and the client's SETTINGS as the connection saw them,
  * and how each session ended: its code, reason and cause chain. The cause tells the end apart: none with code 0 is the
  * client's FIN without a WT_CLOSE_SESSION, a stream error is a RESET_STREAM (or our STOP_SENDING), a lost connection is a
- * CONNECTION_CLOSE (or a timeout) before any capsule was read.
+ * CONNECTION_CLOSE (or a timeout) before any capsule was read. The error code stage adds a line per RESET_STREAM and
+ * STOP_SENDING of its streams (`codes:`, sent and received, from the qlog records: the raw HTTP/3 code and the WebTransport
+ * code it maps to, flagged when above 255) and per case what the session API reported or what the server did.
  */
 class ManualWebTransportServer {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -99,6 +103,9 @@ class ManualWebTransportServer {
         val connect = CompletableDeferred<String>()
         val events = Timeline()
         val qlogSink = dir?.let { AsyncQlogSink(DirectoryQlogSink(File(it, "qlog").path)) }
+        // the error code stage's routes; it reads every reset and STOP_SENDING code from the qlog records, raw and mapped
+        val probe = WtCodesProbe(qlogSink) { events.add(it) }
+        val codesPosted = CompletableDeferred<String>()
         lateinit var peerSettings: suspend () -> String
 
         /** The session's headers and the client's SETTINGS on arrival, and its end once it ends, in [events]. */
@@ -127,7 +134,7 @@ class ManualWebTransportServer {
                 http3 { webTransport { enabled = true } }
                 if (lbChange) http3 { endpoint { loadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0]) } }
                 observability {
-                    qlog = qlogSink
+                    qlog = probe
                     connectionListener = events
                 }
             }) {
@@ -137,6 +144,11 @@ class ManualWebTransportServer {
                         result.complete(call.receiveText())
                         call.respondText("ok")
                     }
+                    post("/codes") {
+                        codesPosted.complete(call.receiveText())
+                        call.respondText("ok")
+                    }
+                    probe.routes(this)
                     webTransport("/wt/echo") { session ->
                         observe("/wt/echo", session)
                         // recorded when it happens, not from the handler, which the connection's end may cancel first
@@ -208,10 +220,18 @@ class ManualWebTransportServer {
                 val seenClose = withTimeoutOrNull(10.seconds) { clientClose.await() }
                 val seenConnect = withTimeoutOrNull(1.seconds) { connect.await() }
                 val closeText = seenClose?.let { "${it.code} \"${it.reason}\" (cause ${chain(it.cause)})" }
-                val serverSide = "connect: $seenConnect\nclientClose seen by the server: $closeText\n"
+                val codes = withTimeoutOrNull(5.seconds) { codesPosted.await() }.orEmpty()
+                val table = probe.table(seenConnect?.substringAfter("user-agent=") ?: "the browser", codes)
+                val serverSide =
+                    "connect: $seenConnect\nclientClose seen by the server: $closeText\n" +
+                        "page closes of /wt/close-probe seen by the server: ${probe.pageCloses.joinToString {
+                            "${it.code} \"${it.reason}\""
+                        }}\n"
                 println("Browser WebTransport result: $json")
                 print(serverSide)
+                print(table)
                 dir?.let {
+                    writeAtomically(File(it, "codes-table.txt"), table)
                     writeAtomically(File(it, "server.txt"), serverSide)
                     writeAtomically(File(it, "result.json"), json + "\n")
                 }
