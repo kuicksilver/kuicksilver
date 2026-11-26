@@ -727,8 +727,8 @@ public class ClientObservability {
      * (docs/guide/observability.md, "Why did this request not use HTTP/3?"): a lost race, a fallback, a broken alternative, a proxy,
      * HTTP/3 turned off. [LogLevel.Info] by default, which the default logger (warnings and up) leaves out: use
      * `KuicksilverLogger.platform(LogLevel.Info)` to see them. Calls over HTTP/3, and calls HTTP/3 was never a candidate for,
-     * are logged at [LogLevel.Debug], except the first call to each origin that advertised no HTTP/3 alternative: it also gets
-     * one line at this level, "<origin>: no HTTP/3 alternative advertised, using <protocol>". Null writes no line. The line
+     * are logged at [LogLevel.Debug], except the first call to each origin whose response advertised no HTTP/3 alternative:
+     * it also gets one line at this level, "<origin>: no HTTP/3 alternative advertised, using <protocol>". Null writes no line. The line
      * names the method, scheme, host, port and path, never the query or the user info.
      */
     public var protocolChoiceLogLevel: LogLevel? = LogLevel.Info

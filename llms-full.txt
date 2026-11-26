@@ -3472,8 +3472,8 @@ fallback, a broken alternative, a proxy) at `observability { protocolChoiceLogLe
 default logger, the platform's at warnings and up, leaves out: set `logger = KuicksilverLogger.platform(LogLevel.Info)`
 to see them (the first alternative marked broken on a network is one Warn line all the same). Calls over HTTP/3, and
 calls HTTP/3 was never a candidate for (`http://`, `http3 { enabled = false }`, `Auto` without `Alt-Svc`), are logged
-at `Debug`. The first call to an origin that advertised no HTTP/3 alternative also gets one line at the
-protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no HTTP/3 alternative
+at `Debug`. The first call to an origin whose response advertised no HTTP/3 (no usable `h3` in its `Alt-Svc`)
+also gets one line at the protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no HTTP/3 alternative
 advertised, using HTTP/2.0`. `null` turns the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
 
 ```text
@@ -5189,7 +5189,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `logger` | `KuicksilverLogger` | `KuicksilverLogger.Default` | 0.3.0 | stable | | the engine's and its QUIC endpoints' diagnostics; `Default` is the platform's logger at warnings and up (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple platforms, standard error elsewhere); `KuicksilverLogger.platform(LogLevel.Info)`, `KuicksilverLogger.Stderr`, `None` or your own |
-| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`, but the first call to each origin that advertised no HTTP/3 alternative also gets one line at this level ("no HTTP/3 alternative advertised"); `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
+| `protocolChoiceLogLevel` | `LogLevel?` | `LogLevel.Info` | 0.3.0 | stable | | level of the logger's line for a call HTTP/3 could have served but did not, which the default logger (warnings and up) leaves out; calls over HTTP/3 or never meant for it are logged at `Debug`, but the first call to each origin whose response advertised no HTTP/3 also gets one line at this level ("no HTTP/3 alternative advertised"); `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). The first alternative marked broken on a network is one warning line whatever this says |
 | `qlog` | `QlogSink?` | `null` | 0.3.0 | stable | | a qlog trace per HTTP/3 connection; wrap a file sink in `AsyncQlogSink` |
 | `eventListener` | `KuicksilverEventListener?` | `null` | 0.3.0 | experimental | | call, protocol, race, Alt-Svc, DNS and pool events |
 | `connectionListener` | `ConnectionListener?` | `null` | 0.3.0 | experimental | | lifecycle of every QUIC connection of the engine |

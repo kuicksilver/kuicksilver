@@ -691,14 +691,8 @@ class GuideSamplesTest {
                     }
 
                 client.use { it.get("https://127.0.0.1:$port/") }
-                assertEquals(
-                    listOf(
-                        // the engine's own line, once for the origin: it advertised no HTTP/3 alternative
-                        "Info kuicksilver: https://127.0.0.1:$port: no HTTP/3 alternative advertised, using HTTP/1.1",
-                        "https://127.0.0.1:$port/ -> HTTP/1.1 (NoAlternative, fallback=NoAlternative, h3Failure=null)",
-                    ),
-                    lines,
-                )
+                // the server advertises HTTP/3 in this response: the engine's "no HTTP/3 alternative advertised" line does not come
+                assertEquals(listOf("https://127.0.0.1:$port/ -> HTTP/1.1 (NoAlternative, fallback=NoAlternative, h3Failure=null)"), lines)
             } finally {
                 server.stopSuspend(100, 1000)
             }

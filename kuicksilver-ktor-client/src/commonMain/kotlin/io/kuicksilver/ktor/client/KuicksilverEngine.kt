@@ -488,12 +488,14 @@ internal class KuicksilverEngine(
     /**
      * One line per answered call: at `observability { protocolChoiceLogLevel }` when HTTP/3 was an option, or the mode would have used it, and
      * the call went over another protocol; at Debug otherwise (HTTP/3 served it, or it was never a candidate). Built only
-     * when the logger wants that level. The first call to an origin that advertised no HTTP/3 alternative
-     * ([FallbackReason.NoAlternative]) also gets one line at the protocol-choice level, once per origin for this client
-     * ([noAlternativeLogged]), so "why not HTTP/3" has an answer at Info when the server sends no `Alt-Svc` at all.
+     * when the logger wants that level. A call over TCP for want of an alternative ([FallbackReason.NoAlternative]) whose
+     * response advertised no HTTP/3 either (the store holds no fresh, usable `h3` entry for the origin once the response's
+     * `Alt-Svc` was learned) also gets one line at the protocol-choice level, once per origin for this client
+     * ([noAlternativeLogged]): so "why not HTTP/3" has an answer at Info when the server sends no `Alt-Svc` at all, and an
+     * origin's first call that learns its alternative logs nothing.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun logDiagnostics(
+    private suspend fun logDiagnostics(
         data: HttpRequestData,
         d: ProtocolDiagnostics,
     ) {
@@ -509,11 +511,12 @@ internal class KuicksilverEngine(
                 val url = data.url
                 val origin =
                     buildString {
-                        append(url.protocol.name).append("://").append(logSafe(uriHost(url.host)))
+                        append(url.protocol.name).append("://").append(logSafe(uriHost(url.host.lowercase())))
                         if (url.port != url.protocol.defaultPort) append(':').append(url.port)
                     }
-                // the check under the lock, the logging after it
-                if (firstNoAlternative(origin)) {
+                // what the response taught: the store after its Alt-Svc; the checks under the locks, the logging after them
+                val advertised = altSvcLock.withLock { altSvc.h3For(url) != null }
+                if (!advertised && firstNoAlternative(origin)) {
                     logger.log(wanted, "kuicksilver: $origin: no HTTP/3 alternative advertised, using ${d.protocol}")
                 }
             }
@@ -524,18 +527,21 @@ internal class KuicksilverEngine(
     }
 
     /**
-     * The origins whose first call without an advertised HTTP/3 alternative was logged. Bounded: when it holds
-     * [NO_ALTERNATIVE_LOG_ORIGINS] origins it starts over, so a client that talks to very many origins may log one of them
-     * a second time, but never grows without limit.
+     * The origins whose call without an advertised HTTP/3 alternative was logged, least recently seen first (insertion
+     * order, a hit moves the origin to the end). Bounded: past [NO_ALTERNATIVE_LOG_ORIGINS] the least recently seen origin
+     * is forgotten, so a client that talks to very many origins may log a rarely seen one again, never grows without limit.
      */
-    private val noAlternativeLogged = HashSet<String>()
+    private val noAlternativeLogged = LinkedHashSet<String>()
     private val noAlternativeLock = SpinLock()
 
-    /** True for the first call to [origin] without an alternative (since the set last started over). */
+    /** True for the first call to [origin] without an alternative (since it was last forgotten). */
     internal fun firstNoAlternative(origin: String): Boolean =
         noAlternativeLock.withLock {
-            if (origin in noAlternativeLogged) return@withLock false
-            if (noAlternativeLogged.size >= NO_ALTERNATIVE_LOG_ORIGINS) noAlternativeLogged.clear()
+            if (noAlternativeLogged.remove(origin)) {
+                noAlternativeLogged.add(origin) // seen again: the most recent now
+                return@withLock false
+            }
+            if (noAlternativeLogged.size >= NO_ALTERNATIVE_LOG_ORIGINS) noAlternativeLogged.remove(noAlternativeLogged.first())
             noAlternativeLogged.add(origin)
             true
         }
@@ -2006,5 +2012,5 @@ internal fun isIpLiteral(host: String): Boolean =
 internal fun HttpMethod.isIdempotent(): Boolean =
     this in setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options, HttpMethod.Put, HttpMethod.Delete, HttpMethod("TRACE"))
 
-/** How many origins [KuicksilverEngine] remembers having logged "no HTTP/3 alternative advertised" for. */
+/** How many origins [KuicksilverEngine] remembers having logged "no HTTP/3 alternative advertised" for (least recently seen forgotten first). */
 internal const val NO_ALTERNATIVE_LOG_ORIGINS = 1024

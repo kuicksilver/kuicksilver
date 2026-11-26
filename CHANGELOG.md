@@ -15,10 +15,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 
 - Ktor client: one log line per origin, at `observability { protocolChoiceLogLevel }` (`Info` by default), when the
-  origin advertised no HTTP/3 alternative: `kuicksilver: https://example.com: no HTTP/3 alternative advertised, using
+  origin's response advertised no HTTP/3 alternative (none usable in the store once its `Alt-Svc` was read): `kuicksilver: https://example.com: no HTTP/3 alternative advertised, using
   HTTP/2.0`. The per-call line of such calls stays at `Debug`, so the most common reason for "why not HTTP/3", a server
-  that sends no `Alt-Svc`, was silent at `Info` until now. Once per origin per client, from a bounded memory (1024
-  origins; full, it starts over).
+  that sends no `Alt-Svc`, was silent at `Info` until now. Once per origin per client (host names compared without case), from a bounded memory of
+  1024 origins that forgets the least recently seen.
 - Documentation for newcomers: a one-screen [quickstart](docs/guide/quickstart.md) (the dependencies, a client that
   names its engine, a server from PEM files with a local test certificate and the PKCS#8 key it needs, the defaults);
   [migrating from OkHttp and Retrofit](docs/guide/migrating-from-okhttp.md) and [from another Ktor

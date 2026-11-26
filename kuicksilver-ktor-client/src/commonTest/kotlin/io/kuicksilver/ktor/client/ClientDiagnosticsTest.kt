@@ -39,6 +39,7 @@ import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -156,15 +157,52 @@ class ClientDiagnosticsTest {
             }
         }
 
-    /** The memory of logged origins is bounded: full, it starts over instead of growing. */
+    /** A server that advertises HTTP/3 in its first response: that call goes over TCP (NoAlternative) and logs no such line. */
+    @Test fun negative_noAlternativeLineNotForAnAdvertisingServer() =
+        h3Test {
+            val (server, port) = testServer(module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    val first = c.get("https://127.0.0.1:$port/")
+                    assertEquals(FallbackReason.NoAlternative, first.kuicksilverDiagnostics?.fallback)
+                    assertTrue(log.lines.none { "no HTTP/3 alternative advertised" in it.second }, "${log.lines}")
+                }
+            } finally {
+                server.stopSuspend(100, 500)
+            }
+        }
+
+    /** Two first calls to an origin at once, its server advertising nothing: one line between them. */
+    @Test fun noAlternativeLineOnceForParallelFirstCalls() =
+        h3Test {
+            val (server, port) = testServer(configure = { http3 { altSvc = false } }, module = okServer())
+            val log = DiagnosticLines(LogLevel.Info)
+            try {
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
+                    coroutineScope {
+                        val a = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                        val b = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                        assertEquals("ok", a.await())
+                        assertEquals("ok", b.await())
+                    }
+                    assertEquals(1, log.lines.count { "no HTTP/3 alternative advertised" in it.second }, "${log.lines}")
+                }
+            } finally {
+                server.stopSuspend(100, 500)
+            }
+        }
+
+    /** The memory of logged origins is bounded: past its size the least recently seen origin is forgotten (LRU). */
     @Test fun noAlternativeMemoryIsBounded() =
         clientTest {
             HttpClient(Kuicksilver).use { c ->
                 val engine = c.engine as KuicksilverEngine
                 repeat(NO_ALTERNATIVE_LOG_ORIGINS) { assertTrue(engine.firstNoAlternative("https://h$it.test")) }
-                assertEquals(false, engine.firstNoAlternative("https://h0.test"))
-                assertTrue(engine.firstNoAlternative("https://one-more.test"), "a full memory starts over")
-                assertTrue(engine.firstNoAlternative("https://h0.test"), "and forgot the earlier origins")
+                assertEquals(false, engine.firstNoAlternative("https://h0.test"), "seen: and now the most recent")
+                assertTrue(engine.firstNoAlternative("https://one-more.test"), "a new origin past the size")
+                assertTrue(engine.firstNoAlternative("https://h1.test"), "the least recently seen was forgotten")
+                assertEquals(false, engine.firstNoAlternative("https://h0.test"), "the recently seen one was kept")
             }
         }
 

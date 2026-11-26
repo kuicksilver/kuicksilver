@@ -143,8 +143,8 @@ fallback, a broken alternative, a proxy) at `observability { protocolChoiceLogLe
 default logger, the platform's at warnings and up, leaves out: set `logger = KuicksilverLogger.platform(LogLevel.Info)`
 to see them (the first alternative marked broken on a network is one Warn line all the same). Calls over HTTP/3, and
 calls HTTP/3 was never a candidate for (`http://`, `http3 { enabled = false }`, `Auto` without `Alt-Svc`), are logged
-at `Debug`. The first call to an origin that advertised no HTTP/3 alternative also gets one line at the
-protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no HTTP/3 alternative
+at `Debug`. The first call to an origin whose response advertised no HTTP/3 (no usable `h3` in its `Alt-Svc`)
+also gets one line at the protocol-choice level, once per origin for the client: `kuicksilver: https://example.com: no HTTP/3 alternative
 advertised, using HTTP/2.0`. `null` turns the lines off. The line is built only when the logger wants its level, and its format stays the same within 0.3.x:
 
 ```text
