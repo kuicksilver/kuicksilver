@@ -461,8 +461,11 @@ internal class ConnectionHandshakeSink(
         // the key phase, which exists once both directions are installed: replay them then, whichever direction came last, or they sit
         // in the buffer until the peer's loss recovery resends their frames
         if (direction == Direction.Read && level != 3) core.receiver.replayBuffered(level)
-        // a server still Handshaking would only hold its 1-RTT packets again (RFC 9001 section 5.7): onHandshakeDone replays them
-        if (level == 3 && core.keyPhase != null && !(core.role == TlsRole.Server && core.state == ConnectionState.Handshaking)) {
+        // a server still Handshaking would only hold its 1-RTT packets again (RFC 9001 section 5.7), a client in 0-RTT as well
+        // (PacketReceiver: the 0-RTT is settled first): onHandshakeDone replays them
+        val holdsOneRtt =
+            core.state == ConnectionState.Handshaking && (core.role == TlsRole.Server || core.remembered != null)
+        if (level == 3 && core.keyPhase != null && !holdsOneRtt) {
             core.receiver.replayBuffered(3)
         }
         if (level == 2) core.loss.handshakeKeysAvailable = true
@@ -601,9 +604,11 @@ internal class ConnectionHandshakeSink(
         if (core.role == TlsRole.Server) {
             core.sendHandshakeDone = true
             core.confirmHandshake()
-            // the client's 1-RTT packets held until its Finished was verified (RFC 9001 section 5.7)
-            core.receiver.replayBuffered(3)
         }
+        // the 1-RTT packets held for the handshake's end: a server's until the client's Finished was verified (RFC 9001 section
+        // 5.7), a 0-RTT client's until its 0-RTT was settled above (section 4.6.2: the server's frames meet the reset streams
+        // and limits of a rejection, never the early ones; its EarlyDataRejected comes before any of their events)
+        core.receiver.replayBuffered(3)
     }
 
     override fun onVerifyRequested(chain: List<Certificate>) {

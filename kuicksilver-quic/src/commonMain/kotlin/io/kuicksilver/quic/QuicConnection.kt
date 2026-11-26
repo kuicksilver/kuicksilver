@@ -23,6 +23,9 @@ public interface QuicConnection : AutoCloseable {
     /**
      * The next stream the peer opened, in id order. A peer stream counts against the limits we grant (`QuicConfig.maxBidiStreams`,
      * `maxUniStreams`) until it was handed out here and is done: read to its end or its reset surfaced, and our half finished.
+     * A client that sent 0-RTT gets a peer stream here only after [earlyDataAccepted] is settled (RFC 9001 section 4.6.2:
+     * the server's answer, and with a rejection the reset of every stream we opened, come before anything of the server's
+     * 1-RTT packets).
      */
     public suspend fun acceptStream(): QuicStream
 

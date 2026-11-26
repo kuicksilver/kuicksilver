@@ -1799,6 +1799,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client, rejected 0-RTT: the server's 0.5-RTT flight was read before the rejection. A 1-RTT packet held for its
+  key was replayed when the key arrived, a step before the handshake's end settled the 0-RTT (RFC 9001 section 4.6.2).
+  The rejection then restarted the connection's credit and stream limits at the server's transport parameters, so a
+  MAX_DATA or MAX_STREAMS in that flight was lost, and an ACK of a rejected 0-RTT packet there was taken as an
+  acknowledgment instead of a PROTOCOL_VIOLATION. A client in 0-RTT now holds the server's 1-RTT packets until the
+  handshake's end, as ngtcp2's client does, and reads them after the 0-RTT is settled; a peer stream is handed out only
+  with `earlyDataAccepted` settled.
+- HTTP/3 client, rejected 0-RTT: the connection could close with QPACK_ENCODER_STREAM_ERROR when both sides used the
+  QPACK dynamic table. The first attempt to open the control and QPACK streams in 0-RTT could be superseded as it
+  ended: the rejection was noted (the critical streams moved to a new generation) while it waited to resume, and it
+  then reported the streams open anyway. Our encoder's Set Dynamic Table Capacity, made for the new generation once
+  the server's SETTINGS arrived, found no streams yet and was dropped, and the server's decoder, its table still of
+  capacity 0 (RFC 9204 section 3.2.3), refused the inserts after it. Decoder-stream bytes of the new generation were
+  dropped the same way. A superseded attempt now leaves the streams to the next one, and a write for a generation whose
+  streams are not open yet waits for them. Encoder instructions made for a dropped encoder stream close the connection
+  with H3_INTERNAL_ERROR instead of going silently, and, as defence in depth, the client reads no server stream until
+  the 0-RTT's answer is known.
 - HTTP/1.1 client: an idle pooled connection is now watched for the server's close (RFC 9112 section 9.5: "Implementations
   SHOULD constantly monitor open connections for a received closure signal and respond to it as appropriate"). When the
   server ends it (close_notify, or a FIN alone) or sends bytes no request asked for, the client closes it in order at once
