@@ -51,6 +51,7 @@ import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
@@ -1879,9 +1880,9 @@ internal class H3Pool(
             failures
                 .takeIf { t.udpProxy != null && !it.proxyReached }
                 ?.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
-                ?: return ConnectTimeoutException(data, x).withAttempts(failures)
+                ?: return data.connectTimeoutException(data.connectTimeoutMillis(config), x).withAttempts(failures)
         for (f in failures.distinct()) if (f !== proxyTls) proxyTls.addSuppressed(f)
-        proxyTls.addSuppressed(ConnectTimeoutException(data, x))
+        proxyTls.addSuppressed(data.connectTimeoutException(data.connectTimeoutMillis(config), x))
         return proxyTls
     }
 

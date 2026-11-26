@@ -28,6 +28,8 @@ internal class H2Conn(
     val localAddress: io.ktor.network.sockets.InetSocketAddress? = null,
     val remoteAddress: io.ktor.network.sockets.InetSocketAddress? = null,
     val viaProxy: Boolean = false,
+    /** The connect timeout of the request that opened it, which bounds the wait for the server's preface (null: unknown). */
+    val connectTimeoutMillis: Long? = null,
 ) : PooledConnection(route, createdAt) {
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.SocketTimeoutException
@@ -20,6 +21,17 @@ import kotlinx.io.Source
 internal fun HttpRequestData.connectTimeoutMillis(config: KuicksilverEngineConfig): Long =
     getCapabilityOrNull(HttpTimeoutCapability)?.connectTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
         ?: config.connectTimeout.inWholeMilliseconds
+
+/**
+ * Ktor's `ConnectTimeoutException` for [this] request, naming [millis], the connect timeout the engine applied
+ * ([connectTimeoutMillis]). Ktor's own `ConnectTimeoutException(request, cause)` reads `HttpTimeout`'s alone, so with only
+ * the engine's `connectTimeout` set its message said `connect_timeout=unknown ms`. The message is otherwise Ktor's:
+ * `Connect timeout has expired [url=..., connect_timeout=... ms]`.
+ */
+internal fun HttpRequestData.connectTimeoutException(
+    millis: Long?,
+    cause: Throwable?,
+): io.ktor.client.network.sockets.ConnectTimeoutException = ConnectTimeoutException(url.toString(), millis, cause)
 
 /** Request timeout of a request (`HttpTimeout`'s, which the plugin enforces itself), null for none. */
 internal fun HttpRequestData.requestTimeoutMillis(): Long? =

@@ -36,6 +36,7 @@ import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.cleartextNotPermitted
 import io.kuicksilver.ktor.client.cleartextPolicyHost
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h2.H2Conn
@@ -933,7 +934,7 @@ internal class H1Pool(
                 conn?.let { if (reused) pool.release(it) else it.close() }
                 stream?.client?.unreserve()
                 if (e is TimeoutCancellationException) {
-                    val timeout = ConnectTimeoutException(data, e)
+                    val timeout = data.connectTimeoutException(data.connectTimeoutMillis(config), e)
                     val wait = waitingFor
                     val failures =
                         if (wait != null) {
@@ -1077,7 +1078,7 @@ internal class H1Pool(
         withTimeoutOrNull(data.connectTimeoutMillis(config)) {
             dns.answered(url.host, url.port, onAnswered = { addresses = it }, afterForTest = remoteHostsForTest)
         }
-        val answered = addresses ?: throw ConnectTimeoutException(data, null)
+        val answered = addresses ?: throw data.connectTimeoutException(data.connectTimeoutMillis(config), null)
         return listOf(WebSocketConnecting.nameKey(url.host)) + answered.map { WebSocketConnecting.addressKey(it) }
     }
 
@@ -1928,6 +1929,7 @@ internal class H1Pool(
                                 tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
                                 tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
                                 viaProxy,
+                                data.connectTimeoutMillis(config),
                             )
                         } catch (e: Throwable) {
                             // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
@@ -1993,6 +1995,7 @@ internal class H1Pool(
                             tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
                             tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
                             viaProxy,
+                            data.connectTimeoutMillis(config),
                         )
                     } catch (e: Throwable) {
                         try {

@@ -1806,6 +1806,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: a `ConnectTimeoutException` names the connect timeout that fired, also when only the engine's own
+  `connectTimeout` is set and `HttpTimeout` is not installed. Before, the name lookup and pool wait of HTTP/1.1 and
+  HTTP/2, a WebSocket's name lookup, the wait for an HTTP/2 server's preface and an HTTP/3 setup said
+  `connect_timeout=unknown ms`: they used Ktor's `ConnectTimeoutException(request, cause)`, which reads the plugin's
+  value alone.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.

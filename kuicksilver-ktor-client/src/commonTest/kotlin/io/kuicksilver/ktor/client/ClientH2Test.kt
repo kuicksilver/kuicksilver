@@ -743,7 +743,10 @@ class ClientH2Test {
                 runCatching { input.readBuffer() }
             }) { port ->
                 testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
-                    assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    val e =
+                        assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    // the connect timeout that bounded the wait for the preface, the engine's own (no HttpTimeout installed)
+                    assertTrue("connect_timeout=500 ms" in e.message.orEmpty(), "${e.message}")
                     // the connection was in the pool (the request went out before the server's preface): the call fails as
                     // the connection ends, and its slot comes back once its transport is closed, in the pool's own
                     // coroutine; unusable meanwhile, it takes no other request
