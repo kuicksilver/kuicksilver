@@ -29,7 +29,7 @@ class LoopbackSquatterTest {
     private suspend fun started(host: String?): Server {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector {
+                tlsConnector /* wildcard on purpose: the shadowed server */ {
                     tls { identity = ServerFixtures.identity() }
                     host?.let { this.host = it }
                     port = 0

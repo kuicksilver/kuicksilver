@@ -312,7 +312,7 @@ class ServerConfigMappingTest {
                         maxHeaderSize = 1024
                     }
                 }
-                tlsConnector {
+                tlsConnector /* wildcard on purpose: built and read, never started */ {
                     port = 8443
                     allowMisdirectedHosts = true
                     proxyProtocol { trust("192.0.2.7") }
@@ -448,7 +448,7 @@ class ServerConfigMappingTest {
         refused("plainConnector { port }") { c.plainConnector { port = -1 } }
         refused("proxyProtocol { } needs at least one trusted source") { c.plainConnector { proxyProtocol { } } }
         refused("proxyProtocol { headerTimeout }") {
-            c.plainConnector {
+            c.plainConnector /* wildcard on purpose: built and read, never started */ {
                 proxyProtocol {
                     trust("10.0.0.0/8")
                     headerTimeout = 2.seconds

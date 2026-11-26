@@ -88,7 +88,7 @@ class ServerEveryInterfaceTest {
     @Test fun tlsConnectorWithoutHostServesIpv4AndIpv6() =
         h3ServerTest {
             startEverywhere({
-                tlsConnector {
+                tlsConnector /* wildcard on purpose: the default bind is the subject */ {
                     tls { identity = ServerFixtures.identity() }
                     port = 0
                 }
