@@ -302,7 +302,7 @@ static void test_renegotiation_attempt_reported(void) {
     }
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
-    /* TLS 1.3 has no renegotiation (RFC 9846 section 4.1.2): its post-handshake messages, KeyUpdate both ways and
+    /* TLS 1.3 has no renegotiation (RFC 9846 section 4.2.2): its post-handshake messages, KeyUpdate both ways and
        NewSessionTicket, are not reported */
     cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
     sc = server_ctx("server");

@@ -104,7 +104,7 @@ class TlsCancelInputTest {
         }
 
     /**
-     * The server's tickets (RFC 9846 section 4.6.1; six after a full TCP handshake) that came before the client's cut are
+     * The server's tickets (RFC 9846 section 4.7.1; six after a full TCP handshake) that came before the client's cut are
      * still stored: the cut ends the reading, not the records the session read before it.
      */
     @Test fun aTicketReadBeforeTheCutIsStored(): Unit =

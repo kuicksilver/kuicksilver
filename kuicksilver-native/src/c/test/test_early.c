@@ -472,7 +472,7 @@ static void test_negative_sni_ticket_other_identity(void) {
     ksl_ctx_free(b);
     END();
 }
-/* NewSessionTickets the client read, and how many of them carried early_data (RFC 9846 section 4.6.1: lifetime, age_add, nonce,
+/* NewSessionTickets the client read, and how many of them carried early_data (RFC 9846 section 4.7.1: lifetime, age_add, nonce,
    ticket, then the extensions) */
 typedef struct {
     int tickets, with_early_data;
@@ -533,7 +533,7 @@ static void test_negative_sni_override_without_early_data(void) {
     ksl_session *next = ksl_ssl_get1_session(c);
     ksl_ssl_free(c);
     ksl_ssl_free(s);
-    /* RFC 9846 section 4.6.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when
+    /* RFC 9846 section 4.7.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when
        using this ticket": a ticket without the extension allows none, also one renewed on a resumption of a ticket that did */
     c = qclient(cc);
     ksl_ssl_set_session(c, next);
@@ -551,7 +551,7 @@ static void test_negative_sni_override_without_early_data(void) {
 }
 
 /* The same without SNI overrides: a server that stopped accepting early data renews a 0-RTT ticket without early_data, and the
-   client offers no 0-RTT with the renewed one (RFC 9846 section 4.6.1, RFC 9001 section 4.6.1: "To indicate that the server does
+   client offers no 0-RTT with the renewed one (RFC 9846 section 4.7.1, RFC 9001 section 4.6.1: "To indicate that the server does
    not accept 0-RTT data, the early_data extension is omitted from the NewSessionTicket") */
 static void test_negative_renewed_ticket_without_early_data(void) {
     SECTION("negative_quic_renewed_ticket_without_early_data_refuses_0rtt");

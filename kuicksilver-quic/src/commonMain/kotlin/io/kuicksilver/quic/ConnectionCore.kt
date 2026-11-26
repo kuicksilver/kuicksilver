@@ -534,7 +534,7 @@ public class ConnectionCore internal constructor(
 
     // ---- 0-RTT (ADR-0015) ----
 
-    /** Client: the ClientHello offers a session ticket (a pre-shared key, RFC 9846 section 4.2.11), with or without 0-RTT. */
+    /** Client: the ClientHello offers a session ticket (a pre-shared key, RFC 9846 section 4.3.11), with or without 0-RTT. */
     internal var resumptionOffered: Boolean = false
 
     /** Client: the server's remembered transport parameters while 0-RTT is pending; null once settled or when none is used. */

@@ -347,7 +347,7 @@ class CertificateCompressionTest {
         }
     }
 
-    /** A resumed TLS 1.3 handshake carries no Certificate (RFC 9846 section 4.4.2), so nothing came compressed either. */
+    /** A resumed TLS 1.3 handshake carries no Certificate (RFC 9846 section 4.5.1), so nothing came compressed either. */
     @Test fun aResumptionHasNoCertificateToCompress() {
         val server = TcpFixtures.server()
         val cache = SessionCache()

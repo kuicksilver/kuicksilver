@@ -109,7 +109,7 @@ class QuicEarlyDataTest {
     }
 
     /**
-     * RFC 9846 section 4.6.1: a ticket's max_early_data_size is what the client may send "when using this ticket". A 0-RTT
+     * RFC 9846 section 4.7.1: a ticket's max_early_data_size is what the client may send "when using this ticket". A 0-RTT
      * ticket resumed on a server that no longer allows early data is renewed without the extension, and the renewed ticket
      * carries no 0-RTT (OpenSSL's client kept the old ticket's value, so the next connection offered 0-RTT the server had
      * withdrawn).
