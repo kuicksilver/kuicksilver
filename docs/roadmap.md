@@ -188,7 +188,7 @@ what the peers really do, and is delivered whole or not at all.
   TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
   ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)). Done (2026-11-18).
 - Connection coalescing across origins for HTTP/2 and HTTP/3, off by default and opt-in ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md)): the address matches and the certificate covers the name,
-  with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
+  with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)). Done (2026-11-26).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy. Done in `kuicksilver-http3` over HTTP/3 (client tunnel, proxy, proxied QUIC;
   [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `connectUdpProxy`, the

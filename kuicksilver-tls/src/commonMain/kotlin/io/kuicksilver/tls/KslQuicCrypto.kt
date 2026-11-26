@@ -752,6 +752,10 @@ internal class KslQuicTlsSession(
     @ExperimentalKuicksilverApi
     override val echStatus: EchStatus get() = ech
 
+    /** See [QuicTlsSession.stapleUntil]. */
+    val stapleUntilValue: Long get() =
+        resumedEntry?.stapleUntil ?: if (ssl != 0L && ctx.config.role == TlsRole.Client) stapleUntilOf(s()) else 0L
+
     // a server that accepted 0-RTT knows the protocol from the ClientHello, before the handshake completes
     override val negotiatedAlpn: String? get() =
         alpn ?: if (ssl != 0L && failure == null && ctx.config.role == TlsRole.Server) {

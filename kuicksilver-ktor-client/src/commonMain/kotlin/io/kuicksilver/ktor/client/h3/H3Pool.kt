@@ -38,6 +38,7 @@ import io.kuicksilver.http3.awaitWebTransportExchangeEnd
 import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.runtime.cancelAndJoinSender
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
@@ -51,12 +52,15 @@ import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
+import io.kuicksilver.ktor.client.checkCoalescing
+import io.kuicksilver.ktor.client.coalescingRetired
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.isTransientRefusal
+import io.kuicksilver.ktor.client.mayCoalesce
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
@@ -80,6 +84,8 @@ import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.handshakeEchStatus
+import io.kuicksilver.quic.handshakeStapleUntil
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
 import io.kuicksilver.quic.unmappedLiteral
@@ -123,6 +129,113 @@ internal class H3Target(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val key: String get() = "$originHost|$host:$port" + (udpProxy?.let { "|" + it.routeKey } ?: "")
 }
+
+/**
+ * The server answered 421 (Misdirected Request) to a request sent on a connection of another origin (coalescing, ADR-0018):
+ * [H3Pool.execute] sends it once more on a connection of its own origin unless [bodyConsumed].
+ */
+internal class H3Misdirected(
+    val bodyConsumed: Boolean,
+) : Exception("421 Misdirected Request on a connection of another origin")
+
+/**
+ * A request body the stream reads through, over the application's channel [delegate], which cannot give its bytes again:
+ * [Mark] says, as one atomic state, whether any byte was taken ([Mark.touched]) or the channel was kept, untouched, for
+ * a repeat ([Mark.keep]); the two exclude each other. Bytes are moved in [awaitContent] only, as
+ * [io.kuicksilver.ktor.client.ConsumedBody] moves them, and only after the state says touched, so a channel kept for a
+ * repeat has lost nothing, and a reader that finds it kept stops without reading.
+ */
+internal class TouchedBody(
+    private val delegate: ByteReadChannel,
+    private val mark: Mark,
+) : ByteReadChannel {
+    /** The state of one attempt's body: untouched, then touched (a byte was taken) or kept (for a repeat), never both. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    class Mark {
+        private val state = kotlin.concurrent.atomics.AtomicInt(UNTOUCHED)
+
+        val touched: Boolean get() = state.load() == TOUCHED
+
+        /** Before a byte is moved: false when the channel was kept for a repeat (nothing may be read here any more). */
+        fun take(): Boolean = state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED
+
+        /** Keeps the channel for a repeat; false when a byte was taken already (the body is consumed). */
+        fun keep(): Boolean = state.compareAndSet(UNTOUCHED, KEPT) || state.load() == KEPT
+
+        val kept: Boolean get() = state.load() == KEPT
+
+        /** Readers inside [awaitContent] now (tests: none is left once the sender was stopped and waited for). */
+        internal val readersForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+        private companion object {
+            const val UNTOUCHED = 0
+            const val TOUCHED = 1
+            const val KEPT = 2
+        }
+    }
+
+    private val buffer = kotlinx.io.Buffer()
+
+    override val closedCause: Throwable? get() = delegate.closedCause
+    override val isClosedForRead: Boolean get() = buffer.exhausted() && delegate.isClosedForRead
+
+    @InternalAPI
+    override val readBuffer: kotlinx.io.Source get() = buffer
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    override suspend fun awaitContent(min: Int): Boolean {
+        mark.readersForTest.addAndFetch(1)
+        try {
+            return fill(min)
+        } finally {
+            mark.readersForTest.addAndFetch(-1)
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    private suspend fun fill(min: Int): Boolean {
+        while (buffer.size < min) {
+            if (mark.kept) throw CancellationException("the request body is kept for a repeat")
+            val from = delegate.readBuffer
+            if (from.exhausted() && !delegate.awaitContent()) return buffer.size >= min
+            if (!mark.take()) throw CancellationException("the request body is kept for a repeat")
+            from.readAtMostTo(buffer, maxOf(STEP, (min - buffer.size)))
+        }
+        return true
+    }
+
+    override fun cancel(cause: Throwable?) {
+        buffer.clear()
+        // a channel kept for a repeat is the repeat's; the repeat, or the call's end, ends it (KeptRequestBody)
+        if (!mark.kept) delegate.cancel(cause)
+    }
+
+    private companion object {
+        const val STEP = 16L * 1024
+    }
+}
+
+/**
+ * The application's channel of a streamed request body that a 421 on another origin's connection left untouched: the
+ * repeat takes it ([take]) instead of asking the content for another (a `ReadChannelContent` may open a new one per
+ * `readFrom()`); a call that ends before the repeat took it cancels it ([release]), so no writer or file stays open.
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class KeptRequestBody(
+    private val channel: ByteReadChannel,
+) {
+    private val taken = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    fun take(): ByteReadChannel? = if (taken.compareAndSet(false, true)) channel else null
+
+    fun release(cause: Throwable?) {
+        if (taken.compareAndSet(false, true)) channel.cancel(cause)
+    }
+}
+
+/** The [KeptRequestBody] of a request between its 421 and its repeat. */
+internal val KeptRequestBodyKey: io.ktor.util.AttributeKey<KeptRequestBody> =
+    io.ktor.util.AttributeKey("io.kuicksilver.ktor.client.KeptRequestBody")
 
 /** The origin host of an [H3Target.key]. */
 private fun originOfKey(key: String): String = key.substringBefore('|')
@@ -199,7 +312,17 @@ internal class H3Entry(
     val webTransport: Boolean = false,
     /** Called after every [release] (the pool's [H3Pool.releasesForTest]). */
     private val released: () -> Unit = {},
+    /**
+     * The origin host the connection was set up for (its TLS configuration's): an entry filed under a key of another origin
+     * carries that origin's requests by coalescing (ADR-0018, [H3Pool]'s `shareSameAddress`).
+     */
+    val origin: String,
 ) {
+    /** The other origins this connection was checked for, and those that got 421 on it (ADR-0018). */
+    val hosts =
+        io.kuicksilver.ktor.client
+            .CoalescedHosts()
+
     /** Requests and WebTransport sessions using the connection. */
     val active = kotlin.concurrent.atomics.AtomicInt(0)
 
@@ -825,7 +948,7 @@ internal class H3Pool(
                     found.active.addAndFetch(1)
                     found to false
                 } else {
-                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased)
+                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased, origin = t.originHost)
                     e.active.addAndFetch(1)
                     e.retire() // kept for the sessions of [t] and closed with its last one
                     wtExtras.getOrPut(t.key) { ArrayList() } += e
@@ -1156,7 +1279,12 @@ internal class H3Pool(
         val here = e.connectedTo ?: return null
         val now = clock()
         for ((k, other) in connections) {
-            if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
+            // a connection of another origin filed here by coalescing is not taken on without its checks (shareSameAddress)
+            if (other === e || originOfKey(k) != t.originHost || other.origin != t.originHost || other.drained ||
+                other.pastLifetime(now)
+            ) {
+                continue
+            }
             // a WebTransport-capable connection serves requests too, not the other way round
             if (e.webTransport && !other.webTransport) continue
             val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
@@ -1187,38 +1315,141 @@ internal class H3Pool(
      * addresses are those of its current answers, the NAT64 synthesis of an IPv6-only network included. A setup of the
      * same origin still in its handshake is waited for first, for one Connection Attempt Delay at most. Nothing is resolved
      * when the origin has no other connection.
+     *
+     * With [coalesce] (`connectionCoalescing`, ADR-0018) a connection of another origin qualifies too, once its handshake is
+     * complete (never a 0-RTT one: its server is not authenticated yet), when its certificate passes every check for [t]'s
+     * origin and [t]'s name resolves to its address ([checkCoalescing]: RFC 9114 section 3.3, "To use an existing
+     * connection for a new origin, clients MUST validate the certificate presented by the server for the new origin server
+     * using the process described in Section 4.3.4 of \[HTTP\]"). Such a filing is checked again by every request of [t]
+     * (the address now, the certificate once per connection): one that no longer passes, or a request that may not coalesce
+     * (a WebSocket, a WebTransport session, the repeat after a 421), leaves it and gets a connection of [t]'s own origin; the
+     * other origin's connection is never retired for that, unless its certificate failed for a reason that may apply to its
+     * own origins too ([Coalesce.Retire], RFC 9114 section 3.3).
      */
     private suspend fun shareSameAddress(
         t: H3Target,
         dns: RequestDns,
         wt: Boolean = false,
+        coalesce: Boolean = false,
+    ): H3Entry? {
+        // a filing of another origin made by a concurrent request meanwhile is checked for this request too, in another round;
+        // a filing that keeps coming back between the rounds is, after the last one, not there for this request at all
+        repeat(MAX_SHARE_ROUNDS) {
+            val r = shareSameAddressOnce(t, dns, wt, coalesce)
+            if (r.done) return r.checked
+        }
+        return null
+    }
+
+    /**
+     * What a round of [shareSameAddress] found: [done] false when another origin's connection was filed under the target
+     * meanwhile (the next round checks it); [checked] the other origin's entry this request checked and filed (or found
+     * filed and checked), which [connectionEntryOnce] may take, and no other.
+     */
+    private class ShareRound(
+        val done: Boolean,
+        val checked: H3Entry? = null,
+    )
+
+    /** Test hook: runs in [shareSameAddressOnce] between the check of a filed connection and the look for candidates. */
+    @kotlin.concurrent.Volatile
+    internal var beforeCandidatesForTest: (suspend (H3Target) -> Unit)? = null
+
+    /**
+     * Test hook: runs in [shareSameAddressOnce] once a candidate was chosen (and checked), before it is filed, with the
+     * target and the origin the chosen connection was set up for.
+     */
+    @kotlin.concurrent.Volatile
+    internal var beforeFilingForTest: (suspend (H3Target, String) -> Unit)? = null
+
+    /** Tests: files the entry of [from] under [under] too, as a concurrent request's coalescing would. */
+    internal suspend fun fileUnderForTest(
+        from: H3Target,
+        under: H3Target,
     ) {
+        lock.withLock { connections[from.key]?.let { connections[under.key] = it } }
+    }
+
+    /** One round of [shareSameAddress]. */
+    private suspend fun shareSameAddressOnce(
+        t: H3Target,
+        dns: RequestDns,
+        wt: Boolean,
+        coalesce: Boolean,
+    ): ShareRound {
         val now = clock()
 
         fun H3Entry.shareable(): Http3Connection? = deferred.getCompletedOrNull()?.takeIf { it.usable() && !drained && !pastLifetime(now) }
-        val candidates =
+
+        // a connection of another origin, filed under [t] by an earlier request: used only after this request's own checks
+        val filed =
+            lock.withLock {
+                connections[t.key]?.takeIf { it.origin != t.originHost }?.let { e ->
+                    if (coalesce && e.shareable() != null) return@let e
+                    connections.remove(t.key) // left, never retired: it is its own origin's
+                    null
+                }
+            }
+        if (filed != null) {
+            when (crossOriginCheck(t, filed, dns)) {
+                io.kuicksilver.ktor.client.Coalesce.Yes -> {
+                    return ShareRound(true, filed)
+                }
+
+                io.kuicksilver.ktor.client.Coalesce.No -> {
+                    lock.withLock { if (connections[t.key] === filed) connections.remove(t.key) }
+                }
+
+                io.kuicksilver.ktor.client.Coalesce.Retire -> {
+                    lock.withLock { if (connections.values.any { it === filed }) retireUnderEveryKey(filed) }
+                }
+            }
+        }
+        beforeCandidatesForTest?.invoke(t)
+        var refiled = false
+        val (candidates, others) =
             lock.withLock {
                 val existing = connections[t.key]
+                // another origin's, filed by a concurrent request since the check above: not taken unchecked
+                if (existing != null && existing.origin != t.originHost) {
+                    refiled = true
+                    return@withLock emptyList<H3Entry>() to emptyList()
+                }
                 if (existing != null && (!wt || existing.webTransport) &&
                     (!existing.deferred.isCompleted || existing.shareable() != null)
                 ) {
-                    return
+                    return ShareRound(true)
                 }
-                connections.entries
-                    .filter { (k, e) ->
-                        k != t.key && originOfKey(k) == t.originHost && (!wt || e.webTransport) &&
-                            (!e.deferred.isCompleted || e.shareable() != null)
-                    }.map { it.value }
-                    .distinct()
+                val same =
+                    connections.entries
+                        .filter { (k, e) ->
+                            k != t.key && originOfKey(k) == t.originHost && e.origin == t.originHost && (!wt || e.webTransport) &&
+                                (!e.deferred.isCompleted || e.shareable() != null)
+                        }.map { it.value }
+                        .distinct()
+                // another origin's: set up, its handshake complete, direct (a key of a CONNECT-UDP tunnel has a third part)
+                val other =
+                    if (!coalesce) {
+                        emptyList()
+                    } else {
+                        connections.entries
+                            .filter { (k, e) ->
+                                e.origin != t.originHost && k.count { it == '|' } == 1 && e.connectedTo != null &&
+                                    e.shareable()?.quic?.isHandshakeComplete == true
+                            }.map { it.value }
+                            .distinct()
+                    }
+                same to other
             }
-        if (candidates.isEmpty()) return
+        if (refiled) return ShareRound(false)
+        if (candidates.isEmpty() && others.isEmpty()) return ShareRound(true)
         val addresses =
             try {
                 dns.answeredDestinations(t.host, t.port).map(Destination::of)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
-                return // the setup resolves again and reports the failure
+                return ShareRound(true) // the setup resolves again and reports the failure
             }
 
         // a sibling still in its handshake has no address yet: its outcome is waited for, for one Connection Attempt Delay
@@ -1227,29 +1458,78 @@ internal class H3Pool(
         // than Happy Eyeballs holds up its next address
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val waitAtMost = config.connectionAttemptDelay
-        withTimeoutOrNull(waitAtMost) {
-            for (e in candidates) {
-                e.deferred.join() // completes failed or not: a failed setup is only no candidate
+        if (candidates.isNotEmpty()) {
+            withTimeoutOrNull(waitAtMost) {
+                for (e in candidates) {
+                    e.deferred.join() // completes failed or not: a failed setup is only no candidate
+                }
             }
         }
         val match =
             candidates.firstOrNull { e ->
                 val remote = e.shareable()?.let { e.connectedTo }
                 remote != null && addresses.any { it.sameAs(remote) }
-            } ?: return
-        lock.withLock {
+            } ?: others.firstOrNull { e ->
+                val remote = e.connectedTo
+                remote != null && addresses.any { it.sameAs(remote) } &&
+                    when (crossOriginCheck(t, e, dns)) {
+                        io.kuicksilver.ktor.client.Coalesce.Yes -> {
+                            true
+                        }
+
+                        io.kuicksilver.ktor.client.Coalesce.No -> {
+                            false
+                        }
+
+                        io.kuicksilver.ktor.client.Coalesce.Retire -> {
+                            lock.withLock { if (connections.values.any { it === e }) retireUnderEveryKey(e) }
+                            false
+                        }
+                    }
+            } ?: return ShareRound(true)
+        beforeFilingForTest?.invoke(t, match.origin)
+        return lock.withLock {
             val existing = connections[t.key]
+            if (existing != null && existing !== match && existing.origin != t.originHost) return@withLock ShareRound(false)
             if (existing != null && (!wt || existing.webTransport) && (!existing.deferred.isCompleted || existing.shareable() != null)) {
-                return
+                return@withLock ShareRound(true, existing.takeIf { it === match && it.origin != t.originHost })
             }
-            if (match.shareable() == null || connections.values.none { it === match }) return
-            // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it
+            if (match.shareable() == null || connections.values.none { it === match }) return@withLock ShareRound(true)
+            // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it; one of
+            // another origin is that origin's and is left alone
             val old = existing?.deferred?.getCompletedOrNull()
-            if (existing != null && old != null && old.usable()) {
+            if (existing != null && existing.origin == t.originHost && old != null && old.usable()) {
                 retireUnderEveryKey(existing)
             }
             connections[t.key] = match
             sharedForTest.addAndFetch(1)
+            ShareRound(true, match.takeIf { it.origin != t.originHost })
+        }
+    }
+
+    /**
+     * [checkCoalescing] of [e] (another origin's connection, set up) for [t]: its server's certificate for [t]'s origin host,
+     * and [t]'s name (the origin, or the alternative it goes to) resolving to where [e] is connected.
+     */
+    private suspend fun crossOriginCheck(
+        t: H3Target,
+        e: H3Entry,
+        dns: RequestDns,
+    ): io.kuicksilver.ktor.client.Coalesce {
+        val c = e.deferred.getCompletedOrNull() ?: return io.kuicksilver.ktor.client.Coalesce.No
+        val remote = e.connectedTo ?: return io.kuicksilver.ktor.client.Coalesce.No
+        if (!c.quic.isHandshakeComplete) return io.kuicksilver.ktor.client.Coalesce.No
+        val peer =
+            io.kuicksilver.ktor.client.CoalescingPeer(
+                e.origin,
+                remote,
+                c.quic.peerCertificates,
+                c.quic.handshakeStapleUntil,
+                c.quic.handshakeEchStatus == io.kuicksilver.tls.EchStatus.Accepted,
+                e.hosts,
+            )
+        return config.checkCoalescing(peer, t.originHost, t.port, dns, listOf(Http3Endpoint.H3), lookupHost = t.host) { own, forHost ->
+            events.coalescingRetired(e.origin, t.originHost, own, forHost)
         }
     }
 
@@ -1308,11 +1588,16 @@ internal class H3Pool(
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
         val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+        // another origin's connection only for a request that may coalesce (ADR-0018); never a WebTransport session
+        val coalesce = !wt && config.mayCoalesce(data, viaProxy = t.udpProxy != null)
         // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
-        if (t.udpProxy == null) shareSameAddress(t, dns, wt)
+        val checked = if (t.udpProxy == null) shareSameAddress(t, dns, wt, coalesce) else null
         val (e, connect) =
             lock.withLock {
-                val existing = connections[t.key]
+                // another origin's connection filed here serves only the request that checked it (shareSameAddress); for any
+                // other request it is not there (a concurrent request's filing is not this one's check), and is left as it is
+                // unless this request files a connection of its own over it
+                val existing = connections[t.key]?.takeIf { it.origin == t.originHost || (coalesce && it === checked) }
                 val done = existing?.deferred?.takeIf { it.isCompleted }?.getCompletedOrNull()
                 // a WebTransport session needs a WebTransport-capable connection; a request takes either kind
                 val fits = existing == null || !wt || existing.webTransport
@@ -1324,10 +1609,12 @@ internal class H3Pool(
                     // past its lifetime, or not WebTransport-capable when a session needs it (RFC 9114 section 3.3: one
                     // connection per origin, the capable one serving the requests from now on): it finishes what it carries
                     // first ([evictExpired] closes it); one still being set up is closed once set up and unused
-                    if (existing != null && ((done != null && done.usable()) || !existing.deferred.isCompleted)) {
+                    if (existing != null && existing.origin == t.originHost &&
+                        ((done != null && done.usable()) || !existing.deferred.isCompleted)
+                    ) {
                         retireUnderEveryKey(existing)
                     }
-                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased)
+                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased, origin = t.originHost)
                         .also { connections[t.key] = it } to true
                 }
             }
@@ -2040,7 +2327,8 @@ internal class H3Pool(
                 lock.withLock {
                     (listOfNotNull(connections[t.key]) + retired)
                         .firstOrNull {
-                            it.deferred.getCompletedOrNull() === prefer && !it.drained && prefer.usable()
+                            // another origin's connection goes through connectionEntry, which checks it for this request
+                            it.deferred.getCompletedOrNull() === prefer && !it.drained && prefer.usable() && it.origin == t.originHost
                         }?.also { it.active.addAndFetch(1) }
                 }
             if (e != null) return e to prefer
@@ -2131,6 +2419,8 @@ internal class H3Pool(
     suspend fun existing(t: H3Target): Http3Connection? =
         lock
             .withLock { connections[t.key] }
+            // another origin's connection filed here is checked per request (connectionEntry): not "existing" for [t]
+            ?.takeIf { it.origin == t.originHost }
             ?.deferred
             ?.getCompletedOrNull()
             ?.takeIf { it.usable() }
@@ -2141,7 +2431,7 @@ internal class H3Pool(
      * CONNECT (WebSockets over HTTP/3, RFC 9220).
      */
     suspend fun canConnectProtocol(t: H3Target): Boolean =
-        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.let {
+        lock.withLock { connections[t.key] }?.takeIf { it.origin == t.originHost }?.deferred?.getCompletedOrNull()?.let {
             it.usable() &&
                 it.peerSettings.value?.enableConnectProtocol == true
         } ==
@@ -2241,7 +2531,8 @@ internal class H3Pool(
                     ) {
                         webSocket(conn, data, callContext, extraHeaders)
                     } else {
-                        exchange(conn, data, callContext, extraHeaders, watch)
+                        // on another origin's connection (coalescing, ADR-0018) a 421 is not the call's answer
+                        exchange(conn, data, callContext, extraHeaders, watch, misdirectedFails = entry.origin != t.originHost)
                     }
                 // in use until the call ends (its body read or abandoned), not just until the response head; a WebSocket
                 // until its session ended, which may be after the call (WebSocketLifetime): a connection whose count fell to
@@ -2361,6 +2652,27 @@ internal class H3Pool(
                     events.emit("retry") { retry(data, repeats + 1, e) }
                     continue
                 }
+                if (e is H3Misdirected) {
+                    // RFC 9110 section 15.5.20: "A client that receives a 421 (Misdirected Request) response MAY retry the
+                    // request, whether or not the request method is idempotent, over a different connection, such as a
+                    // fresh connection specific to the target resource's origin". The connection carries no request of
+                    // this origin any more, and this call coalesces no more: the repeat goes on a connection of its own
+                    entry.hosts.record(t.originHost, accepted = false)
+                    lock.withLock { connections.entries.removeAll { (k, v) -> v === entry && originOfKey(k) == t.originHost } }
+                    data.attributes.put(io.kuicksilver.ktor.client.NoCoalescingKey, Unit)
+                    if (e.bodyConsumed) {
+                        throw H3BodyConsumed(
+                            "421 Misdirected Request on a connection of another origin (connection coalescing), and the " +
+                                "request's streamed body was already consumed",
+                            e,
+                        )
+                    }
+                    repeats++
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                    events.emit("retry") { retry(data, repeats + 1, e) }
+                    continue
+                }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {
@@ -2392,6 +2704,7 @@ internal class H3Pool(
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>>,
         watch: H3StallMonitor.Watch? = null,
+        misdirectedFails: Boolean = false,
     ): HttpResponseData {
         val requestTime = GMTDate()
         val body = data.body.unwrap()
@@ -2401,15 +2714,52 @@ internal class H3Pool(
         // a request that may be repeated (RFC 9110 section 9.2.2) waits for its response only until a stall: then it goes
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
+        // a body that cannot be produced again: whether any of it was taken, which decides whether a 421 may send it again
+        val touch = if (misdirectedFails && !body.isReplayable()) TouchedBody.Mark() else null
+        // the application's channel this attempt reads (a streamed body), for the repeat a 421 may hand it to
+        var sent: SentBody? = null
         val response: Http3Response =
             withSocketInactivityTimeout(data, activity) {
                 val w = watch
                 if (w != null && repeatable) {
-                    w.abortable(discard = { it.cancel() }) { send(conn, data, callContext, extraHeaders, body, activity) }
+                    w.abortable(
+                        discard = { it.cancel() },
+                    ) { send(conn, data, callContext, extraHeaders, body, activity, touch) { sent = it } }
                 } else {
-                    send(conn, data, callContext, extraHeaders, body, activity)
+                    send(conn, data, callContext, extraHeaders, body, activity, touch) { sent = it }
                 }
             }
+        if (misdirectedFails && response.status == 421) {
+            // the server is not authoritative for the request on this connection (RFC 9110 section 7.4): the answer is
+            // dropped (its stream abandoned) and the request goes once more on a connection of its own origin (execute)
+            misdirectedForTest?.invoke()
+            // as over HTTP/2, only a body the stream took something of is consumed. The decision is one step: kept now, the
+            // sender takes nothing more (it stops at its next read); then it is stopped and waited for, so it reads nothing
+            // while the repeat does
+            val kept = touch?.keep() == true
+            response.body.cancel(H3Misdirected(false))
+            // bounded: a sender that does not end (a trailers callback that ignores its cancellation) leaves the body for lost
+            val settled =
+                io.kuicksilver.tls.completedWithin(data.connectTimeoutMillis(config).milliseconds) {
+                    response.cancelAndJoinSender()
+                    true
+                } == true
+            misdirectedSettledForTest?.invoke(touch?.readersForTest?.load() ?: 0)
+            if (kept && !settled) {
+                sent?.channel?.cancel(H3Misdirected(true))
+                throw H3Misdirected(true)
+            }
+            if (kept) {
+                val channel = sent?.channel
+                if (channel != null) {
+                    val k = KeptRequestBody(channel)
+                    data.attributes.put(KeptRequestBodyKey, k)
+                    // a call that ends before its repeat took the channel ends the channel too
+                    callContext[Job]?.invokeOnCompletion { k.release(it) }
+                }
+            }
+            throw H3Misdirected(touch != null && !kept)
+        }
         data.attributes.put(PriorityUpdaterKey, response.priorityUpdater()) // for HttpResponse.updatePriority
         // a stall abandoned while the body is read fails the read with QuicStalledException, before the connection's close does;
         // once the whole response arrived the exchange needs the network no more, and a stall must not touch it
@@ -2422,6 +2772,19 @@ internal class H3Pool(
         return finish(conn, data, callContext, response, requestTime)
     }
 
+    /** The channel one attempt sends a request body from. */
+    private class SentBody(
+        val channel: ByteReadChannel,
+    )
+
+    /** Test hook: runs in [exchange] once a 421 on another origin's connection came, before its body is decided on. */
+    @kotlin.concurrent.Volatile
+    internal var misdirectedForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: gets, once the 421'd attempt's sender was stopped and waited for, how many readers its body still has. */
+    @kotlin.concurrent.Volatile
+    internal var misdirectedSettledForTest: ((Int) -> Unit)? = null
+
     @OptIn(InternalAPI::class)
     private suspend fun send(
         conn: Http3Connection,
@@ -2430,10 +2793,15 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>>,
         body: OutgoingContent,
         activity: Activity?,
+        touch: TouchedBody.Mark? = null,
+        onChannel: (SentBody) -> Unit = {},
     ): Http3Response {
         // this attempt's own channel when the body is replayable (bytes, or a writer started for this attempt alone): a retry
-        // or the fallback makes a new one. A streamed body's channel is the application's, the same for every attempt
-        val channel = bodyChannel(body, callContext)
+        // or the fallback makes a new one. A streamed body's channel is the application's: the one a 421's attempt kept
+        // untouched, else what the content gives (a content may open a new channel per readFrom; the kept one is then not
+        // asked for again)
+        val channel = bodyChannel(body, callContext, data.attributes.getOrNull(KeptRequestBodyKey))
+        channel?.let { onChannel(SentBody(it)) }
         return try {
             conn.request(
                 http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
@@ -2443,7 +2811,10 @@ internal class H3Pool(
                             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                             if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
                         }
-                    this.body = channel?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
+                    this.body =
+                        channel?.let { b ->
+                            (touch?.let { TouchedBody(b, it) } ?: b).let { t -> activity?.let { ConsumedBody(t, it) } ?: t }
+                        }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     allowEarlyData = config.http3.earlyData
                     priority = data.priority
@@ -2682,6 +3053,9 @@ internal class H3Pool(
     }
 
     internal companion object {
+        /** Rounds of [shareSameAddress] a filing of another origin made meanwhile may cost a request. */
+        const val MAX_SHARE_ROUNDS = 3
+
         /** See [connectionIdLength]: the explicit one of the two lengths, or the common one. */
         fun resolveConnectionIdLength(
             quic: Int,
@@ -2755,9 +3129,15 @@ internal class H3Pool(
             return Http3Headers(out)
         }
 
+        /**
+         * The channel a request body is sent from; for a streamed body, the application's channel a 421 kept for the repeat
+         * ([kept], [KeptRequestBody]) when there is one, so a content that opens a new channel per `readFrom()` (a file's)
+         * is opened once, whichever protocol the repeat goes over.
+         */
         fun bodyChannel(
             body: OutgoingContent,
             callContext: CoroutineContext,
+            kept: KeptRequestBody? = null,
         ): ByteReadChannel? =
             when (body) {
                 is OutgoingContent.NoContent, is OutgoingContent.ProtocolUpgrade -> {
@@ -2769,7 +3149,7 @@ internal class H3Pool(
                 }
 
                 is OutgoingContent.ReadChannelContent -> {
-                    body.readFrom()
+                    kept?.take() ?: body.readFrom()
                 }
 
                 is OutgoingContent.WriteChannelContent -> {
@@ -2780,7 +3160,7 @@ internal class H3Pool(
                 }
 
                 is OutgoingContent.ContentWrapper -> {
-                    bodyChannel(body.delegate(), callContext)
+                    bodyChannel(body.delegate(), callContext, kept)
                 }
             }
 

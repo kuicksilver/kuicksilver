@@ -547,7 +547,9 @@ public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null): Boo
  * "If the port part of the origin triple is different from the default port for the protocol given by the scheme part of
  * the origin triple", ":" and the port), names the origin of [url]: RFC 7838 section 4,
  * "An association with an origin that the client does not consider authoritative for the current connection MUST be
- * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
+ * ignored". Only the origin the connection was set up for is taken as authoritative here, also on a connection that carries
+ * other origins by coalescing (ADR-0018): those learn from their responses' `Alt-Svc` fields, and a frame on one of their
+ * request streams, which does not name its origin, is ignored by the caller (`H1Pool`).
  * Scheme and host compare case-insensitively; an explicit default port is taken too.
  */
 internal fun isAltSvcFrameOrigin(

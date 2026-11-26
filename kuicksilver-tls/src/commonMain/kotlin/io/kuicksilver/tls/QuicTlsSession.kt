@@ -600,3 +600,11 @@ public interface QuicCrypto {
         retryPseudoPacket: ByteArray,
     ): ByteArray
 }
+
+/**
+ * Client: until when the OCSP response the server stapled is fresh (epoch seconds) once the handshake completed, 0 when
+ * none was checked; a resumed session keeps its full handshake's. 0 for a session that is not the OpenSSL-backed one.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicTlsSession.stapleUntil: Long
+    get() = (this as? KslQuicTlsSession)?.stapleUntilValue ?: 0L

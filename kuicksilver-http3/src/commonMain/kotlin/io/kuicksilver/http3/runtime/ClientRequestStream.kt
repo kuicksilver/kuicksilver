@@ -756,6 +756,24 @@ internal class ResponseImpl(
         bodyChannel.cancel(e)
         trailersDeferred.cancel(e)
     }
+
+    /** [cancel], then waits for the request body's sender to end: nothing reads the request body from here on. */
+    internal suspend fun cancelAndJoinSender(code: Long) {
+        cancel(code)
+        sender?.join()
+    }
+}
+
+/**
+ * [Http3Response.cancel], and once it returns the request's body is no longer read: the coroutine that sent it has ended,
+ * so a caller may hand that body to another request. A response this layer did not make is only cancelled. The wait has no
+ * bound of its own: a sender held up by code that ignores cancellation (a trailers callback, `Http3Request.trailers`, that
+ * blocks or suspends without checking) holds it as long, so a caller bounds it and treats a sender still running as having
+ * consumed the body.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public suspend fun Http3Response.cancelAndJoinSender(code: Long = Http3ErrorCode.REQUEST_CANCELLED) {
+    if (this is ResponseImpl) cancelAndJoinSender(code) else cancel(code)
 }
 
 /**

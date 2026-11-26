@@ -225,6 +225,20 @@ public interface QuicConnection : AutoCloseable {
     public val isHandshakeComplete: Boolean get() = true
 }
 
+/** Client: the Encrypted Client Hello outcome of the handshake once it completed ([io.kuicksilver.tls.EchStatus.None] before). */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicConnection.handshakeEchStatus: io.kuicksilver.tls.EchStatus
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.handshakeEchStatus ?: io.kuicksilver.tls.EchStatus.None
+
+/**
+ * Client: until when the OCSP response the server stapled in the handshake is fresh (epoch seconds), 0 when none was checked
+ * or the handshake has not completed; a resumed connection keeps its full handshake's. Coalescing holds another origin to it
+ * (`verifyForReuse`).
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicConnection.handshakeStapleUntil: Long
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.handshakeStapleUntil ?: 0L
+
 /**
  * Server: the server_name of the ClientHello the configuration's `sniSelector` chose this connection's identity and settings
  * for (RFC 6066 section 3; unverified input), null when it carried none, no selector ran, or [this] is not an endpoint's

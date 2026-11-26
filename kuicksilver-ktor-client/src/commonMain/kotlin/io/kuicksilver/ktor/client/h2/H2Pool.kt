@@ -28,7 +28,39 @@ internal class H2Conn(
     val localAddress: io.ktor.network.sockets.InetSocketAddress? = null,
     val remoteAddress: io.ktor.network.sockets.InetSocketAddress? = null,
     val viaProxy: Boolean = false,
+    /**
+     * Where a direct TLS connection is connected to (the literal its Happy Eyeballs race won with) and the chain its server
+     * presented: what coalescing checks another origin against ([io.kuicksilver.ktor.client.checkCoalescing]). Null and
+     * empty for a connection through a proxy and for h2c, which never carry another origin.
+     */
+    val destination: io.kuicksilver.ktor.client.h3.Destination? = null,
+    val peerChain: List<io.kuicksilver.tls.Certificate> = emptyList(),
+    /** The host the connection was set up for (its certificate's first check), its staple's bound, its ECH outcome. */
+    val ownHost: String = "",
+    val stapleUntil: Long = 0L,
+    val echAccepted: Boolean = false,
+    /** Whether the TLS session was resumed (its [peerChain] is the full handshake's, kept with the ticket). */
+    val resumed: Boolean = false,
+    /**
+     * Whether requests of other origins may come on it (`connectionCoalescing` and a direct TLS connection): then no request
+     * on it lets HPACK index `cookie` (RFC 7541 section 7.1), so one origin's requests cannot probe another's cookies
+     * through the shared dynamic table.
+     */
+    val mayCarryOthers: Boolean = false,
 ) : PooledConnection(route, createdAt) {
+    /** The other origins this connection was checked for, and those that got 421 on it (ADR-0018). */
+    val hosts =
+        io.kuicksilver.ktor.client
+            .CoalescedHosts()
+
+    /** What coalescing checks another origin against; null for a connection that never carries one. */
+    val peer: io.kuicksilver.ktor.client.CoalescingPeer? by lazy {
+        destination?.takeIf { peerChain.isNotEmpty() }?.let {
+            io.kuicksilver.ktor.client
+                .CoalescingPeer(ownHost, it, peerChain, stapleUntil, echAccepted, hosts)
+        }
+    }
+
     /** REFUSED_STREAM answers so far: the second retires the connection (OkHttp's `RealConnection.trackFailure`). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     val refusedStreams: kotlin.concurrent.atomics.AtomicInt = kotlin.concurrent.atomics.AtomicInt(0)
@@ -53,7 +85,8 @@ internal class H2Conn(
  * within `maxConnectionsPerRoute` (the TCP pool's slots). Requests that wait for a stream or a slot watch their route's
  * `signal`, which every change bumps: a released stream, new SETTINGS, a GOAWAY, a connection that came or went. Routes
  * without connections and watchers are dropped at once, so the map is bounded by the live connections and the waiters.
- * No connection coalescing across origins (RFC 9113 section 9.1.1; ADR-0017).
+ * With `connectionCoalescing` a request may also take a stream on a connection of another route ([coalescingCandidates],
+ * RFC 9113 section 9.1.1; ADR-0018); the connection stays filed under its own route.
  */
 internal class H2Pool(
     private val limits: PoolLimits,
@@ -179,6 +212,21 @@ internal class H2Pool(
         val now = clock()
         val list = lock.withLock { routes[route]?.conns?.toList() } ?: return emptyList()
         return list.filter { it.client.isUsable && !pastLifetime(it, now) }
+    }
+
+    /**
+     * The connections of routes other than [route] that may carry another origin's request (RFC 9113 section 9.1.1, ADR-0018):
+     * direct over TLS ([H2Conn.destination]), usable, within their lifetime, the server's SETTINGS in and a stream free under
+     * its limit (a full one is not waited for: the request takes a connection of its own). Whether one may carry the
+     * request's origin is the caller's check ([io.kuicksilver.ktor.client.checkCoalescing]).
+     */
+    fun coalescingCandidates(route: String): List<H2Conn> {
+        val now = clock()
+        val list = lock.withLock { routes.filterKeys { it != route }.values.flatMap { it.conns } }
+        return list.filter {
+            it.peer != null && it.client.isUsable && !pastLifetime(it, now) &&
+                it.client.serverSettingsReceived && it.client.reservedStreams < it.client.peerMaxConcurrentStreams
+        }
     }
 
     /** Whether [route] has an HTTP/2 connection (usable or not). */

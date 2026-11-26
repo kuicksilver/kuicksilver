@@ -359,6 +359,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getConnectUdpProxy ()Lio/kuicksilver/ktor/client/ConnectUdpProxy;
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
+	public final fun getConnectionCoalescing ()Z
 	public final fun getDns ()Lio/kuicksilver/ktor/client/Dns;
 	public final fun getEch ()Lio/kuicksilver/ktor/client/EchClientConfig;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
@@ -386,6 +387,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setConnectTimeout-LRDsOJo (J)V
 	public final fun setConnectUdpProxy (Lio/kuicksilver/ktor/client/ConnectUdpProxy;)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
+	public final fun setConnectionCoalescing (Z)V
 	public final fun setDns (Lio/kuicksilver/ktor/client/Dns;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
 	public final fun setHttp11Hints (Ljava/util/Set;)V
