@@ -1032,7 +1032,7 @@ internal class H1Pool(
                 if (c.client.reservedStreams > 0) {
                     c.client.shutdown()
                 } else {
-                    c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                    c.client.abortInOrder(ConnectionEndedException.PeerUnresponsive("the HTTP/2 connection did not answer a health PING"))
                 }
                 continue
             }
