@@ -72,8 +72,9 @@ public sealed class RaceHeadStart {
     }
 
     /**
-     * A fixed head start of [delay], 10 ms..2 s (RFC 8305 section 5); another value fails the engine's creation with
-     * IllegalArgumentException. On a network where QUIC was never confirmed the head start is 10 ms, whatever this says.
+     * A fixed head start of [delay], 10 ms..2 s (RFC 8305 section 5); another value, `Duration.INFINITE` included (that is
+     * [NoRace]), fails the engine's creation with IllegalArgumentException. On a network where QUIC was never confirmed the
+     * head start is 10 ms, whatever this says.
      */
     public class Fixed(
         public val delay: Duration,
@@ -882,7 +883,8 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
             mapOf(
                 "enableConnectProtocol" to "on for WebSockets and WebTransport (RFC 9220)",
                 "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
-                "webTransport" to "enabled and maxSessions are set with http3 { webTransport { } }",
+                "webTransport" to
+                    "enabled is on for each webTransport() call; maxSessions is http3 { webTransport { maxSessionsPerConnection } }",
                 "earlyData" to "a server's policy; the client's 0-RTT is http3 { earlyData { enabled } }",
             )
 

@@ -313,8 +313,9 @@ public class KuicksilverApplicationEngine(
                 mapOf(
                     "enableConnectProtocol" to "on for WebSockets, WebTransport and CONNECT-UDP (RFC 9220)",
                     "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
-                    "webTransport" to "set with http3 { webTransport { } }",
-                    "webTransport.limits" to "set with http3 { webTransport { } }",
+                    "webTransport" to "enabled and maxSessions are http3 { webTransport { enabled; maxSessionsPerConnection } }",
+                    "webTransport.limits" to
+                        "initialMaxStreamsBidi, initialMaxStreamsUni and initialMaxData are http3 { webTransport { } }",
                     "earlyData" to "set with http3 { earlyData { policy } }",
                 )
 

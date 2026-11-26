@@ -769,6 +769,11 @@ internal class H3Pool(
         require(config.http3.webTransport.maxSessions >= 1) {
             "http3 { webTransport { maxSessions } } must be at least 1, not ${config.http3.webTransport.maxSessions}"
         }
+        // checked here under the name the application set: the SETTINGS builder below would name webTransport { maxSessions }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        require(config.http3.webTransport.maxSessionsPerConnection in 1..65_535) {
+            "http3 { webTransport { maxSessionsPerConnection } } must be 1..65535, not ${config.http3.webTransport.maxSessionsPerConnection}"
+        }
     }
 
     /** The engine's HTTP/3 settings with WebTransport and Extended CONNECT on: a WebTransport-capable connection's. */

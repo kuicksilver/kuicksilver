@@ -286,14 +286,7 @@ internal class KuicksilverEngine(
 
     /** Races HTTP/3 against TCP with the configured head start (`http3 { expert { raceHeadStart } }`). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val race =
-        ProtocolRace(
-            when (val h = config.http3.expert.raceHeadStart) {
-                RaceHeadStart.Adaptive -> null
-                RaceHeadStart.NoRace -> Duration.INFINITE
-                is RaceHeadStart.Fixed -> h.delay
-            },
-        )
+    private val race = ProtocolRace(config.http3.expert.raceHeadStart)
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
     private var networkSeen = false

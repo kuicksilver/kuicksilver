@@ -438,6 +438,9 @@ class ServerConfigMappingTest {
         refused("http3 { endpoint { acceptQueue } }") { c.http3.endpoint.acceptQueue = 0 }
         refused("http3 { endpoint { maxConnectionLifetime } }") { c.http3.endpoint.maxConnectionLifetime = Duration.ZERO }
         refused("http3 { endpoint { maxConnectionLifetime } }") { c.http3.endpoint.maxConnectionLifetime = Duration.INFINITE }
+        // the name the application set, not the SETTINGS name the engine writes it to (webTransport { maxSessions })
+        refused("http3 { webTransport { maxSessionsPerConnection } }") { c.http3.webTransport.maxSessionsPerConnection = 0 }
+        refused("http3 { webTransport { maxSessionsPerConnection } }") { c.http3.webTransport.maxSessionsPerConnection = 65_536 }
         refused("webSockets { maxMessageSize }") { c.webSockets.maxMessageSize = 0 }
         refused("tcp { maxConnections }") { c.tcp.maxConnections = 0 }
         refused("tcp { maxConnectionsPerIp }") { c.tcp.maxConnectionsPerIp = 0 }

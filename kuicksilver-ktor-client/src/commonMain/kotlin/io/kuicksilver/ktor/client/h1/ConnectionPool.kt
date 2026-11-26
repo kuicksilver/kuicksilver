@@ -131,11 +131,11 @@ internal class PoolLimits(
     val maxLifetimeMillis: Long,
 ) {
     init {
-        require(maxTotal > 0) { "maxConnectionsCount must be positive, was $maxTotal" }
-        require(maxPerRoute > 0) { "maxConnectionsPerRoute must be positive, was $maxPerRoute" }
-        require(maxIdlePerRoute >= 0) { "maxIdleConnectionsPerRoute must not be negative, was $maxIdlePerRoute" }
-        require(idleTimeoutMillis > 0) { "idleTimeout must be positive" }
-        require(maxLifetimeMillis > 0) { "maxConnectionLifetime must be positive" }
+        require(maxTotal > 0) { "pool { maxConnections } must be positive, was $maxTotal" }
+        require(maxPerRoute > 0) { "pool { maxConnectionsPerRoute } must be positive, was $maxPerRoute" }
+        require(maxIdlePerRoute >= 0) { "pool { maxIdleConnectionsPerRoute } must not be negative, was $maxIdlePerRoute" }
+        require(idleTimeoutMillis > 0) { "pool { idleTimeout } must be positive" }
+        require(maxLifetimeMillis > 0) { "pool { maxConnectionLifetime } must be positive, or null" }
     }
 }
 

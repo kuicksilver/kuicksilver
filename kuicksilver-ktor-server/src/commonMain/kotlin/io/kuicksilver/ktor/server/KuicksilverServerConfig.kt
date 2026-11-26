@@ -562,8 +562,17 @@ public class ServerWebTransportConfig internal constructor() {
      */
     public var enabled: Boolean = false
 
-    /** The most WebTransport sessions a client may open on one connection (`SETTINGS_WT_MAX_SESSIONS`); 4 by default. */
+    /**
+     * The most WebTransport sessions a client may open on one connection (`SETTINGS_WT_MAX_SESSIONS`), 1..65535; 4 by
+     * default.
+     *
+     * @throws IllegalArgumentException when set outside 1..65535.
+     */
     public var maxSessionsPerConnection: Int = 4
+        set(value) {
+            require(value in 1..65_535) { "http3 { webTransport { maxSessionsPerConnection } } must be 1..65535, not $value" }
+            field = value
+        }
 
     /** The bidirectional streams a client may open in one session at first (`SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI`); 24 by default. */
     public var initialMaxStreamsBidi: Long = 24

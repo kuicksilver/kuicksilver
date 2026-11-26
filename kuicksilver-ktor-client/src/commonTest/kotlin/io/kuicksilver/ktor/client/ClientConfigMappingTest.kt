@@ -278,6 +278,31 @@ class ClientConfigMappingTest {
                     .close()
             }
         assertTrue("http3 { stall { probeTimeouts } }" in stall.message.orEmpty(), stall.message)
+        // refusals name the option the application set, not an internal or a 0.2.x name
+        for (bad in listOf(0, 65_536)) {
+            val wt =
+                assertFailsWith<IllegalArgumentException> {
+                    io.ktor.client
+                        .HttpClient(Kuicksilver) { engine { http3 { webTransport { maxSessionsPerConnection = bad } } } }
+                        .close()
+                }
+            assertTrue("http3 { webTransport { maxSessionsPerConnection } }" in wt.message.orEmpty(), wt.message)
+        }
+        for (bad in listOf(Duration.ZERO, 9.milliseconds, 2001.milliseconds, Duration.INFINITE)) {
+            val race =
+                assertFailsWith<IllegalArgumentException>("Fixed($bad)") {
+                    io.ktor.client
+                        .HttpClient(Kuicksilver) { engine { http3 { expert { raceHeadStart = RaceHeadStart.Fixed(bad) } } } }
+                        .close()
+                }
+            assertTrue("http3 { expert { raceHeadStart" in race.message.orEmpty(), race.message)
+        }
+        val pool =
+            assertFailsWith<IllegalArgumentException> {
+                io.kuicksilver.ktor.client.h1
+                    .PoolLimits(0, 1, 0, 1, 1)
+            }
+        assertTrue("pool { maxConnections }" in pool.message.orEmpty(), pool.message)
     }
 
     /** "Off" is null: no PING, one address after another, no lifetime limit, no protocol-choice line. */

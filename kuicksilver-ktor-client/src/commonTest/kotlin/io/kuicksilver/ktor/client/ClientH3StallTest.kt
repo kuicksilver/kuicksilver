@@ -171,7 +171,7 @@ class ClientH3StallTest {
         heard: Heard,
         detection: Boolean = true,
         idle: Duration = 15.seconds,
-        hardDelay: Duration? = Duration.INFINITE,
+        raceHeadStart: RaceHeadStart = RaceHeadStart.NoRace,
         minSilence: Duration = 500.milliseconds,
         abandonAfter: Duration = 2.seconds,
         // windows that take a whole 4 MiB response before the application reads any of it
@@ -192,7 +192,7 @@ class ClientH3StallTest {
             }
             observability { eventListener = heard }
             http3 {
-                expert { raceHeadStart = hardDelay?.let { RaceHeadStart.Fixed(it) } ?: RaceHeadStart.Adaptive }
+                expert { this.raceHeadStart = raceHeadStart }
                 stall { enabled = detection }
                 stall { this.minSilence = minSilence }
                 stall { this.abandonAfter = abandonAfter }
@@ -420,7 +420,7 @@ class ClientH3StallTest {
             val ios = FaultyIos()
             val heard = Heard()
             try {
-                client(ios, heard, hardDelay = null).use { c ->
+                client(ios, heard, raceHeadStart = RaceHeadStart.Adaptive).use { c ->
                     val url = "https://127.0.0.1:${s.port}/"
                     assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // learns the alternative
                     ios.cut()

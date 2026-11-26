@@ -166,6 +166,11 @@ The design left these cases open or met them only in the code; each was decided 
 - **The migration script handles conditional values by hand.** `tools/migrate/config-0.3.py` rewrites a plain
   `discovery = H1Only` into `enabled = false` and reports a conditional one (`if (h3Only) H3Only else H1Only`) for a hand
   rewrite; the engine-interop and soak sites were rewritten by hand.
+- **Refusals name the option the application set.** `RaceHeadStart.Fixed` takes 10 ms..2 s only, and
+  `Fixed(Duration.INFINITE)` is refused (`RaceHeadStart.NoRace` is the one name for "TCP only after HTTP/3 failed"); the
+  message names `http3 { expert { raceHeadStart } }`. `http3 { webTransport { maxSessionsPerConnection } }` is checked
+  against 1..65535 under its own name (the client when the engine is created, the server when it is set) before it
+  becomes the SETTINGS' `webTransport { maxSessions }`; the pool's and the TCP listener's messages use the block names.
 - **The migration script never leaves a refusal behind.** An option an engine derives and refuses (the client's
   `quic { handshakeTimeout }`, `expert { resetStreamAt; cancelErrorCode }`, the HTTP/3 SETTINGS `enableConnectProtocol`
   and `h3Datagram`) or that the client's `tls { }` lost (`sessionTickets`, `genericAlerts`, `handshakeTimeout`,

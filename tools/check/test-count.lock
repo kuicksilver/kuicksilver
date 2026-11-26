@@ -2373,13 +2373,13 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.h1StartsAtHardDelay
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.h1StartsImmediatelyOnH3Failure
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.h3WinsWithoutStartingH1
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.hardDelayFromSrttClamped
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.infiniteHardDelayWaitsForHttp3OnAnUnconfirmedNetwork
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.headStartFromSrttClamped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.loserIsHandedOverWhenCallerIsCancelled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.losingH1ResultIsHandedToOnLoser
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.minimumHeadStartOnUnconfirmedNetwork
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_anH1WinnerTheCallerNeverGotIsHandedToOnLoser
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_hardDelayOutsideRfc8305BoundsIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.negative_fixedHeadStartOutsideRfc8305BoundsIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProtocolRaceTest.noRaceWaitsForHttp3OnAnUnconfirmedNetwork
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.colonInASocks5UserNameIsAccepted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_colonInUserIdOrControlCharactersAreRefusedForBasic
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ProxyBasicCredentialsTest.negative_engineWithAnInvalidBasicUserIdFailsAtCreation

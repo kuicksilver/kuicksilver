@@ -270,8 +270,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     val untrustedRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     val proxyProtocol = l.proxyProtocol
                     try {
-                        // the checks cheapest first: a slot of maxTcpConnections before accept (none free: the backlog holds
-                        // the client), maxTcpConnectionsPerIp right after it (no lock, no suspension), then the HTTP/2
+                        // the checks cheapest first: a slot of tcp { maxConnections } before accept (none free: the backlog
+                        // holds the client), tcp { maxConnectionsPerIp } right after it (no lock, no suspension), then the HTTP/2
                         // repeat offenders (a lock while the table is not empty), and only then the TLS handshake
                         acceptLoop(
                             accept = { server.accept() },
@@ -286,7 +286,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 client.abort()
                                 perIpRefusals.report(
                                     from?.let { peerAddressBytes(it) }?.let { describeIp(it) } ?: "an unknown address",
-                                    "it holds ${limits.maxPerIp} connections already (maxTcpConnectionsPerIp)",
+                                    "it holds ${limits.maxPerIp} connections already (tcp { maxConnectionsPerIp })",
                                 )
                                 events.emit("connectionRefused") { connectionRefused(HttpProtocolVersion.HTTP_1_1, from, REFUSED_PER_IP) }
                                 refusedPerIp.update { it + 1 } // after the event: a test that sees the count sees the event
