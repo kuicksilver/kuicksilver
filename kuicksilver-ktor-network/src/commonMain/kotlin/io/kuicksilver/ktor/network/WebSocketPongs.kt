@@ -135,7 +135,9 @@ public class WebSocketPongs(
                 // otherwise ends it too, and then in order only if the peer had ended in order before
                 val waited = withTimeoutOrNull(closeWait) { peerDone.await() }
                 val inOrder = waited == null || peerEndedInOrder
-                lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) }
+                // bounded too, its wait for the lock included (a writer stuck on a full output holds it): the end path waits
+                // two close waits at most; markEnded below covers an end the bound cut
+                withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
                 ended = true
             } finally {
                 try {

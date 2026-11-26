@@ -322,6 +322,40 @@ class WebSocketPongsTest {
             peer.flushAndClose()
         }
 
+    /**
+     * The same without any cancellation: the peer stays silent past the close wait and the guard's lock stays taken past a
+     * second one (a writer stuck on a full output would hold it). The wait for the held end still ends, after two close
+     * waits and not before; before, the end waited for the lock without a bound and the engine's end path with it.
+     */
+    @Test
+    fun negative_theHeldEndIsOverWithinTwoCloseWaitsWhenTheLockStaysTaken() =
+        runTest {
+            val job = Job()
+            val peer = ByteChannel()
+            val wire = ByteChannel()
+            val pongs = WebSocketPongs()
+            guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext + job, pongs = pongs)
+            val session = guardWebSocketOutput(wire, masking = false, pongs = pongs)
+            session.writeFully(close(1000))
+            session.flushAndClose()
+            assertEquals(0x88, oneFrame(wire).b0)
+            pongs.lock.lock()
+            try {
+                val waited = async { session.awaitWebSocketOutputEnd() }
+                advanceTimeBy(WebSocketPongs.DEFAULT_CLOSE_WAIT * 2 - 1.milliseconds)
+                runCurrent()
+                assertTrue(!waited.isCompleted, "held for the close wait, then bounded by a second one")
+                advanceTimeBy(2.milliseconds)
+                runCurrent()
+                assertTrue(waited.isCompleted, "over within two close waits")
+            } finally {
+                pongs.lock.unlock()
+            }
+            job.cancel()
+            wire.flushAndClose()
+            peer.flushAndClose()
+        }
+
     /** A channel whose end only flushes [wire], as the client engines' held transport end. */
     private class HeldOpen(
         private val wire: ByteChannel,

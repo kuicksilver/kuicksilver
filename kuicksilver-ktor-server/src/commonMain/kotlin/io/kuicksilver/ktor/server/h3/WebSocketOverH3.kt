@@ -139,9 +139,9 @@ internal class H3UpgradeResponse(
             sessionOutput = out
             upgrade.upgrade(input.channel, out, engineDispatcher, userDispatcher).join()
         } finally {
-            // the session is over: nothing reads its input any more, so the guard stops here, before it copies what the
-            // client still sends into a channel nobody reads; then the extension's state is freed (the guard inflates with
-            // a codec of its own)
+            // the session is over: nothing reads its input any more, so the guard stops right after the held end below,
+            // before it copies what the client still sends into a channel nobody reads; then the extension's state is freed
+            // (the guard inflates with a codec of its own)
             // the stream end the frame guard held for Pongs after the server's Close is ended first, while the guard still
             // reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its Close
             sessionOutput?.awaitWebSocketOutputEnd()

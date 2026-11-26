@@ -122,8 +122,8 @@ internal class H1Response(
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
-            // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
-            // the order is for clarity, not safety)
+            // the frame guard stops after the held end below, then the extension's state is freed (the guard inflates with a
+            // codec of its own, so that order is for clarity, not safety)
             // the transport end the frame guard held for Pongs after the server's Close is ended first, while the guard
             // still reads the client's Pings and Close (RFC 6455 section 5.5.2): a handler that returns right after its
             // Close (a raw session) leaves that to the engine
