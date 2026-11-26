@@ -308,6 +308,7 @@ def _filter(body, table, report, where, what, allowed=None):
     walk(_parse(body), "")
     for s, e, new in sorted(edits, reverse=True):
         body = body[:s] + new + body[e:]
+    body = _tidy_separators(body)
     # a group the cuts left empty goes (one that holds a comment of ours stays)
     pos = 0
     while True:
@@ -321,6 +322,52 @@ def _filter(body, table, report, where, what, allowed=None):
         body = body[:cs] + body[ce:]
 
 
+def _tidy_separators(body):
+    """Drops the `;` a removed or commented-out statement left without a statement before it (after `{`, the start or
+    another `;`) or after it (before `}` or the end): `{ /* ... */; a = 1; }` -> `{ /* ... */ a = 1 }`. Comments and
+    strings are skipped (kotlin_scan.blank)."""
+    code = kotlin_scan.blank(body)
+    drop = set()
+    last = None  # the last code character kept, ignoring blanks
+    for i, ch in enumerate(code):
+        if ch.isspace():
+            continue
+        if ch == ";" and last in (None, "{", ";"):
+            drop.add(i)
+            continue
+        last = ch
+    nxt = None  # the next code character to the right, ignoring blanks and dropped separators
+    for i in range(len(code) - 1, -1, -1):
+        ch = code[i]
+        if ch.isspace() or i in drop:
+            continue
+        if ch == ";" and nxt in (None, "}"):
+            drop.add(i)
+            continue
+        nxt = ch
+    if not drop:
+        return body
+    out = [c for i, c in enumerate(body) if i not in drop]
+    return "".join(out)
+
+
+def _h3_floors(body, report, where, server):
+    """Reports the literal values of an engine's quicConfig below RFC 9114 section 6's floors, which the 0.3.0 engines
+    refuse at start: initialStreamWindow < 1024 (section 6.2, both roles) and, on a server, maxBidiStreams < 100 (6.1)."""
+    code = kotlin_scan.blank(body)
+    floors = [("initialStreamWindow", 1024, "flowControl {{ initialStreamWindow = {} }}",
+               "RFC 9114 section 6.2: at least 1,024 bytes of credit SHOULD go to each unidirectional stream")]
+    if server:
+        floors.append(("maxBidiStreams", 100, "maxBidiStreams = {}",
+                       "RFC 9114 section 6.1: at least 100 request streams SHOULD be permitted at a time"))
+    for name, floor, shown, why in floors:
+        for m in re.finditer(rf"(?<![\w.]){name}\s*=\s*([0-9][0-9_]*)L?\b", code):
+            value = int(body[m.start(1):m.end(1)].replace("_", ""))
+            if value < floor:
+                report.append(f"{where}: http3 {{ quic {{ {shown.format(value)} }} }}: below {floor} ({why}): the 0.3.0 engine "
+                              f"refuses it at start: raise it")
+
+
 # The client engine derives these of its http3 { quic { } } (KuicksilverEngineConfig.QUIC_DERIVED) and refuses them.
 CLIENT_QUIC_DERIVED = {
     "handshakeTimeout": ("derived", "the engine's connectTimeout: set connectTimeout"),
@@ -329,6 +376,8 @@ CLIENT_QUIC_DERIVED = {
     "expert.maxUniStreams": ("report", "now in expert { }, at least 3 (RFC 9114 section 6.2)"),
     # 0.2.x quicConfig { connectionIdLength }: the endpoint's in 0.3.0, which the engine builds
     "connectionIdLength": ("move", ("http3", "expert"), "connectionIdLength", "now http3 { expert { connectionIdLength } }"),
+    # 0.2.x quicConfig { qlog }: one sink per endpoint in 0.3.0, the engine's observability { qlog }
+    "qlog": ("move", ("observability",), "qlog", "now observability { qlog }"),
 }
 SERVER_QUIC_DERIVED = {k: v for k, v in CLIENT_QUIC_DERIVED.items() if k != "handshakeTimeout"}
 SERVER_QUIC_DERIVED["connectionIdLength"] = (
@@ -390,6 +439,7 @@ def _c_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
+    _h3_floors(_raw_builder_body(value, "quicConfig"), report, where, server=False)
     body, moved = _filter(_raw_builder_body(value, "quicConfig"), CLIENT_QUIC_DERIVED, report, where, "http3 { quic { ")
     return "replace", _with_moved(_block(("http3", "quic"), body) if body.strip() else "", moved)
 
@@ -597,6 +647,7 @@ def _s_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
+    _h3_floors(_raw_builder_body(value, "quicConfig"), report, where, server=True)
     body, moved = _filter(_raw_builder_body(value, "quicConfig"), SERVER_QUIC_DERIVED, report, where, "http3 { quic { ")
     return "replace", _with_moved(_block(("http3", "quic"), body) if body.strip() else "", moved)
 

@@ -379,6 +379,67 @@ if [ "$(sort "$tmp/check.txt" | tr '\n' ' ')" != "client.kt guide.md merge.kt se
     echo "FAIL: --check listed $(tr '\n' ' ' < "$tmp/check.txt")or wrote a file"
     fails=$((fails + 1))
 fi
+# an engine's quicConfig { qlog } goes to observability { qlog }; the `;` a removed statement leaves goes with it; values
+# below RFC 9114 section 6's floors, which the 0.3.0 engines refuse at start, are reported with the section
+mkdir -p "$tmp/q/want"
+cat > "$tmp/q/quic.kt" <<'FIXTURE'
+package x
+
+import io.kuicksilver.ktor.client.Kuicksilver
+import io.kuicksilver.quic.quicConfig
+
+fun c() =
+    HttpClient(Kuicksilver) {
+        engine {
+            quic = quicConfig { handshakeTimeout = 5.seconds; maxIdleTimeout = 10.seconds; initialStreamWindow = 1000; qlog = sink }
+        }
+    }
+
+fun s() =
+    embeddedServer(Kuicksilver, configure = {
+        quic = quicConfig { maxBidiStreams = 99; initialStreamWindow = 1_024; qlog = sink }
+    }) {}
+FIXTURE
+cat > "$tmp/q/want/quic.kt" <<'FIXTURE'
+package x
+
+import io.kuicksilver.ktor.client.Kuicksilver
+import io.kuicksilver.quic.quicConfig
+
+fun c() =
+    HttpClient(Kuicksilver) {
+        engine {
+            http3 { quic { /* derived by the engine (the engine's connectTimeout: set connectTimeout): handshakeTimeout = 5.seconds */ maxIdleTimeout = 10.seconds; flowControl { initialStreamWindow = 1000 } } }
+            observability { qlog = sink }
+        }
+    }
+
+fun s() =
+    embeddedServer(Kuicksilver, configure = {
+        http3 { quic { maxBidiStreams = 99; flowControl { initialStreamWindow = 1_024 } } }
+        observability { qlog = sink }
+    }) {}
+FIXTURE
+cat > "$tmp/q/want/report.txt" <<'REPORT'
+CHECK quic.kt:15: http3 { quic { maxBidiStreams = 99 } }: below 100 (RFC 9114 section 6.1: at least 100 request streams SHOULD be permitted at a time): the 0.3.0 engine refuses it at start: raise it
+CHECK quic.kt:15: http3 { quic { qlog = sink } }: now observability { qlog }
+CHECK quic.kt:9: http3 { quic { flowControl { initialStreamWindow = 1000 } } }: below 1024 (RFC 9114 section 6.2: at least 1,024 bytes of credit SHOULD go to each unidirectional stream): the 0.3.0 engine refuses it at start: raise it
+CHECK quic.kt:9: http3 { quic { handshakeTimeout = 5.seconds } }: derived by the engine (the engine's connectTimeout: set connectTimeout): commented out
+CHECK quic.kt:9: http3 { quic { qlog = sink } }: now observability { qlog }
+1 file(s) changed
+REPORT
+(cd "$tmp/q" && python3 -I -B "$here/config-0.3.py" quic.kt > out.txt 2> report.txt) || { echo "FAIL: config-0.3.py failed on quic.kt"; fails=$((fails + 1)); }
+for f in quic.kt report.txt; do
+    if ! diff -u "$tmp/q/want/$f" "$tmp/q/$f"; then
+        echo "FAIL: $f differs from the fixture's 0.3.0 form"
+        fails=$((fails + 1))
+    fi
+done
+(cd "$tmp/q" && python3 -I -B "$here/config-0.3.py" quic.kt > again.txt 2> again-report.txt)
+if ! cmp -s "$tmp/q/want/quic.kt" "$tmp/q/quic.kt" || grep -q '^CHECK' "$tmp/q/again-report.txt"; then
+    echo "FAIL: a second run changed or reported quic.kt"; cat "$tmp/q/again-report.txt"
+    fails=$((fails + 1))
+fi
 if [ "$fails" -ne 0 ]; then
     echo "config-0.3-test: $fails failure(s)"
     exit 1
