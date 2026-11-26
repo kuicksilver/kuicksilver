@@ -168,6 +168,20 @@ class Http3EndpointAcceptTest {
                         "SHOULD be permitted at a time), not 99",
                     e.message,
                 )
+                // the test seam is per call: one bind may permit 99, and the next plain bind is refused again
+                val seamIo = net.open(InetSocketAddress("10.0.0.5", 443))
+                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                Http3Endpoint
+                    .bind(
+                        seamIo.localAddress,
+                        serverConfig(seamIo, quicConfig { maxBidiStreams = 99 }),
+                        Http3Settings.Default,
+                        allowFewerBidiStreams = true,
+                    ).close()
+                val againIo = net.open(InetSocketAddress("10.0.0.6", 443))
+                assertFailsWith<IllegalArgumentException> {
+                    Http3Endpoint.bind(againIo.localAddress, serverConfig(againIo, quicConfig { maxBidiStreams = 99 }))
+                }
                 val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
                 val server = Http3Endpoint.bind(serverIo.localAddress, serverConfig(serverIo, quicConfig { maxBidiStreams = 100 }))
                 val clientIo = net.open(InetSocketAddress("10.0.0.1", 1111))

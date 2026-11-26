@@ -239,12 +239,20 @@ public class KuicksilverApplicationEngine(
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
         internal var h2ReleaseForTest: ((io.kuicksilver.http2.runtime.H2ServerStream, CancellationException?) -> Unit)? = null
 
+        /**
+         * Test seam: lets this engine permit fewer than the 100 request streams RFC 9114 section 6.1 holds a server to
+         * (`http3 { quic { maxBidiStreams } }`), so a test can exhaust a client's stream credit with a few requests. This
+         * engine only; public for the client's tests, which start their server through it.
+         */
+        @io.kuicksilver.annotations.InternalKuicksilverApi
+        public var allowFewerBidiStreamsForTest: Boolean = false
+
         /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
         internal var http3Bind: suspend (
             InetSocketAddress,
             QuicEndpointConfig,
             Http3Settings,
-        ) -> Http3Endpoint = { a, c, s -> Http3Endpoint.bind(a, c, s) }
+        ) -> Http3Endpoint = { a, c, s -> Http3Endpoint.bind(a, c, s, allowFewerBidiStreamsForTest) }
 
         /**
          * The QUIC settings of the HTTP/3 listeners: the `http3 { quic { } }` block, its derived options refused, with
@@ -264,7 +272,15 @@ public class KuicksilverApplicationEngine(
             requireUniStreamCredit(built)
             val flowControl = wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L
             val (bidi, uni) =
-                quicStreamLimits(built, assigned, sessions, wt.initialMaxStreamsBidi, wt.initialMaxStreamsUni, flowControl)
+                quicStreamLimits(
+                    built,
+                    assigned,
+                    sessions,
+                    wt.initialMaxStreamsBidi,
+                    wt.initialMaxStreamsUni,
+                    flowControl,
+                    allowFewerBidiStreamsForTest,
+                )
             val window = quicConnectionWindow(built, assigned, sessions, wt.initialMaxData, flowControl)
             val resetStreamAt = wt.enabled && !built.resetStreamAt
             if (bidi == built.maxBidiStreams && uni == built.maxUniStreams && window == built.maxConnectionWindow && !resetStreamAt) {
@@ -395,6 +411,7 @@ public class KuicksilverApplicationEngine(
                 bidiPerSession: Long,
                 uniPerSession: Long,
                 flowControl: Boolean,
+                allowFewerBidiStreams: Boolean = false,
             ): Pair<Long, Long> {
                 val needBidi = if (flowControl) atLeast(sessions, bidiPerSession + 1, 0) else 0
                 val needUni = if (flowControl) atLeast(sessions, uniPerSession, 3) else 3
@@ -417,8 +434,7 @@ public class KuicksilverApplicationEngine(
                 val bidi =
                     if ("maxBidiStreams" in assigned) {
                         val n = built.maxBidiStreams
-                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                        require(n >= 100 || Http3Endpoint.allowFewerBidiStreamsForTest) {
+                        require(n >= 100 || allowFewerBidiStreams) {
                             "http3 { quic { maxBidiStreams } } must be at least 100 (RFC 9114 section 6.1: at least 100 request " +
                                 "streams SHOULD be permitted at a time), not $n"
                         }

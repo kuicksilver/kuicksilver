@@ -265,9 +265,10 @@ The design left these cases open or met them only in the code; each was decided 
   as the server opens no request streams. Both roles (`Http3Endpoint.bind`, `connect`, `connectEarly` and both engines'
   `http3 { quic { flowControl { initialStreamWindow } } }`) refuse an initial stream window below 1024, which is the
   window of every unidirectional stream; the bidirectional ones share it, and 1024 bytes are no real limit for them
-  either. Tests that need a server with fewer streams set `Http3Endpoint.allowFewerBidiStreamsForTest`, an
-  `@InternalKuicksilverApi` seam that the Ktor server engine reads too, public because the Ktor client's tests start
-  such a server.
+  either. Tests that need a server with fewer streams set the server engine's own
+  `allowFewerBidiStreamsForTest` (an `@InternalKuicksilverApi` field of its configuration, public because the Ktor
+  client's tests start such a server), which the engine passes to its `Http3Endpoint.bind`: per engine, never a global
+  switch that another test running at the same time would see.
 - **WebTransport options are named as written, and the connection window fits the sessions.** The HTTP/3 SETTINGS
   builder recorded the three per-session limits under one made-up key, so the server's refusal named
   `http3 { settings { webTransport { limits } } }`, which does not exist. Each option is recorded under its own name, and

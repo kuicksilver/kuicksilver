@@ -217,11 +217,24 @@ public class Http3Endpoint private constructor(
             local: InetSocketAddress,
             config: QuicEndpointConfig = QuicEndpointConfig.Default,
             settings: Http3Settings = Http3Settings.Default,
+        ): Http3Endpoint = bind(local, config, settings, allowFewerBidiStreams = false)
+
+        /**
+         * Test seam: [bind], and with [allowFewerBidiStreams] a server that grants fewer than the 100 request streams of
+         * section 6.1, so a test can exhaust a client's stream credit with a few requests. Per call, never global: the Ktor
+         * server engine passes its own `allowFewerBidiStreamsForTest`, which only that engine's tests set.
+         */
+        @InternalKuicksilverApi
+        public suspend fun bind(
+            local: InetSocketAddress,
+            config: QuicEndpointConfig,
+            settings: Http3Settings,
+            allowFewerBidiStreams: Boolean,
         ): Http3Endpoint {
             config.server?.let {
                 require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" }
                 requireCriticalStreams(it.quic)
-                requireRequestStreams(it.quic)
+                if (!allowFewerBidiStreams) requireRequestStreams(it.quic)
             }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
             return Http3Endpoint(QuicEndpoint.bind(local, config.forHttp3Server(server)), server)
@@ -283,15 +296,6 @@ public class Http3Endpoint private constructor(
         @kotlin.concurrent.Volatile
         internal var allowFewerUniStreamsForTest = false
 
-        /**
-         * Test hook: binds a server that grants fewer than the 100 request streams of section 6.1, so a test can exhaust a
-         * client's stream credit with a few requests. The Ktor server engine reads it too, and the Ktor client's tests set
-         * it for their server, hence public.
-         */
-        @InternalKuicksilverApi
-        @kotlin.concurrent.Volatile
-        public var allowFewerBidiStreamsForTest: Boolean = false
-
         /** Test hook: an endpoint that gives a stream less than the 1024 bytes of section 6.2, to test a peer's side of it. */
         @kotlin.concurrent.Volatile
         internal var allowSmallerStreamWindowForTest = false
@@ -325,7 +329,7 @@ public class Http3Endpoint private constructor(
          * server opens no bidirectional streams).
          */
         private fun requireRequestStreams(q: QuicConfig) {
-            require(q.maxBidiStreams >= MIN_REQUEST_STREAMS || allowFewerBidiStreamsForTest) {
+            require(q.maxBidiStreams >= MIN_REQUEST_STREAMS) {
                 "an HTTP/3 server needs QuicConfig maxBidiStreams >= 100 (RFC 9114 section 6.1: at least 100 request streams " +
                     "SHOULD be permitted at a time), not ${q.maxBidiStreams}"
             }

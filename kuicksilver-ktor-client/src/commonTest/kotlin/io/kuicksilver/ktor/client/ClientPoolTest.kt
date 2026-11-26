@@ -17,7 +17,6 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
-import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.beforeTransportClosedForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
@@ -51,14 +50,14 @@ class ClientPoolTest {
     private suspend fun fewStreamsServer(
         streams: Long,
         module: io.ktor.server.application.Application.() -> Unit,
-    ): Pair<TestServer, Int> {
-        Http3Endpoint.allowFewerBidiStreamsForTest = true
-        try {
-            return testServer(configure = { http3 { quic { maxBidiStreams = streams } } }, module = module)
-        } finally {
-            Http3Endpoint.allowFewerBidiStreamsForTest = false
-        }
-    }
+    ): Pair<TestServer, Int> =
+        testServer(
+            configure = {
+                allowFewerBidiStreamsForTest = true
+                http3 { quic { maxBidiStreams = streams } }
+            },
+            module = module,
+        )
 
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
