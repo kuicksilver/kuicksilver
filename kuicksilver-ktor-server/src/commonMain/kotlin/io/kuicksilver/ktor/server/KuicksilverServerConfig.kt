@@ -888,7 +888,8 @@ public class TcpLimitsConfig internal constructor() {
      * its TLS handshake, which a proxy in front reports as 502 or 503, and it is reported to
      * [KuicksilverServerEventListener.connectionRefused] with the reason `per-IP limit`. An address is its bytes, never a
      * name: an IPv4-mapped client as its IPv4 address, an IPv6 client by its whole address (as QUIC's
-     * `http3 { endpoint { maxConnectionsPerIp } }`). At least 1, or null.
+     * `http3 { endpoint { maxConnectionsPerIp } }`). Off by default, unlike QUIC's (256): the TCP handshake proves a
+     * client's address before any state is kept for it, and proxies in front of TCP are common. At least 1, or null.
      *
      * @throws IllegalArgumentException when set below 1.
      */
