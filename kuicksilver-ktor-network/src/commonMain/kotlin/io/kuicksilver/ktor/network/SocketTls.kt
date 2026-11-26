@@ -28,6 +28,7 @@ import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.isHandshakeTimeout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -175,49 +176,100 @@ public class TlsSocket private constructor(
      * the wrapped failure it caught) hid the [TlsException] two causes deep. A channel opened with
      * [openDeliveringReadChannel] keeps the plaintext relayed before the failure readable (`ReadDelivery`).
      *
-     * A channel opened once [close] has begun gets nothing: it fails at once, and no relay reads the session's input,
-     * which the close reads and drops from then on (a second reader would race it and take the peer's bytes past the
-     * close).
+     * A channel opened once this side ended the socket ([close], [abort], a failed stream) gets nothing: it fails at
+     * once with a [ConnectionEndedException.LocalClose], and no relay reads the session's input, which the close reads and
+     * drops from then on (a second reader would race it and take the peer's bytes past the close). A relay that this
+     * side's end stops (a read waiting as the socket closes) fails its channel with the same, never with its own
+     * cancellation: a CancellationException reaching a reader that was not cancelled reads as its own cancellation.
      */
     @OptIn(InternalAPI::class)
     override fun attachForReading(channel: ByteChannel): WriterJob {
-        if (closeBegun) return closedForReading(channel)
-        val job = relayTo(channel)
+        if (closeBegun || closing) return closedForReading(channel)
+        // the socket's job may have ended already, and a coroutine launched under a completed job never runs: its channel
+        // failed with "Parent job is Completed", a JobCancellationException, instead of the LocalClose. Attaching a child
+        // decides it atomically: the child is active only while the socket's job is, and holds that job open until the
+        // relay ends
+        val relayParent = Job(coroutineContext[Job])
+        if (!relayParent.isActive) return closedForReading(channel)
+        val job = relayTo(channel, relayParent)
         attachedReader = job
         // a close that began meanwhile may have looked for the relay before it was set: it ends here then (both sides set
         // their own flag before they read the other's, so one of them sees the other's). It cannot read alongside the
         // close's drop either way: the close cancels the session's input (TlsConnection.cancelInput) once the relay it saw
         // has ended, and a relay that came after reads only that cancelled input
-        if (closeBegun) job.job.cancel()
+        if (closeBegun) endRelay(job)
         return job
     }
 
-    /** The application's channel of a closed socket: it fails at once, nothing is read for it. */
-    private fun closedForReading(channel: ByteChannel): WriterJob =
-        writer(coroutineContext, channel) {
-            throw ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is read")
-        }
+    /**
+     * The application's channel of a socket this side ended: it fails at once, nothing is read for it. The channel fails
+     * here, before any coroutine: one launched under the socket's job, completed by then, would never run. The writer job
+     * returned, outside that job, has nothing left to do.
+     */
+    private fun closedForReading(channel: ByteChannel): WriterJob {
+        channel.cancel(localEnd())
+        @OptIn(DelicateCoroutinesApi::class)
+        return GlobalScope.writer(Dispatchers.Unconfined, channel) {}
+    }
+
+    /**
+     * Stops [relay] for this side's end: its channel fails with [localEnd] first, so that the relay's cancellation, which
+     * the channel would otherwise take as its cause, finds it closed (ktor's channels keep their first cause). It may be
+     * called before the relay ran at all.
+     */
+    private fun endRelay(relay: WriterJob) {
+        relay.channel.cancel(localEnd())
+        relay.job.cancel()
+    }
 
     @OptIn(InternalAPI::class)
-    private fun relayTo(channel: ByteChannel): WriterJob =
-        writer(coroutineContext, channel) {
-            val source = tls.input
-            try {
-                while (true) {
-                    if (source.readBuffer.exhausted() && !source.awaitContent()) break
-                    source.readBuffer.transferTo(channel.writeBuffer)
-                    channel.flush()
-                }
-                source.closedCause?.let { throw it }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                val failure = if (e is ClosedByteChannelException) e.sessionFailure() else e
-                // before the writer's own cancel, which then finds the channel closed: what was relayed stays readable
-                readDelivery.fail(channel, failure)
-                throw failure
+    private fun relayTo(
+        channel: ByteChannel,
+        parent: CompletableJob,
+    ): WriterJob {
+        val relay =
+            writer(coroutineContext + parent, channel) {
+                relay(channel)
             }
+        relay.job.invokeOnCompletion { parent.complete() }
+        return relay
+    }
+
+    @OptIn(InternalAPI::class)
+    private suspend fun relay(channel: ByteChannel) {
+        val source = tls.input
+        try {
+            while (true) {
+                if (source.readBuffer.exhausted() && !source.awaitContent()) break
+                source.readBuffer.transferTo(channel.writeBuffer)
+                channel.flush()
+            }
+            source.closedCause?.let { throw it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // this side ended the socket ([abortTls] ends the session under the relay, a failed stream as well): the
+            // channel fails with that end, not with what the ended session reports (a clean end of its input, "connection
+            // closed")
+            if (closing) {
+                readDelivery.fail(channel, localEnd())
+                throw CancellationException("the TLS socket is closed", e)
+            }
+            val failure = if (e is ClosedByteChannelException) e.sessionFailure() else e
+            // before the writer's own cancel, which then finds the channel closed: what was relayed stays readable
+            readDelivery.fail(channel, failure)
+            throw failure
         }
+        // the session's input ended cleanly under this side's end ([abortTls] closes the session): not the peer's end
+        if (closing) {
+            readDelivery.fail(channel, localEnd())
+            throw CancellationException("the TLS socket is closed")
+        }
+    }
+
+    /** This side ended the socket: what a read gets from then on. */
+    private fun localEnd(): ConnectionEndedException.LocalClose =
+        ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is read")
 
     /**
      * The relay above, once attached: [close] and [abortTls] end it. It may wait for room in the application's channel,
@@ -242,28 +294,47 @@ public class TlsSocket private constructor(
      * connection's close would take the cut one for the whole. It ends with the fatal alert internal_error after what was
      * sent, then a FIN, where OpenSSL can send one (RFC 9846 section 6.1; `failTls`), else with a reset (`abortTls`). A
      * channel closed normally ends with `close_notify` on [close].
+     *
+     * A channel opened once this side ended the socket ([close], [abort], a failed stream) fails at once with a
+     * [ConnectionEndedException.LocalClose] and starts no pump: a pump launched under the socket's completed job never ran
+     * (the application's write failed with a JobCancellationException), and one started while the close is under way
+     * met the session's closed output and failed the stream, which turns the graceful close into an alert.
      */
     @OptIn(InternalAPI::class)
-    override fun attachForWriting(channel: ByteChannel): ReaderJob =
-        reader(coroutineContext, channel) {
-            try {
-                // ktor's copyTo, without its close of the destination with the failure: closing the TLS output sends
-                // close_notify, which would race the abort
-                while (true) {
-                    if (channel.readBuffer.exhausted() && !channel.awaitContent()) break
-                    channel.readBuffer.transferTo(tls.output.writeBuffer)
-                    tls.output.flush()
+    override fun attachForWriting(channel: ByteChannel): ReaderJob {
+        if (closeBegun || closing) return closedForWriting(channel)
+        // as for the read relay: the pump runs under a child attached while the socket's job is still active, or not at all
+        val pumpParent = Job(coroutineContext[Job])
+        if (!pumpParent.isActive) return closedForWriting(channel)
+        val pump =
+            reader(coroutineContext + pumpParent, channel) {
+                try {
+                    // ktor's copyTo, without its close of the destination with the failure: closing the TLS output sends
+                    // close_notify, which would race the abort
+                    while (true) {
+                        if (channel.readBuffer.exhausted() && !channel.awaitContent()) break
+                        channel.readBuffer.transferTo(tls.output.writeBuffer)
+                        tls.output.flush()
+                    }
+                    channel.closedCause?.let { throw it }
+                } catch (e: Throwable) {
+                    if (e !is CancellationException) failTls(e)
+                    throw e
                 }
-                channel.closedCause?.let { throw it }
-            } catch (e: Throwable) {
-                if (e !is CancellationException) failTls(e)
-                throw e
+                tls.output.flushAndClose()
             }
-            tls.output.flushAndClose()
-        }.also {
-            attachedChannel = channel
-            attachedWriter = it
-        }
+        pump.job.invokeOnCompletion { pumpParent.complete() }
+        attachedChannel = channel
+        attachedWriter = pump
+        return pump
+    }
+
+    /** The application's write channel of a socket this side ended: it fails at once, nothing is sent from it. */
+    private fun closedForWriting(channel: ByteChannel): ReaderJob {
+        channel.cancel(ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is written"))
+        @OptIn(DelicateCoroutinesApi::class)
+        return GlobalScope.reader(Dispatchers.Unconfined, channel) {}
+    }
 
     /**
      * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes; on a server
@@ -301,9 +372,9 @@ public class TlsSocket private constructor(
                 // (and the peer's writes behind that) until the bound (a client's session stops reading past 256 KiB
                 // dropped, and the close comes under the rest); a relay attached as the close began fails on the cancelled
                 // input, so nothing reads it alongside the drop
-                attachedReader?.job?.let {
-                    it.cancel()
-                    it.join()
+                attachedReader?.let {
+                    endRelay(it)
+                    it.job.join()
                 }
                 tls.cancelInput(CancellationException("the TLS socket is closed: nothing more is read"))
                 attachedWriter?.let { rj ->
@@ -351,7 +422,7 @@ public class TlsSocket private constructor(
         // and the application's pumps: the write pump waits for the application's next bytes, the read relay for room in
         // its channel; both are children of the raw socket's job, which they held, and the socket, for good
         attachedWriter?.job?.cancel()
-        attachedReader?.job?.cancel()
+        attachedReader?.let(::endRelay)
     }
 
     /**

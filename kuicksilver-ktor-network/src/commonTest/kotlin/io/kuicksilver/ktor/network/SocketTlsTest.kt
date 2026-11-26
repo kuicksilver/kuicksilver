@@ -38,6 +38,7 @@ import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -254,25 +255,171 @@ class SocketTlsTest {
             }
         }
 
-    /** A read channel opened after close() fails at once with a LocalClose: this side closed the socket, not the peer. */
-    @Test fun negative_aReadAfterTheCloseIsALocalClose(): Unit =
+    /**
+     * A read channel opened after close() fails at once with a LocalClose: this side closed the socket, not the peer. The
+     * channel is opened while the close is still under way here; [negative_aReadAfterTheCloseEndedIsALocalClose] opens it
+     * once the socket's job has completed.
+     */
+    @Test fun negative_aReadAfterTheCloseIsALocalClose(): Unit = afterLocalEnd(delivering = false, end = { it.close() })
+
+    /**
+     * The same once the close has ended: the socket's job is complete, and a relay launched under it never ran (the channel
+     * failed with "Parent job is Completed", a JobCancellationException, under load on Linux).
+     */
+    @Test fun negative_aReadAfterTheCloseEndedIsALocalClose(): Unit =
+        afterLocalEnd(
+            delivering = false,
+            end = { it.close() },
+            awaitEnd = true,
+        )
+
+    /** The same for the engines' read channel ([openDeliveringReadChannel]). */
+    @Test fun negative_aDeliveringReadAfterTheCloseEndedIsALocalClose(): Unit =
+        afterLocalEnd(delivering = true, end = { it.close() }, awaitEnd = true)
+
+    /** An abort is this side's end too: a read channel opened after it fails with a LocalClose, not a cancellation. */
+    @Test fun negative_aReadAfterTheAbortIsALocalClose(): Unit =
+        afterLocalEnd(delivering = false, end = {
+            it.abort()
+        }, awaitEnd = true, aborted = true)
+
+    /** The same for the engines' read channel. */
+    @Test fun negative_aDeliveringReadAfterTheAbortIsALocalClose(): Unit =
+        afterLocalEnd(
+            delivering = true,
+            end = { it.abort() },
+            awaitEnd = true,
+            aborted = true,
+        )
+
+    /**
+     * A read waiting when the socket closes fails with a LocalClose as well: the close ends the relay, and the channel it
+     * fed is failed with this side's end, not with the relay's cancellation (a CancellationException reaching a reader
+     * that was not cancelled reads as its own cancellation).
+     */
+    @Test fun negative_aReadPendingAtTheCloseIsALocalClose(): Unit = pendingAtLocalEnd(delivering = false) { it.close() }
+
+    /** The same for the engines' read channel. */
+    @Test fun negative_aDeliveringReadPendingAtTheCloseIsALocalClose(): Unit = pendingAtLocalEnd(delivering = true) { it.close() }
+
+    /** And at an abort. */
+    @Test fun negative_aReadPendingAtTheAbortIsALocalClose(): Unit = pendingAtLocalEnd(delivering = false, aborted = true) { it.abort() }
+
+    /**
+     * A write channel opened after this side's end fails with a LocalClose too: no pump starts under the socket's job, which
+     * may have completed (the write failed with a raw JobCancellationException), or while the close is under way (the pump
+     * met the closed session output and failed the stream).
+     */
+    @Test fun negative_aWriteAfterTheCloseEndedIsALocalClose(): Unit = writeAfterLocalEnd(awaitEnd = true) { it.close() }
+
+    /** The same while the close is still under way. */
+    @Test fun negative_aWriteAfterTheCloseIsALocalClose(): Unit = writeAfterLocalEnd(awaitEnd = false) { it.close() }
+
+    /** And after an abort. */
+    @Test fun negative_aWriteAfterTheAbortIsALocalClose(): Unit = writeAfterLocalEnd(awaitEnd = true, aborted = true) { it.abort() }
+
+    private fun writeAfterLocalEnd(
+        awaitEnd: Boolean,
+        aborted: Boolean = false,
+        end: (TlsSocket) -> Unit,
+    ): Unit =
         runBlocking {
             val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
             try {
                 val c = withTimeout(20.seconds) { srv.client() }
-                c.close()
-                val r = c.openReadChannel()
-                runCatching { withTimeout(10.seconds) { r.readAvailable(ByteArray(1), 0, 1) } }
-                withTimeout(10.seconds) { while (!r.isClosedForRead) r.awaitContent() }
-                val end =
-                    generateSequence(r.closedCause) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
-                assertIs<ConnectionEndedException.LocalClose>(end, "${r.closedCause}")
-                assertEquals("the TLS socket is closed: nothing more is read", end.message)
-                withTimeout(10.seconds) { srv.job.await() }
+                end(c)
+                if (awaitEnd) withTimeout(20.seconds) { c.socketContext.join() }
+                val w = c.openWriteChannel(autoFlush = true)
+                val e =
+                    runCatching {
+                        withTimeout(10.seconds) {
+                            w.writeFully(ByteArray(10), 0, 10)
+                            w.flush()
+                        }
+                    }.exceptionOrNull()
+                assertTrue(e != null && e !is CancellationException, "the write after the local end failed with $e")
+                val localEnd = generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+                assertIs<ConnectionEndedException.LocalClose>(localEnd, "the write after the local end failed with $e")
+                assertEquals("the TLS socket is closed: nothing more is written", localEnd.message)
+                withTimeout(20.seconds) { c.socketContext.join() }
+                srv.awaitHandler(aborted)
             } finally {
                 srv.close()
             }
         }
+
+    /** [end]s the client's socket, then opens its read channel (after the socket's job completed with [awaitEnd]). */
+    private fun afterLocalEnd(
+        delivering: Boolean,
+        end: (TlsSocket) -> Unit,
+        awaitEnd: Boolean = false,
+        aborted: Boolean = false,
+    ): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                end(c)
+                if (awaitEnd) withTimeout(20.seconds) { c.socketContext.join() }
+                val r = if (delivering) c.openDeliveringReadChannel() else c.openReadChannel()
+                assertLocalClose(r)
+                srv.awaitHandler(aborted)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /** Opens the client's read channel, waits in a read on it, and [end]s the socket meanwhile. */
+    private fun pendingAtLocalEnd(
+        delivering: Boolean,
+        aborted: Boolean = false,
+        end: (TlsSocket) -> Unit,
+    ): Unit =
+        runBlocking {
+            val srv = LoopbackServer.start { s -> runCatching { s.openReadChannel().readAvailable(ByteArray(1), 0, 1) } }
+            try {
+                val c = withTimeout(20.seconds) { srv.client() }
+                val r = if (delivering) c.openDeliveringReadChannel() else c.openReadChannel()
+                val read = async(Dispatchers.Default) { runCatching { r.readAvailable(ByteArray(1), 0, 1) } }
+                end(c)
+                val failure = withTimeout(10.seconds) { read.await() }.exceptionOrNull()
+                assertTrue(failure !is CancellationException, "the pending read failed with $failure")
+                assertLocalClose(r, failure)
+                withTimeout(20.seconds) { c.socketContext.join() }
+                srv.awaitHandler(aborted)
+            } finally {
+                srv.close()
+            }
+        }
+
+    /**
+     * Waits for the server's handler; after an abort it may have failed: the reset can reach the server while its handshake
+     * still reads the client's Finished.
+     */
+    private suspend fun LoopbackServer.awaitHandler(aborted: Boolean) {
+        withTimeout(10.seconds) { if (aborted) runCatching { job.await() } else job.await() }
+    }
+
+    /**
+     * [r] failed with this side's end: its cause is a LocalClose, and so is the failure of a read that waited on it
+     * ([failure]). A read of a channel that is closed already returns -1 (ktor's channels), so the cause is what tells.
+     */
+    private suspend fun assertLocalClose(
+        r: ByteReadChannel,
+        failure: Throwable? = null,
+    ) {
+        if (failure != null) {
+            val end = generateSequence(failure) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+            assertIs<ConnectionEndedException.LocalClose>(end, "the waiting read failed with $failure")
+        } else {
+            val thrown = runCatching { withTimeout(10.seconds) { r.readAvailable(ByteArray(1), 0, 1) } }.exceptionOrNull()
+            assertTrue(thrown !is CancellationException, "the read after the local end failed with $thrown")
+        }
+        withTimeout(10.seconds) { while (!r.isClosedForRead) runCatching { r.awaitContent() } }
+        val end = generateSequence(r.closedCause) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()
+        assertIs<ConnectionEndedException.LocalClose>(end, "the channel's cause ${r.closedCause}")
+        assertEquals("the TLS socket is closed: nothing more is read", end.message)
+    }
 
     /**
      * The server's application never reads: once its buffers are full, the client's flush, close_notify and the raw socket's
