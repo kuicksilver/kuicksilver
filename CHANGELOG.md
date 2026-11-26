@@ -17,6 +17,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
   stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
   later drafts.
+- `kq` (`samples/kq-cli`, not published): a curl-like command line on the Ktor client engine, built as a native
+  executable for macOS arm64, Linux x64 and arm64 and Windows x64. `kq get|head <url>` with `--http3`, `--http3-only`,
+  `--http2`, `--http1.1`, `-i`, `-H`, `-o`, `--repeat`, `--0rtt`, `--qlog <dir>`, `--cacert`, `--alt-svc <file>` and
+  `--connect-timeout`; `-v` prints for each response the protocol and why (`ProtocolDiagnostics`), the QUIC connection
+  (handshake time, RTT, ALPN, the 0-RTT outcome, the QUIC version offered), the race and the `Alt-Svc` fields received,
+  and a failed call's connect failures. Public API only. Its tests run kq against an in-process server over loopback on
+  the JVM and macOS; the local gate runs them and builds every executable in a new step, `sample: kq-cli (tests, the kq
+  executables)`, and hosted CI in the `apple`, `apple-native` and `linux-native` jobs.
+- README: a "Features" section right after the status note (HTTP/3, HTTP/2 and HTTP/1.1; Alt-Svc, the protocol race and
+  fallback; WebTransport and its drafts; QUIC and HTTP datagrams; ECH; CONNECT-UDP; 0-RTT; connection migration; RFC
+  compliance; interop; qlog), each linked to the page behind it, and the samples; the same list as keywords in
+  `llms.txt` and in the summary of `llms-full.txt` (`tools/check/llms-full.sh`).
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.

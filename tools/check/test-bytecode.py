@@ -244,6 +244,7 @@ SAMPLES = [("samples/realtime-telemetry/build/classes/kotlin/jvm/test", ("sample
            ("samples/webtransport-chat/build/classes/kotlin/jvm/test", ("samples/webtransport-chat/src/commonTest/",
                                                                        "samples/webtransport-chat/src/jvmTest/")),
            ("samples/http3-server/build/classes/kotlin/test", ("samples/http3-server/src/test/",)),
+           ("samples/kq-cli/build/classes/kotlin/jvm/test", ("samples/kq-cli/src/commonTest/", "samples/kq-cli/src/jvmTest/")),
            ("samples/compose-demo/composeApp/build/classes/kotlin/android/hostTest",
             ("samples/compose-demo/composeApp/src/commonTest/", "samples/compose-demo/composeApp/src/androidHostTest/")),
            ("samples/compose-demo/server/build/classes/kotlin/test", ("samples/compose-demo/server/src/test/",)),

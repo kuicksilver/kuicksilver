@@ -2436,6 +2436,9 @@ on Apple platforms it is the system's.
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side
 is the one described in [QUIC: Observability](quic.md#observability): counters, a `KuicksilverLogger`, a
 `ConnectionListener` and qlog.
+[`samples/kq-cli`](../../samples/kq-cli/README.md) puts the client side together in a command line, `kq get -v <url>`:
+the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
+and a qlog trace per connection, built for macOS, Linux and Windows.
 
 **Server.** In the engine configuration, `logger` receives the HTTP/3 endpoints' diagnostics (warnings on standard error by
 default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC

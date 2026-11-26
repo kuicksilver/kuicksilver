@@ -2,6 +2,8 @@
 
 > The guides of Kuicksilver (QUIC, HTTP/3, HTTP/2 and TLS for Kotlin Multiplatform, with a Ktor client and server engine) in one file, generated from docs/guide/*.md by tools/check/llms-full.sh. Links to other pages point at GitHub. The index is llms.txt.
 
+Features (each described in the guides below; experimental ones are marked so there): HTTP/3, HTTP/2 and HTTP/1.1 in one Ktor client engine and one server engine; Alt-Svc discovery, an HTTP/3 and TCP protocol race with an RTT-based head start, and fallback to TCP for a broken alternative or a stalled QUIC connection (adaptive TCP and QUIC); WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17; servers also take drafts 16, 14 and 02, clients also offer 16 and 02); QUIC datagrams (RFC 9221) and HTTP datagrams (RFC 9297); Encrypted Client Hello (ECH, RFC 9849), client and server; CONNECT-UDP (RFC 9298, MASQUE), client and proxy; 0-RTT; connection migration; qlog. RFC-strict: one row per requirement in docs/spec/rfc-compliance.md, every departure for a peer in docs/spec/compat-shims.md. Interop-tested against 6 QUIC stacks (msquic, ngtcp2, picoquic, quic-go, quiche, quinn; docs/spec/interop.md). Kotlin Multiplatform targets: JVM, Android, iOS, macOS, Linux and Windows (not JS or Wasm). Samples: samples/kq-cli (kq, a curl-like command line), samples/realtime-telemetry, samples/compose-demo.
+
 ## QUIC with Kuicksilver
 
 **What this page is for.** It explains the QUIC layer on its own: configuring, binding an endpoint, opening streams, and the
@@ -2455,8 +2457,9 @@ CONNECT-UDP (RFC 9298, "Proxying UDP in HTTP", the UDP part of MASQUE) tunnels U
 sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the target, and from then on UDP payloads
 travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
 and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
-and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024), and the
-Ktor engines do not offer CONNECT-UDP yet.
+and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024). The Ktor
+engines offer it too: the server engine's `connectUdp` ([Ktor: CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connect-udp-over-http3-experimental))
+and the client engine's `connectUdpProxy` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental)).
 
 A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
 default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
@@ -5149,6 +5152,9 @@ on Apple platforms it is the system's.
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side
 is the one described in [QUIC: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#observability): counters, a `KuicksilverLogger`, a
 `ConnectionListener` and qlog.
+[`samples/kq-cli`](https://github.com/kuicksilver/kuicksilver/blob/main/samples/kq-cli/README.md) puts the client side together in a command line, `kq get -v <url>`:
+the protocol of each response and why, the QUIC connection (handshake time, RTT, ALPN, 0-RTT), the `Alt-Svc` learned
+and a qlog trace per connection, built for macOS, Linux and Windows.
 
 **Server.** In the engine configuration, `logger` receives the HTTP/3 endpoints' diagnostics (warnings on standard error by
 default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC
