@@ -187,3 +187,8 @@ The design left these cases open or met them only in the code; each was decided 
   exceptions of principle 9 are `#field-experimental` lines, the mapping tests are `#mapped` lines, and the classes without
   one (`TlsConfig.Builder` and its blocks, the constructor-configured `SessionTicketConfig` and `UdpProxyConfig`, the
   unchanged `CapsuleConfig.Builder`) carry an `#unmapped` reason.
+- **Transport-parameter durations are whole milliseconds.** `maxIdleTimeout` and `expert { maxAckDelay }` go on the wire in
+  milliseconds (RFC 9000 section 18.2) while the connection times its idle close and its ACKs on the `Duration`: a fraction
+  was advertised rounded down (`0.5 ms` as 0, which is "no idle timeout") and the peer's view and ours differed. A value
+  that is not a whole number of milliseconds is refused rather than rounded, so what is advertised is what runs;
+  `maxAckDelay` must also be at least 0. Every `EngineMain` duration key takes whole milliseconds for the same reason.

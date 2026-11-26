@@ -506,8 +506,8 @@ kuicksilver.tls {
 # kuicksilver.http3.endpoint.maxConnectionsPerIp = off                   # behind a NAT or kube-proxy
 ```
 
-Values: `true` or `false` for a switch (nothing else); a duration as `Duration.parse` reads it (`30s`, `1h`, `PT30S`);
-an enumeration's names in any case; `off` for "none" or "no limit" where an option has one, and `0` there is refused
+Values: `true` or `false` for a switch (nothing else); a duration as `Duration.parse` reads it (`30s`, `1h`, `PT30S`),
+in whole milliseconds (`1.5ms` is refused); an enumeration's names in any case; `off` for "none" or "no limit" where an option has one, and `0` there is refused
 (`kuicksilver.tcp.maxConnectionsPerIp: use off instead of 0`). A value goes to the same option as the DSL and passes the
 same checks; a refusal names the key. Every key under `kuicksilver.` must be one of these: an unknown key fails the start
 (`kuicksilver.http3.quic.maxConnections is not a Kuicksilver key; did you mean kuicksilver.http3.endpoint.maxConnections?`),
@@ -578,7 +578,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `maxIdleTimeout` | `Duration?` | 30 s | 0.2.0 | stable | | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`; `null` advertises none and leaves the timeout to the peer; positive and finite otherwise (0.2: `Duration.ZERO` for none) |
+| `maxIdleTimeout` | `Duration?` | 30 s | 0.2.0 | stable | | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`; `null` advertises none and leaves the timeout to the peer; positive, finite and whole milliseconds otherwise (0.2: `Duration.ZERO` for none) |
 | `handshakeTimeout` | `Duration` | 10 s | 0.2.0 | stable | | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake`; positive (`Duration.INFINITE` leaves only the idle timeout); the Ktor client derives it from `connectTimeout` |
 | `keepAlive` | `Duration?` | `null` (off) | 0.2.0 | stable | | PING interval while the application is quiet; positive and finite, at most 3/4 of `maxIdleTimeout` (any, when that is `null`); PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout does not close the connection |
 | `maxBidiStreams` | `Long` | 100 | 0.2.0 | stable | | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`), 0..2^60, raised by MAX_STREAMS as streams close; a stream counts as closed once the application took it from `acceptStream()` and consumed it. For HTTP/3, the requests a client may have open at once |
@@ -638,7 +638,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `maxUniStreams` | `Long` | 100 | 0.3.0 | experimental | | unidirectional streams the peer may have open at once (`initial_max_streams_uni`), 0..2^60; HTTP/3 needs at least 3 (RFC 9114 section 6.2): `Http3Endpoint` refuses less |
-| `maxAckDelay` | `Duration` | 25 ms | 0.3.0 | experimental | | our `max_ack_delay`, below 2^14 ms |
+| `maxAckDelay` | `Duration` | 25 ms | 0.3.0 | experimental | | our `max_ack_delay`, 0..2^14-1 ms in whole milliseconds (advertised and used as the ACK deadline alike) |
 | `ackDelayExponent` | `Int` | 3 | 0.3.0 | experimental | | our `ack_delay_exponent`, 0..20 |
 | `activeConnectionIdLimit` | `Int` | 4 | 0.3.0 | experimental | | our `active_connection_id_limit`, at least 2: connection IDs of the peer kept for migration and rotation |
 | `initialVersion` | `VersionProfile?` | `null` (the first of `versions`) | 0.3.0 | experimental | | the version of a client's first flight, one of `versions`: prefer v2 while starting in v1 (RFC 9368) |

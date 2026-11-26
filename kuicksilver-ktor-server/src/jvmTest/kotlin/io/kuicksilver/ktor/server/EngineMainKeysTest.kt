@@ -18,6 +18,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -221,9 +222,21 @@ class EngineMainKeysTest {
     @Test fun negative_valuesAreStrict() {
         assertEquals("kuicksilver.http2.enabled: \"yes\" is not true or false", refused("kuicksilver.http2.enabled=yes"))
         assertEquals(
-            "kuicksilver.requestHeaderTimeout: \"soon\" is not a duration (30s, 1h)",
+            "kuicksilver.requestHeaderTimeout: \"soon\" is not a duration in whole milliseconds (30s, 1h, 250ms)",
             refused("kuicksilver.requestHeaderTimeout=soon"),
         )
+        // the timers and transport parameters behind a key work in milliseconds: 0.5ms would become 0, "none"
+        for (v in listOf("0.5ms", "1500us", "1.0005s")) {
+            assertEquals(
+                "kuicksilver.http3.quic.maxIdleTimeout: \"$v\" is not a duration in whole milliseconds (30s, 1h, 250ms), or off",
+                refused("kuicksilver.http3.quic.maxIdleTimeout=$v"),
+            )
+        }
+        assertEquals(
+            "kuicksilver.requestHeaderTimeout: \"2500us\" is not a duration in whole milliseconds (30s, 1h, 250ms)",
+            refused("kuicksilver.requestHeaderTimeout=2500us"),
+        )
+        assertEquals(1500.milliseconds, configuration("kuicksilver.requestHeaderTimeout=1.5s").requestHeaderTimeout)
         assertEquals("kuicksilver.tcp.maxConnections: \"many\" is not a whole number", refused("kuicksilver.tcp.maxConnections=many"))
         assertEquals("kuicksilver.connector.h2c: \"both\" is not off, withHttp11, only", refused("kuicksilver.connector.h2c=both"))
         // the option's own refusal, with the key in front

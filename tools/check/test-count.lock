@@ -4272,7 +4272,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.localTranspor
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_handshakeTimeoutMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_initialRttMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_keepAliveMustBePositiveAndFinite
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxAckDelayMustBeWholeMillisecondsInRange
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBePositiveAndFiniteOrNull
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBeWholeMilliseconds
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxSendBufferMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.toBuilderKeepsEverySetting
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.versionsOptInV1V2

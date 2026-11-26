@@ -15,6 +15,7 @@ import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsVersions
 import kotlin.jvm.JvmStatic
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -28,9 +29,10 @@ import kotlin.time.Duration.Companion.seconds
  * work in `application.yaml`.
  *
  * Values: `true`/`false` for a switch (nothing else); a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1h`,
- * `PT30S`); names of an enumeration in any case (`required`, `tls12And13`, `withHttp11`); `off` for "none" or "no limit" of
- * a key that has one (`tls.reloadInterval`, `http2.repeatOffenderPenalty`, `http3.endpoint.maxConnectionsPerIp`,
- * `http3.quic.maxIdleTimeout`, `http3.quic.keepAlive`, `tcp.maxConnectionsPerIp`), where `0` is refused. An unknown key
+ * `PT30S`), in whole milliseconds; names of an enumeration in any case (`required`, `tls12And13`, `withHttp11`); `off` for
+ * "none" or "no limit" of a key that has one (`tls.reloadInterval`, `http2.repeatOffenderPenalty`,
+ * `http3.endpoint.maxConnectionsPerIp`, `http3.quic.maxIdleTimeout`, `http3.quic.keepAlive`, `tcp.maxConnectionsPerIp`),
+ * where `0` is refused. An unknown key
  * under `kuicksilver.` fails the start, naming the key that replaced it (a 0.2.x key or an earlier 0.3.0 one,
  * [RENAMED_KEYS]) or the closest known key.
  */
@@ -323,6 +325,8 @@ public object EngineMain {
 
     private const val PREFIX = "kuicksilver."
 
+    private const val DURATION = "a duration in whole milliseconds (30s, 1h, 250ms)"
+
     /**
      * The rules every key reads by: a value is trimmed; a value the option refuses fails with the key named before the
      * option's own message.
@@ -381,12 +385,12 @@ public object EngineMain {
         fun duration(
             key: String,
             apply: (Duration) -> Unit,
-        ) = read(key, ::parseDuration, "a duration (30s, 1h)", apply)
+        ) = read(key, ::parseDuration, DURATION, apply)
 
         fun durationOrOff(
             key: String,
             apply: (Duration?) -> Unit,
-        ) = readOrOff(key, ::parseDuration, "a duration (30s, 1h)", apply)
+        ) = readOrOff(key, ::parseDuration, DURATION, apply)
 
         /** An enumeration key: one of [values] by its name, any case. */
         fun <T : Any> enum(
@@ -408,7 +412,12 @@ public object EngineMain {
                 )
         }
 
-        private fun parseDuration(v: String): Duration? = runCatching { Duration.parse(v) }.getOrNull()
+        /**
+         * A duration in whole milliseconds, the unit every timer and transport parameter behind a key works in: `1.5ms`
+         * would be cut to 1 ms, and `0.5ms` to the 0 that means "none".
+         */
+        private fun parseDuration(v: String): Duration? =
+            runCatching { Duration.parse(v) }.getOrNull()?.takeIf { it.isInfinite() || it.inWholeMilliseconds.milliseconds == it }
 
         /** Runs [block], the option's refusal prefixed with [key]. */
         fun named(

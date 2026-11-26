@@ -445,7 +445,7 @@ class EngineMainTest {
             refused("-P:kuicksilver.http3.quic.migration.allow=yes"),
         )
         assertEquals(
-            "kuicksilver.http3.quic.maxIdleTimeout: \"soon\" is not a duration (30s, 1h), or off",
+            "kuicksilver.http3.quic.maxIdleTimeout: \"soon\" is not a duration in whole milliseconds (30s, 1h, 250ms), or off",
             refused("-P:kuicksilver.http3.quic.maxIdleTimeout=soon"),
         )
         assertTrue(

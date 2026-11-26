@@ -97,7 +97,7 @@ public class QuicConfig private constructor(
      */
     @property:InternalKuicksilverApi
     public val maxSendBuffer: Long,
-    /** Our `max_ack_delay` (RFC 9000 section 18.2): the longest we hold back an acknowledgement; below 2^14 ms. */
+    /** Our `max_ack_delay` (RFC 9000 section 18.2): the longest we hold back an acknowledgement; 0..2^14-1 whole ms. */
     @property:InternalKuicksilverApi
     public val maxAckDelay: Duration,
     /** Our `ack_delay_exponent` (RFC 9000 section 18.2), 0..20: the scale of the ACK Delay field in our ACK frames. */
@@ -224,6 +224,8 @@ public class QuicConfig private constructor(
         require(!maxIdleTimeout.isNegative() && maxIdleTimeout.isFinite()) {
             "maxIdleTimeout must be positive and finite, or null (none)"
         }
+        // RFC 9000 section 18.2: transport parameters carry milliseconds, and the deadlines run on the advertised value
+        require(maxIdleTimeout.isWholeMilliseconds()) { "maxIdleTimeout must be a whole number of milliseconds, not $maxIdleTimeout" }
         require(handshakeTimeout.isPositive()) { "handshakeTimeout must be positive" }
         require(keepAlive == null || (keepAlive.isPositive() && keepAlive.isFinite())) { "keepAlive must be positive and finite, or null" }
         // with our idle timeout off (ZERO) only the peer's applies, and the interval follows it at run time
@@ -239,7 +241,10 @@ public class QuicConfig private constructor(
         require(maxSendUdpPayloadSize in 1200..65527) { "pathMtu { maxSend } must be 1200..65527" }
         require(activeConnectionIdLimit >= 2) { "expert { activeConnectionIdLimit } must be at least 2" }
         require(ackDelayExponent in 0..20) { "expert { ackDelayExponent } must be 0..20" }
-        require(maxAckDelay < 16384.milliseconds) { "expert { maxAckDelay } must be below 2^14 ms" }
+        require(!maxAckDelay.isNegative() && maxAckDelay < 16384.milliseconds) { "expert { maxAckDelay } must be 0..2^14-1 ms" }
+        require(maxAckDelay.isWholeMilliseconds()) {
+            "expert { maxAckDelay } must be a whole number of milliseconds (max_ack_delay is advertised in them), not $maxAckDelay"
+        }
         require(initialRtt > Duration.ZERO && initialRtt <= 10.seconds) { "expert { initialRtt } must be positive and at most 10 s" }
         require(initialStreamWindow in 1..maxStreamWindow && initialConnectionWindow in 1..maxConnectionWindow) {
             "flowControl windows out of range: initial windows must be 1..their max"
@@ -343,7 +348,7 @@ public class QuicConfig private constructor(
 
         /**
          * Default 30 s; null advertises no `max_idle_timeout` (RFC 9000 section 10.1) and leaves the idle timeout to the
-         * peer. Positive and finite otherwise: a connection idle for the smaller of both peers' values (never less than 3 x
+         * peer. Positive, finite and a whole number of milliseconds otherwise (the parameter carries milliseconds): a connection idle for the smaller of both peers' values (never less than 3 x
          * PTO) closes silently with a [TimeoutKind.Idle] timeout.
          */
         public var maxIdleTimeout: Duration? = 30.seconds
@@ -580,7 +585,10 @@ public class QuicConfig private constructor(
                     assigned += "expert.maxUniStreams"
                 }
 
-            /** Default 25 ms (the RFC 9000 default), below 2^14 ms: our `max_ack_delay` (RFC 9000 section 18.2), the longest we hold back an acknowledgement. */
+            /**
+             * Default 25 ms (the RFC 9000 default), 0..2^14-1 ms in whole milliseconds: our `max_ack_delay` (RFC 9000 section
+             * 18.2), the longest we hold back an acknowledgement; the advertised value and the ACK deadline are the same.
+             */
             public var maxAckDelay: Duration = 25.milliseconds
 
             /** Default 3 (the RFC 9000 default), 0..20: our `ack_delay_exponent` (RFC 9000 section 18.2), the scale of the ACK Delay field. */
@@ -651,6 +659,10 @@ public class QuicConfig private constructor(
             val idle = maxIdleTimeout
             require(idle == null || (idle.isPositive() && idle.isFinite())) {
                 "maxIdleTimeout must be positive and finite, or null (none): Duration.ZERO is no longer \"none\""
+            }
+            // below 1 ms it would be advertised as 0, which is "no idle timeout" (RFC 9000 section 18.2)
+            require(idle == null || idle.isWholeMilliseconds()) {
+                "maxIdleTimeout must be a whole number of milliseconds (max_idle_timeout is advertised in them), not $idle"
             }
             val frame = datagrams.maxFrameSize
             require(frame == null || frame in 1..65_535L) { "datagrams { maxFrameSize } must be 1..65535, or null (no datagrams)" }
@@ -747,6 +759,9 @@ public class QuicConfig private constructor(
         public val Default: QuicConfig = Builder().build()
     }
 }
+
+/** Whether this finite duration is a whole number of milliseconds, as a transport parameter carries it (RFC 9000 section 18.2). */
+private fun Duration.isWholeMilliseconds(): Boolean = inWholeMilliseconds.milliseconds == this
 
 /** Builds a [QuicConfig] from the defaults. */
 public inline fun quicConfig(block: QuicConfig.Builder.() -> Unit): QuicConfig = QuicConfig.Builder().apply(block).build()

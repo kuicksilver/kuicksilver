@@ -14,7 +14,9 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 
 class QuicConfigTest {
@@ -98,6 +100,38 @@ class QuicConfigTest {
             val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }
             assertEquals("maxIdleTimeout must be positive and finite, or null (none): Duration.ZERO is no longer \"none\"", e.message)
         }
+    }
+
+    /** RFC 9000 section 18.2: `max_idle_timeout` is in milliseconds; 0.5 ms would be advertised as 0, "no idle timeout". */
+    @Test fun negative_maxIdleTimeoutMustBeWholeMilliseconds() {
+        for (bad in listOf(500.microseconds, 1500.microseconds, 1.nanoseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }
+            assertEquals(
+                "maxIdleTimeout must be a whole number of milliseconds (max_idle_timeout is advertised in them), not $bad",
+                e.message,
+            )
+        }
+        val tp = quicConfig { maxIdleTimeout = 1.milliseconds }.localTransportParameters(TlsRole.Client, ConnectionId(ByteArray(8)), null)
+        assertEquals(1L, tp.maxIdleTimeoutMs)
+    }
+
+    /** `max_ack_delay` is advertised in milliseconds and ACKs are timed on the same value: no fraction, no negative. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_maxAckDelayMustBeWholeMillisecondsInRange() {
+        for (bad in listOf((-1).milliseconds, 16384.milliseconds, Duration.INFINITE)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxAckDelay = $bad") { quicConfig { expert { maxAckDelay = bad } } }
+            assertEquals("expert { maxAckDelay } must be 0..2^14-1 ms", e.message)
+        }
+        for (bad in listOf(500.microseconds, 25_500.microseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxAckDelay = $bad") { quicConfig { expert { maxAckDelay = bad } } }
+            assertEquals(
+                "expert { maxAckDelay } must be a whole number of milliseconds (max_ack_delay is advertised in them), not $bad",
+                e.message,
+            )
+        }
+        assertEquals(Duration.ZERO, quicConfig { expert { maxAckDelay = Duration.ZERO } }.maxAckDelay)
+        assertEquals(16383.milliseconds, quicConfig { expert { maxAckDelay = 16383.milliseconds } }.maxAckDelay)
     }
 
     @Test fun negative_keepAliveMustBePositiveAndFinite() {

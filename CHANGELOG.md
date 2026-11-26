@@ -1258,6 +1258,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/3 did not serve stays at `observability { protocolChoiceLogLevel }` (Info), which the default logger leaves out.
 - HTTP/3: `Http3Settings.maxInformationalResponses`, ignored since 0.2.1, is removed (breaking). Interim responses are
   bounded by `maxFieldSectionSize` (RFC 9110 section 15.2).
+- QUIC: `quicConfig { maxIdleTimeout }` and `expert { maxAckDelay }` must be whole milliseconds, and `maxAckDelay` at
+  least 0 (breaking strictness, RFC 9000 section 18.2). Both go on the wire in milliseconds while the connection timed
+  itself on the full `Duration`: a fraction was advertised rounded down (`500.microseconds` as 0, "no idle timeout"). The
+  `EngineMain` duration keys take whole milliseconds too (`kuicksilver.http3.quic.maxIdleTimeout = 0.5ms` is refused).
 - WebTransport (experimental), draft-02 sessions, which Chrome and Firefox negotiate (breaking strictness,
   draft-ietf-webtrans-http3-02 section 4.3: stream codes are "limited to an unsigned 8-bit integer"): `reset(code)`,
   `reset(code, reliableOffset)` and `stopSending(code)` with a code above 255 now throw IllegalArgumentException there,
