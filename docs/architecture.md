@@ -205,8 +205,10 @@ applications without sockets. Not published yet.
 The QUIC Interop Runner endpoint (`kuicksilver-interop`, Docker image in `tools/interop`), the engine interop bench
 (`kuicksilver-engine-interop`, JVM tests only: the Ktor engines against other HTTP implementations in one process,
 [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), benchmarks and allocation
-gates (`kuicksilver-bench`), `samples/realtime-telemetry`, a separate Gradle build that consumes the library as an
-outside project would, and `samples/ios`, an Xcode app over the library's XCFramework ([iOS guide](guide/ios.md)).
+gates (`kuicksilver-bench`), and the samples, each a separate Gradle build that consumes the library as an outside
+project would: `samples/realtime-telemetry` (kuicksilver-quic), `samples/webtransport-chat` (WebTransport through both
+Ktor engines), `samples/http3-server` (the Ktor server engine from `EngineMain`), `samples/compose-demo` (Android and
+iOS), and `samples/ios`, an Xcode app over the library's XCFramework ([iOS guide](guide/ios.md)).
 
 ## Cross-Cutting Concerns
 

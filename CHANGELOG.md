@@ -431,6 +431,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   of the release gate, run by `:androidApp:migrationDemoDeviceTest` against the server on the host. Its
   build verifies every plugin and dependency against `gradle/verification-metadata.xml`, which now also covers Compose
   Multiplatform, the AndroidX libraries it brings, OkHttp 5.5.1 and Ktor's CIO, Darwin and mock engines.
+- Two samples for adopting the Ktor engines (not published; each a Gradle build of its own that takes
+  `io.kuicksilver:*` by coordinates, verified against `gradle/verification-metadata.xml`). `samples/http3-server` is
+  an HTTP/3 Ktor server in about twenty lines: `EngineMain` and an `application.conf` with TLS from PEM files
+  (reloaded hourly), HTTP/2 and HTTP/1.1 on the same port, `Alt-Svc`, and the PROXY protocol switched on by
+  `PROXY_TRUSTED_SOURCES`; its README has the `curl --http3` commands and a deployment note for HAProxy and nginx, and
+  `Http3ServerTest` starts it with that file and checks HTTP/2 with `Alt-Svc` then HTTP/3, HTTP/3 only, HTTP/1.1, a
+  PROXY v1 header naming the client and a client without one refused. `samples/webtransport-chat` is a WebTransport
+  chat room: a Ktor server (`webTransport("/chat")`) and a client in common code (`HttpClient.webTransport`, compiled
+  for the JVM, macOS and the iOS simulator) with a bidirectional stream per member for messages and membership,
+  datagrams for typing indicators (relayed at most every 250 ms), refusals as session close codes (a taken name, a
+  full room of 25, a bad line), control characters in messages replaced, a slow reader dropped once its 256-line queue
+  is full and `ServerDraining` on a graceful stop. No server key is in common code: the JVM server loads its identity
+  from PEM files, with the sample's public one only on loopback. `ChatTest` runs the server and its clients in one JVM
+  over UDP. Both run in the CI `apple` job (the chat's iOS simulator compile in `apple-native`) and in the local gate.
 - Engine interop bench (`kuicksilver-engine-interop`, not published; docs/spec/interop.md, "Engine interop"): the Ktor
   client engine against Ktor's Netty server (HTTP/1.1, HTTP/2 and HTTP/3) and CIO server and a plain Netty server (1xx,
   trailers, GOAWAY), and the Ktor server engine against Ktor's CIO, OkHttp and Java client engines, OkHttp and the JDK's

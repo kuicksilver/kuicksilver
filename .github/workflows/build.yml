@@ -655,6 +655,17 @@ jobs:
         run: |
           (cd samples/realtime-telemetry && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
           python3 -I tools/check/test-bytecode.py samples/realtime-telemetry/build/classes/kotlin/jvm/test
+      - name: 'sample: webtransport-chat'
+        # the chat server and its clients in one JVM over UDP on loopback (WebTransport streams and datagrams), and its
+        # common code compiled for macOS (the iOS simulator compile is in apple-native, which builds that OpenSSL anyway)
+        run: |
+          (cd samples/webtransport-chat && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest compileKotlinMacosArm64)
+          python3 -I tools/check/test-bytecode.py samples/webtransport-chat/build/classes/kotlin/jvm/test
+      - name: 'sample: http3-server'
+        # EngineMain with the sample's application.conf; the Kuicksilver client over HTTP/2, HTTP/3 and HTTP/1.1, the PROXY protocol
+        run: |
+          (cd samples/http3-server && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace test)
+          python3 -I tools/check/test-bytecode.py samples/http3-server/build/classes/kotlin/test
       - name: 'fuzz: regression corpus'
         run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"
       - name: 'sim: Monte-Carlo (KSL_SIM_RUNS=200)'
@@ -738,6 +749,9 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_SIM_TESTS
+      - name: 'sample: webtransport-chat (iosSimulatorArm64 compile)'
+        # the chat client and server in common code, as an iOS app takes them (the apple job compiles them for macOS)
+        run: (cd samples/webtransport-chat && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace compileKotlinIosSimulatorArm64)
       - name: 'native: compile iosArm64 (device)'
         id: ios-device
         run: |

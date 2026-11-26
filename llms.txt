@@ -22,6 +22,13 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 - [Configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md): every option with its type, default, range, where it is set and since which release; HTTP/2 settings included
 - [Troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md): symptoms by exact error text or code (handshake timeout, certificate errors, ALPN mismatch, CONNECTION_REFUSED and connection limits, 0-RTT, HTTP/3 fallback reasons, HTTP/2 failures) with cause and action
 
+## Samples
+
+- [HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/samples/http3-server/README.md): an HTTP/3 Ktor server from EngineMain and application.conf: TLS from PEM files, Alt-Svc, HTTP/2 and HTTP/1.1 on the same port, the PROXY protocol behind HAProxy or nginx, curl --http3
+- [WebTransport chat](https://github.com/kuicksilver/kuicksilver/blob/main/samples/webtransport-chat/README.md): a Ktor WebTransport server and a common-code client: a bidirectional stream for messages, datagrams for typing indicators, close codes, slow readers, graceful stop
+- [Real-time telemetry](https://github.com/kuicksilver/kuicksilver/blob/main/samples/realtime-telemetry/README.md): a QUIC application on kuicksilver-quic: stream priorities, datagrams, connection migration, tests over MemoryNetwork
+- [Compose Multiplatform demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md): an Android and iOS app whose HTTP/3 download survives a network switch that breaks TCP
+
 ## Policies
 
 - [API stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md): stable and experimental API, ABI checks, supported platforms, Ktor and OpenSSL policies

@@ -110,6 +110,12 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
   [docs/spec/rfc/](docs/spec/rfc/)), [interop results](docs/spec/interop.md), [compatibility
   shims](docs/spec/compat-shims.md), [reliability signals](docs/reliability.md), [benchmarks](docs/benchmarks.md),
   [threat model](docs/spec/threat-model.md).
+- Samples, each a Gradle build of its own that takes the library by coordinates: an [HTTP/3 Ktor server in about twenty
+  lines](samples/http3-server/README.md) (TLS, Alt-Svc, HTTP/2 and HTTP/1.1 on the same port, the PROXY protocol), a
+  [WebTransport chat](samples/webtransport-chat/README.md) (Ktor server and a common-code client: streams for messages,
+  datagrams for typing indicators), a [real-time QUIC application](samples/realtime-telemetry/README.md) (streams,
+  datagrams, connection migration), a [Compose Multiplatform demo](samples/compose-demo/README.md) (a download that
+  survives a switch from Wi-Fi to the mobile network) and an [iOS app](samples/ios/README.md).
 - Internals: [architecture](docs/architecture.md), [decision records](docs/adr/README.md).
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [GOVERNANCE.md](GOVERNANCE.md) (roles, decisions, access continuity).

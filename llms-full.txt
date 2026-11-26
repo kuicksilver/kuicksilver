@@ -3431,6 +3431,11 @@ val server = embeddedServer(Kuicksilver, configure = {
 }
 ```
 
+A whole application on this route and on the client's `webTransport` is
+[samples/webtransport-chat](https://github.com/kuicksilver/kuicksilver/blob/main/samples/webtransport-chat/README.md): a chat room with a bidirectional stream per
+member for the messages and datagrams for the typing indicators, its refusals as session close codes, and a test that
+runs the server and its clients in one JVM.
+
 A real browser is checked by `ChromeWebTransportTest` (`kuicksilver-ktor-server` jvmTest), which runs only on request
 and only with an installed Chrome or Chromium:
 
@@ -3810,6 +3815,10 @@ kuicksilver {
     quicMaxConnectionsPerIp = 4096     # behind a NAT or kube-proxy; see deployment.md
 }
 ```
+
+[samples/http3-server](https://github.com/kuicksilver/kuicksilver/blob/main/samples/http3-server/README.md) is such a server, with `kuicksilver.http2`,
+`kuicksilver.altSvc` and `kuicksilver.proxyProtocol.trustedSources` taken from environment variables (`${?NAME}`), and a
+test that starts it with its `application.conf`.
 
 The application's main class is `io.kuicksilver.ktor.server.EngineMain` (in Gradle: `application { mainClass.set("io.kuicksilver.ktor.server.EngineMain") }`),
 and `-config=<file>` picks another file, as with Ktor's own engines. The private key must be an unencrypted PKCS#8 file

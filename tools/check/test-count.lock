@@ -6797,6 +6797,11 @@ samples/compose-demo/server/src/test	io.kuicksilver.sample.compose.server.RangeT
 samples/compose-demo/server/src/test	io.kuicksilver.sample.compose.server.RangeTest.negative_zeroSuffixIsUnsatisfiable
 samples/compose-demo/server/src/test	io.kuicksilver.sample.compose.server.RangeTest.suffix
 samples/compose-demo/server/src/test	io.kuicksilver.sample.compose.server.RangeTest.unitIsCaseInsensitive
+samples/http3-server/src/test	io.kuicksilver.sample.http3.Http3ServerTest.altSvcLeadsTheClientToHttp3
+samples/http3-server/src/test	io.kuicksilver.sample.http3.Http3ServerTest.http11FallbackOnTheSamePort
+samples/http3-server/src/test	io.kuicksilver.sample.http3.Http3ServerTest.http3OnlyClient
+samples/http3-server/src/test	io.kuicksilver.sample.http3.Http3ServerTest.negative_proxyProtocolRefusesAClientWithoutHeader
+samples/http3-server/src/test	io.kuicksilver.sample.http3.Http3ServerTest.proxyProtocolNamesTheClient
 samples/ios/shared/src/iosTest	io.kuicksilver.sample.ios.LoopbackTest.echoAndHttp3AgainstTheInAppServer
 samples/ios/shared/src/iosTest	io.kuicksilver.sample.ios.LoopbackTest.echoWhileFollowingTheDefaultNetwork
 samples/ios/shared/src/iosTest	io.kuicksilver.sample.ios.LoopbackTest.parsesUrls
@@ -6805,3 +6810,11 @@ samples/realtime-telemetry/src/commonTest	io.kuicksilver.sample.telemetry.Teleme
 samples/realtime-telemetry/src/commonTest	io.kuicksilver.sample.telemetry.TelemetryMemoryTest.oversizedControlLineClosesConnection
 samples/realtime-telemetry/src/jvmTest	io.kuicksilver.sample.telemetry.TelemetryUdpTest.fullSessionOverUdp
 samples/realtime-telemetry/src/macosArm64Test	io.kuicksilver.sample.telemetry.TelemetryUdpNativeTest.fullSessionOverUdp
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.gracefulStopDrainsSessions
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.negative_badLinesCloseTheSession
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.negative_nameTakenIsRefused
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.negative_roomFullIsRefused
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.negative_sampleIdentityOnlyOnLoopback
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.negative_slowReaderIsDropped
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.roomOverWebTransport
+samples/webtransport-chat/src/jvmTest	io.kuicksilver.sample.chat.ChatTest.welcomeOfAFullRoomFitsAServerLine
