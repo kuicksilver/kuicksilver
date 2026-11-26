@@ -97,7 +97,7 @@ public interface DatagramIo : AutoCloseable {
         public suspend fun open(
             local: InetSocketAddress,
             prefer: IoPreference = IoPreference.Accelerated,
-        ): DatagramIo = openDatagramIo(local, prefer, KuicksilverLogger.Stderr)
+        ): DatagramIo = openDatagramIo(local, prefer, KuicksilverLogger.Default)
     }
 }
 
@@ -125,5 +125,5 @@ internal expect suspend fun openPortableDatagramIo(
     acceleratedRefusal: Throwable?,
 ): DatagramIo
 
-/** One line to standard error: what [KuicksilverLogger.Stderr], the default logger, writes. */
+/** One line to standard error: what [KuicksilverLogger.Stderr] writes. */
 internal expect fun printWarning(line: String)

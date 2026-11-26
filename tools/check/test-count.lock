@@ -4185,6 +4185,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyQuicOp
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroDatagramFrameSizeIsRefusedNullIsOff
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroIdleTimeoutIsRefusedNullIsNone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.serverAcceptEarlyDataReachesTheConfig
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultLoggerTest.anEndpointLogsToTheDefaultLogger
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultLoggerTest.platformTakesItsLevelAndAbove
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultLoggerTest.theDefaultLoggerTakesWarningsAndUp
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultNetworkUpdatesTest.availableAndLostBecomeNetworksAndNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultNetworkUpdatesTest.lostOfAnOldNetworkAfterTheSwitchIsIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.aPairThatEndsCleanlyCloses
@@ -6121,6 +6124,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.portableCapab
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.stableAddressReusesInstance
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.trySendDoesNotSuspend
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NormalPathExceptionsJvmTest.aNormalConnectionBuildsOnlyItsCloseReasons
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PlatformLoggerJvmTest.withoutAnSlf4jProviderTheWarningsGoToStandardError
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PreferredAddressJvmTest.nameIsRefusedByItsName
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedIdleCloseInterruptsTheWaitingReceiver
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedInterruptEndsAReceiveInFlight

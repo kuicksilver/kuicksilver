@@ -587,8 +587,10 @@ public abstract interface class io/kuicksilver/quic/KuicksilverLogger {
 }
 
 public final class io/kuicksilver/quic/KuicksilverLogger$Companion {
+	public final fun getDefault ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getNone ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getStderr ()Lio/kuicksilver/quic/KuicksilverLogger;
+	public final fun platform (Lio/kuicksilver/quic/LogLevel;)Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun stderr (Lio/kuicksilver/quic/LogLevel;)Lio/kuicksilver/quic/KuicksilverLogger;
 }
 

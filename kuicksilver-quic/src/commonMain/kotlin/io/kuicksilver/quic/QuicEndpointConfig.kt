@@ -444,8 +444,11 @@ public class QuicEndpointConfig private constructor(
         /** The observability options of a [Builder]: one place for the logger, qlog and the connection listener. */
         @KuicksilverDsl
         public class Observability internal constructor() {
-            /** Default [KuicksilverLogger.Stderr] (warnings on standard error): where the endpoint's diagnostics go (docs/guide/quic.md, "Observability"). */
-            public var logger: KuicksilverLogger = KuicksilverLogger.Stderr
+            /**
+             * Default [KuicksilverLogger.Default] (the platform's logger, warnings and up): where the endpoint's diagnostics go
+             * (docs/guide/quic.md, "Observability").
+             */
+            public var logger: KuicksilverLogger = KuicksilverLogger.Default
 
             /**
              * Default null (no qlog): receives a qlog trace per connection of the endpoint (docs/guide/quic.md, "qlog"). A

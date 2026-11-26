@@ -259,11 +259,14 @@ abstract interface io.kuicksilver.quic/KuicksilverLogger { // io.kuicksilver.qui
     abstract fun log(io.kuicksilver.quic/LogLevel, kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.quic/KuicksilverLogger.log|log(io.kuicksilver.quic.LogLevel;kotlin.String;kotlin.Throwable?){}[0]
 
     final object Companion { // io.kuicksilver.quic/KuicksilverLogger.Companion|null[0]
+        final val Default // io.kuicksilver.quic/KuicksilverLogger.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.Default.<get-Default>|<get-Default>(){}[0]
         final val None // io.kuicksilver.quic/KuicksilverLogger.Companion.None|{}None[0]
             final fun <get-None>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.None.<get-None>|<get-None>(){}[0]
         final val Stderr // io.kuicksilver.quic/KuicksilverLogger.Companion.Stderr|{}Stderr[0]
             final fun <get-Stderr>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.Stderr.<get-Stderr>|<get-Stderr>(){}[0]
 
+        final fun platform(io.kuicksilver.quic/LogLevel): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.platform|platform(io.kuicksilver.quic.LogLevel){}[0]
         final fun stderr(io.kuicksilver.quic/LogLevel): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.stderr|stderr(io.kuicksilver.quic.LogLevel){}[0]
     }
 }

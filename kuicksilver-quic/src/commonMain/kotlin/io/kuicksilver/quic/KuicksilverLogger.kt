@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
-import io.kuicksilver.annotations.ExperimentalKuicksilverApi
-
 /** Severity of a [KuicksilverLogger] line, from the most verbose to the most severe. */
-@ExperimentalKuicksilverApi
 public enum class LogLevel {
     /** Per-connection lifecycle: opened, handshake complete, path changed, closed with its reason. */
     Debug,
@@ -22,8 +19,8 @@ public enum class LogLevel {
 
 /**
  * Where the library's diagnostics go (docs/guide/quic.md, "Observability"), set per endpoint with
- * `QuicEndpointConfig.logger` and per Ktor engine with its `logger` setting. No SLF4J or other dependency: bridge it to the
- * logging framework of your application in a few lines.
+ * `quicEndpointConfig { observability { logger } }` and per Ktor engine with its `observability { logger }`. The default,
+ * [Default], is the platform's logger; bridge it to any other logging framework of your application in a few lines.
  *
  * The library never logs secrets: no keys, traffic secrets, session tickets, Retry or address-validation tokens and no
  * reset tokens; connection IDs and addresses are logged. Lines are built only when [isEnabled] answers true for their
@@ -31,7 +28,6 @@ public enum class LogLevel {
  * loop) and must be quick and thread-safe; an exception out of it (a CancellationException too) is swallowed and counted
  * in `EndpointStats.listenerFailures`.
  */
-@ExperimentalKuicksilverApi
 public interface KuicksilverLogger {
     /** Whether lines of [level] are wanted; checked before a line is built. */
     public fun isEnabled(level: LogLevel): Boolean
@@ -45,7 +41,15 @@ public interface KuicksilverLogger {
 
     /** Holds the built-in loggers. */
     public companion object {
-        /** The default: [LogLevel.Warn] and above, one line each on standard error (the behaviour before loggers existed). */
+        /**
+         * The default: [platform] at [LogLevel.Warn], so the library's warnings land where the application's own log lines
+         * go. SLF4J on the JVM (the API Ktor logs through; the logger `io.kuicksilver`, and standard error when no SLF4J
+         * provider is on the classpath), Logcat on Android (tag `Kuicksilver`), NSLog on Apple platforms, standard error on
+         * Linux and Windows.
+         */
+        public val Default: KuicksilverLogger by lazy { platform(LogLevel.Warn) }
+
+        /** [LogLevel.Warn] and above, one line each on standard error: the default before 0.3.0. */
         public val Stderr: KuicksilverLogger = StderrLogger(LogLevel.Warn)
 
         /** Drops everything. */
@@ -64,10 +68,15 @@ public interface KuicksilverLogger {
 
         /** [minLevel] and above to standard error, prefixed with `kuicksilver:` and the level. */
         public fun stderr(minLevel: LogLevel): KuicksilverLogger = StderrLogger(minLevel)
+
+        /** [minLevel] and above to the platform's logger, as [Default] does at [LogLevel.Warn]: `platform(LogLevel.Info)` while you debug. */
+        public fun platform(minLevel: LogLevel): KuicksilverLogger = platformLogger(minLevel)
     }
 }
 
-@OptIn(ExperimentalKuicksilverApi::class)
+/** The platform's logger behind [KuicksilverLogger.platform]. */
+internal expect fun platformLogger(minLevel: LogLevel): KuicksilverLogger
+
 private class StderrLogger(
     private val minLevel: LogLevel,
 ) : KuicksilverLogger {
@@ -90,7 +99,6 @@ private class StderrLogger(
  * includes a CancellationException: logging is not suspending, so one out of [KuicksilverLogger.log] is the logger's own
  * failure, and rethrowing it would end the coroutine of an endpoint loop without a trace.
  */
-@OptIn(ExperimentalKuicksilverApi::class)
 internal inline fun KuicksilverLogger.emit(
     level: LogLevel,
     cause: Throwable? = null,
@@ -106,7 +114,7 @@ internal inline fun KuicksilverLogger.emit(
  * [delegate] behind a guard: nothing it throws, a CancellationException included, reaches the caller; [failures] counts
  * what it threw (an endpoint's `EndpointStats.listenerFailures`). Any thread may call it.
  */
-@OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class GuardedLogger(
     private val delegate: KuicksilverLogger,
 ) : KuicksilverLogger {
