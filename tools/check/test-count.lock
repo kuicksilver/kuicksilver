@@ -1867,6 +1867,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.h
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.http3SwitchedOffStillUsesH2
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.largeResponseIsComplete
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_aRequestCancelledDuringTheHealthCheckGivesItsStreamBack
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_aServerThatAllowsNoStreamIsARefusal
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_anImmediateGoAwayIsARefusal
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_http11RequiredFallsBackAndMarks
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_http11RequiredGoAwayDoesNotRepeatAProcessedPost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.negative_http11RequiredOnTheStreamDoesNotRepeatAPost

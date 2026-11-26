@@ -26,6 +26,7 @@ import kotlin.test.assertTrue
  * call must name the alert whatever the timing, on every protocol, not "the connection is going away" (the GOAWAY the
  * HTTP/2 client sends as the transport fails) or another vague end. Each case runs several times to cover both orders.
  */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class ClientMissingCertificateTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -44,14 +45,36 @@ class ClientMissingCertificateTest {
             }
         }
 
+    /**
+     * Over HTTP/2 the call fails with the lost connection, the alert as its cause, and is not repeated: the request was
+     * not processed (RFC 9113 section 8.7), but a new connection would only meet the same alert after a full handshake.
+     */
     @Test fun negative_overHttp2TheCallNamesTheAlert() =
         clientTest {
             withServer(http2 = true) { port ->
                 repeat(ROUNDS) { round ->
-                    val e = assertFails { testClient().use { it.get("https://127.0.0.1:$port/") } }
+                    val retries = kotlin.concurrent.atomics.AtomicInt(0)
+                    val e =
+                        assertFails {
+                            testClient(engine = {
+                                observability {
+                                    eventListener =
+                                        object : KuicksilverEventListener() {
+                                            override fun retry(
+                                                request: io.ktor.client.request.HttpRequestData,
+                                                attempt: Int,
+                                                cause: Throwable,
+                                            ) {
+                                                retries.addAndFetch(1)
+                                            }
+                                        }
+                                }
+                            }).use { it.get("https://127.0.0.1:$port/") }
+                        }
                     assertIs<Http2Exception.ConnectionClosed>(e, "round $round: $e")
                     assertEquals("the connection was lost: $alert", e.message, "round $round")
                     assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "round $round: $e")
+                    assertEquals(0, retries.load(), "round $round: a call lost to a TLS alert is not repeated")
                 }
             }
         }

@@ -949,11 +949,16 @@ internal class H1Pool(
                                 } else {
                                     // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
                                     // the call fails rather than open connection after connection to a server that refuses them.
-                                    // A connection that ended already fails the call with its end: over TLS 1.3 the client's
-                                    // handshake completes before the server checks its certificate, and the server's alert
-                                    // (certificate_required) is what the caller must see, not a refusal
+                                    // A connection whose transport failed already fails the call with that loss: over TLS 1.3
+                                    // the client's handshake completes before the server checks its certificate, and the
+                                    // server's alert (certificate_required) is what the caller must see, not a refusal. Read
+                                    // before the shutdown below, whose own end ("GOAWAY and no streams left") is no reason,
+                                    // and only a loss with a cause: a refusal ended by the protocol stays a refusal
+                                    val lost =
+                                        (c.client.closeCause as? io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed)
+                                            ?.takeIf { it.cause != null }
                                     c.client.shutdown()
-                                    (c.client.closeCause as? io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed)?.let {
+                                    lost?.let {
                                         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
                                         throw it.copyForCall()
                                     }
@@ -1314,7 +1319,9 @@ internal class H1Pool(
                             e.cause,
                         )
                     }
-                    if (++h2Repeats > 2) {
+                    // a connection lost to a fatal TLS failure (the server's alert, a failed verification or handshake) is
+                    // not repeated: a new connection meets the same failure, after a full handshake
+                    if (++h2Repeats > 2 || e.cause.isFatalTls()) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         diagnostics?.connectionWide(h2c.client.closeCause)
                         throw e.cause
@@ -2502,3 +2509,14 @@ internal class TcpProgress {
         }
     }
 }
+
+/**
+ * Whether a fatal TLS failure is among the causes: an alert received from the peer, a failed verification, a protocol
+ * failure of the handshake. A request repeated on a new connection after it would only meet it again.
+ */
+internal fun Throwable.isFatalTls(): Boolean =
+    generateSequence(this) { it.cause }.any {
+        it is io.kuicksilver.tls.TlsException.AlertReceived ||
+            it is io.kuicksilver.tls.TlsException.Verify ||
+            it is io.kuicksilver.tls.TlsException.Protocol
+    }

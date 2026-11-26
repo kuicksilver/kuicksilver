@@ -43,11 +43,15 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+
+/** The call's failure when a new HTTP/2 connection takes no request (H1Pool). */
+private const val REFUSAL = "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)"
 
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/client.md, "HTTP/2 on the client"): ALPN `h2`, one multiplexed connection per route, the
@@ -675,6 +679,35 @@ class ClientH2Test {
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals(FallbackReason.H2Refused, r.kuicksilverDiagnostics!!.fallback)
+                }
+            }
+        }
+
+    /**
+     * A new connection whose server allows no stream (SETTINGS_MAX_CONCURRENT_STREAMS 0) is a refusal, and the call says
+     * so: not the end of the connection the client then shuts down ("GOAWAY and no streams left").
+     */
+    @Test fun negative_aServerThatAllowsNoStreamIsARefusal() =
+        clientTest {
+            tlsH2WithSilentUdp(settings = io.kuicksilver.http2.http2Settings { maxConcurrentStreams = 0 }, onRequest = { _, r ->
+                ok(r)
+            }) { port, _ ->
+                testClient().use { c ->
+                    engine(c).h1.afterH2StartForTest = { client, _ -> client.awaitServerSettings() }
+                    val e = assertFails { c.get("https://127.0.0.1:$port/") }
+                    assertEquals(REFUSAL, e.message, "$e")
+                }
+            }
+        }
+
+    /** The same for a GOAWAY (NO_ERROR, last stream 0) right after the server's preface. */
+    @Test fun negative_anImmediateGoAwayIsARefusal() =
+        clientTest {
+            tlsH2WithSilentUdp(onConnection = { _, c -> c.goAway(Http2ErrorCode.NO_ERROR) }, onRequest = { _, r -> ok(r) }) { port, _ ->
+                testClient().use { c ->
+                    engine(c).h1.afterH2StartForTest = { client, _ -> client.awaitClosed() }
+                    val e = assertFails { c.get("https://127.0.0.1:$port/") }
+                    assertEquals(REFUSAL, e.message, "$e")
                 }
             }
         }
