@@ -27,9 +27,15 @@ public enum class TlsRole {
     Server,
 }
 
-/** Versions offered: QUIC is always TLS 1.3; TCP defaults to 1.3 and accepts 1.2 only when asked (RFC 9325 profile). */
+/**
+ * Versions offered: QUIC is always TLS 1.3; over TCP a [TlsConfig] defaults to 1.3 and accepts 1.2 only when asked (RFC 9325
+ * profile). The Ktor client engine asks by default (its `tls { versions }`), the Ktor server's connectors do not.
+ */
 public enum class TlsVersions {
-    /** TLS 1.3 only (RFC 9846): the default, and the only value QUIC accepts (RFC 9001 section 4.2). */
+    /**
+     * TLS 1.3 only (RFC 9846): the default of [TlsConfig] and of the Ktor server, and the only value QUIC accepts (RFC 9001
+     * section 4.2).
+     */
     Tls13,
 
     /**
@@ -291,7 +297,10 @@ public class TlsConfig private constructor(
          */
         public var serverName: String? = null
 
-        /** The versions offered; default [TlsVersions.Tls13]. [TlsVersions.Tls12And13] is for TCP peers without TLS 1.3 only. */
+        /**
+         * The versions offered; default [TlsVersions.Tls13]. [TlsVersions.Tls12And13] is for TCP peers without TLS 1.3 only (the
+         * default of the Ktor client engine, which sets it on its TCP connections).
+         */
         @SecuritySensitive
         public var versions: TlsVersions = TlsVersions.Tls13
 

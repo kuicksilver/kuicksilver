@@ -1508,4 +1508,50 @@ class ClientCoalescingTest {
             assertEquals(Coalesce.No, config.checkCoalescing(p, "d.wild.test", 443, dns, alpn))
             assertEquals(before, verified.load())
         }
+
+    /**
+     * RFC 9113 section 9.1.1: a coalesced request "MUST satisfy any checks that the client would perform when forming a new
+     * TLS connection for the host in the URI", the version included. A host with an ECH configuration gets TLS 1.3-only
+     * connections (RFC 9849 section 6.1), so a connection that negotiated TLS 1.2 never carries it, whatever its certificate
+     * says; a TLS 1.3 one does, and the TLS 1.2 one still carries a host without ECH.
+     */
+    @Test fun negative_aTls12ConnectionNeverCarriesAnEchHost() =
+        runBlocking {
+            val body =
+                EchTestKeys.A
+                    .substringAfter("-----BEGIN ECHCONFIG-----")
+                    .substringBefore("-----END ECHCONFIG-----")
+            val list =
+                io.kuicksilver.tls.EchConfigList
+                    .parseBase64(body.lines().joinToString(""))
+            val config =
+                KuicksilverEngineConfig().apply {
+                    tls {
+                        trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) }
+                        ech { configLists = mapOf("b.wild.test" to list) }
+                    }
+                    network { dns = MapDns() }
+                }
+            val here = Destination(byteArrayOf(127, 0, 0, 1), 443, 0)
+            val chain = listOf(Certificate(TestCerts.server))
+            val alpn = listOf("h2", "http/1.1")
+
+            fun peer(v: io.kuicksilver.tls.TlsVersion) = CoalescingPeer("a.wild.test", here, chain, 0L, false, CoalescedHosts(), v)
+            val tls12 = peer(io.kuicksilver.tls.TlsVersion.Tls12)
+            assertEquals(Coalesce.No, config.checkCoalescing(tls12, "b.wild.test", 443, config.newRequestDns(), alpn))
+            assertEquals(Coalesce.Yes, config.checkCoalescing(tls12, "c.wild.test", 443, config.newRequestDns(), alpn), "no ECH")
+            val tls13 = peer(io.kuicksilver.tls.TlsVersion.Tls13)
+            assertEquals(Coalesce.Yes, config.checkCoalescing(tls13, "b.wild.test", 443, config.newRequestDns(), alpn))
+            // a TLS 1.2 connection that accepted the host before it got ECH: the version is checked every time
+            tls12.hosts.record("d.wild.test", accepted = true)
+            val later =
+                KuicksilverEngineConfig().apply {
+                    tls {
+                        trust = TrustConfig.Custom { c, _, _ -> VerifyResult.Accepted(c) }
+                        ech { configLists = mapOf("d.wild.test" to list) }
+                    }
+                    network { dns = MapDns() }
+                }
+            assertEquals(Coalesce.No, later.checkCoalescing(tls12, "d.wild.test", 443, later.newRequestDns(), alpn))
+        }
 }

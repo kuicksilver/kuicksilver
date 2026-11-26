@@ -14,7 +14,8 @@ import io.kuicksilver.ktor.network.KtorVersionPolicy
 import kotlin.reflect.KClass
 
 /**
- * `HttpClient(Kuicksilver) { engine { ... } }`: HTTP/3 with Alt-Svc discovery and HTTP/1.1 over TLS 1.3 on every platform (docs/guide/ktor.md).
+ * `HttpClient(Kuicksilver) { engine { ... } }`: HTTP/3 with Alt-Svc discovery, and HTTP/2 and HTTP/1.1 over TLS 1.3 or 1.2,
+ * on every platform (docs/guide/ktor.md).
  * Creating the engine fails with [IllegalStateException] when the Ktor on the classpath is not the supported 3.6.x
  * (docs/guide/ktor.md, "Supported Ktor versions").
  *

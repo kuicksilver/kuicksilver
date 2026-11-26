@@ -1582,6 +1582,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalesci
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.h3TheRepeatTakesTheKeptChannel
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_aKeptChannelIsCancelledWhenTheCallEndsBeforeTheRepeat
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_aRefusalIsNeverUndone
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_aTls12ConnectionNeverCarriesAnEchHost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_anAltSvcFrameOnACoalescedStreamIsNotTakenForTheConnectionsOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_cookiesAreNeverIndexedOnAConnectionOthersMayShare
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_h2ACertificateThatDoesNotCoverTheHostIsNotReused
@@ -1742,8 +1743,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aProxyHopRejectionIsNotTheOrigins
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aRejectedRetryIsNotRetriedAgain
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_anEarlyRequestOnARejectedRetryIsNotSentAThirdTime
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_echHostWithATls12OnlyServerFailsWithoutFallback
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_echReliantRequestNeverFallsBackToTheOrigin
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationNeedsTls13Only
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationMakesItsConnectionsTls13Only
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationWithoutUsableConfigIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_proxyHopOffersNoEchConfiguration
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_serverWithoutEchIsRetriedWithoutEch
@@ -2170,6 +2172,13 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocksPro
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocksProxyTest.socks5UsernamePassword
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocksProxyTest.theDnsResolvesTheOriginThroughSocks5ButNotThroughSocks5h
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientSocksProxyTest.wsThroughHttpProxyUsesConnect
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12DowngradeTest.negative_aStrippedTls13OfferIsNotDowngradedTo12
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12DowngradeTest.negative_tls13OnlyClientNeverSpeaksTls12
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.defaultClientSpeaksH2OverTls12
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.defaultClientSpeaksHttp11OverTls12
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.negative_pinsHoldOverTls12
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.negative_tls12ServerWithoutEmsIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.tls12SessionIsResumedOnTheEnginesNextConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.clientClosesPlainServerClosesTcpFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.clientClosesTlsServerClosesFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.h2ClientClosesServerEndsStreamFirst
@@ -2309,7 +2318,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.system
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineSessionCacheTest.engineCloseDropsItsSessions
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.alpnAndServerNameComeFromTheRequest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.everyOptionOfTheBlockApplies
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_quicConfigurationsAreTls13Only
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_groupsWithoutACurveNeedTls13Only
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_h2OverTls12NeedsP256
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_proxyTlsBlockIsCheckedWhenTheEngineIsCreated
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.negative_quicConfigurationsAreTls13OnlyUnderTheDefault
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.entriesSurviveANewInstance
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.expiredAndMalformedLinesAreDroppedOnLoad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.identicalPutDoesNotRewrite
@@ -2833,6 +2845,9 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTe
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.reconnectResumesWith0Rtt
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.udpBlockedWith0RttFallsBackWithinConnectTimeout
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientEarlyDataTest.udpBlockedWith0RttStallsOverToTcpInSeconds
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientTls12JdkServerTest.defaultClientIsServedByATls12OnlyServer
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientTls12JdkServerTest.negative_pinsHoldOverTls12
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientTls12JdkServerTest.negative_tls12ServerWithOnlyWeakSuitesIsRefused
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientUdpReleaseTest.closingTheClientReleasesItsUdpSocket
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ConnectionPoolUnconfinedTest.h2SignalWaiterLooksAgainAtOnceWithoutDeadlock
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ConnectionPoolUnconfinedTest.handedConnectionClosedAtOnceDoesNotDeadlock

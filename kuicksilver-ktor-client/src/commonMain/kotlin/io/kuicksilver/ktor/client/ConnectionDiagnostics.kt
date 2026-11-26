@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.PathInfo
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.tls.TlsVersion
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 
@@ -101,6 +102,8 @@ public class QuicConnectionSnapshot internal constructor(
  * @property viaProxy Whether the connection goes through a proxy; [remoteAddress][TcpConnectionSnapshot.remoteAddress]
  *   is then the proxy's.
  * @property secure Whether the connection carries TLS (to the origin, inside a tunnel through a proxy).
+ * @property tlsVersion The TLS version the connection to the origin negotiated: [TlsVersion.Tls12] only where
+ *   `tls { versions }` allows it (the default) and the server lacks TLS 1.3. Null without TLS and when the handshake failed.
  */
 @ExperimentalKuicksilverApi
 public class TcpConnectionSnapshot internal constructor(
@@ -111,13 +114,14 @@ public class TcpConnectionSnapshot internal constructor(
     public val alpn: String?,
     public val viaProxy: Boolean,
     public val secure: Boolean,
+    public val tlsVersion: TlsVersion?,
 ) : ConnectionSnapshot() {
     override val transport: Transport get() = Transport.Tcp
 
     /** For logs. */
     override fun toString(): String =
         "TcpConnectionSnapshot(${protocol ?: "no protocol"}, $localAddress -> $remoteAddress, alpn=$alpn, " +
-            "viaProxy=$viaProxy, reused=$reused)"
+            "tls=${tlsVersion ?: "none"}, viaProxy=$viaProxy, reused=$reused)"
 }
 
 /**

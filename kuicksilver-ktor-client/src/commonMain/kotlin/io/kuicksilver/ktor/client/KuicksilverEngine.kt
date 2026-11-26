@@ -64,7 +64,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
-/** `HttpClient(Kuicksilver)`: HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
+/** `HttpClient(Kuicksilver)`: HTTP/3, HTTP/2 and HTTP/1.1 over TLS 1.3, or TLS 1.2 over TCP (docs/guide/ktor.md). */
 @OptIn(InternalAPI::class, DelicateCoroutinesApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal class KuicksilverEngine(
     override val config: KuicksilverEngineConfig,
@@ -112,13 +112,27 @@ internal class KuicksilverEngine(
         require(abandon >= MIN_STALL_SILENCE && abandon <= MAX_STALL_ABANDON) {
             "http3 { stall { abandonAfter } } must be 100 ms..10 min, was $abandon"
         }
-        // RFC 9849 section 6.1, rule 1: ECH is TLS 1.3 only, and a configuration given for a host must be offered
+        // every refusal of the tls blocks happens here, not at the first request: the engine's own block as its TCP connections
+        // take it (TLS 1.3 only with H3Only: no TLS goes over TCP then, and QUIC is TLS 1.3 whatever tls { versions } says), and
+        // the proxies' block as an https:// proxy's connection takes it
+        checkTlsBlock("tls { }") {
+            io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                config.tls.applyTo(this, tls13Only = config.http3.discovery == Http3Discovery.H3Only)
+            }
+        }
+        if (config.proxies.tlsBlock != null) checkTlsBlock("proxies { tls { } }") { config.proxyTlsConfigFor(PROXY_CHECK_HOST) }
+        // RFC 9113 section 9.2.2: "Deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        // [TLS-ECDHE] with the P-256 elliptic curve [RFC8422]": a client that offers h2 over TLS 1.2 keeps secp256r1
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         require(
-            config.tls.ech.configLists
-                .isEmpty() || config.echCapable(),
+            config.tls.versions != io.kuicksilver.tls.TlsVersions.Tls12And13 ||
+                !config.http2.enabled ||
+                config.http3.discovery == Http3Discovery.H3Only ||
+                io.kuicksilver.tls.KeyExchangeGroups.SECP256R1 in config.tls.keyExchangeGroups.groups,
         ) {
-            "tls { ech { configLists } } needs TLS 1.3 only: tls { versions } allows TLS 1.2 (RFC 9849 section 6.1)"
+            "tls { keyExchangeGroups } must list secp256r1 while tls { versions = Tls12And13 } and http2 { enabled }: HTTP/2 over " +
+                "TLS 1.2 needs TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256 (RFC 9113 section 9.2.2); add secp256r1, set " +
+                "tls { versions = TlsVersions.Tls13 } or http2 { enabled = false }"
         }
         // a list given for a host is offered or refused now: one without a usable ECHConfig, or any in a build without ECH,
         // would otherwise send the host's name in the clear (with GREASE) on every connection
@@ -130,8 +144,9 @@ internal class KuicksilverEngine(
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         for ((host, list) in config.tls.ech.configLists) {
             try {
+                // a connection that offers it is TLS 1.3 only, whatever tls { versions } says (RFC 9849 section 6.1)
                 io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
-                    config.tls.applyTo(this)
+                    config.tls.applyTo(this, tls13Only = true)
                     ech { configList = list }
                 }
             } catch (e: io.kuicksilver.tls.TlsException.Config) {
@@ -140,9 +155,12 @@ internal class KuicksilverEngine(
         }
     }
 
-    /** Whether connections offer the `ech` of the HTTPS records (RFC 9848; `ech.fromHttpsRecords`, TLS 1.3 only). */
+    /**
+     * Whether connections offer the `ech` of the HTTPS records (RFC 9848; `ech.fromHttpsRecords`); such a connection is TLS
+     * 1.3 only ([ClientTlsConfig.applyTo]).
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val echFromRecords: Boolean = config.tls.ech.fromHttpsRecords && config.echCapable()
+    private val echFromRecords: Boolean = config.tls.ech.fromHttpsRecords
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
@@ -1973,3 +1991,27 @@ internal fun isIpLiteral(host: String): Boolean =
 /** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =
     this in setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options, HttpMethod.Put, HttpMethod.Delete, HttpMethod("TRACE"))
+
+/** The server name the eager check of `proxies { tls { } }` builds with (a reserved name, RFC 6761; nothing is sent to it). */
+private const val PROXY_CHECK_HOST = "proxy.invalid"
+
+/**
+ * Runs [build], which builds a client TlsConfig as a connection would, when the engine is created: a refusal becomes
+ * IllegalArgumentException naming [what] (with the way out when it is TLS 1.2's: no curve among the groups), and a native
+ * library that cannot be loaded IllegalStateException, instead of a failure at every request.
+ */
+private inline fun checkTlsBlock(
+    what: String,
+    build: () -> Unit,
+) {
+    try {
+        build()
+    } catch (e: io.kuicksilver.tls.TlsException.Config) {
+        val hint = if ("Tls12And13" in e.message.orEmpty()) " (versions = TlsVersions.Tls13 keeps them, without TLS 1.2)" else ""
+        throw IllegalArgumentException("$what: ${e.message}$hint", e)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        throw IllegalStateException("$what could not be checked: the native TLS library failed ($e)", e)
+    }
+}

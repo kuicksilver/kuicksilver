@@ -55,19 +55,20 @@ internal fun HttpRequestData.socketTimeoutMillis(): Long? =
 internal fun KuicksilverEngineConfig.tlsConfigFor(
     host: String,
     alpn: List<String>,
-    // the transport: QUIC is TLS 1.3 only (RFC 9001 section 4.2), whatever tls { versions } says
+    // the transport: QUIC is TLS 1.3 only (RFC 9001 section 4.2)
     quic: Boolean,
     // what the connection offers for ECH (RFC 9849), from its EchRoute; null: none, GREASE as configured
     ech: EchRoute.Offer? = null,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
-        this@tlsConfigFor.tls.applyTo(this, tls13Only = quic)
+        // the connection decides these: one configuration per endpoint, the retry's after a rejection. Every connection of an
+        // ECH route is TLS 1.3 only, the retry after a rejection included, also when it offers nothing (RFC 9849 section 6.1:
+        // ECH is TLS 1.3; a TLS 1.2 server fails it, never sees the name in the clear), and so is QUIC (RFC 9001 section 4.2)
+        val offered = ech?.list
+        this@tlsConfigFor.tls.applyTo(this, tls13Only = quic || offered != null || ech?.retry == true)
         // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
         this.alpn = alpn
         serverName = host
-        // the connection decides these: one configuration per endpoint, the retry's after a rejection; ECH is TLS 1.3
-        // only, and a TLS 1.2 configuration offers none (EchClientConfig.fromHttpsRecords)
-        val offered = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
         ech {
             configList = offered
             grease = this@tlsConfigFor.tls.ech.grease
@@ -124,8 +125,8 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             proxy.trust = proxyTrustOf(origin.trust)
             proxy.ech.grease = origin.ech.grease
             proxy.own()
-            proxy.applyTo(this, tls13Only = quic)
             val offered = proxy.ech.listFor(host)
+            proxy.applyTo(this, tls13Only = quic || offered != null)
             ech {
                 configList = offered
                 grease = proxy.ech.grease

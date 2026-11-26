@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client (experimental): `TcpConnectionSnapshot.tlsVersion`, the TLS version a call's TCP connection negotiated
+  (`TlsVersion.Tls12` or `Tls13`; null without TLS or after a failed handshake), also in its `toString()`.
 - WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
   stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
   later drafts.
@@ -1140,6 +1142,28 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: TLS 1.2 is offered next to TLS 1.3 over TCP by default (a default change; ADR-0026). `tls { versions }`
+  defaults to `TlsVersions.Tls12And13` (it was `Tls13`), as in OkHttp and the browsers, so a backend that speaks only
+  TLS 1.2 keeps working after a move from OkHttp; `tls { versions = TlsVersions.Tls13 }` keeps TLS 1.3 only, and with it a
+  TLS 1.2-only server fails with `protocol_version` as before. The default applies to HTTP/1.1, HTTP/2 and the hop to an
+  `https://` proxy. TLS 1.3 is negotiated whenever the server has it; an attacker who hides the client's TLS 1.3 offer
+  makes the handshake fail on the downgrade sentinel (RFC 9846 section 4.2.3). TLS 1.2 runs only under the fixed profile:
+  ECDHE with AES-GCM or ChaCha20-Poly1305, Extended Master Secret required, no compression, no renegotiation (RFC 9325,
+  RFC 10015, RFC 9113 section 9.2); a server that offers only CBC, static RSA or DHE suites gets no handshake. HTTP/3 stays
+  TLS 1.3 only (RFC 9001), and so does every connection that offers an ECH configuration, from `tls { ech { configLists } }`
+  or an HTTPS record: a server with TLS 1.2 alone fails it rather than see the name in the clear (RFC 9849 section 6.1).
+  The retry after an ECH rejection is TLS 1.3 only as well, the secure-disable retry without ECH included, and a
+  connection that negotiated TLS 1.2 never carries an ECH host by coalescing (RFC 9113 section 9.1.1). A `configLists`
+  entry under `versions = Tls12And13` is no longer refused when the engine is created, and `ech { fromHttpsRecords }` is
+  no longer ignored when TLS 1.2 is allowed. Every refusal of a `tls { }` or `proxies { tls { } }` block now happens when
+  the engine is created, not at the first request (IllegalArgumentException naming the block; IllegalStateException when
+  the native library cannot be loaded for the check). Under the new default that refuses `keyExchangeGroups` without an
+  elliptic curve (TLS 1.2 has no hybrid) unless `versions = Tls13` (the message says so; with
+  `http3 { discovery = H3Only }` they are taken), also in a `proxies { tls { } }` block that was accepted before and would
+  now fail every proxy connection, and, with `http2 { enabled }`, `keyExchangeGroups` without `secp256r1` (RFC 9113
+  section 9.2.2: HTTP/2 over TLS 1.2 needs TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256). Under TLS 1.2 the server's
+  certificate chain and a client certificate travel in the clear: set `Tls13` when `tls { identity }` identifies a user or
+  device. The Ktor server's connectors and a `TlsConfig` keep `Tls13` as their default.
 - TLS (ksl): a client context sets only its minimum TLS version and leaves the top open (RFC 9852 section 4: "clients
   SHOULD specify just the minimum version they want"; OpenSSL's highest, TLS 1.3 in 4.1); server contexts stay TLS 1.3 at
   most, QUIC sessions TLS 1.3 only.
@@ -2063,9 +2087,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Fixed
 
 - Ktor client: with `tls { versions = TlsVersions.Tls12And13 }` every HTTP/3 connection failed before it started (the TLS
-  layer refuses TLS 1.2 for QUIC, RFC 9001 section 4.2), so such a client fell back to TCP with `FallbackReason.TlsFailure`,
-  and the QUIC hop to a CONNECT-UDP proxy whose TLS allowed TLS 1.2 failed likewise. The engine now gives its QUIC
-  connections TLS 1.3 only, whatever `tls { versions }` says, as the server engine did.
+  layer refuses TLS 1.2 for QUIC, RFC 9001 section 4.2), so such a client fell back to TCP with `FallbackReason.TlsFailure`
+  and the QUIC hop to a CONNECT-UDP proxy whose TLS allowed TLS 1.2 failed likewise. The engine now gives its
+  QUIC connections TLS 1.3 only, whatever `tls { versions }` says, as the server engine did.
 - WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
   header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
   implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error

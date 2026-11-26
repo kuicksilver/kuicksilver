@@ -311,3 +311,39 @@ The design left these cases open or met them only in the code; each was decided 
   window ceilings, which keeps the auto-tuning's doubling and the received count far from the range end; the receive
   flow controller clamps every limit to 2^62-1 anyway; and both engines refuse sessions whose product exceeds 2^60
   rather than saturate, since a silently smaller window would stall those sessions.
+- **The client offers TLS 1.2 by default; the server and `TlsConfig` do not (owner decision 2026-11-26).** The Ktor
+  client's `tls { versions }` defaults to `Tls12And13`, as OkHttp and the browsers do, so that an application moving from
+  OkHttp does not silently lose backends that speak only TLS 1.2; `Tls13` is the opt-in. The model is one rule: the side
+  that cannot choose its peers gets the compatible default, the side that runs the service the strict one. A client
+  meets servers it does not control; a server's operator chooses its clients' floor, so the Ktor server's connectors keep
+  `Tls13` (RFC 9852's default) with `Tls12And13` on request, unchanged. `TlsConfig.Builder` keeps `Tls13` for both roles:
+  it is the protocol layer under QUIC (where only `Tls13` is valid, RFC 9001 section 4.2), under the server and under
+  `kuicksilver-ktor-network`'s raw sockets, and a role-dependent default there would make the same builder mean two things;
+  the client engine sets the version on every configuration it builds, so the layer's default never reaches it. What the
+  client's default does not change: TLS 1.2 runs only under the fixed profile of the TLS layer (ECDHE with AEAD,
+  Extended Master Secret required, no compression or renegotiation; RFC 9325, RFC 10015, RFC 9113 section 9.2), TLS 1.3 is
+  negotiated whenever the server has it, and OpenSSL's downgrade sentinel check (RFC 9846 section 4.2.3), always on, ends
+  a handshake whose TLS 1.3 offer an attacker hid. The client's QUIC connections, and every connection that offers an
+  ECH configuration (a `configLists` entry or an HTTPS record's `ech`), are TLS 1.3 only whatever the option says
+  (`ClientTlsConfig.applyTo(tls13Only)`; the transport is passed in, `tlsConfigFor(quic)`, not read from ALPN). For ECH
+  three options were weighed: keep refusing ECH with TLS 1.2 allowed (it
+  would refuse every `configLists` under the new default and silently turn `fromHttpsRecords` off, over QUIC too), offer
+  TLS 1.2 in the outer ClientHello as RFC 9849 section 6.1 allows (blocked in `ksl` by OpenSSL bug A, ADR-0019, and it
+  would add the path of a TLS 1.2 server answering an ECH offer: authenticate the public name, then `ech_required`), or
+  make those connections TLS 1.3 only.
+  The third was chosen: a server with TLS 1.2 alone fails the request with `protocol_version`, never a fallback to TLS 1.2
+  or to a connection without ECH (RFC 9849: no silent fallback). The whole ECH route is TLS 1.3 only, its retry after a
+  rejection included, also the secure-disable retry that offers no configuration, so the rule has no exception; and a
+  connection that negotiated TLS 1.2 never carries a host whose own connection would be TLS 1.3 only by coalescing (RFC
+  9113 section 9.1.1: the reuse passes every check a new connection would make, the version included). Every refusal of
+  the engine's TLS blocks, `proxies { tls { } }` included, happens when the engine is created (with `discovery = H3Only`
+  the engine's block is checked as TLS 1.3 only, since no TLS goes over TCP): key-exchange groups without an elliptic curve
+  under the default (TLS 1.2 has no hybrid), with a message naming `Tls13`, and groups without `secp256r1` while HTTP/2 is
+  on (RFC 9113 section 9.2.2, the client's side of the server's start check above). A `ksl` client context gives only its
+  minimum version (RFC 9852 section 4, SHOULD); its top is open. TLS 1.2 brought one more recommendation into play: RFC 9325
+  section 7.2.1's sequence-number nonce for AES-GCM, which OpenSSL 4.1.0 does not follow; the twelfth carried patch fixes
+  it (ADR-0019). Under TLS 1.2 the certificates travel in the clear; the option's KDoc says to keep `Tls13` with a client
+  identity. The proxy hop shares the
+  origin's default unless `proxies { tls { } }` says otherwise. The negotiated version is in the call diagnostics
+  (`TcpConnectionSnapshot.tlsVersion`). Making QUIC TLS 1.3 only in the client fixed a bug: with `Tls12And13`, every
+  HTTP/3 connection had failed in `TlsConfig.validateFor(quic)` and the client had fallen back to TCP.

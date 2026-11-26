@@ -15,7 +15,8 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * Encrypted Client Hello of the client engine (RFC 9849; docs/guide/ktor.md, "Encrypted Client Hello"); change it with
  * `tls { ech { } }` ([ClientTlsConfig.ech]). The configuration a connection offers comes from, in this order: the `ech` parameter of
  * the HTTPS record whose endpoint it goes to ([fromHttpsRecords], RFC 9848), the [configLists] entry of the request's host,
- * else none, and then GREASE ECH ([grease]). Over TCP and QUIC alike; TLS 1.3 only.
+ * else none, and then GREASE ECH ([grease]). Over TCP and QUIC alike; a connection that offers a configuration is TLS 1.3
+ * only, whatever `tls { versions }` says (RFC 9849 section 6.1), so a server with TLS 1.2 alone fails it.
  */
 @KuicksilverDsl
 @ExperimentalKuicksilverApi
@@ -24,9 +25,11 @@ public class EchClientConfig {
      * ECHConfigLists given out of band, by the request's host, compared as host names (without case, a trailing dot or the
      * brackets of an IPv6 literal; two keys for one host fail the engine's creation): every connection for that origin
      * offers it (directly, to an `Alt-Svc` alternative, and inside a proxy's CONNECT, SOCKS5 or CONNECT-UDP tunnel), unless
-     * an HTTPS record's endpoint brings its own. Empty by default. The engine refuses an entry when
-     * the `tls` block allows TLS 1.2 (ECH is TLS 1.3 only, RFC 9849 section 6.1), when the list holds no usable ECHConfig,
-     * and in a build without ECH, with IllegalArgumentException when it is created (each with its own message): a list
+     * an HTTPS record's endpoint brings its own; those connections are TLS 1.3 only (ECH is TLS 1.3, RFC 9849
+     * section 6.1), also under the default `tls { versions = Tls12And13 }`, so a server of the host that has TLS 1.2 alone fails
+     * the request instead of getting the name in the clear. Empty by default. The engine refuses an entry when the list
+     * holds no usable ECHConfig and in a build without ECH, with IllegalArgumentException when it is created (each with its
+     * own message): a list
      * given here never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` without a usable
      * ECHConfig is different: the connection sends GREASE then, as RFC 9849 section 6.1 allows.
      *
@@ -57,7 +60,7 @@ public class EchClientConfig {
      * no ClientHello goes out before the origin's SVCB resolution completed (section 5.3, MUST; within the connect timeout,
      * a resolution that fails counting as no records), and when every endpoint of the records has an `ech` parameter the
      * request never falls back to a connection without them (section 5.1, SVCB-reliant), so a failure is reported instead.
-     * Ignored, as if false, when the `tls` block allows TLS 1.2.
+     * A connection that offers a record's configuration is TLS 1.3 only, whatever `tls { versions }` says.
      */
     public var fromHttpsRecords: Boolean = true
 }
@@ -164,7 +167,3 @@ internal fun echHostKey(host: String): String =
         .removeSuffix(".")
         .removePrefix("[")
         .removeSuffix("]")
-
-/** Whether the engine's connections can offer ECH at all: TLS 1.3 only (RFC 9849 section 6.1, rule 1). */
-@OptIn(ExperimentalKuicksilverApi::class)
-internal fun KuicksilverEngineConfig.echCapable(): Boolean = tls.versions == io.kuicksilver.tls.TlsVersions.Tls13

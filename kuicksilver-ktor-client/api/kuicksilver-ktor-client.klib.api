@@ -772,6 +772,8 @@ final class io.kuicksilver.ktor.client/TcpConnectionSnapshot : io.kuicksilver.kt
         final fun <get-reused>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.reused.<get-reused>|<get-reused>(){}[0]
     final val secure // io.kuicksilver.ktor.client/TcpConnectionSnapshot.secure|{}secure[0]
         final fun <get-secure>(): kotlin/Boolean // io.kuicksilver.ktor.client/TcpConnectionSnapshot.secure.<get-secure>|<get-secure>(){}[0]
+    final val tlsVersion // io.kuicksilver.ktor.client/TcpConnectionSnapshot.tlsVersion|{}tlsVersion[0]
+        final fun <get-tlsVersion>(): io.kuicksilver.tls/TlsVersion? // io.kuicksilver.ktor.client/TcpConnectionSnapshot.tlsVersion.<get-tlsVersion>|<get-tlsVersion>(){}[0]
     final val transport // io.kuicksilver.ktor.client/TcpConnectionSnapshot.transport|{}transport[0]
         final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/TcpConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
     final val viaProxy // io.kuicksilver.ktor.client/TcpConnectionSnapshot.viaProxy|{}viaProxy[0]

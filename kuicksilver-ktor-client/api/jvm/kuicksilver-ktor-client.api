@@ -687,6 +687,7 @@ public final class io/kuicksilver/ktor/client/TcpConnectionSnapshot : io/kuicksi
 	public fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public fun getReused ()Z
 	public final fun getSecure ()Z
+	public final fun getTlsVersion ()Lio/kuicksilver/tls/TlsVersion;
 	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
 	public final fun getViaProxy ()Z
 	public fun toString ()Ljava/lang/String;

@@ -164,6 +164,8 @@ internal class CoalescingPeer(
     val stapleUntil: Long,
     val echAccepted: Boolean,
     val hosts: CoalescedHosts,
+    /** The TLS version the connection negotiated (an HTTP/3 one: TLS 1.3). */
+    val tlsVersion: io.kuicksilver.tls.TlsVersion = io.kuicksilver.tls.TlsVersion.Tls13,
 )
 
 /**
@@ -183,6 +185,9 @@ internal class CoalescingPeer(
  *   lives. The host's name is hidden from the verifier's network requests (RFC 9849 section 10.7) when the connection's ECH
  *   was accepted or a new connection to the host would offer ECH. A refusal is remembered for the connection, and so is a
  *   421 ([CoalescedHosts.record]).
+ * - **the TLS version**, every time: a connection that negotiated TLS 1.2 never carries a host whose new connection would
+ *   be TLS 1.3 only (one that would offer ECH: [tlsConfigFor] with its ECH route; a `versions = Tls13` client never has
+ *   such a connection), since that host's check of a new connection includes the version (RFC 9113 section 9.1.1).
  *
  * A refusal for any reason but the name is checked against the connection's own origin too ([CoalescingPeer.ownHost], its
  * name hidden as for the new host): when that fails as well, the decision is [Coalesce.Retire], and [onRetire] gets the own
@@ -206,12 +211,15 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
     if (peer.chain.isEmpty() || !coalescingTrust(tls.trust) || hosts.verdict(host) == false) return Coalesce.No
     try {
         if (dns.answeredDestinations(lookupHost, port).none { Destination.of(it).sameAs(peer.remote) }) return Coalesce.No
+        val route = dns.echRoute(host) { tls.ech.listFor(it) }
+        // a new connection to the host would be TLS 1.3 only (an ECH route): a TLS 1.2 connection never carries it
+        if (peer.tlsVersion == io.kuicksilver.tls.TlsVersion.Tls12 &&
+            tlsConfigFor(host, alpn, quic, route.offer).versions == io.kuicksilver.tls.TlsVersions.Tls13
+        ) {
+            return Coalesce.No
+        }
         if (hosts.verdict(host) == true) return Coalesce.Yes
-        val hidden =
-            peer.echAccepted || dns
-                .echRoute(host) { tls.ech.listFor(it) }
-                .offer.list
-                ?.isUsable == true
+        val hidden = peer.echAccepted || route.offer.list?.isUsable == true
         return when (val v = tlsConfigFor(host, alpn, quic).verifyForReuse(peer.chain, peer.stapleUntil, hidden)) {
             is VerifyResult.Accepted -> {
                 hosts.record(host, accepted = true)

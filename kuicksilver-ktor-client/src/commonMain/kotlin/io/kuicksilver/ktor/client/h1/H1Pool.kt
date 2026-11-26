@@ -129,6 +129,7 @@ internal class H1Connection(
             tls?.negotiatedAlpn,
             viaProxy,
             tls != null,
+            tls?.protocolVersion,
         )
 
     /**
@@ -297,7 +298,7 @@ private val H2_ALPN = listOf("h2", "http/1.1")
 private val DONE: Job = Job().also { it.complete() }
 
 /**
- * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3, or
+ * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3 or 1.2, or
  * over cleartext TCP with prior knowledge for the origins in `http2 { priorKnowledge }` (h2c, section 3.3; ADR-0018).
  * An HTTP/2 connection takes one slot of the limits below and serves its route's requests as streams ([H2Pool]): one
  * connection per route while it has a free stream, a second only when it is full. HTTP/1.1 keeps keep-alive and the
@@ -1251,6 +1252,7 @@ internal class H1Pool(
                         "h2",
                         h2c.viaProxy,
                         true,
+                        h2c.tlsVersion,
                     )
                 } else {
                     obtained.connection?.snapshot(obtained.reused)
@@ -2088,6 +2090,7 @@ internal class H1Pool(
                                 tls.sessionReused,
                                 destination != null,
                                 connectTimeoutMillis = data.connectTimeoutMillis(config),
+                                tlsVersion = tls.protocolVersion,
                             ).also {
                                 @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
                                 made?.store(it)
@@ -2218,6 +2221,7 @@ internal class H1Pool(
                 null,
                 viaProxy,
                 true,
+                null,
             )
         connectFailed(data, io.kuicksilver.ktor.client.ConnectStage.TlsHandshake, remote, viaProxy, e)
     }

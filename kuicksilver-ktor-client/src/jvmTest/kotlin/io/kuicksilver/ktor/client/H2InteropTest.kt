@@ -324,15 +324,18 @@ class H2InteropTest {
         }
 
     /**
-     * HTTP/2 over TLS 1.2 (RFC 9113 section 9.2): a client that allows TLS 1.2 offers `h2` and speaks it with a server that
-     * has only TLS 1.2, under the ECDHE + AEAD suites of its profile (none of them prohibited by section 9.2.2).
+     * HTTP/2 over TLS 1.2 (RFC 9113 section 9.2): the default client allows TLS 1.2 (0.3.0), offers `h2` and speaks it with a
+     * server that has only TLS 1.2, under the ECDHE + AEAD suites of its profile (none of them prohibited by section 9.2.2);
+     * the call's diagnostics say TLS 1.2.
      */
     @Test fun tls12ServerGetsH2() =
         clientTest {
             netty("TLSv1.2").use { n ->
-                testClient(engine = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                testClient().use { c ->
                     val r = c.get("https://127.0.0.1:${n.port}/hello")
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    val d = kotlin.test.assertIs<TcpConnectionSnapshot>(kotlin.test.assertNotNull(r.kuicksilverDiagnostics).connection)
+                    assertEquals(io.kuicksilver.tls.TlsVersion.Tls12, d.tlsVersion)
                     assertEquals("netty/hello", r.bodyAsText())
                     assertEquals("netty/again", c.get("https://127.0.0.1:${n.port}/again").bodyAsText())
                     assertEquals(1, (c.engine as KuicksilverEngine).h1.h2.connectionCount)
@@ -341,7 +344,8 @@ class H2InteropTest {
         }
 
     /**
-     * A server with TLS 1.2 only answers this client's ClientHello (TLS 1.3 only, the default) with a `protocol_version`
+     * A server with TLS 1.2 only answers the ClientHello of a client with `versions = Tls13` (the opt-in; the default allows
+     * TLS 1.2 since 0.3.0, [tls12ServerGetsH2]) with a `protocol_version`
      * alert: `protocolSelected` never comes, `connectFailed` reports the TLS failure with the server's address, and the
      * exception's diagnostics say TCP, with the connection whose handshake failed.
      */
@@ -367,7 +371,10 @@ class H2InteropTest {
                             selected += protocol
                         }
                     }
-                testClient(engine = { observability { eventListener = listener } }).use { c ->
+                testClient(engine = {
+                    tls { versions = io.kuicksilver.tls.TlsVersions.Tls13 }
+                    observability { eventListener = listener }
+                }).use { c ->
                     val e = kotlin.test.assertFailsWith<Throwable> { c.get("https://127.0.0.1:${n.port}/hello") }
                     val alert = generateSequence(e) { it.cause }.filterIsInstance<io.kuicksilver.tls.TlsException.AlertReceived>().first()
                     assertEquals("protocol_version", alert.description)
@@ -405,7 +412,7 @@ class H2InteropTest {
     @Test fun negative_tls12RenegotiationIsAProtocolError() =
         clientTest {
             netty("TLSv1.2").use { n ->
-                testClient(engine = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                testClient().use { c ->
                     val e = runCatching { withTimeout(10.seconds) { c.get("https://127.0.0.1:${n.port}/renegotiate") } }.exceptionOrNull()
                     val closed = generateSequence(e) { it.cause }.filterIsInstance<Http2Exception.ConnectionClosed>().firstOrNull()
                     assertEquals(Http2ErrorCode.PROTOCOL_ERROR, closed?.code, "the call failed with $e")

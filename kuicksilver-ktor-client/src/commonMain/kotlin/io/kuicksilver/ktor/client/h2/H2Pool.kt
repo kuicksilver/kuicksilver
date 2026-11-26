@@ -49,6 +49,8 @@ internal class H2Conn(
     val mayCarryOthers: Boolean = false,
     /** The connect timeout of the request that opened it, which bounds the wait for the server's preface (null: unknown). */
     val connectTimeoutMillis: Long? = null,
+    /** The TLS version its handshake negotiated, for the call diagnostics; null for h2c. */
+    val tlsVersion: io.kuicksilver.tls.TlsVersion? = null,
 ) : PooledConnection(route, createdAt) {
     /** The other origins this connection was checked for, and those that got 421 on it (ADR-0018). */
     val hosts =
@@ -59,7 +61,7 @@ internal class H2Conn(
     val peer: io.kuicksilver.ktor.client.CoalescingPeer? by lazy {
         destination?.takeIf { peerChain.isNotEmpty() }?.let {
             io.kuicksilver.ktor.client
-                .CoalescingPeer(ownHost, it, peerChain, stapleUntil, echAccepted, hosts)
+                .CoalescingPeer(ownHost, it, peerChain, stapleUntil, echAccepted, hosts, tlsVersion ?: io.kuicksilver.tls.TlsVersion.Tls13)
         }
     }
 

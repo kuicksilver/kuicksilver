@@ -134,7 +134,7 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 |---|---|---|---|---|---|---|
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)) |
 | `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Ktor: Mutual TLS](ktor.md#mutual-tls-client-certificates)) |
-| `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP; `Tls12And13` keeps HTTP/2 on over TLS 1.2 (a server's renegotiation request then ends the connection, RFC 9113 section 9.2.1); QUIC is TLS 1.3 only |
+| `versions` | `TlsVersions` | `TlsVersions.Tls12And13` (0.3.0; was `Tls13`) | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP and to an `https://` proxy: TLS 1.3, or TLS 1.2 with a server without 1.3, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation: a server's request ends an HTTP/2 connection, RFC 9113 section 9.2.1), as OkHttp and the browsers; `Tls13` refuses a TLS 1.2-only server; QUIC and every connection that offers ECH are TLS 1.3 only |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
 | `keyExchangeGroups` | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | 0.3.0 | experimental | 🔒 | key-exchange groups and the key shares sent ([`tlsConfig(role) { }`](#tlsconfigrole--)) |
 | `revocation` | `RevocationPolicy` | `RevocationPolicy.StapledIfPresent` | 0.3.0 | experimental | 🔒 | how the OCSP response the server staples is checked ([Certificate revocation](tls.md#certificate-revocation)) |
@@ -149,9 +149,9 @@ over TCP and QUIC alike, TLS 1.3 only.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `configLists` | `Map<String, EchConfigList>` | empty | 0.3.0 | experimental | | ECHConfigLists given out of band, by request host: every connection for that origin offers it (directly, to an `Alt-Svc` alternative, inside a proxy tunnel) unless an HTTPS record's endpoint brings its own; with a `tls { versions }` that allows TLS 1.2 the engine's creation fails (RFC 9849 section 6.1) |
+| `configLists` | `Map<String, EchConfigList>` | empty | 0.3.0 | experimental | | ECHConfigLists given out of band, by request host: every connection for that origin offers it (directly, to an `Alt-Svc` alternative, inside a proxy tunnel) unless an HTTPS record's endpoint brings its own; those connections are TLS 1.3 only whatever `tls { versions }` says (RFC 9849 section 6.1) |
 | `grease` | `Boolean` | `true` | 0.3.0 | experimental | | GREASE ECH on every TLS connection that offers no configuration (RFC 9849 section 6.2.1) |
-| `fromHttpsRecords` | `Boolean` | `true` | 0.3.0 | experimental | | offer the `ech` parameter of the origin's HTTPS records (RFC 9848), which `network { httpsRecords }` must look up: no ClientHello before the records resolved (section 5.3), and no fallback to a connection without them when every endpoint has `ech` (section 5.1, SVCB-reliant); ignored when TLS 1.2 is allowed |
+| `fromHttpsRecords` | `Boolean` | `true` | 0.3.0 | experimental | | offer the `ech` parameter of the origin's HTTPS records (RFC 9848), which `network { httpsRecords }` must look up: no ClientHello before the records resolved (section 5.3), and no fallback to a connection without them when every endpoint has `ech` (section 5.1, SVCB-reliant); those connections are TLS 1.3 only |
 
 ### `engine { http3 { } }`
 
