@@ -247,7 +247,8 @@ opcodes, fragmentation, UTF-8, the closing handshake, limits, and permessage-def
 directions: its fuzzing client against the server engine (`server`) and the client engine against its fuzzing server
 (`client`). The server and the client are the conformance executable's (`Autobahn.kt` in `kuicksilver-soak`): Ktor's
 `WebSockets` plugin with `PerMessageDeflate`, over HTTP/1.1, the engines' default limits, and an echo of every Text
-and Binary frame as it came; Ping, Pong and Close are Ktor's `DefaultWebSocketSession`'s, as in an application. The image
+and Binary frame as it came; the engine answers each Ping (`WebSocketPongs`) and Ktor's `DefaultWebSocketSession`
+answers the Close, as in an application. The image
 (`crossbario/autobahn-testsuite`, linux/amd64 only) is pinned by its digest. A case passes when the suite's verdict is OK
 or INFORMATIONAL for the case and for its closing handshake; any other verdict fails the run, except where the script
 records the verdicts a case may get with the RFC text that allows them, and the number of cases (517) is recorded too.
@@ -259,7 +260,8 @@ The linuxX64 executable runs inside the suite's container; the JVM and macOS one
 | hosted CI (`build.yml`) | ✓ (job `linux-native`) | ✓ (job `linux-native`) | ✓ (job `linux`, x64) | ✓ (job `linux`, x64) |
 
 In hosted CI Docker runs on the Linux host itself: the suite reaches the JVM server on the host network as 127.0.0.1,
-with none of Docker Desktop's forwarding in between.
+with none of Docker Desktop's forwarding in between. How long each hosted CI run takes (amd64, no emulation) is to be recorded here after its first
+run; on the Mac, under emulation, the linuxX64 runs take about 14 minutes per direction and the JVM client about 8.
 
 The first three rows are runs of the final `tools/interop/autobahn.sh`, after both fixes below (2026-11-26):
 
@@ -302,7 +304,7 @@ only by answering `client_max_window_bits` (9 or 15), which RFC 7692 section 7.1
 carry it ("the corresponding extension negotiation response to the offer MUST NOT include the "client_max_window_bits"
 extension parameter"). `PerMessageDeflate` does not offer it ("A client MAY include" it, the same section): the JVM's
 Deflater has a fixed 15-bit window and could not keep to a smaller value. So the suite declines the extension and marks
-the case UNIMPLEMENTED. The server runs all of 13 with every offer the suite makes (OK).
+the case UNIMPLEMENTED. The linuxX64 server runs all of 13 with every offer the suite makes (OK).
 
 **Recorded: server_max_window_bits=9 on the JVM (13.3 and 13.5, JVM server).** Here the fuzzing client offers
 `server_max_window_bits=9`. RFC 7692 section 7.1.2.1: a server accepts it "by including the "server_max_window_bits"

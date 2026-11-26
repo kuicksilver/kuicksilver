@@ -169,7 +169,7 @@ html = {n: open(f"{v}/verify/{n}.html", encoding="utf-8").read() for n in ("inte
 assert '<span class="fail">h2 ✗</span>' in html["interop"] and "OkHttpToServerH2Test.post1MiB()" in html["interop"]
 assert "on another commit" in html["fuzzing"] and "(" + "fedcba987654" + ")" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
 assert "h2spec (h2c)" in html["conformance"] and "not run in hosted CI" in html["conformance"] and "h3spec (server)" in html["conformance"]
-assert "Autobahn (client)" in html["conformance"] and "(1 recorded as the suite&#x27;s own error)" in html["conformance"], html["conformance"]
+assert "Autobahn (client)" in html["conformance"] and "(1 recorded, each with the RFC text that allows its verdict)" in html["conformance"], html["conformance"]
 assert "9 377" in html["benchmarks"] and "9 200" in html["benchmarks"]
 assert "0123456789abcdef0123456789abcdef01234567" in html["platforms"] and "2026-11-18 09:00 UTC" in html["platforms"]
 assert "actions/runs/1001" in html["platforms"]

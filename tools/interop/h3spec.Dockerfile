@@ -6,6 +6,10 @@
 # as build arguments; the image is tagged by them and this file's hash). linux/amd64 only: h3spec publishes no
 # linux-arm64 binary (an arm64 Mac runs this image under emulation). The server executable is mounted, not copied. The
 # base is pinned by digest (the multi-arch index, as tools/check/deployment-guide.Dockerfile).
+# The Debian packages (libgmp10, zlib1g, and curl and ca-certificates to fetch the binary, removed after) are not pinned to
+# versions: Debian's mirrors keep only the current version of a package, so a pinned one stops installing at the next
+# point release, and the build of this image would fail for that reason alone. What runs the tests is pinned: the base by
+# digest, h3spec by its sha256 (checked here, with curl only as the transport), and the server is the gate's own build.
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ARG H3SPEC_VERSION
 ARG H3SPEC_SHA256

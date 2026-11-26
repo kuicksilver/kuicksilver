@@ -63,7 +63,8 @@ runner weekly. The engine interop bench, `kuicksilver-engine-interop`, runs in e
 also runs Ktor's own engine contract suites (adapted from Ktor 3.6.0) in its common tests, so on every target.
 h3spec (`tools/interop/h3spec.sh`) and the Autobahn|Testsuite (`tools/interop/autobahn.sh`) run in every gate and in
 hosted CI, as h2spec does (the JVM WebSocket server only in hosted CI, on Linux): each fails on a case that does not pass, except the cases it lists with the RFC text that
-allows them, and on a change in the number of cases.
+allows them, and on a change in the number of cases. Their durations in hosted CI are to be recorded after the first run there
+([interop.md](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26)).
 
 - TODO(measure): the runner matrix on the 0.3.0 code: `tools/ci/local-matrix.sh --with-interop` (or
   `tools/interop/run-local.sh` per image), then the tables of [interop.md](spec/interop.md) and
