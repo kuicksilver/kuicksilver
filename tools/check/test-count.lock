@@ -4079,6 +4079,10 @@ kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNati
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.emptyFileIsEmpty
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.negative_fileAboveTheCapRefused
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.negative_missingFileFails
+kuicksilver-native/src/commonTest	io.kuicksilver.config.RateLimitTest.equalityIsByValue
+kuicksilver-native/src/commonTest	io.kuicksilver.config.RateLimitTest.smallestValuesAreOne
+kuicksilver-native/src/commonTest	io.kuicksilver.config.RateLimitTest.zeroOrNegativeBurstIsRefusedWithItsName
+kuicksilver-native/src/commonTest	io.kuicksilver.config.RateLimitTest.zeroOrNegativeRateIsRefusedWithItsName
 kuicksilver-native/src/commonTest	io.kuicksilver.native.ConcurrentSessionsTest.eightParallelHandshakesWithPrivateEventBuffers
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslAvailabilityCommonTest.availableOnABuiltPlatform
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.abiVersionMatches

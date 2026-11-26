@@ -39,6 +39,16 @@ public annotation class InternalKuicksilverApi
 )
 public annotation class DelicateKuicksilverApi
 
+/**
+ * Marks an option whose wrong value weakens security: it opens a denial of service, a leak or a downgrade (see the threat
+ * model). It needs no opt-in; the option reference (docs/guide/configuration.md) shows such options with 🔒. An option that
+ * can only weaken the default is also [DelicateKuicksilverApi].
+ */
+@MustBeDocumented
+@Retention(AnnotationRetention.BINARY)
+@Target(AnnotationTarget.PROPERTY, AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+public annotation class SecuritySensitive
+
 /** Marker for Kuicksilver configuration DSLs. */
 @DslMarker
 @Target(AnnotationTarget.CLASS, AnnotationTarget.TYPE)
