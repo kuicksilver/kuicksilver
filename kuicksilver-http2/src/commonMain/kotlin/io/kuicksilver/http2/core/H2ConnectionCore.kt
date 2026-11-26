@@ -366,6 +366,12 @@ internal class H2ConnectionCore(
      */
     internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id > lastLocalSent
 
+    /**
+     * Whether the peer's SETTINGS frames (ACKs not counted) began: the first is its preface (section 3.4), which takes no
+     * glitch; every later one takes one.
+     */
+    internal var peerPrefaceSettingsTaken = false
+
     /** Glitches counted so far (a test hook). */
     internal var glitchesTaken = 0
 

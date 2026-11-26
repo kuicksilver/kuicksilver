@@ -88,6 +88,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.goLikeSlowReaderTakesNoGlitch
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_dataDribbleHoldsOneFramePerStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_emptyFrameFloodsWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_onlyThePrefaceSettingsIsFree
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodFillsTheQueueBeforeTheGlitchBudget
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodWithoutReading
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_priorityShufflingWithoutReading
@@ -3339,6 +3340,9 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodWithoutReadingIsCutOffAfterTheStallDeadline
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetBounded
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetSlowerThanTheSettingsTimeoutEndsCalm
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetSpendsTheDefaultGlitchBudget
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetSpendsTheGlitchBudget
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_rapidResetDoesNotRunHandlersUnbounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_repeatOffenderBackoff
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_slowReadDoesNotPinResponses
