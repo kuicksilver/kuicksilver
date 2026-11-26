@@ -102,6 +102,23 @@ ships when its gate passes ([process.md](process.md)). What comes after 0.3.0 is
 may change with user feedback, and every item still follows the release bar (each bug fixed with a test before a
 release). The [Not planned](#not-planned) list says what the project will not do, and why.
 
+### Version policy
+
+Decided on 2026-11-26:
+
+- A minor release, 0.X.0, brings new features together with the fixes found since the one before it. A fix found after
+  0.X.0 ships in 0.(X+1).0, and what does not make a minor release moves to the next one.
+- A patch release, 0.X.Y, is made only when users need a fix before the next minor release, or for a security fix that
+  cannot wait for it. An OpenSSL (or zlib, brotli) security release whose issue is reachable through Kuicksilver is such
+  a fix: it ships as a patch release of the latest line, in the times of [SECURITY.md](../SECURITY.md#openssl). A
+  Critical or High vulnerability always cannot wait: its fix ships as a patch release within 30 days of the assessment.
+  Nor can the fix for a Medium vulnerability that is publicly known, or whose disclosure date is within 60 days of the
+  assessment: it ships as a patch release within 60 days ([SECURITY.md](../SECURITY.md#what-happens-next)).
+- A non-security OpenSSL patch release (4.1.x) ships in the next minor release, not in a patch release of its own, and
+  the move to the OpenSSL 4.2 LTS branch is made in a minor release.
+- From 1.0, no breaking change within 1.x (Semantic Versioning, [stability.md](stability.md)); fixes come as patch
+  releases.
+
 ### 0.2.x — patch releases
 
 0.2.1, a bug-fix release from the `release/0.2.x` branch, was released on 2026-11-04.
@@ -181,7 +198,6 @@ what the peers really do, and is delivered whole or not at all.
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
 - HTTPS proxies (TLS to the proxy): implemented, experimental ([ADR-0023](adr/0023-https-proxy.md),
   [details](spec/rfc/9110.md#https-proxy)).
-- ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)) (done: on by default on both sides, brotli
   then zlib, built into libcrypto from pinned and verified releases, [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
@@ -198,21 +214,29 @@ what the peers really do, and is delivered whole or not at all.
   name check on rejection, and the move to 4.1.x has its own prerequisites; both are listed in
   [ADR-0019](adr/0019-openssl-4-and-ech.md).
 
-### 0.3.x — multipath QUIC
-
-Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), published 2026-11 from
-draft-ietf-quic-multipath) moved from 0.3.0 to a 0.3.x release on 2026-11-18: experimental and off by default, but with
-every MUST and SHOULD of the RFC. It starts with the refactoring to one packet number space per path.
-
 ### 0.4.0 (planned)
 
+- Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), published 2026-11 from
+  draft-ietf-quic-multipath): experimental and off by default, but with every MUST and SHOULD of the RFC. It starts with
+  the refactoring to one packet number space per path. It moved from 0.3.0 to a 0.3.x release on 2026-11-18 and, under
+  the [version policy](#version-policy), to 0.4.0 on 2026-11-26.
+- ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default; moved from the 0.3.0
+  [feature parity](#feature-parity-decided-2026-11-16) list on 2026-11-19.
 - The GSSAPI method of SOCKS5, a MUST of [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi): where the platform has a GSS-API
   (JGSS on the JVM, GSS.framework on Apple, SSPI on Windows, libgssapi on Linux); Android has none, so there it stays
   unavailable, documented.
+- Verification and measurements, moved from 0.3.0 on 2026-11-26 (none of them changes what 0.3.0 does):
+  - a mutation score of the protocol cores, starting with HTTP/3 ([how we verify](how-we-verify.md#planted-bugs-instead-of-mutation-testing));
+  - differential fuzzing of the QUIC code against quiche and quic-go;
+  - high-bandwidth benchmarks against the peer QUIC stacks on gigabit links;
+  - HTTP/3 client benchmarks against Cronet and URLSession on a phone ([why Kuicksilver](why-kuicksilver.md#performance));
+  - a benchmark against Netty's HTTP/3 server on the JVM (goodput, CPU per GB);
+  - benchmarks against OkHttp beyond `tools/bench/why-quic.sh`.
 
-### After 0.3.0, until 1.0
+### After 0.4.0, until 1.0
 
-Fixes and hardening, multipath QUIC in 0.3.x and the 0.4.0 items (above); no other new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
+Further minor releases under the [version policy](#version-policy), each with new features and fixes; patch releases
+only as that policy says. From 1.0, no breaking change within 1.x ([stability.md](stability.md)).
 
 ### After 1.0
 

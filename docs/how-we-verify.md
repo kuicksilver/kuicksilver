@@ -195,6 +195,8 @@ protocol header; and a libFuzzer harness of the C parsing code in `ksl` (`tools/
 - **Findings.** A crash becomes a committed input, a unit test and a fix. 20 inputs, for 17 bugs, are recorded in
   `tools/fuzz/reproducers.txt`.
 
+- Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): differential fuzzing of the QUIC code against quiche and
+  quic-go.
 - TODO(measure): fuzzing hours per target for 0.3.0: `tools/fuzz/campaign.sh status` after the campaign, read by
   `tools/report/reliability.sh` from `build/fuzz-campaign/stats.tsv` (the current [reliability.md](reliability.md)
   says "not measured in this gate").
@@ -210,8 +212,8 @@ input no longer reaches the bug, the input must still pass and the guard test mu
 security check also has a `negative_*` test that fails when the check is removed ([threat model](#threat-model)). This
 is mutation testing of the security checks only ([threat-model.md, section 8](spec/threat-model.md#assurance-case)).
 
-- TODO(measure): a mutation score of the protocol cores. That needs a mutation tool for Kotlin set up first (none is in
-  the build); there is no number to give.
+- Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): a mutation score of the protocol cores, starting with
+  HTTP/3. That needs a mutation tool for Kotlin set up first (none is in the build); there is no number to give.
 
 ## The release gate
 
@@ -297,8 +299,11 @@ Still to measure (the tool that produces each):
 - TODO(measure): the handshake rate after the 0.3.0 server changes: `tools/bench/run-table.sh --phases handshakes`.
 - TODO(measure): the size on iOS for 0.3.0 (`tools/check/ios-size.sh`) and the arm64-v8a `libksl.so` of 0.3.0
   (`tools/check/size.sh`, printed by the gate's "android: size gate" step).
-- TODO(measure): benchmarks against OkHttp beyond `tools/bench/why-quic.sh` (which covers OkHttp's HTTP/1.1 and HTTP/2
-  over an emulated network), and against Cronet and Netty's HTTP/3 server: no tool in the repository does this yet.
+
+Planned for 0.4.0 ([roadmap](roadmap.md#040-planned)): benchmarks against OkHttp beyond `tools/bench/why-quic.sh` (which
+covers OkHttp's HTTP/1.1 and HTTP/2 over an emulated network), against Cronet and URLSession on a phone and against
+Netty's HTTP/3 server, and high-bandwidth benchmarks against the peer QUIC stacks on gigabit links. No tool in the
+repository does these yet.
 
 ## Repository checks
 
