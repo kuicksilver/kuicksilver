@@ -2502,10 +2502,12 @@ cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)).
 **Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
 its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
 that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
-`client.engine.coroutineContext.job.join()` (0.3.0): it returns once every endpoint finished closing, which includes
-`close()` on the qlog trace of every connection, a call still reading its body included. An `AsyncQlogSink` writes on its
-own coroutine, so `flush()` it after the join to have the files written. The join has no bound of its own (closing an
-endpoint waits for nothing on the network); wrap it in `withTimeout` where the exit must not wait at all.
+`client.engine.coroutineContext.job.join()` (0.3.0). The join first waits for every call in flight: a response body
+until it is read or cancelled, a WebSocket or SSE session until it is closed. Only then are the endpoints closed, and the
+join returns once every one of them finished closing, which includes `close()` on the qlog trace of every connection.
+An `AsyncQlogSink` writes on its own coroutine, so `flush()` it after the join to have the files written. The join has no
+bound of its own: a body nobody reads or a session nobody closes holds it for as long as it stays open, so wrap the join
+in `withTimeout` where the exit must not wait for them.
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.

@@ -25,10 +25,21 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** A qlog sink that only counts the traces opened and closed. */
-internal class CountingQlogSink : QlogSink {
+/**
+ * A qlog sink that only counts the traces opened and closed. The close of a trace for which [hold] answers true (asked
+ * with the connection's ID at the close) blocks the endpoint loop that closes it until [release] (at most 5 s): what waits
+ * for that close waits for it.
+ */
+internal class CountingQlogSink(
+    private val hold: (odcidHex: String) -> Boolean = { false },
+) : QlogSink {
     val opened = AtomicInt(0)
     val closed = AtomicInt(0)
+    private val released = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    fun release() {
+        released.complete(Unit)
+    }
 
     override fun open(
         odcidHex: String,
@@ -39,6 +50,9 @@ internal class CountingQlogSink : QlogSink {
             override fun write(record: String) {}
 
             override fun close() {
+                if (hold(odcidHex)) {
+                    kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(5.seconds) { released.await() } }
+                }
                 closed.incrementAndFetch()
             }
         }

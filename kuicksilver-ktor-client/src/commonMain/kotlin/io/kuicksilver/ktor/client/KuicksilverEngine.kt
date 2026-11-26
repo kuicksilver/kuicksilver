@@ -322,12 +322,25 @@ internal class KuicksilverEngine(
                 try {
                     requests.join()
                 } finally {
-                    withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
-                    h1.closeAll()
-                    migrationJob.cancel() // the migrators end before their connections
-                    withContext(NonCancellable) { h3.closeAndJoin() }
-                    withContext(NonCancellable) { h3.closeSessions() }
-                    selector.close()
+                    // every step runs whatever the one before it threw (the first failure is rethrown at the end, later ones
+                    // suppressed), none of them cut by a cancellation; the selector, which the TCP sockets use, goes last
+                    var failure: Throwable? = null
+                    withContext(NonCancellable) {
+                        suspend fun step(block: suspend () -> Unit) {
+                            try {
+                                block()
+                            } catch (t: Throwable) {
+                                failure?.addSuppressed(t) ?: run { failure = t }
+                            }
+                        }
+                        step { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
+                        step { h1.closeAll() }
+                        step { migrationJob.cancel() } // the migrators end before their connections
+                        step { h3.closeAndJoin() }
+                        step { h3.closeSessions() }
+                        step { selector.close() }
+                    }
+                    failure?.let { throw it }
                 }
             }
         // the leak sentinel's record of this engine (off in production: one read): it ends once the cleanup after close() ran

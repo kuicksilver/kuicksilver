@@ -1079,17 +1079,32 @@ internal class H3Pool(
 
     /**
      * [close], then waits until every endpoint of the pool finished closing: each connection on it closed and its qlog trace
-     * closed (`QuicEndpoint.closeAndJoin`), the sockets released. An endpoint bound while this runs is closed by its binder,
-     * which sees [closed]; taking the [lock] once waits for a direct or proxy-hop bind in progress to have noted its endpoint.
+     * closed (`QuicEndpoint.closeAndJoin`), the sockets released. Each endpoint leaves [endpoints] once joined, and the set
+     * is read again until it is empty: an endpoint bound while this runs (its binder sees [closed] and closes it) is joined
+     * too. Taking the [lock] once waits for a direct or proxy-hop bind in progress to have noted its endpoint. The closes of
+     * ended tunnels still running ([closeTunnelEndpoint]) are joined, not cancelled, before [tunnelCloses] goes.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     suspend fun closeAndJoin() {
         close()
         lock.withLock {}
-        for (ep in endpoints.load()) ep.closeAndJoin()
-        endpoints.store(emptySet())
+        while (true) {
+            val left = endpoints.load()
+            if (left.isEmpty()) break
+            for (ep in left) {
+                ep.closeAndJoin()
+                endpoints.update { it - ep }
+            }
+        }
+        tunnelCloses.coroutineContext[Job]!!
+            .children
+            .toList()
+            .forEach { it.join() }
         tunnelCloses.cancel()
     }
+
+    /** Tests: the endpoints [closeAndJoin] would still wait for. */
+    internal val endpointCountForTest: Int get() = endpoints.load().size
 
     /**
      * Whether [this] ended: its HTTP/3 session took note, or its QUIC transport ended before that (the session learns of
