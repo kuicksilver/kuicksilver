@@ -1185,7 +1185,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   | server `identity`, `tlsConnector(identity) { }` | `tls { identity }` (or `tls { pemFiles(chain, key) }`) and `tlsConnector { }` |
   | server `tlsConnector { clientAuth; trust; cipherSuites; sniSelector }` | `tls { clientAuth; clientTrust; cipherSuites; sniSelector }` (per connector: `tlsConnector { tls { } }`) |
   | server `tlsConnector { host = "0.0.0.0" }` (the default) | `tlsConnector { host = null }` (the default: every interface, see below) |
-  | server `connectionIdleTimeoutSeconds: Int` | `http1 { idleTimeout: Duration }` |
+  | server `connectionIdleTimeoutSeconds: Int` | `tcp { idleTimeout: Duration }` (HTTP/1.1 and HTTP/2) |
   | server `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` |
   | server `http3: Boolean`, `altSvc` | `http3 { enabled; altSvc }` |
   | server `quic = …`, `quicMaxIdleTimeout` | `http3 { quic { … } }`, `http3 { quic { maxIdleTimeout } }` |

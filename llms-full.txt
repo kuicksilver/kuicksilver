@@ -3040,7 +3040,7 @@ server.start(wait = true)
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. Over HTTP/2 and HTTP/3 the same deadline bounds each
   request head (`maxHeaderBlockTime` of `http2 { settings { } }` and `http3 { settings { } }`, 10 s by default): an
-  HTTP/3 head that misses it is reset with `H3_REQUEST_REJECTED`. `http1 { idleTimeout }` (45 s) closes a connection
+  HTTP/3 head that misses it is reset with `H3_REQUEST_REJECTED`. `tcp { idleTimeout }` (45 s) closes a connection
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
   upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). `Expect:
@@ -3278,7 +3278,7 @@ Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over 
 limit and, in `floodLimits { }`, the flood limits of the core ([configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server)).
 The engine's deadlines apply: the client's connection preface must arrive within `requestHeaderTimeout` of the accepted
 connection (TLS included), else GOAWAY and close; each field block must arrive within it too (else GOAWAY with
-ENHANCE_YOUR_CALM); a request body that sends no byte for `http1 { idleTimeout }` fails the handler's read and is
+ENHANCE_YOUR_CALM); a request body that sends no byte for `tcp { idleTimeout }` fails the handler's read and is
 answered 408 when nothing else answered; a connection without requests for that long gets GOAWAY and closes; a
 response that gets no window from the client for the longer of that and 5 minutes resets its stream. Request content is
 credited to the client only as the handler reads it. A client's RST_STREAM cancels the handler of that request; a
@@ -3943,7 +3943,7 @@ connector, which has no DSL block) and Ktor's own `ktor.deployment.connectionIdl
 | `kuicksilver.webSockets.maxMessageSize` | `webSockets { maxMessageSize }`: the largest WebSocket message a client may send, in bytes (`16777216`) |
 | `kuicksilver.tcp.maxConnections` | `tcp { maxConnections }`: TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.tcp.maxConnectionsPerIp` | `tcp { maxConnectionsPerIp }`: TCP connections of one client address on a connector (`off`; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
-| `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `http1 { idleTimeout }` (`45`) |
+| `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `tcp { idleTimeout }` (`45`) |
 
 The QUIC transport keys set `http3 { quic { } }` as the DSL does. Every key with its type and release is in the
 [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#hocon-keys).
@@ -6480,7 +6480,7 @@ timeout, at most 3/4 of `maxIdleTimeout`. Set it on the side that keeps a quiet 
 client: on the Ktor client `engine { http3 { quic { keepAlive = 15.seconds } } }`, on the Ktor server
 `http3 { quic { keepAlive = 15.seconds } }` (`kuicksilver.http3.quic.keepAlive = 15s`; every connection of the listener then sends a PING that often, which a
 server with many idle clients pays for). The Ktor client closes HTTP/3 connections that carry no request after its own
-`pool { idleTimeout }` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`http1 { idleTimeout }`, 45 s,
+`pool { idleTimeout }` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`tcp { idleTimeout }`, 45 s,
 `ktor.deployment.connectionIdleTimeoutSeconds` with `EngineMain`, closes idle HTTP/1.1 connections first).
 
 A process that was frozen (an Android app frozen in the background or in Doze, a laptop that slept, a debugger stopped
@@ -6656,7 +6656,7 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
   HTTP/2 alike ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `http3 { quic { } }` (idle timeout, windows, congestion control), `http3 { settings { } }`,
-  `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `http1 { idleTimeout }` against slow clients
+  `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `tcp { idleTimeout }` against slow clients
   ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)).
 
 #### QUIC connection limits
@@ -7171,7 +7171,6 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `idleTimeout` | `Duration` | 45 s | 0.3.0 | stable | | an HTTP/1.1 connection without requests for this long is closed (both directions); a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes; a request body that sends no byte for this long gets 408 and the connection closes. `EngineMain` sets it from `ktor.deployment.connectionIdleTimeoutSeconds` |
 | `allowBareLf` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | let a bare LF (no CR before it) end a line of an HTTP/1.1 request head or trailer section (RFC 9112 section 2.2 MAY); by default such a request gets 400 and the connection closes, since a proxy in front that reads the LF as part of a line would frame the request otherwise (section 11.2) |
 
 #### `configure { http2 { } }`
@@ -7267,11 +7266,12 @@ RESET_STREAM_AT and needs QUIC datagrams.
 
 #### `configure { tcp { } }`
 
-`TcpLimitsConfig`: the TCP connection limits of every connector, HTTP/1.1 and HTTP/2 alike
+`TcpLimitsConfig`: the TCP connections of every connector, HTTP/1.1 and HTTP/2 alike: their idle timeout and limits
 ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
+| `idleTimeout` | `Duration` | 45 s | 0.3.0 | stable | | a TCP connection without requests for this long is closed: an HTTP/1.1 one both directions, an HTTP/2 one after GOAWAY; a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes; a request body that sends no byte for this long fails the handler's read (HTTP/1.1: 408 and close). `EngineMain` sets it from `ktor.deployment.connectionIdleTimeoutSeconds`; HTTP/3 has `http3 { quic { maxIdleTimeout } }` |
 | `maxConnections` | `Int` | 10 000 | 0.3.0 | stable | 🔒 | TCP connections (TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n`; at least 1 |
 | `maxConnectionsPerIp` | `Int?` | `null` (off) | 0.3.0 | stable | 🔒 | TCP connections of one client address (IPv6 whole; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS, and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address, so turn it on (256, say) only when the server faces clients directly; with `proxyProtocol` the address is the proxy's |
 
@@ -7360,7 +7360,7 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 | `kuicksilver.webSockets.maxMessageSize` | bytes, at least 1 | 16 777 216 | 0.3.0 | `webSockets { maxMessageSize }` |
 | `kuicksilver.tcp.maxConnections` | at least 1 | 10 000 | 0.3.0 | `tcp { maxConnections }` |
 | `kuicksilver.tcp.maxConnectionsPerIp` | at least 1, or `off` | `off` | 0.3.0 | `tcp { maxConnectionsPerIp }` |
-| `ktor.deployment.connectionIdleTimeoutSeconds` (Ktor) | seconds | 45 | 0.2.0 | `http1 { idleTimeout }` |
+| `ktor.deployment.connectionIdleTimeoutSeconds` (Ktor) | seconds | 45 | 0.2.0 | `tcp { idleTimeout }` |
 
 The `kuicksilver.tls.*` keys other than the two files need `certificateChain` and `privateKey`, and
 `kuicksilver.connector.proxyProtocol.headerTimeout` and `maxHeaderSize` need `trustedSources`: the start fails otherwise.
@@ -7847,7 +7847,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `tlsConnector { host = "0.0.0.0" }` (the default) | `tlsConnector { }` | the default is `null`: every interface, IPv6 and IPv4; `host = "0.0.0.0"` keeps IPv4 alone |
 | `tlsConnector { port }` | `tlsConnector { port }` | unchanged |
 | `tlsConnector { clientAuth; trust; cipherSuites; sniSelector }` | `tls { clientAuth; clientTrust; cipherSuites; sniSelector }` | also per connector in `tlsConnector { tls { } }` |
-| `connectionIdleTimeoutSeconds: Int` | `http1 { idleTimeout: Duration }` | |
+| `connectionIdleTimeoutSeconds: Int` | `tcp { idleTimeout: Duration }` | |
 | `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` | |
 | `http3 = false` | `http3 { enabled = false }` | |
 | `altSvc` | `http3 { altSvc }` | |
@@ -7908,7 +7908,7 @@ file that holds both the scalar and the block keeps only the last definition (HO
 | `kuicksilver.webSocketsOverHttp3` | `kuicksilver.webSockets.overHttp3` | 0.2.x |
 | `kuicksilver.tls.certificateChain` | unchanged | 0.2.x |
 | `kuicksilver.tls.privateKey` | unchanged | 0.2.x |
-| `ktor.deployment.connectionIdleTimeoutSeconds` | unchanged (sets `http1 { idleTimeout }`) | 0.2.x |
+| `ktor.deployment.connectionIdleTimeoutSeconds` | unchanged (sets `tcp { idleTimeout }`) | 0.2.x |
 | `kuicksilver.tls.trustedGateway` | `kuicksilver.connector.allowMisdirectedHosts` | 0.3.0 snapshot |
 | `kuicksilver.http2` | `kuicksilver.http2.enabled` | 0.3.0 snapshot |
 | `kuicksilver.h2c` | `kuicksilver.connector.h2c` | 0.3.0 snapshot |

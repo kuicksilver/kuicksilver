@@ -220,7 +220,7 @@ class ServerH1TimeoutTest {
                     }
                 }
                 val configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {
-                    http1 { idleTimeout = 1.seconds }
+                    tcp { idleTimeout = 1.seconds }
                     sendStallTimeoutForTest = 1.seconds
                     observability { eventListener = events }
                 }
@@ -292,7 +292,7 @@ class ServerH1TimeoutTest {
                     }
                 val (server, port) =
                     largeResponseServer(tls) {
-                        http1 { idleTimeout = 1.seconds }
+                        tcp { idleTimeout = 1.seconds }
                         sendStallTimeoutForTest = 1.seconds
                         observability { eventListener = events }
                     }
@@ -379,7 +379,7 @@ class ServerH1TimeoutTest {
                 val mib = if (tls) 8 else 4
                 val (server, port) =
                     largeResponseServer(tls) {
-                        http1 { idleTimeout = 1.seconds }
+                        tcp { idleTimeout = 1.seconds }
                         sendStallTimeoutForTest = 15.seconds
                     }
                 try {
@@ -407,7 +407,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    http1 { idleTimeout = 1.seconds }
+                    tcp { idleTimeout = 1.seconds }
                     connector {
                         host = "127.0.0.1"
                         port = 0
@@ -439,7 +439,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    http1 { idleTimeout = 1.seconds }
+                    tcp { idleTimeout = 1.seconds }
                     connector {
                         host = "127.0.0.1"
                         port = 0

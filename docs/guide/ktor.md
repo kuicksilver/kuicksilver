@@ -305,7 +305,7 @@ server.start(wait = true)
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. Over HTTP/2 and HTTP/3 the same deadline bounds each
   request head (`maxHeaderBlockTime` of `http2 { settings { } }` and `http3 { settings { } }`, 10 s by default): an
-  HTTP/3 head that misses it is reset with `H3_REQUEST_REJECTED`. `http1 { idleTimeout }` (45 s) closes a connection
+  HTTP/3 head that misses it is reset with `H3_REQUEST_REJECTED`. `tcp { idleTimeout }` (45 s) closes a connection
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
   upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). `Expect:
@@ -543,7 +543,7 @@ Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over 
 limit and, in `floodLimits { }`, the flood limits of the core ([configuration reference](configuration.md#ktor-server)).
 The engine's deadlines apply: the client's connection preface must arrive within `requestHeaderTimeout` of the accepted
 connection (TLS included), else GOAWAY and close; each field block must arrive within it too (else GOAWAY with
-ENHANCE_YOUR_CALM); a request body that sends no byte for `http1 { idleTimeout }` fails the handler's read and is
+ENHANCE_YOUR_CALM); a request body that sends no byte for `tcp { idleTimeout }` fails the handler's read and is
 answered 408 when nothing else answered; a connection without requests for that long gets GOAWAY and closes; a
 response that gets no window from the client for the longer of that and 5 minutes resets its stream. Request content is
 credited to the client only as the handler reads it. A client's RST_STREAM cancels the handler of that request; a
@@ -1208,7 +1208,7 @@ connector, which has no DSL block) and Ktor's own `ktor.deployment.connectionIdl
 | `kuicksilver.webSockets.maxMessageSize` | `webSockets { maxMessageSize }`: the largest WebSocket message a client may send, in bytes (`16777216`) |
 | `kuicksilver.tcp.maxConnections` | `tcp { maxConnections }`: TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.tcp.maxConnectionsPerIp` | `tcp { maxConnectionsPerIp }`: TCP connections of one client address on a connector (`off`; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
-| `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `http1 { idleTimeout }` (`45`) |
+| `ktor.deployment.connectionIdleTimeoutSeconds` | Ktor's key, read into `tcp { idleTimeout }` (`45`) |
 
 The QUIC transport keys set `http3 { quic { } }` as the DSL does. Every key with its type and release is in the
 [configuration reference](configuration.md#hocon-keys).

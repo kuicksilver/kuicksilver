@@ -24,9 +24,7 @@ public final class io/kuicksilver/ktor/server/H2cMode : java/lang/Enum {
 
 public final class io/kuicksilver/ktor/server/Http1ServerConfig {
 	public final fun getAllowBareLf ()Z
-	public final fun getIdleTimeout-UwyO8pc ()J
 	public final fun setAllowBareLf (Z)V
-	public final fun setIdleTimeout-LRDsOJo (J)V
 }
 
 public final class io/kuicksilver/ktor/server/Http2ServerConfig {
@@ -388,8 +386,10 @@ public final class io/kuicksilver/ktor/server/ServerWebTransportConfig {
 }
 
 public final class io/kuicksilver/ktor/server/TcpLimitsConfig {
+	public final fun getIdleTimeout-UwyO8pc ()J
 	public final fun getMaxConnections ()I
 	public final fun getMaxConnectionsPerIp ()Ljava/lang/Integer;
+	public final fun setIdleTimeout-LRDsOJo (J)V
 	public final fun setMaxConnections (I)V
 	public final fun setMaxConnectionsPerIp (Ljava/lang/Integer;)V
 }

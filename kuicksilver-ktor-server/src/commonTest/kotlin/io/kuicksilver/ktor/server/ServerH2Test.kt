@@ -751,7 +751,7 @@ class ServerH2Test {
             val statuses = Channel<Int?>(Channel.UNLIMITED)
             val (server, port) =
                 h2Server(configure = {
-                    http1 { idleTimeout = 1.seconds }
+                    tcp { idleTimeout = 1.seconds }
                     observability {
                         eventListener =
                             object : KuicksilverServerEventListener() {

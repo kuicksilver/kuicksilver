@@ -392,7 +392,6 @@ start with a PROXY protocol header (v1 or v2) from one of the trusted sources, b
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `idleTimeout` | `Duration` | 45 s | 0.3.0 | stable | | an HTTP/1.1 connection without requests for this long is closed (both directions); a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes; a request body that sends no byte for this long gets 408 and the connection closes. `EngineMain` sets it from `ktor.deployment.connectionIdleTimeoutSeconds` |
 | `allowBareLf` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | let a bare LF (no CR before it) end a line of an HTTP/1.1 request head or trailer section (RFC 9112 section 2.2 MAY); by default such a request gets 400 and the connection closes, since a proxy in front that reads the LF as part of a line would frame the request otherwise (section 11.2) |
 
 ### `configure { http2 { } }`
@@ -488,11 +487,12 @@ RESET_STREAM_AT and needs QUIC datagrams.
 
 ### `configure { tcp { } }`
 
-`TcpLimitsConfig`: the TCP connection limits of every connector, HTTP/1.1 and HTTP/2 alike
+`TcpLimitsConfig`: the TCP connections of every connector, HTTP/1.1 and HTTP/2 alike: their idle timeout and limits
 ([Connection limits](ktor.md#connection-limits)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
+| `idleTimeout` | `Duration` | 45 s | 0.3.0 | stable | | a TCP connection without requests for this long is closed: an HTTP/1.1 one both directions, an HTTP/2 one after GOAWAY; a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes; a request body that sends no byte for this long fails the handler's read (HTTP/1.1: 408 and close). `EngineMain` sets it from `ktor.deployment.connectionIdleTimeoutSeconds`; HTTP/3 has `http3 { quic { maxIdleTimeout } }` |
 | `maxConnections` | `Int` | 10 000 | 0.3.0 | stable | 🔒 | TCP connections (TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n`; at least 1 |
 | `maxConnectionsPerIp` | `Int?` | `null` (off) | 0.3.0 | stable | 🔒 | TCP connections of one client address (IPv6 whole; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS, and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address, so turn it on (256, say) only when the server faces clients directly; with `proxyProtocol` the address is the proxy's |
 
@@ -581,7 +581,7 @@ and a key of 0.2.x or of an earlier 0.3.0 snapshot names the key that replaced i
 | `kuicksilver.webSockets.maxMessageSize` | bytes, at least 1 | 16 777 216 | 0.3.0 | `webSockets { maxMessageSize }` |
 | `kuicksilver.tcp.maxConnections` | at least 1 | 10 000 | 0.3.0 | `tcp { maxConnections }` |
 | `kuicksilver.tcp.maxConnectionsPerIp` | at least 1, or `off` | `off` | 0.3.0 | `tcp { maxConnectionsPerIp }` |
-| `ktor.deployment.connectionIdleTimeoutSeconds` (Ktor) | seconds | 45 | 0.2.0 | `http1 { idleTimeout }` |
+| `ktor.deployment.connectionIdleTimeoutSeconds` (Ktor) | seconds | 45 | 0.2.0 | `tcp { idleTimeout }` |
 
 The `kuicksilver.tls.*` keys other than the two files need `certificateChain` and `privateKey`, and
 `kuicksilver.connector.proxyProtocol.headerTimeout` and `maxHeaderSize` need `trustedSources`: the start fails otherwise.
@@ -1068,7 +1068,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `tlsConnector { host = "0.0.0.0" }` (the default) | `tlsConnector { }` | the default is `null`: every interface, IPv6 and IPv4; `host = "0.0.0.0"` keeps IPv4 alone |
 | `tlsConnector { port }` | `tlsConnector { port }` | unchanged |
 | `tlsConnector { clientAuth; trust; cipherSuites; sniSelector }` | `tls { clientAuth; clientTrust; cipherSuites; sniSelector }` | also per connector in `tlsConnector { tls { } }` |
-| `connectionIdleTimeoutSeconds: Int` | `http1 { idleTimeout: Duration }` | |
+| `connectionIdleTimeoutSeconds: Int` | `tcp { idleTimeout: Duration }` | |
 | `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` | |
 | `http3 = false` | `http3 { enabled = false }` | |
 | `altSvc` | `http3 { altSvc }` | |
@@ -1129,7 +1129,7 @@ file that holds both the scalar and the block keeps only the last definition (HO
 | `kuicksilver.webSocketsOverHttp3` | `kuicksilver.webSockets.overHttp3` | 0.2.x |
 | `kuicksilver.tls.certificateChain` | unchanged | 0.2.x |
 | `kuicksilver.tls.privateKey` | unchanged | 0.2.x |
-| `ktor.deployment.connectionIdleTimeoutSeconds` | unchanged (sets `http1 { idleTimeout }`) | 0.2.x |
+| `ktor.deployment.connectionIdleTimeoutSeconds` | unchanged (sets `tcp { idleTimeout }`) | 0.2.x |
 | `kuicksilver.tls.trustedGateway` | `kuicksilver.connector.allowMisdirectedHosts` | 0.3.0 snapshot |
 | `kuicksilver.http2` | `kuicksilver.http2.enabled` | 0.3.0 snapshot |
 | `kuicksilver.h2c` | `kuicksilver.connector.h2c` | 0.3.0 snapshot |

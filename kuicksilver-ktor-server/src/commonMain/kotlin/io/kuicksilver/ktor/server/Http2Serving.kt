@@ -318,7 +318,7 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
 }
 
 /**
- * GOAWAY for a connection without requests for [idle] (`http1 { idleTimeout }`); a request that arrives meanwhile
+ * GOAWAY for a connection without requests for [idle] (`tcp { idleTimeout }`); a request that arrives meanwhile
  * restarts the count. A connection that then cannot even write its GOAWAY within [sendTimeout] once its last request is
  * done (the client reads nothing) is aborted.
  */

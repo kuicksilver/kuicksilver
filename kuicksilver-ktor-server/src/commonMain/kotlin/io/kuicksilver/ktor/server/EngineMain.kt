@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
  * exceptions: the TLS files (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`, `ocspStapling`, `echKeys`,
  * which the DSL reads with `pemFiles`, `clientCaFile` and `ocspStaplingFile`), the `kuicksilver.connector` block (the
  * deployment port, a Ktor connector: `allowMisdirectedHosts`, `h2c`, `proxyProtocol.*`) and Ktor's own
- * `ktor.deployment.connectionIdleTimeoutSeconds` (`http1 { idleTimeout }`). Every key is in [KNOWN_KEYS]; the same keys
+ * `ktor.deployment.connectionIdleTimeoutSeconds` (`tcp { idleTimeout }`). Every key is in [KNOWN_KEYS]; the same keys
  * work in `application.yaml`. Without `ktor.deployment.host` (or `-host`) the deployment port binds every interface as a
  * host-less `tlsConnector { }` does (`::` dual-stack, `0.0.0.0` where the host has no IPv6), not Ktor's `0.0.0.0`.
  *
@@ -234,7 +234,7 @@ public object EngineMain {
         loadCommonConfiguration(deployment)
         val k = Keys(config)
         k.read("ktor.deployment.connectionIdleTimeoutSeconds", { it.toIntOrNull()?.seconds }, "a whole number of seconds") {
-            http1.idleTimeout = it
+            tcp.idleTimeout = it
         }
         checkKeys(config)
         k.duration("kuicksilver.requestHeaderTimeout") { requestHeaderTimeout = it }

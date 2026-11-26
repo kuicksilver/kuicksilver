@@ -58,7 +58,7 @@ class ServerConfigMappingTest {
         assertNull(c.tls.ocspStapling)
         assertNull(c.tls.echKeys)
         assertNull(c.tls.keylog)
-        assertEquals(45.seconds, c.http1.idleTimeout)
+        assertEquals(45.seconds, c.tcp.idleTimeout)
         assertEquals(false, c.http1.allowBareLf)
         assertEquals(true, c.http2.enabled, "on by default since 0.3.0")
         assertNull(c.http2.repeatOffenderPenalty)
@@ -422,11 +422,9 @@ class ServerConfigMappingTest {
     @Test fun tcpAndWebSocketOptionsReachTheConfiguration() {
         val c =
             config {
-                http1 {
-                    idleTimeout = 2.minutes
-                    allowBareLf = true
-                }
+                http1 { allowBareLf = true }
                 tcp {
+                    idleTimeout = 2.minutes
                     maxConnections = 5
                     maxConnectionsPerIp = 2
                 }
@@ -435,7 +433,7 @@ class ServerConfigMappingTest {
                     maxMessageSize = 1024
                 }
             }
-        assertEquals(2.minutes, c.http1.idleTimeout)
+        assertEquals(2.minutes, c.tcp.idleTimeout)
         assertEquals(true, c.http1.allowBareLf)
         assertEquals(5, c.tcp.maxConnections)
         assertEquals(2, c.tcp.maxConnectionsPerIp)
@@ -642,7 +640,7 @@ class ServerConfigMappingTest {
         refused("requestHeaderTimeout") { c.requestHeaderTimeout = Duration.ZERO }
         refused("requestHeaderTimeout") { c.requestHeaderTimeout = Duration.INFINITE }
         refused("tls { reloadInterval }") { c.tls.reloadInterval = 500.milliseconds }
-        refused("http1 { idleTimeout }") { c.http1.idleTimeout = Duration.ZERO }
+        refused("tcp { idleTimeout }") { c.tcp.idleTimeout = Duration.ZERO }
         refused("http2 { repeatOffenderPenalty }") { c.http2.repeatOffenderPenalty = Duration.ZERO }
         refused("http2 { repeatOffenderPenalty }") { c.http2.repeatOffenderPenalty = Duration.INFINITE }
         refused("http2 { repeatOffenderPenalty }") { c.http2.repeatOffenderPenalty = (-1).seconds }

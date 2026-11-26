@@ -81,9 +81,6 @@ final class io.kuicksilver.ktor.server/Http1ServerConfig { // io.kuicksilver.kto
     final var allowBareLf // io.kuicksilver.ktor.server/Http1ServerConfig.allowBareLf|{}allowBareLf[0]
         final fun <get-allowBareLf>(): kotlin/Boolean // io.kuicksilver.ktor.server/Http1ServerConfig.allowBareLf.<get-allowBareLf>|<get-allowBareLf>(){}[0]
         final fun <set-allowBareLf>(kotlin/Boolean) // io.kuicksilver.ktor.server/Http1ServerConfig.allowBareLf.<set-allowBareLf>|<set-allowBareLf>(kotlin.Boolean){}[0]
-    final var idleTimeout // io.kuicksilver.ktor.server/Http1ServerConfig.idleTimeout|{}idleTimeout[0]
-        final fun <get-idleTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.server/Http1ServerConfig.idleTimeout.<get-idleTimeout>|<get-idleTimeout>(){}[0]
-        final fun <set-idleTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.server/Http1ServerConfig.idleTimeout.<set-idleTimeout>|<set-idleTimeout>(kotlin.time.Duration){}[0]
 }
 
 final class io.kuicksilver.ktor.server/Http2ServerConfig { // io.kuicksilver.ktor.server/Http2ServerConfig|null[0]
@@ -505,6 +502,9 @@ final class io.kuicksilver.ktor.server/ServerWebTransportConfig { // io.kuicksil
 }
 
 final class io.kuicksilver.ktor.server/TcpLimitsConfig { // io.kuicksilver.ktor.server/TcpLimitsConfig|null[0]
+    final var idleTimeout // io.kuicksilver.ktor.server/TcpLimitsConfig.idleTimeout|{}idleTimeout[0]
+        final fun <get-idleTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.server/TcpLimitsConfig.idleTimeout.<get-idleTimeout>|<get-idleTimeout>(){}[0]
+        final fun <set-idleTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.server/TcpLimitsConfig.idleTimeout.<set-idleTimeout>|<set-idleTimeout>(kotlin.time.Duration){}[0]
     final var maxConnections // io.kuicksilver.ktor.server/TcpLimitsConfig.maxConnections|{}maxConnections[0]
         final fun <get-maxConnections>(): kotlin/Int // io.kuicksilver.ktor.server/TcpLimitsConfig.maxConnections.<get-maxConnections>|<get-maxConnections>(){}[0]
         final fun <set-maxConnections>(kotlin/Int) // io.kuicksilver.ktor.server/TcpLimitsConfig.maxConnections.<set-maxConnections>|<set-maxConnections>(kotlin.Int){}[0]

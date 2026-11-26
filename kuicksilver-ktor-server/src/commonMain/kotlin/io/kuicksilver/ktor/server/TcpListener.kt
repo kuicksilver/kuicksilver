@@ -215,7 +215,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val latch: CompletableJob = Job()
         val rootJob = launch(CoroutineName("kuicksilver-server-${l.config}"), start = CoroutineStart.UNDISPATCHED) { latch.join() }
         val selector = engineSelector(coroutineContext) // a socket closed on it is released at once (EngineSelector.kt)
-        val timeout = configuration.http1.idleTimeout
+        val timeout = configuration.tcp.idleTimeout
 
         val headerTimeout = configuration.requestHeaderTimeout
         val sendTimeout = configuration.sendStallTimeoutForTest ?: sendStallTimeout(timeout)

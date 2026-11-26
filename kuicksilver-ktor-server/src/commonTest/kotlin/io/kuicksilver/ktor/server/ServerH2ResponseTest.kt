@@ -331,7 +331,7 @@ class ServerH2ResponseTest {
     @Test fun idleConnectionGetsGoAwayAndCloses() =
         serverTest {
             val (server, port) =
-                h2TlsServer(configure = { http1 { idleTimeout = 1.seconds } }) { routing { get("/") { call.respondText("ok") } } }
+                h2TlsServer(configure = { tcp { idleTimeout = 1.seconds } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()

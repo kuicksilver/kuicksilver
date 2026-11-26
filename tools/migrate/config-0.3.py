@@ -623,7 +623,7 @@ def _s_admission(value, report, where):
 
 
 SERVER_MOVES = {
-    "connectionIdleTimeoutSeconds": _s_seconds("idleTimeout", "http1"),
+    "connectionIdleTimeoutSeconds": _s_seconds("idleTimeout", "tcp"),
     "requestHeaderTimeoutSeconds": _s_seconds("requestHeaderTimeout"),
     "h1AllowBareLf": (("http1",), "allowBareLf"),
     "maxTcpConnections": (("tcp",), "maxConnections"),

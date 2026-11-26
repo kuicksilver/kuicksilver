@@ -228,3 +228,7 @@ The design left these cases open or met them only in the code; each was decided 
   connectors of its own (`::` dual-stack, `0.0.0.0` without IPv6, logged), so `tlsConnector { }` and the configuration file
   agree. It decides by the absence of both, never by the value: an explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4
   alone. Ktor's `connector { }` in code keeps Ktor's `0.0.0.0`, as its block has a `host` with that default.
+- **The idle timeout of TCP connections is `tcp { idleTimeout }`.** It drives HTTP/2's idle GOAWAY and request bodies as
+  well as HTTP/1.1's idle close, so `http1 { idleTimeout }` put a TCP-wide concept in a protocol block (principle 2). It
+  sits with the TCP limits; Ktor's `ktor.deployment.connectionIdleTimeoutSeconds` sets it, and HTTP/3 keeps its own,
+  `http3 { quic { maxIdleTimeout } }`.

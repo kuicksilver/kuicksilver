@@ -342,7 +342,7 @@ class ServerH2FloodTest {
             val (server, port) =
                 bigServer(ended) {
                     sendStallTimeoutForTest = 2.seconds
-                    http1 { idleTimeout = 600.seconds }
+                    tcp { idleTimeout = 600.seconds }
                 }
             try {
                 RawH2Client.connect(port).use { raw ->

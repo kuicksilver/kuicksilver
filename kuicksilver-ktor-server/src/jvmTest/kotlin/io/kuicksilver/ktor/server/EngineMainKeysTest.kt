@@ -137,7 +137,7 @@ class EngineMainKeysTest {
     }
 
     @Test fun ktorsIdleTimeoutKeyIsTheHttp1One() {
-        assertEquals(90.seconds, configuration("ktor.deployment.connectionIdleTimeoutSeconds=90").http1.idleTimeout)
+        assertEquals(90.seconds, configuration("ktor.deployment.connectionIdleTimeoutSeconds=90").tcp.idleTimeout)
     }
 
     @Test fun negative_everyRenamedKeyNamesItsReplacement() {

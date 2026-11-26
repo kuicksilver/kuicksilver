@@ -401,7 +401,7 @@ timeout, at most 3/4 of `maxIdleTimeout`. Set it on the side that keeps a quiet 
 client: on the Ktor client `engine { http3 { quic { keepAlive = 15.seconds } } }`, on the Ktor server
 `http3 { quic { keepAlive = 15.seconds } }` (`kuicksilver.http3.quic.keepAlive = 15s`; every connection of the listener then sends a PING that often, which a
 server with many idle clients pays for). The Ktor client closes HTTP/3 connections that carry no request after its own
-`pool { idleTimeout }` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`http1 { idleTimeout }`, 45 s,
+`pool { idleTimeout }` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`tcp { idleTimeout }`, 45 s,
 `ktor.deployment.connectionIdleTimeoutSeconds` with `EngineMain`, closes idle HTTP/1.1 connections first).
 
 A process that was frozen (an Android app frozen in the background or in Doze, a laptop that slept, a debugger stopped
@@ -577,7 +577,7 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
   HTTP/2 alike ([Connection limits](ktor.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `http3 { quic { } }` (idle timeout, windows, congestion control), `http3 { settings { } }`,
-  `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `http1 { idleTimeout }` against slow clients
+  `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `tcp { idleTimeout }` against slow clients
   ([Ktor: Server](ktor.md#server)).
 
 ### QUIC connection limits

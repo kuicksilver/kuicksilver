@@ -106,7 +106,7 @@ public class KuicksilverApplicationEngine(
         /** HTTP/1.1; change it with [http1]. */
         public val http1: Http1ServerConfig = Http1ServerConfig()
 
-        /** Configures [http1] in place: `http1 { idleTimeout = 2.minutes }`. */
+        /** Configures [http1] in place. */
         public fun http1(block: Http1ServerConfig.() -> Unit) {
             http1.block()
         }
@@ -135,10 +135,13 @@ public class KuicksilverApplicationEngine(
             webSockets.block()
         }
 
-        /** The TCP connection limits; change it with [tcp]. */
+        /** The TCP connections' idle timeout and limits; change it with [tcp]. */
         public val tcp: TcpLimitsConfig = TcpLimitsConfig()
 
-        /** Configures [tcp] in place: `tcp { maxConnectionsPerIp = 256 }` for a server that faces its clients directly. */
+        /**
+         * Configures [tcp] in place: `tcp { idleTimeout = 2.minutes }`, or `tcp { maxConnectionsPerIp = 256 }` for a server that
+         * faces its clients directly.
+         */
         public fun tcp(block: TcpLimitsConfig.() -> Unit) {
             tcp.block()
         }

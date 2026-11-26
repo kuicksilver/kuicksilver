@@ -444,26 +444,6 @@ internal class ResolvedServerTls(
 @KuicksilverDsl
 public class Http1ServerConfig internal constructor() {
     /**
-     * How long an HTTP/1.1 connection stays open without a request: then it is closed, both directions; 45 s by default.
-     * On a keep-alive connection the engine's `requestHeaderTimeout` also runs from the end of the last response, so the
-     * smaller of the two closes an idle connection. A response the client reads nothing of (its socket takes nothing) ends
-     * the connection after the longer of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a
-     * time (the buffer in front of the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s. A closing
-     * connection sends what is left for as long as the client takes it, and is aborted after the same time without
-     * progress. A request body that sends no byte for this long (counted after `100 Continue` when the client asked for it)
-     * fails the handler's read; the client gets 408 when no response has started, and the connection closes. Each wait for
-     * body bytes has its own deadline, so a slow but moving upload is read in full. HTTP/2 uses it for its idle connections
-     * and request bodies too. `EngineMain` reads Ktor's own `ktor.deployment.connectionIdleTimeoutSeconds` into it.
-     *
-     * @throws IllegalArgumentException when set to zero or less.
-     */
-    public var idleTimeout: Duration = 45.seconds
-        set(value) {
-            require(value.isPositive()) { "http1 { idleTimeout } must be positive" }
-            field = value
-        }
-
-    /**
      * Whether a bare LF (one without the CR before it) ends a line of an HTTP/1.1 request head (the request line, a field
      * line, the empty line after them) and of a chunked request's trailer section; false by default. RFC 9112 section 2.2
      * lets a recipient take a bare LF as a line end (MAY) and warns in section 11.2 that lenient parsing "can result in
@@ -858,9 +838,30 @@ public class ServerWebSocketsConfig internal constructor() {
         }
 }
 
-/** The TCP connection limits of every connector, HTTP/1.1 and HTTP/2 alike (threat model 3.2). */
+/** The TCP connections of every connector, HTTP/1.1 and HTTP/2 alike: their idle timeout and limits (threat model 3.2). */
 @KuicksilverDsl
 public class TcpLimitsConfig internal constructor() {
+    /**
+     * How long a TCP connection stays open without a request, on HTTP/1.1 and HTTP/2 alike; 45 s by default. An HTTP/1.1
+     * connection is then closed, both directions; an HTTP/2 one gets GOAWAY first. On a keep-alive connection the engine's
+     * `requestHeaderTimeout` also runs from the end of the last response, so the smaller of the two closes an idle
+     * HTTP/1.1 connection. A response the client reads nothing of (its socket takes nothing) ends the connection after the
+     * longer of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a time (the buffer in front
+     * of the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s. A closing connection sends what is left
+     * for as long as the client takes it, and is aborted after the same time without progress. A request body that sends no
+     * byte for this long (counted after `100 Continue` when the client asked for it) fails the handler's read; over HTTP/1.1
+     * the client gets 408 when no response has started, and the connection closes. Each wait for body bytes has its own
+     * deadline, so a slow but moving upload is read in full. `EngineMain` reads Ktor's own
+     * `ktor.deployment.connectionIdleTimeoutSeconds` into it. HTTP/3 has its own, `http3 { quic { maxIdleTimeout } }`.
+     *
+     * @throws IllegalArgumentException when set to zero or less.
+     */
+    public var idleTimeout: Duration = 45.seconds
+        set(value) {
+            require(value.isPositive()) { "tcp { idleTimeout } must be positive" }
+            field = value
+        }
+
     /**
      * The most TCP connections each connector holds at once, counted from `accept` (TLS handshakes included) until the
      * socket is released. At the limit the connector stops accepting: the OS backlog holds new clients (their connect

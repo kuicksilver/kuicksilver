@@ -53,7 +53,7 @@ class ServerH1BodyTest {
         val server =
             kuicksilverServer(log, configure = {
                 configure()
-                http1 { idleTimeout = idleSeconds.seconds }
+                tcp { idleTimeout = idleSeconds.seconds }
                 connector {
                     host = "127.0.0.1"
                     port = 0
