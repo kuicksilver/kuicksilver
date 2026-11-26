@@ -1140,6 +1140,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS (ksl): a client context sets only its minimum TLS version and leaves the top open (RFC 9852 section 4: "clients
+  SHOULD specify just the minimum version they want"; OpenSSL's highest, TLS 1.3 in 4.1); server contexts stay TLS 1.3 at
+  most, QUIC sessions TLS 1.3 only.
 - TLS 1.2 AES-GCM records carry their 64-bit sequence number as nonce_explicit (RFC 9325 section 7.2.1, RECOMMENDED;
   OpenSSL 4.1.0 started it at a random value). OpenSSL carries a twelfth patch (`patch_12`,
   `openssl-4.1.0-tls12-gcm-nonce-sequence.patch`; ADR-0019), so every bundled OpenSSL build changes; ChaCha20-Poly1305

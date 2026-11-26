@@ -2734,9 +2734,11 @@ static void test_default_versions_and_tls12_profile(void) {
     int roles[2] = {KSL_CLIENT, KSL_SERVER};
     for (int i = 0; i < 2; i++) {
         ksl_ctx *c = ksl_ctx_new(roles[i]);
-        CHECK(SSL_CTX_get_min_proto_version(c->ctx) == TLS1_3_VERSION &&
-                  SSL_CTX_get_max_proto_version(c->ctx) == TLS1_3_VERSION,
-              "a new context speaks TLS 1.3 only");
+        /* RFC 9852 section 4: a client "SHOULD specify just the minimum version": its top is open (0, OpenSSL's highest) */
+        long top = roles[i] == KSL_CLIENT ? 0 : TLS1_3_VERSION;
+        CHECK(SSL_CTX_get_min_proto_version(c->ctx) == TLS1_3_VERSION && SSL_CTX_get_max_proto_version(c->ctx) == top,
+              roles[i] == KSL_CLIENT ? "a new client context sets TLS 1.3 as its floor and no top"
+                                     : "a new server context speaks TLS 1.3 only");
         CHECK(ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, TLS1_1_VERSION) == KSL_ERROR &&
                   ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, TLS1_VERSION) == KSL_ERROR,
               "negative: TLS 1.0 and 1.1 refused as minimum");
@@ -2746,8 +2748,8 @@ static void test_default_versions_and_tls12_profile(void) {
         CHECK(SSL_CTX_get_min_proto_version(c->ctx) == TLS1_3_VERSION, "the refused values changed nothing");
         CHECK(ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, KSL_TLS1_2) == KSL_OK &&
                   SSL_CTX_get_min_proto_version(c->ctx) == TLS1_2_VERSION &&
-                  SSL_CTX_get_max_proto_version(c->ctx) == TLS1_3_VERSION,
-              "TLS 1.2 as the floor, 1.3 still the top");
+                  SSL_CTX_get_max_proto_version(c->ctx) == top,
+              "TLS 1.2 as the floor, the top unchanged");
         STACK_OF(SSL_CIPHER) *sk = SSL_CTX_get_ciphers(c->ctx);
         int tls12 = 0, ok = 1;
         for (int k = 0; k < sk_SSL_CIPHER_num(sk); k++) {
@@ -3166,6 +3168,89 @@ static void test_tls12_gcm_nonce_is_the_sequence_number(void) {
     END();
 }
 
+/* The server's first flight with the renegotiation_info extension (0xff01) taken out of its ServerHello: a server
+   without RFC 5746. The record, handshake and extensions lengths are fixed up. */
+static size_t strip_server_ri(uint8_t *b, size_t n) {
+    if (n < 5 + 4 + 2 + 32 + 1 || b[0] != 22 || b[5] != 2)
+        return n;
+    size_t p = 5 + 4 + 2 + 32;
+    p += 1 + b[p]; /* session_id */
+    p += 2 + 1;    /* cipher_suite, compression_method */
+    size_t ext_at = p;
+    size_t ext_len = ((size_t)b[p] << 8) | b[p + 1];
+    p += 2;
+    size_t end = p + ext_len;
+    while (p + 4 <= end) {
+        size_t type = ((size_t)b[p] << 8) | b[p + 1], len = ((size_t)b[p + 2] << 8) | b[p + 3];
+        if (type == 0xff01) {
+            size_t cut = 4 + len;
+            memmove(b + p, b + p + cut, n - p - cut);
+            n -= cut;
+            size_t rec = (((size_t)b[3] << 8) | b[4]) - cut;
+            b[3] = (uint8_t)(rec >> 8), b[4] = (uint8_t)rec;
+            size_t hs = (((size_t)b[6] << 16) | ((size_t)b[7] << 8) | b[8]) - cut;
+            b[6] = (uint8_t)(hs >> 16), b[7] = (uint8_t)(hs >> 8), b[8] = (uint8_t)hs;
+            ext_len -= cut;
+            b[ext_at] = (uint8_t)(ext_len >> 8), b[ext_at + 1] = (uint8_t)ext_len;
+            return n;
+        }
+        p += 4 + len;
+    }
+    return n;
+}
+/* Whether the client's first record (its ClientHello) carries the extension of [type]. */
+static int client_hello_has(const capture *k, size_t type) {
+    const uint8_t *b = k->buf;
+    if (k->len < 5 + 4 + 2 + 32 + 1 || b[0] != 22 || b[5] != 1)
+        return 0;
+    size_t p = 5 + 4 + 2 + 32;
+    p += 1 + b[p];
+    p += 2 + (((size_t)b[p] << 8) | b[p + 1]);
+    p += 1 + b[p];
+    size_t end = p + 2 + (((size_t)b[p] << 8) | b[p + 1]);
+    for (p += 2; p + 4 <= end && p + 4 <= k->len;) {
+        size_t t = ((size_t)b[p] << 8) | b[p + 1], len = ((size_t)b[p + 2] << 8) | b[p + 3];
+        if (t == type)
+            return 1;
+        p += 4 + len;
+    }
+    return 0;
+}
+static void test_tls12_client_requires_renegotiation_info(void) {
+    SECTION("tcp_tls12_client_requires_renegotiation_info");
+    /* RFC 9325 section 3.5: "TLS 1.2 clients and servers MUST implement the renegotiation_info extension, as defined in
+       [RFC5746]". A client that may negotiate TLS 1.2 offers it in its ClientHello (0xff01); RFC 5746 section 4.1 allows a
+       client to refuse a server without it, and ksl's clients do (SSL_OP_LEGACY_SERVER_CONNECT cleared): handshake_failure
+       (40) when its ServerHello comes without it. */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    capture k[2] = {{0}, {0}};
+    CHECK(tcp_pump_captured(c, s, k, NULL) == KSL_OK, "control: a TLS 1.2 server with the extension is served");
+    CHECK(client_hello_has(&k[0], 0xff01),
+          "the ClientHello of a client that allows TLS 1.2 carries renegotiation_info");
+    free(k[0].buf);
+    free(k[1].buf);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test");
+    s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    capture k2[2] = {{0}, {0}};
+    int rc = tcp_pump_captured(c, s, k2, strip_server_ri), alert = 0;
+    last_code(c, &alert);
+    CHECK(rc == KSL_ERROR && alert == SSL_AD_HANDSHAKE_FAILURE && !c->done,
+          "negative: a ServerHello without renegotiation_info: the client sends handshake_failure (40)");
+    free(k2[0].buf);
+    free(k2[1].buf);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    END();
+}
+
 void run_tcp(void) {
     test_weak_chain_refused_before_pause();
     test_echo();
@@ -3201,4 +3286,5 @@ void run_tcp(void) {
     test_default_versions_and_tls12_profile();
     test_tls12_server_suite_choice();
     test_tls12_gcm_nonce_is_the_sequence_number();
+    test_tls12_client_requires_renegotiation_info();
 }
