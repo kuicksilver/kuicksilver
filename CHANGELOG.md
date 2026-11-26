@@ -1250,7 +1250,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   logger at another level; `KuicksilverLogger` and `LogLevel` are stable.
 - Ktor server: `tlsConnector { }` and `plainConnector { }` without a `host` bind every interface of both families (breaking
   behaviour): one dual-stack socket per protocol on `::`, IPv4 clients arriving as IPv4-mapped addresses, or `0.0.0.0` where
-  the host has no IPv6 (logged at Info). 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
+  the host has no IPv6 (logged at Info). `call.request.local` reports such a client, and the local address it reached, as
+  the IPv4 addresses they are (`127.0.0.1`, on Kotlin/Native too, where TCP sockets reported `::ffff:127.0.0.1`), and an
+  HTTP/3 call's `localAddress` is the address the client sent to where the UDP socket reports it, else the connector's. 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
   keeps IPv4 alone. `host` is `String?` now, and Ktor logs `Responding at https://:::443` for such a connector. Ktor's own
   `connector { }` (and `ktor.deployment.host`) keeps Ktor's `0.0.0.0`.
 - QUIC: the NEW_TOKEN replay register grows on demand, from 128 KiB, doubling at 3/4 load, up to

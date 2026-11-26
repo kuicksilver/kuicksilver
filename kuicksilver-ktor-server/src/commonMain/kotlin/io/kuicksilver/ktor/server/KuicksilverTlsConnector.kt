@@ -144,8 +144,8 @@ public class KuicksilverTlsConnector internal constructor(
     public class Builder internal constructor() {
         /**
          * The address to bind, for TCP and UDP alike; null (the default): every interface, IPv6 and IPv4, with one dual-stack
-         * socket per protocol bound to `::` (IPv4 clients reach it as IPv4-mapped addresses), or `0.0.0.0` where the host
-         * has no IPv6 (logged at Info). `"0.0.0.0"` keeps IPv4 alone, `"::1"` or `"127.0.0.1"` one loopback. Since 0.3.0
+         * socket per protocol bound to `::` (an IPv4 client reaches it as an IPv4-mapped address, which `call.request.local`
+         * reports as the IPv4 address it is), or `0.0.0.0` where the host has no IPv6 (logged at Info). `"0.0.0.0"` keeps IPv4 alone, `"::1"` or `"127.0.0.1"` one loopback. Since 0.3.0
          * (0.2: `0.0.0.0`).
          */
         public var host: String? = null

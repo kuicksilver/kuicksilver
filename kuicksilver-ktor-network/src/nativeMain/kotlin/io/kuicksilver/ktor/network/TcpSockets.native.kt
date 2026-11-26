@@ -347,7 +347,8 @@ internal class NativeTcpServerSocket(
             }
             val socket =
                 try {
-                    NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
+                    // an IPv4 client of a dual-stack `::` listener is the IPv4 address it is (`127.0.0.1`), as the JDK reports it
+                    NativeTcpSocket(selector, fd, Sockaddr(peer).unmapped().toInet(), socketContext)
                 } catch (e: Throwable) {
                     tcpClose(fd)
                     throw e
@@ -413,7 +414,8 @@ internal class NativeTcpSocket(
      * system may not have chosen the address yet (Windows answers the wildcard). Throws [PosixException] when it cannot.
      */
     internal fun recordLocalAddress() {
-        local = tcpAddressOf(descriptor, peer = false).toInet()
+        // the local end of an IPv4 connection on a dual-stack socket is IPv4 too (`::ffff:127.0.0.1` is 127.0.0.1)
+        local = tcpAddressOf(descriptor, peer = false).unmapped().toInet()
     }
 
     private val closeFlag = AtomicBoolean(false)

@@ -351,7 +351,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
-| `host` | `String?` | `null` (every interface, IPv6 and IPv4) | 0.2.0 | stable | | the address to bind, for TCP and UDP alike; `null` binds `::` with one dual-stack socket per protocol (IPv4 clients arrive as IPv4-mapped addresses), or `0.0.0.0` where the host has no IPv6 (logged at Info); `"0.0.0.0"` keeps IPv4 alone (0.2: `"0.0.0.0"` by default) |
+| `host` | `String?` | `null` (every interface, IPv6 and IPv4) | 0.2.0 | stable | | the address to bind, for TCP and UDP alike; `null` binds `::` with one dual-stack socket per protocol (an IPv4 client arrives as an IPv4-mapped address, and `call.request.local` reports it as the IPv4 address it is), or `0.0.0.0` where the host has no IPv6 (logged at Info); `"0.0.0.0"` keeps IPv4 alone (0.2: `"0.0.0.0"` by default) |
 | `port` | `Int` | 443 | 0.2.0 | stable | | TCP port and UDP port of HTTP/3, 0..65 535; 0 picks a free pair (`resolvedConnectors()`) |
 | `proxyProtocol { }` | block | none | 0.3.0 | stable | 🔒 | the PROXY protocol on the TCP side ([below](#configure--tlsconnector--proxyprotocol----)) |
 | `allowMisdirectedHosts` | `Boolean` | `false` | 0.3.0 | delicate | 🔒 | `true` turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), on HTTP/1.1, HTTP/2 and HTTP/3: only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |

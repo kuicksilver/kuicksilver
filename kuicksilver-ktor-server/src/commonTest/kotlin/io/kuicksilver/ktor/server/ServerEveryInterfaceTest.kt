@@ -19,6 +19,7 @@ import io.kuicksilver.tls.TrustConfig
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 
 /**
@@ -42,7 +43,15 @@ class ServerEveryInterfaceTest {
                 embeddedServer(Kuicksilver, configure = {
                     configure()
                     shutdownGracePeriod = 0
-                }) { routing { get("/") { call.respondText("$token ${call.request.local.version}") } } }
+                }) {
+                    routing {
+                        get("/") { call.respondText("$token ${call.request.local.version}") }
+                        get("/addresses") {
+                            val l = call.request.local
+                            call.respondText("$token ${l.remoteHost} ${l.remoteAddress} ${l.localHost} ${l.localAddress}")
+                        }
+                    }
+                }
             server.startSuspend(false)
             try {
                 val port =
@@ -122,6 +131,64 @@ class ServerEveryInterfaceTest {
                 }
             }
         }
+
+    /**
+     * An IPv4 client of a host-less connector arrives on the dual-stack socket as `::ffff:127.0.0.1`; the call sees the IPv4
+     * address it is, on every protocol and platform (Kotlin/Native unmaps it, the JDK does so itself), so an access list or a
+     * log written for `127.0.0.1` matches. An IPv6 client stays IPv6.
+     */
+    @Test fun ipv4ClientOfAHostlessConnectorIsSeenAsIpv4() =
+        h3ServerTest {
+            startEverywhere({
+                tlsConnector {
+                    tls { identity = ServerFixtures.identity() }
+                    port = 0
+                }
+            }) { port, token ->
+                val v4 = listOf("127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1")
+                val v6 = listOf("::1", "::1", "::1", "::1")
+                client(null).use { c ->
+                    assertEquals(v4, addresses(c, "https://127.0.0.1:$port/addresses", token), "HTTP/2")
+                    if (ipv6Bindable() && ipv6Loopback()) assertEquals(v6, addresses(c, "https://[::1]:$port/addresses", token), "HTTP/2")
+                }
+                // HTTP/3: the local address is the one the client sent to where the UDP socket reports it, else the wildcard
+                client(Http3Discovery.H3Only).use { c ->
+                    val (remoteHost, remoteAddress, localHost, localAddress) = addresses(c, "https://127.0.0.1:$port/addresses", token)
+                    assertEquals(listOf("127.0.0.1", "127.0.0.1"), listOf(remoteHost, remoteAddress), "HTTP/3")
+                    assertTrue(localHost == localAddress && localHost in setOf("127.0.0.1", "::"), "HTTP/3 local $localHost $localAddress")
+                }
+            }
+        }
+
+    /** The same over cleartext HTTP/1.1 on a plain connector without a host. */
+    @Test fun ipv4ClientOfAHostlessPlainConnectorIsSeenAsIpv4() =
+        serverTest {
+            startEverywhere({
+                plainConnector { port = 0 }
+                http3 { enabled = false }
+            }) { port, token ->
+                client(null).use { c ->
+                    assertEquals(
+                        listOf("127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1"),
+                        addresses(c, "http://127.0.0.1:$port/addresses", token),
+                    )
+                    if (ipv6Bindable() && ipv6Loopback()) {
+                        assertEquals(listOf("::1", "::1", "::1", "::1"), addresses(c, "http://[::1]:$port/addresses", token))
+                    }
+                }
+            }
+        }
+
+    /** `remoteHost remoteAddress localHost localAddress` of a call to [url], checked to come from this server ([token]). */
+    private suspend fun addresses(
+        c: HttpClient,
+        url: String,
+        token: String,
+    ): List<String> {
+        val words = c.get(url).bodyAsText().split(' ')
+        if (words.first() != token) throw TokenMismatch("another server answered: $words")
+        return words.drop(1)
+    }
 
     @Test fun connectorWithoutHostReportsTheWildcard() =
         serverTest {

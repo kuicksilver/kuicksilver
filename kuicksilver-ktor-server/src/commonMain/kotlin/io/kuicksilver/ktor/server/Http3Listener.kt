@@ -30,6 +30,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.sniSelectedFor
+import io.kuicksilver.quic.specificIpOrNull
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -230,7 +231,13 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                                 // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                                 try {
                                                     beforeH3HandlerForTest?.invoke()
-                                                    handleHttp3(req, local, peer, authorityCheck)
+                                                    // the address the client sent to where the socket reports it (an IPv4
+                                                    // one of a dual-stack socket unmapped), else the connector's own
+                                                    val here =
+                                                        conn.quic.activePath
+                                                            ?.localAddress
+                                                            ?.specificIpOrNull() ?: local
+                                                    handleHttp3(req, here, peer, authorityCheck)
                                                 } catch (e: CancellationException) {
                                                     throw e
                                                 } catch (e: Throwable) {
