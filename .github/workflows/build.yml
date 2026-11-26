@@ -124,7 +124,7 @@ jobs:
       - name: 'lint: doc-refs and test-check negative controls, migration fixtures'
         run: |
           rc=0
-          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links; do
+          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links art7-loops; do
             bash "tools/check/$t-test.sh" || rc=1
           done
           bash tools/migrate/config-0.3-test.sh || rc=1   # the 0.2.x -> 0.3.0 configuration migration on its fixtures
@@ -850,7 +850,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
-        with: { ndk: 'true', openssl-cache: android }
+        # android.jar of the compileSdk and the dexdump of AGP 9.3's default build tools: tools/check/art7-loops.sh pins both
+        with: { ndk: 'true', openssl-cache: android, sdk-packages: 'platforms;android-35 build-tools;36.0.0' }
       - name: 'android: AAR'
         run: $G :kuicksilver-native:bundleAndroidMainAar
       - name: 'android: every compiled host and device test method can run'
@@ -881,6 +882,14 @@ jobs:
         # the dex does not depend on the emulator's API level: once
         if: ${{ matrix.api == 35 }}
         run: bash tools/check/r8-inlining.sh kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar
+        env: { KSL_R8_REQUIRED: '1' }
+      - name: 'android: loops ART 7 can deoptimize (R8, D8)'
+        # every guarded call in a loop with a dead phi copy judged (release dex) or listed (debug dex), the helpers kept from R8:
+        # tools/check/art7-loops.sh, docs/spec/art7-deopt-loops.md; the dex does not depend on the emulator's API level: once
+        if: ${{ matrix.api == 35 }}
+        run: |
+          $G :kuicksilver-ktor-server:bundleAndroidMainAar :kuicksilver-quic:bundleAndroidMainAar
+          bash tools/check/art7-loops.sh kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar kuicksilver-ktor-server/build/outputs/aar/kuicksilver-ktor-server.aar kuicksilver-quic/build/outputs/aar/kuicksilver-quic.aar
         env: { KSL_R8_REQUIRED: '1' }
       - name: 'android: free disk for the emulator'
         # Run 38287900994: both emulators exited before adb saw them and the action only reported a boot timeout. The

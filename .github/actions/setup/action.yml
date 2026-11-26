@@ -8,6 +8,11 @@ inputs:
   ndk:
     description: install the NDK pinned in gradle/toolchains.toml and export ANDROID_NDK_ROOT and LLVM_* (llvm-objcopy, llvm-nm, llvm-ar, ...)
     default: 'false'
+  sdk-packages:
+    description: >-
+      Android SDK packages to install when missing, separated by spaces (sdkmanager names, each pinned: platforms;android-35,
+      build-tools;36.0.0); each must then be there
+    default: ''
   xcode:
     description: select the Xcode pinned in gradle/toolchains.toml (macOS)
     default: 'false'
@@ -94,6 +99,22 @@ runs:
         { echo "ANDROID_NDK_ROOT=$ndk"; echo "ANDROID_NDK_HOME=$ndk"
           for t in nm objcopy objdump readelf ar; do echo "LLVM_$(echo "$t" | tr '[:lower:]' '[:upper:]')=$bin/llvm-$t"; done; } >> "$GITHUB_ENV"
         echo "NDK $rev at $ndk"
+    - name: Pinned Android SDK packages
+      if: inputs.sdk-packages != ''
+      shell: bash
+      env: { PACKAGES: '${{ inputs.sdk-packages }}' }
+      run: |
+        sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"; sm="$sdk/cmdline-tools/latest/bin/sdkmanager"
+        [ -x "$sm" ] || { echo "::error::no sdkmanager under ANDROID_HOME=$sdk"; exit 1; }
+        for p in $PACKAGES; do
+          dir="$sdk/${p//;//}"
+          if [ ! -d "$dir" ]; then
+            { yes || true; } | "$sm" --install "$p" > "$RUNNER_TEMP/sdkmanager.log" 2>&1 \
+              || { tail -30 "$RUNNER_TEMP/sdkmanager.log"; echo "::error::sdkmanager could not install $p"; exit 1; }
+          fi
+          [ -d "$dir" ] || { echo "::error::$p is not at $dir after sdkmanager"; exit 1; }
+          echo "$p at $dir"
+        done
     - name: Kotlin/Native toolchain cache
       if: inputs.konan != ''
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

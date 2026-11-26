@@ -236,7 +236,7 @@ refuses anything else ([release.md](release.md)). `tools/ci/local-matrix.sh --dr
 | JVM on macOS | every module's tests, the engine interop bench, the samples, the coverage report; the changed modules' tests on JDK 17 and 25 |
 | JVM on Linux x64 and arm64 | every module's suite in Docker against the manylinux `libksl.so`; the system-OpenSSL mode |
 | JVM on Windows (release run) | every module's suite in the Windows 11 VM against the mingw-w64 dll |
-| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the device tests on the emulator, connection migration against a server on the host; the changed modules' device tests on an API 24 emulator |
+| Android | the AAR, its size gate, 16 KiB page alignment, R8 keep rules, the loops ART 7 can deoptimize ([art7-deopt-loops.md](spec/art7-deopt-loops.md)), the device tests on the emulator, connection migration against a server on the host; the changed modules' device tests on an API 24 emulator |
 | macOS and iOS | `macosArm64` tests, every module's `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled |
 | Linux (Kotlin/Native) | the `linuxX64` and `linuxArm64` test executables of every module in Docker, glibc floors, h2spec, h3spec and the Autobahn\|Testsuite, the deployment guide's commands with `curl --http3-only` |
 | Windows (Kotlin/Native) | the `mingwX64` test executables are linked here and run in hosted CI |
