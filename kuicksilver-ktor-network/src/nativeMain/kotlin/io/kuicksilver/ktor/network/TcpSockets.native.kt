@@ -35,6 +35,7 @@ import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineName
@@ -521,7 +522,7 @@ internal class NativeTcpSocket(
         producer: (ByteChannel) -> J,
     ): J {
         if (closeFlag.load()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             channel.cancel(e)
             throw e
         }
@@ -531,7 +532,7 @@ internal class NativeTcpSocket(
             throw IllegalStateException("$name channel has already been set")
         }
         if (closeFlag.load()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             j.cancel()
             channel.cancel(e)
             throw e
@@ -580,9 +581,9 @@ internal class NativeTcpSocket(
                 // loop leaves its cancellation
                 val cause =
                     sendFailures.recorded ?: when {
-                        aborted -> IOException("The connection was aborted")
-                        resetFlag.load() -> IOException("The connection was reset")
-                        closeFlag.load() -> IOException("Socket closed")
+                        aborted -> ConnectionEndedException.LocalClose("The connection was aborted")
+                        resetFlag.load() -> ConnectionEndedException.LocalClose("The connection was reset")
+                        closeFlag.load() -> ConnectionEndedException.LocalClose("Socket closed")
                         else -> null
                     }
                 readDelivery.fail(channel, cause ?: e)
@@ -591,7 +592,8 @@ internal class NativeTcpSocket(
                 // a receive error (a reset) or a select that fails is not the peer's end: the channel fails with it (a send's
                 // failure that came first is the cause). The close below ran first and closed it cleanly (a select failure
                 // even broke out of the loop as if at the end), so a reader took a cut stream for a complete one
-                val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
+                val cause =
+                    sendFailures.recorded ?: if (aborted) ConnectionEndedException.LocalClose("The connection was aborted", e) else e
                 readDelivery.fail(channel, cause)
                 throw cause
             } finally {
@@ -744,7 +746,7 @@ internal class NativeTcpSocket(
                 if (withTimeoutOrNull(roomRecheck) { pending.await() } != null) select = null
             } catch (e: CancellationException) {
                 val cause = lost.load()
-                if (cause != null && scope.isActive) throw IOException("Connection reset by peer", cause)
+                if (cause != null && scope.isActive) throw ConnectionEndedException.PeerClosed("Connection reset by peer", cause)
                 throw e
             } catch (e: Throwable) {
                 select = null // a select that failed is not kept: its failure is thrown once, the next wait selects again

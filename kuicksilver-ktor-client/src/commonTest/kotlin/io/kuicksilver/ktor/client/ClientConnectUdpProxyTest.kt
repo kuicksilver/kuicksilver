@@ -33,6 +33,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -117,6 +118,53 @@ class ClientConnectUdpProxyTest {
                 // closing the client closed the tunnelled connection, its tunnel and its connection to the proxy
                 kotlinx.coroutines.withTimeout(10.seconds) { proxy.activeTunnels.first { it == 0 } }
                 assertTrue(proxy.stats.toTargets > 0 && proxy.stats.fromTargets > 0, "${proxy.stats}")
+            }
+        }
+
+    @Test fun joiningTheEngineJobWaitsForTheTunnelledConnectionsTrace() =
+        h3Test {
+            val proxy = loopbackProxy()
+            withProxyAndTarget(proxy) { proxyPort, targetPort, _ ->
+                val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
+                // the trace of the connection through the tunnel (the one to the target's port; the other goes to the proxy)
+                // closes only on release: the engine's job must not complete before it
+                val tunnelled = kotlin.concurrent.atomics.AtomicReference<String?>(null)
+                val sink = CountingQlogSink(hold = { it == tunnelled.load() })
+                val listener =
+                    object : io.kuicksilver.quic.ConnectionListener {
+                        override fun onOpened(connection: io.kuicksilver.quic.ConnectionInfo) {
+                            if (connection.remoteAddress.port == targetPort) tunnelled.store(connection.id)
+                        }
+                    }
+
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                val c =
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        connectUdpProxy = udp
+                        http3 {
+                            qlog = sink
+                            connectionListener = listener
+                        }
+                    })
+                val job = c.engine.coroutineContext[kotlinx.coroutines.Job]!!
+                try {
+                    assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
+                    assertEquals(2, sink.opened.load())
+                    assertTrue(tunnelled.load() != null, "the tunnelled connection was seen")
+                    assertEquals(2, (c.engine as KuicksilverEngine).h3.endpointCountForTest, "the proxy hop's endpoint and the tunnel's")
+                    c.close()
+                    assertEquals(
+                        null,
+                        kotlinx.coroutines.withTimeoutOrNull(500.milliseconds) { job.join() },
+                        "the join returned while the tunnelled connection's trace was still being closed",
+                    )
+                } finally {
+                    sink.release()
+                    c.close()
+                }
+                kotlinx.coroutines.withTimeout(10.seconds) { job.join() }
+                assertEquals(2, sink.closed.load(), "every trace closed by the time join() returned")
+                assertEquals(0, (c.engine as KuicksilverEngine).h3.endpointCountForTest, "every endpoint joined and forgotten")
             }
         }
 

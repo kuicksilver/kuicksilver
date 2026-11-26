@@ -26,6 +26,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.runtime.Http2Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -42,6 +43,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -720,6 +722,30 @@ class ClientH2Test {
             }
         }
 
+    /** The engine's hard close of an HTTP/2 connection is a LocalClose: this side ended it, whatever its message says. */
+    @Test fun aHardCloseByTheClientIsALocalClose() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, _ ->
+                testClient().use { c ->
+                    val started = mutableListOf<io.kuicksilver.http2.runtime.H2ClientConnection>()
+                    engine(c).h1.afterH2StartForTest = { client, _ -> started += client }
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    val client = started.single()
+                    io.kuicksilver.ktor.client.h2
+                        .H2Conn(client, "route", 0L)
+                        .close() // the hard close (closeTransport)
+                    withTimeout(5.seconds) { client.awaitClosed() }
+                    // the cause of the connection's Http2Exception.ConnectionClosed
+                    val end =
+                        generateSequence(client.closeCause) { it.cause }
+                            .filterIsInstance<ConnectionEndedException>()
+                            .firstOrNull()
+                    assertIs<ConnectionEndedException.LocalClose>(end, "${client.closeCause}")
+                    assertEquals("the HTTP/2 connection was closed by the client", end.message)
+                }
+            }
+        }
+
     /**
      * A server that sends GOAWAY (last stream 0) on every new connection: the call fails after at most three connections
      * (one, when the GOAWAY arrives with the server's SETTINGS; else the two repeats of a request not processed), never a
@@ -743,7 +769,10 @@ class ClientH2Test {
                 runCatching { input.readBuffer() }
             }) { port ->
                 testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
-                    assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    val e =
+                        assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    // the connect timeout that bounded the wait for the preface, the engine's own (no HttpTimeout installed)
+                    assertTrue("connect_timeout=500 ms" in e.message.orEmpty(), "${e.message}")
                     // the connection was in the pool (the request went out before the server's preface): the call fails as
                     // the connection ends, and its slot comes back once its transport is closed, in the pool's own
                     // coroutine; unusable meanwhile, it takes no other request

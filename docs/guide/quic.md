@@ -258,6 +258,13 @@ A client that prefers v2 but must start in v1 (the widely deployed version) sets
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
 
+Which version a connection ended up with is `QuicConnection.version` (experimental, 0.3.0): `VersionProfile.V1` or
+`VersionProfile.V2`, null until the handshake settled it. With more than one version configured it can differ from the
+one the client's first flight offered, so read it rather than `versions` or `initialVersion`. It is set before
+`awaitHandshake()` returns and before `onHandshakeCompleted` (a server's 0-RTT connection: when it accepted the early
+data), never changes afterwards and stays readable after the close; `ConnectionInfo.version` is the same value for a
+connection listener, and the Ktor client's `QuicConnectionSnapshot.version` carries it per call.
+
 ## Binding an endpoint and connecting
 
 A socket error inside the endpoint loop ends the endpoint: every connection fails with `ConnectionLost.Internal`,
@@ -1347,7 +1354,10 @@ A sink is called on the endpoint loop, so a file sink on a slow disk would slow 
 `AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
 closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is
 dropped and counted in `dropped`, so a stalled disk loses trace lines, never throughput. `sampleEvery = n` traces one
-connection in n; `flush()` waits for what is queued and `close()` stops the writer after it.
+connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
+connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
+`client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
+client](ktor.md#closing-the-client)).
 
 ```kotlin
 // guide:quic:qlog-async

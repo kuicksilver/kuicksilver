@@ -16,6 +16,7 @@ public final class io/kuicksilver/ktor/client/AltSvcKt {
 }
 
 public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
+	public static final field Companion Lio/kuicksilver/ktor/client/AltSvcStore$Companion;
 	public fun clear ()V
 	public abstract fun clearNonPersistent ()V
 	public abstract fun get (Ljava/lang/String;)Ljava/util/List;
@@ -23,6 +24,10 @@ public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
 	public abstract fun put (Ljava/lang/String;Ljava/util/List;)V
 	public abstract fun remove (Ljava/lang/String;)V
 	public fun setNetworkId (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/client/AltSvcStore$Companion {
+	public final fun originOf (Lio/ktor/http/Url;)Ljava/lang/String;
 }
 
 public final class io/kuicksilver/ktor/client/AltSvcStore$DefaultImpls {
@@ -529,6 +534,7 @@ public final class io/kuicksilver/ktor/client/QuicConnectionSnapshot : io/kuicks
 	public final fun getRttVariation-UwyO8pc ()J
 	public final fun getSmoothedRtt-UwyO8pc ()J
 	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
+	public final fun getVersion ()Lio/kuicksilver/quic/VersionProfile;
 	public fun toString ()Ljava/lang/String;
 }
 

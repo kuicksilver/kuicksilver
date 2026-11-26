@@ -26,6 +26,8 @@ kotlin {
         tasks.matching { it.name == "cinteropKsl" + name.replaceFirstChar(Char::uppercase) }.configureEach { dependsOn(archive) }
     }
     sourceSets {
+        // ConnectionEndedException (io.kuicksilver.io), shared by the HTTP/2, TLS socket and engine layers, is a kotlinx.io.IOException
+        commonMain.dependencies { api(libs.kotlinx.io.core) }
         jvmMain { resources.srcDir(layout.buildDirectory.dir("jni/resources")) }
     }
     // JNI_OnLoad finds KslNative's natives and PacketBuffer.buffer by name: an app shrinking with R8 must keep them (proguard.txt in the AAR)

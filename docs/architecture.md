@@ -53,7 +53,9 @@ Two properties shape the code more than anything else:
 The C shim `ksl` (`src/c/ksl_*.c`, one header `ksl.h`), its JNI binding (`src/jni`), its cinterop definition
 (`src/nativeInterop/cinterop/ksl.def`) and the Kotlin facade `Ksl` (`src/commonMain/.../native/Ksl.kt`, with `actual`s
 per platform). Also `PacketBuffer` (a native-memory buffer: direct `ByteBuffer` on the JVM, `nativeHeap` on Native),
-`KslLoader` and the opt-in annotations (`io.kuicksilver.annotations`). OpenSSL is built from a pinned, signature-checked
+`KslLoader`, the opt-in annotations (`io.kuicksilver.annotations`) and `ConnectionEndedException` (`io.kuicksilver.io`:
+who ended a TCP connection, shared by `kuicksilver-http2`, `kuicksilver-ktor-network` and the client engine, ADR-0017
+clarification 2026-11-26), for which the module depends on `kotlinx-io-core` with `api`. OpenSSL is built from a pinned, signature-checked
 tarball by `tools/openssl`, with zlib and brotli compiled into its libcrypto for TLS certificate compression (ADR-0025),
 and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
 

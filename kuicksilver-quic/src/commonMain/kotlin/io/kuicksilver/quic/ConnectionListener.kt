@@ -87,6 +87,7 @@ public class ConnectionInfo internal constructor(
     private val remote: () -> InetSocketAddress,
     private val pathsNow: () -> List<PathInfo> = { emptyList() },
     private val pathChangesNow: () -> Int = { 0 },
+    private val versionNow: () -> VersionProfile? = { null },
 ) {
     /** The peer's address on the path the connection sends on now; read it inside a callback (it is the loop's view). */
     public val remoteAddress: InetSocketAddress get() = remote()
@@ -112,6 +113,14 @@ public class ConnectionInfo internal constructor(
      * Readable from any thread; the difference of two readings counts the moves between them.
      */
     public val pathChanges: Int get() = pathChangesNow()
+
+    /**
+     * The QUIC version the connection speaks ([QuicConnection.version]): null until the handshake settled it, set from
+     * [ConnectionListener.onHandshakeCompleted] on (a server's 0-RTT connection: from [ConnectionListener.onZeroRtt] with
+     * [ZeroRttOutcome.Accepted]), and kept after [ConnectionListener.onClosed]. It may differ from the version the client
+     * offered first (compatible version negotiation, RFC 9368). Readable from any thread.
+     */
+    public val version: VersionProfile? get() = versionNow()
 
     /** For logs: the role and the connection ID. */
     override fun toString(): String = "ConnectionInfo($role $id)"

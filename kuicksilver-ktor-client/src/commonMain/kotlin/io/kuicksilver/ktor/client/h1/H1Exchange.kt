@@ -66,7 +66,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.io.EOFException
 import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -543,7 +542,7 @@ internal suspend fun readResponse(
             val read =
                 readResponseHead(input, head)
                     ?: throw ClosedReadChannelException(
-                        EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
+                        PeerTruncation("Failed to parse HTTP response: the server prematurely closed the connection"),
                     )
             val bytes = read.bytes
             kept = read.keptValues
@@ -768,7 +767,7 @@ internal suspend fun startTunnel(
         while (true) {
             val bytes =
                 readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.bytes
-                    ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+                    ?: throw ClosedReadChannelException(PeerTruncation("Failed to parse CONNECT response: unexpected EOF"))
             rawResponse = parseResponse(ByteReadChannel(bytes))
                 ?: throw ParserException("Failed to parse CONNECT response")
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
@@ -833,7 +832,7 @@ internal class ResponseFraming private constructor(
             transferEncoding == null && contentLength >= 0 -> {
                 val copied = input.copyTo(out, contentLength)
                 if (copied < contentLength) {
-                    throw EOFException("The connection closed after $copied of $contentLength body bytes")
+                    throw PeerTruncation("The connection closed after $copied of $contentLength body bytes")
                 }
             }
 

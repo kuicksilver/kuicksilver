@@ -71,6 +71,14 @@ final class io.kuicksilver.native/PacketBuffer : kotlin/AutoCloseable { // io.ku
     }
 }
 
+sealed class io.kuicksilver.io/ConnectionEndedException : kotlinx.io/IOException { // io.kuicksilver.io/ConnectionEndedException|null[0]
+    final class LocalClose : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.LocalClose|null[0]
+
+    final class PeerClosed : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.PeerClosed|null[0]
+
+    final class PeerUnresponsive : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.PeerUnresponsive|null[0]
+}
+
 sealed class io.kuicksilver.native/KslException : kotlin/RuntimeException { // io.kuicksilver.native/KslException|null[0]
     final class AbiMismatch : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.AbiMismatch|null[0]
         constructor <init>(kotlin/Int, kotlin/Int) // io.kuicksilver.native/KslException.AbiMismatch.<init>|<init>(kotlin.Int;kotlin.Int){}[0]

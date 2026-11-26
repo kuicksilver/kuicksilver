@@ -314,6 +314,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         open fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.quic/QuicConnection.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
     open val resetStreamAtEnabled // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled|{}resetStreamAtEnabled[0]
         open fun <get-resetStreamAtEnabled>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled.<get-resetStreamAtEnabled>|<get-resetStreamAtEnabled>(){}[0]
+    open val version // io.kuicksilver.quic/QuicConnection.version|{}version[0]
+        open fun <get-version>(): io.kuicksilver.quic/VersionProfile? // io.kuicksilver.quic/QuicConnection.version.<get-version>|<get-version>(){}[0]
 
     abstract fun trySendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.quic/QuicConnection.trySendDatagram|trySendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
     abstract suspend fun acceptStream(): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.acceptStream|acceptStream(){}[0]
@@ -829,6 +831,8 @@ final class io.kuicksilver.quic/ConnectionInfo { // io.kuicksilver.quic/Connecti
         final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/ConnectionInfo.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
     final val role // io.kuicksilver.quic/ConnectionInfo.role|{}role[0]
         final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.quic/ConnectionInfo.role.<get-role>|<get-role>(){}[0]
+    final val version // io.kuicksilver.quic/ConnectionInfo.version|{}version[0]
+        final fun <get-version>(): io.kuicksilver.quic/VersionProfile? // io.kuicksilver.quic/ConnectionInfo.version.<get-version>|<get-version>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.quic/ConnectionInfo.toString|toString(){}[0]
 }

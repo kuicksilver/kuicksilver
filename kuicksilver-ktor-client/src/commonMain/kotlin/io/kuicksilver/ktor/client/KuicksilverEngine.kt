@@ -47,7 +47,6 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -75,11 +74,16 @@ internal class KuicksilverEngine(
         setOf(HttpTimeoutCapability, WebSocketCapability, WebSocketExtensionsCapability, SSECapability)
 
     /**
-     * The requests' job, a supervisor child of the base context (as in the CIO engine): `close()` completes it, and once its
-     * calls are done the cleanup below closes the pools, the UDP endpoint and the selector. Without it the cleanup waited
-     * for its own parent and every closed client kept its sockets (found by the vendored Ktor client contract tests).
+     * The engine's job, a supervisor child of the base context (as in the CIO engine): `close()` completes it, and it
+     * completes once the cleanup below, its child, has closed the pools, the UDP endpoints (every connection on them and
+     * its qlog trace) and the selector, so `engine.coroutineContext.job.join()` waits for all of that. The calls hang on
+     * [requests], a child of it the cleanup waits for: were they on this job itself, the cleanup would wait for its own
+     * parent and every closed client kept its sockets (found by the vendored Ktor client contract tests).
      */
     override val coroutineContext: CoroutineContext = super.coroutineContext.let { it + SupervisorJob(it[Job]) }
+
+    /** The requests' job: every call in flight ([execute]) and [engineJob] hang on it; [close] completes it. */
+    private val requests = SupervisorJob(coroutineContext[Job])
 
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -135,7 +139,7 @@ internal class KuicksilverEngine(
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
-    private val engineJob = SupervisorJob(coroutineContext[Job])
+    private val engineJob = SupervisorJob(requests)
 
     /** Background work that outlives a call (a QUIC setup that lost the race); completed by [close] so the cleanup can run. */
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
@@ -311,18 +315,39 @@ internal class KuicksilverEngine(
                 followedNetworkUpdates.value++
             }
         }
-        val requests = coroutineContext[Job]!!
+        // a child of the engine's job, which so completes only after it: `engine.coroutineContext.job.join()` returns once
+        // the endpoints are closed (their connections' qlog traces with them); the job never completes before close()
         cleanup =
-            GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
+            CoroutineScope(coroutineContext).launch(start = CoroutineStart.ATOMIC) {
                 try {
                     requests.join()
                 } finally {
-                    withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
-                    h1.closeAll()
-                    migrationJob.cancel() // the migrators end before their connections
-                    h3.close()
-                    withContext(NonCancellable) { h3.closeSessions() }
-                    selector.close()
+                    // every step runs whatever the one before it threw (the first failure is rethrown at the end, later ones
+                    // suppressed), none of them cut by a cancellation; the selector, which the TCP sockets use, goes last
+                    var failure: Throwable? = null
+                    withContext(NonCancellable) {
+                        suspend fun step(block: suspend () -> Unit) {
+                            try {
+                                block()
+                            } catch (t: Throwable) {
+                                failure?.addSuppressed(t) ?: run { failure = t }
+                            }
+                        }
+                        step { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
+                        step { h1.closeAll() }
+                        step { migrationJob.cancel() } // the migrators end before their connections
+                        step { h3.closeAndJoin() }
+                        step { h3.closeSessions() }
+                        step { selector.close() }
+                    }
+                    failure?.let { f ->
+                        runCatching {
+                            if (events.logger.isEnabled(LogLevel.Warn)) {
+                                events.logger.log(LogLevel.Warn, "the engine's cleanup after close() failed; its other steps ran", f)
+                            }
+                        }
+                        throw f
+                    }
                 }
             }
         // the leak sentinel's record of this engine (off in production: one read): it ends once the cleanup after close() ran
@@ -341,6 +366,7 @@ internal class KuicksilverEngine(
         cancelLostSetups()
         httpsRecords?.close() // a DNS lookup still running would hold up the cleanup for up to its timeout
         engineJob.complete()
+        requests.complete()
         super.close()
     }
 
@@ -354,7 +380,7 @@ internal class KuicksilverEngine(
         val callContext = callContext()
         // Ktor's call job is not a child of the requests' job: a child of that job lives as long as the call (its response
         // body included), so the cleanup after close() waits for the call (as CIO's) instead of closing its socket under it
-        val inFlight = Job(this.coroutineContext[Job])
+        val inFlight = Job(requests)
         callContext[Job]!!.invokeOnCompletion { inFlight.complete() }
         // a close() since the check above may have completed the requests' job before the attach: the cleanup then does not
         // wait for this call and closes the pools under it (the HTTP/3 pool failed it with IllegalStateException, a TCP

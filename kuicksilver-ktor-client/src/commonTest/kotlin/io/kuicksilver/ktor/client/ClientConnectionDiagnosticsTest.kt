@@ -34,6 +34,7 @@ import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
@@ -169,6 +170,9 @@ class ClientConnectionDiagnosticsTest {
                     assertNotNull(path.remoteConnectionId)
                     assertTrue(q.smoothedRtt.isPositive(), "$q")
                     assertEquals(0, q.pathChanges)
+                    // the version the handshake settled, the one the connection listener's handle reads too
+                    assertSame(VersionProfile.V1, q.version)
+                    assertSame(handle.version, q.version)
                     assertTrue(d.connectFailures.isEmpty(), "${d.connectFailures}")
                     // the snapshot's text names no connection ID
                     assertFalse(path.localConnectionId!! in q.toString(), "$q")

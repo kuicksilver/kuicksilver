@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.selector.SelectInterest
@@ -19,6 +21,7 @@ import io.ktor.utils.io.read
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.write
 import io.ktor.utils.io.writer
+import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
@@ -170,7 +173,7 @@ internal class KslNioSocket(
      */
     override fun attachForReading(channel: ByteChannel): WriterJob {
         if (closing.get()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             channel.cancel(e)
             throw e
         }
@@ -182,7 +185,7 @@ internal class KslNioSocket(
         }
         // a close() between the check above and the assignment found no read loop to end: this one ends it
         if (closing.get()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             job.job.cancel()
             channel.cancel(e)
             throw e
@@ -219,15 +222,15 @@ internal class KslNioSocket(
             // nor an end, which the peer did not send. A delivering channel keeps what was received before it
             val cause =
                 sendFailures.recorded ?: when {
-                    aborted -> IOException("The connection was aborted")
-                    closing.get() -> IOException("Socket closed")
+                    aborted -> ConnectionEndedException.LocalClose("The connection was aborted")
+                    closing.get() -> ConnectionEndedException.LocalClose("Socket closed")
                     else -> null
                 }
             if (cause != null) readDelivery.fail(channel, cause)
             throw e
         } catch (e: Throwable) {
             // a reset, a closed descriptor (the writer failed): the send's failure when one came first, it is the cause
-            val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
+            val cause = sendFailures.recorded ?: if (aborted) ConnectionEndedException.LocalClose("The connection was aborted", e) else e
             readDelivery.fail(channel, cause)
             throw cause
         } finally {
@@ -241,7 +244,7 @@ internal class KslNioSocket(
 
     override fun attachForWriting(channel: ByteChannel): ReaderJob {
         if (closing.get()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             channel.cancel(e)
             throw e
         }

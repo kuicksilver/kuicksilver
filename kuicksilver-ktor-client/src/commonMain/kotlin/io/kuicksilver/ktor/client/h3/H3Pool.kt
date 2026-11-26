@@ -50,10 +50,12 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
+import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.checkCoalescing
 import io.kuicksilver.ktor.client.coalescingRetired
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
@@ -712,6 +714,7 @@ internal class H3Pool(
                         else -> set.loopback4
                     }
                 bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, config.http3.settings).also {
+                    bound(it)
                     endpointBindStepForTest?.invoke(it, false)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
                     // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
@@ -957,7 +960,7 @@ internal class H3Pool(
             }
         if (made) {
             try {
-                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis, deadline)
+                val c = connectWebTransport(t.originHost, t.port, data, dns, connectTimeoutMillis, deadline)
                 c.closed.invokeOnCompletion { launchUnderLock { wtExtras[t.key]?.remove(e) } }
                 e.deferred.complete(c)
             } catch (x: Throwable) {
@@ -1047,12 +1050,13 @@ internal class H3Pool(
     private suspend fun connectWebTransport(
         originHost: String,
         port: Int,
+        data: HttpRequestData,
         dns: RequestDns,
         connectTimeoutMillis: Long,
         deadline: kotlin.time.TimeMark,
     ): Http3Connection {
         val left = -deadline.elapsedNow().inWholeMilliseconds
-        if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        if (left <= 0) throw data.connectTimeoutException(connectTimeoutMillis, null)
         ensureOpen()
         val route = dns.echRoute(originHost) { config.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
@@ -1073,13 +1077,13 @@ internal class H3Pool(
             }
         } catch (e: TimeoutCancellationException) {
             if (made == null) {
-                throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e).withAttempts(failures)
+                throw data.connectTimeoutException(connectTimeoutMillis, e).withAttempts(failures)
             }
         } catch (e: Throwable) {
             made?.let { withContext(NonCancellable) { runCatching { it.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") } } }
             throw e
         }
-        return made ?: throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        return made ?: throw data.connectTimeoutException(connectTimeoutMillis, null)
     }
 
     /**
@@ -1168,7 +1172,64 @@ internal class H3Pool(
         closed = true
         direct.close()
         proxyHop.close()
+        for (ep in endpoints.load()) ep.close() // the tunnels' (one per connection through a CONNECT-UDP proxy)
     }
+
+    /**
+     * Every endpoint this pool bound and has not seen finish closing: the direct ones, the proxy hop's and the CONNECT-UDP
+     * tunnels' ([bound]). [closeAndJoin] waits for them; a tunnel's leaves once its own close finished ([closeTunnelEndpoint]).
+     */
+    private val endpoints = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Endpoint>())
+
+    /** Where the endpoint of an ended tunnel closes and is then forgotten (not [ownScope]: [close] cancels that one). */
+    private val tunnelCloses = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /** Notes a newly bound endpoint for [closeAndJoin]; the binder reads [closed] after this and closes it when it is set. */
+    private fun bound(ep: Http3Endpoint) {
+        endpoints.update { it + ep }
+    }
+
+    /** Closes a tunnel's endpoint (its connection ended, or its setup failed) and forgets it once it finished closing. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun closeTunnelEndpoint(ep: Http3Endpoint) {
+        ep.close()
+        tunnelCloses.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+            try {
+                ep.closeAndJoin()
+            } finally {
+                endpoints.update { it - ep }
+            }
+        }
+    }
+
+    /**
+     * [close], then waits until every endpoint of the pool finished closing: each connection on it closed and its qlog trace
+     * closed (`QuicEndpoint.closeAndJoin`), the sockets released. Each endpoint leaves [endpoints] once joined, and the set
+     * is read again until it is empty: an endpoint bound while this runs (its binder sees [closed] and closes it) is joined
+     * too. Taking the [lock] once waits for a direct or proxy-hop bind in progress to have noted its endpoint. The closes of
+     * ended tunnels still running ([closeTunnelEndpoint]) are joined, not cancelled, before [tunnelCloses] goes.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    suspend fun closeAndJoin() {
+        close()
+        lock.withLock {}
+        while (true) {
+            val left = endpoints.load()
+            if (left.isEmpty()) break
+            for (ep in left) {
+                ep.closeAndJoin()
+                endpoints.update { it - ep }
+            }
+        }
+        tunnelCloses.coroutineContext[Job]!!
+            .children
+            .toList()
+            .forEach { it.join() }
+        tunnelCloses.cancel()
+    }
+
+    /** Tests: the endpoints [closeAndJoin] would still wait for. */
+    internal val endpointCountForTest: Int get() = endpoints.load().size
 
     /**
      * Whether [this] ended: its HTTP/3 session took note, or its QUIC transport ended before that (the session learns of
@@ -1818,6 +1879,8 @@ internal class H3Pool(
                     config.http3.settings,
                 )
             inner = ep
+            bound(ep)
+            if (closed) throw IllegalStateException("the client is closed") // after bound(): closeAndJoin sees it or this does
             val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
             // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
@@ -1835,12 +1898,12 @@ internal class H3Pool(
                     }
                 }
             c.closed.invokeOnCompletion {
-                ep.close()
+                closeTunnelEndpoint(ep)
                 outer.close()
             }
             return c
         } catch (e: Throwable) {
-            inner?.close()
+            inner?.let { closeTunnelEndpoint(it) }
             outer.close()
             throw e
         }
@@ -2121,9 +2184,9 @@ internal class H3Pool(
             failures
                 .takeIf { t.udpProxy != null && !it.proxyReached }
                 ?.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
-                ?: return ConnectTimeoutException(data, x).withAttempts(failures)
+                ?: return data.connectTimeoutException(data.connectTimeoutMillis(config), x).withAttempts(failures)
         for (f in failures.distinct()) if (f !== proxyTls) proxyTls.addSuppressed(f)
-        proxyTls.addSuppressed(ConnectTimeoutException(data, x))
+        proxyTls.addSuppressed(data.connectTimeoutException(data.connectTimeoutMillis(config), x))
         return proxyTls
     }
 
@@ -2910,10 +2973,7 @@ internal class H3Pool(
                         webSocketConnectedForTest?.invoke()
                     }
                 }
-                kept ?: throw io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    null,
-                )
+                kept ?: throw data.connectTimeoutException(millis, null, WEBSOCKET_NOT_CONNECTED)
             } catch (e: CancellationException) {
                 // the call itself was cancelled: a stream kept meanwhile is ended here, as connect would have
                 kept?.let {

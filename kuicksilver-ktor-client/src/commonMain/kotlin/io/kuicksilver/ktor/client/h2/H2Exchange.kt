@@ -8,7 +8,6 @@
 
 package io.kuicksilver.ktor.client.h2
 
-import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.client.request.ResponseAdapterAttributeKey
@@ -30,6 +29,7 @@ import io.kuicksilver.ktor.client.NeverIndexKey
 import io.kuicksilver.ktor.client.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.client.PriorityUpdater
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.expectsContinue
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
@@ -324,7 +324,7 @@ internal suspend fun h2Exchange(
         // took nothing more than its head); one whose content had started fails with the connection's end itself, so that
         // nothing takes it for a request that never left
         if (conn.client.serverPrefaceMissed && stream.openedBeforeServerSettings && !bodyStarted) {
-            throw ConnectTimeoutException(data, e)
+            throw data.connectTimeoutException(conn.connectTimeoutMillis, e)
         }
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last

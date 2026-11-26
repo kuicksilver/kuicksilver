@@ -118,7 +118,12 @@ class H1ResponseHeadTest {
                 send("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nLocation: /x\r\n")
                 wire.fromServer.flushAndClose()
             }
-            assertFailsWith<ClosedReadChannelException> { exchange(wire, get) }
+            val e = assertFailsWith<ClosedReadChannelException> { exchange(wire, get) }
+            // the server's end, by type, under the EOFException it always was
+            assertTrue(
+                generateSequence<Throwable>(e) { it.cause }.any { it is io.kuicksilver.io.ConnectionEndedException.PeerClosed },
+                "$e",
+            )
         }
 
     /** The proxy's CONNECT response cut before its empty line fails the tunnel the same way (RFC 9112 section 8). */

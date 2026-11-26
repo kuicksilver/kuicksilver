@@ -44,6 +44,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Never through a proxy, for a WebSocket or WebTransport session, over h2c, under `TrustConfig.Tofu` or
     `TrustConfig.ExpectedName`, or on a 0-RTT connection. An ALTSVC frame on a request stream of a connection that carried
     another origin is ignored, and on an HTTP/2 connection other origins may share `cookie` is never indexed by HPACK.
+- Ktor client, HTTP/2 and the TLS socket (experimental): `ConnectionEndedException` (package `io.kuicksilver.io`, in
+  `kuicksilver-native`) says who ended a TCP connection under a call, so callers no longer match message strings.
+  `PeerClosed` is the peer's FIN where more was expected, an HTTP/1.1 response cut short included (the cause of the
+  `EOFException` it always was); `PeerUnresponsive` is an HTTP/2 PING unanswered (keepalive or health check), or the
+  socket or WebSocket connect timeout while only the server's answer was awaited; `LocalClose` is this client closing
+  the connection or reading after its close. The sites that threw a plain `IOException` for these throw them now, the
+  TCP socket's own `Socket closed` and `The connection was aborted` included; the messages are unchanged and the types
+  are still `IOException`s. A reset stays the platform's exception (`SocketException` on the JVM and Android, the
+  receive error on Kotlin/Native). An HTTP/2 call sees one as the cause of `Http2Exception.ConnectionClosed`
+  (`docs/guide/ktor.md`, "Who ended the connection"). `kuicksilver-native` now depends on `kotlinx-io-core`, which every
+  other module already used.
+- Ktor client (experimental): `AltSvcStore.originOf(url)` gives the origin key the engine stores a URL's alternatives
+  under, in the one canonical form the `AltSvcStore` KDoc now states: `scheme://host:port` with the host's ASCII letters
+  in lowercase (a trailing dot kept, an internationalised name as given), an IPv6 address in brackets in RFC 5952 text
+  and the port always written. A store that seeds or looks up an origin no longer has to rebuild the engine's format.
+- QUIC (experimental): `QuicConnection.version` and `ConnectionInfo.version` say which QUIC version the handshake settled,
+  `VersionProfile.V1` or `V2` (RFC 9369); null until then. With both versions configured it can differ from the one the
+  client's first flight offered (compatible version negotiation, RFC 9368). The Ktor client's `QuicConnectionSnapshot`
+  carries it as `version`.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.
@@ -1126,6 +1145,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `StreamStopped.code` null). Before, any 32-bit code went out and came in. An application that serves browsers keeps its
   stream codes within 0..255 (`WebTransportSession.maxStreamErrorCode`). Later drafts keep 0..2^32-1, and the code of a
   session's close stays 32-bit in every draft (draft-02 section 5).
+- Ktor client: the origin key of the Alt-Svc store, the broken marks and the remembered RTTs is canonical. The host's
+  ASCII letters are lowercased (RFC 6454 section 4) and an IPv6 host is written in RFC 5952 text with its brackets, so
+  `https://Example.com/` and `https://example.com/`, or two spellings of one IPv6 address, share their alternatives.
+  Before, they were two origins. A trailing dot is kept: `example.com.` stays another origin. `FileAltSvcStore` reads the
+  origins of an older file into the canonical key, merging two spellings of one origin.
+- Ktor client: `client.engine.coroutineContext.job.join()` after `HttpClient.close()` now returns once the engine closed
+  its pools, its UDP endpoints and its selector. That includes every QUIC connection's qlog trace, so an app that exits
+  after the join keeps complete traces (`docs/guide/ktor.md`, "Closing the client"). The join first waits for every call
+  in flight (bodies until read or cancelled, WebSocket and SSE sessions until closed) and has no bound of its own. Before,
+  the cleanup ran outside the engine's job, and the join returned as soon as the calls had finished. The endpoints of
+  CONNECT-UDP tunnels are now also closed by `close()` instead of waiting for their connections to end, and each cleanup
+  step runs even when one before it failed.
 - Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
   RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
   connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
@@ -1865,6 +1896,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   codes within WebTransport application error code range to the application that owns the only session"). A draft-02
   connection carries one session, so its application accepts the stream and reads the reset. Before, the stream was
   dropped and its code lost.
+- Ktor client: a `ConnectTimeoutException` names the connect timeout that fired, also when only the engine's own
+  `connectTimeout` is set and `HttpTimeout` is not installed. Before, the name lookup and pool wait of HTTP/1.1 and
+  HTTP/2, a WebSocket's name lookup, the wait for an HTTP/2 server's preface and an HTTP/3 setup said
+  `connect_timeout=unknown ms`: they used Ktor's `ConnectTimeoutException(request, cause)`, which reads the plugin's
+  value alone. A WebTransport session's connect timeout names the session's URL now, not only its host and port.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.

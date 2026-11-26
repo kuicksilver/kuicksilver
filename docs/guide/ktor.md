@@ -1156,7 +1156,8 @@ val client = HttpClient(Kuicksilver) {
 - Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
   inside the tunnel), see [Proxies](#proxies).
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the
-  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
+  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, whose message names the timeout that fired
+  (`connect_timeout=500 ms`: `HttpTimeout`'s, else the engine's own `connectTimeout`), the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
   packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
   takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
@@ -1552,7 +1553,15 @@ reads at most the first 8 MiB of a file (a full store takes less).
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
-(one engine per file: two engines sharing a file overwrite each other). Both built-in stores keep at most 8 alternatives
+(one engine per file: two engines sharing a file overwrite each other). A store is keyed by origin in one canonical form:
+`scheme://host:port`, the host with its ASCII letters in lowercase and nothing else changed (`example.com.` is another
+origin than `example.com`, RFC 6454 section 4; an internationalised name is keyed as the URL spells it, so use its
+A-label), an IPv6 address in brackets in RFC 5952 text, the port always written (`https://example.com:443`,
+`https://[2001:db8::1]:8443`), a `wss` URL keyed as its `https` origin. `AltSvcStore.originOf(url)` (experimental,
+0.3.0) builds that key, for a store that looks an origin up or seeds one; `FileAltSvcStore` reads the origins of an
+older file into it. There
+is no change callback: wrap the store to see what it learns, as the engine calls `put`, `remove`, `clearNonPersistent` and
+`clear` for every change. Both built-in stores keep at most 8 alternatives
 per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
 without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `networkId()` reports a new network,
@@ -2574,6 +2583,17 @@ On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the 
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
 
+<a id="closing-the-client"></a>
+**Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
+its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
+that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
+`client.engine.coroutineContext.job.join()` (0.3.0). The join first waits for every call in flight: a response body
+until it is read or cancelled, a WebSocket or SSE session until it is closed. Only then are the endpoints closed, and the
+join returns once every one of them finished closing, which includes `close()` on the qlog trace of every connection.
+An `AsyncQlogSink` writes on its own coroutine, so `flush()` it after the join to have the files written. The join has no
+bound of its own: a body nobody reads or a session nobody closes holds it for as long as it stays open, so wrap the join
+in `withTimeout` where the exit must not wait for them.
+
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
 
@@ -2697,7 +2717,9 @@ before it. `transport` on the diagnostics themselves says `Quic` or `Tcp`.
   `http3 { connectionListener }` hears (the connection's name for its whole life, and of its qlog trace); the active
   `path` and all `paths` with the connection IDs on each ([QUIC: Observability](quic.md#observability)); `smoothedRtt`,
   `minRtt` and `rttVariation`; and `pathChanges`, the moves to another path (migrations, NAT rebindings, the server's
-  preferred address) between the moment this call took the connection and the snapshot. It is plain data, no handle:
+  preferred address) between the moment this call took the connection and the snapshot; and the QUIC `version` the
+  handshake settled, `VersionProfile.V1` or `V2` (RFC 9369), which can differ from the one the client offered first
+  when both sides allow both ([QUIC: Configuration](quic.md#configuration)). It is plain data, no handle:
   neither a response nor an exception that carries the diagnostics keeps the connection in memory (for the live
   connection, join `connectionId` with what the listener hears). From the response head until the call ends, each read
   of `connection` takes a snapshot of the live connection; when the call ends — its body read or the response released,
@@ -2783,6 +2805,29 @@ every request on the connection, and the connection listener, as one instance: t
 diagnostics on that instance. A call that fails with it in the engine throws its own copy (same type, fields and cause)
 carrying its diagnostics, and `callFailed` gets that copy; a call that meets it later, reading its response body, gets the instance itself, which carries
 none (the body's failure comes after the call's end), as does the `ConnectionLost` that `onClosed` hears.
+
+<a id="who-ended-the-connection"></a>
+**Who ended the connection** (experimental, 0.3.0). When the TCP connection under an HTTP/1.1 or HTTP/2 call ended, a
+`ConnectionEndedException` (package `io.kuicksilver.io`) among the exception's causes says who ended it, so a test
+harness or an app need not match messages:
+
+- `PeerClosed`: the peer's FIN where more was expected. Over HTTP/2 the connection's input ended; over HTTP/1.1 the
+  response was cut (no response, a head without its empty line, a body short of its `Content-Length` or chunked framing),
+  where the exception is the `EOFException` it always was, with `PeerClosed` as its cause.
+- `PeerUnresponsive`: an HTTP/2 PING unanswered (the `pingInterval` keepalive or a pooled connection's health check),
+  or the socket timeout, or a WebSocket's connect timeout, expired while the whole request was out and only the
+  server's answer was awaited. While the request was still going out (a request body the application produces slowly)
+  the cut is a plain `IOException`: nothing says whose side stalled.
+- `LocalClose`: this client closed the connection, or read after closing it (`Socket closed`, `The connection was
+  aborted`).
+
+A reset is not typed: it stays the platform's exception (a `SocketException` on the JVM and Android, the receive error
+on Kotlin/Native), as does any other failure of the socket. An HTTP/2 call usually fails with
+`Http2Exception.ConnectionClosed` whose cause is one of these:
+`generateSequence(e) { it.cause }.filterIsInstance<ConnectionEndedException>().firstOrNull()`. They are `IOException`s
+with the messages they always had, so existing `catch` blocks and log matches still work. A QUIC connection's end is a
+`QuicException.ConnectionLost` with its `initiator` instead, a TLS failure a `TlsException`, a timeout the call sees
+Ktor's `ConnectTimeoutException` or `SocketTimeoutException`.
 
 ### Graceful stop
 

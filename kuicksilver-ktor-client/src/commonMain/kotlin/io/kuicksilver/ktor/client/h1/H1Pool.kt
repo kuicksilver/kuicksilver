@@ -25,6 +25,7 @@ import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.kuicksilver.http2.runtime.H2ClientConnection
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
@@ -35,10 +36,12 @@ import io.kuicksilver.ktor.client.NoCoalescingKey
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.checkCoalescing
 import io.kuicksilver.ktor.client.cleartextNotPermitted
 import io.kuicksilver.ktor.client.cleartextPolicyHost
 import io.kuicksilver.ktor.client.coalescingRetired
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h2.H2Conn
@@ -331,6 +334,9 @@ internal class H1Pool(
     /** Test hook: gets how long each [closeOrderly] took, once the connection is closed (in order or past its bound). */
     internal var orderlyCloseTookForTest: ((Duration) -> Unit)? = null
 
+    /** Test hook: the cause a connection's input is cut with, by an orderly close or an expired timeout, as it is cut. */
+    internal var inputCutForTest: ((Throwable) -> Unit)? = null
+
     /**
      * Ends [tls] (none for h2c) in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
@@ -357,7 +363,11 @@ internal class H1Pool(
                     .markNow()
             try {
                 val bound = orderlyCloseTimeoutForTest
-                if (dropInput) tls?.cancelInput(kotlinx.io.IOException("the connection is closing"))
+                if (dropInput) {
+                    val cut = ConnectionEndedException.LocalClose("the connection is closing")
+                    inputCutForTest?.invoke(cut)
+                    tls?.cancelInput(cut)
+                }
                 withTimeoutOrNull(bound) {
                     tls?.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
@@ -673,7 +683,9 @@ internal class H1Pool(
                             c.client.shutdown()
                         } else {
                             // a peer that does not answer has not lost the transport: GOAWAY, close_notify, FIN, bounded
-                            c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                            c.client.abortInOrder(
+                                ConnectionEndedException.PeerUnresponsive("the HTTP/2 connection did not answer a health PING"),
+                            )
                         }
                         continue
                     }
@@ -828,7 +840,9 @@ internal class H1Pool(
                                             // a peer that does not answer has not lost the transport: GOAWAY, close_notify,
                                             // FIN, bounded (RFC 9113 section 6.8, RFC 9846 section 6.1)
                                             found.client.abortInOrder(
-                                                kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"),
+                                                ConnectionEndedException.PeerUnresponsive(
+                                                    "the HTTP/2 connection did not answer a health PING",
+                                                ),
                                             )
                                         }
                                         continue
@@ -962,7 +976,7 @@ internal class H1Pool(
                 conn?.let { if (reused) pool.release(it) else it.close() }
                 stream?.client?.unreserve()
                 if (e is TimeoutCancellationException) {
-                    val timeout = ConnectTimeoutException(data, e)
+                    val timeout = data.connectTimeoutException(data.connectTimeoutMillis(config), e)
                     val wait = waitingFor
                     val failures =
                         if (wait != null) {
@@ -1146,7 +1160,7 @@ internal class H1Pool(
         withTimeoutOrNull(data.connectTimeoutMillis(config)) {
             dns.answered(url.host, url.port, onAnswered = { addresses = it }, afterForTest = remoteHostsForTest)
         }
-        val answered = addresses ?: throw ConnectTimeoutException(data, null)
+        val answered = addresses ?: throw data.connectTimeoutException(data.connectTimeoutMillis(config), null)
         return listOf(WebSocketConnecting.nameKey(url.host)) + answered.map { WebSocketConnecting.addressKey(it) }
     }
 
@@ -1385,9 +1399,26 @@ internal class H1Pool(
                 if (whole && !tlsFailed) conn.closeOrderly() else conn.close()
             }
 
-            /** A timeout expired: the reader is cut first, so the call's timeout surfaces on time; then the close. */
-            fun closeAfterExpiry() {
-                conn.cancelInput(kotlinx.io.IOException("the socket timeout expired"))
+            /**
+             * A timeout expired ([what]: the socket timeout, or a WebSocket's connect timeout): the reader is cut first, so the
+             * call's timeout surfaces on time; then the close. The cut is the peer's silence
+             * ([ConnectionEndedException.PeerUnresponsive]) only when the whole request was out and only the peer's answer was
+             * awaited; while our own request was still going out (a request body the application produces slowly, or one
+             * the peer stopped taking) it is a plain IOException: nothing says whose side stalled.
+             */
+            fun closeAfterExpiry(what: String = "the socket timeout expired") {
+                val sender = bodyJob
+                val awaitingThePeer =
+                    !between &&
+                        if (sender == null) {
+                            requestOut.isCompleted
+                        } else {
+                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                            sender.sent.isCompleted && sender.sent.getCompleted()
+                        }
+                val cut = if (awaitingThePeer) ConnectionEndedException.PeerUnresponsive(what) else kotlinx.io.IOException(what)
+                inputCutForTest?.invoke(cut)
+                conn.cancelInput(cut)
                 closeAfterFailure(null)
             }
 
@@ -1566,8 +1597,15 @@ internal class H1Pool(
                 val response =
                     try {
                         when (webSocketKeys) {
-                            null -> exchangeOnce()
-                            else -> connectingWithin(data, onExpiry = { closeAfterExpiry() }) { exchangeOnce() }
+                            null -> {
+                                exchangeOnce()
+                            }
+
+                            else -> {
+                                connectingWithin(data, onExpiry = {
+                                    closeAfterExpiry("the WebSocket handshake was not answered within the connect timeout")
+                                }) { exchangeOnce() }
+                            }
                         }
                     } finally {
                         held?.release()
@@ -1680,12 +1718,7 @@ internal class H1Pool(
         // an Activity nobody ticks: a plain deadline
         return Activity().within(
             millis,
-            timeout = {
-                io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    it,
-                )
-            },
+            timeout = { data.connectTimeoutException(millis, it, WEBSOCKET_NOT_CONNECTED) },
             onExpiry = onExpiry,
             block = block,
         )
@@ -2054,6 +2087,7 @@ internal class H1Pool(
                                 tls.echStatus == io.kuicksilver.tls.EchStatus.Accepted,
                                 tls.sessionReused,
                                 destination != null,
+                                connectTimeoutMillis = data.connectTimeoutMillis(config),
                             ).also {
                                 @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
                                 made?.store(it)
@@ -2122,6 +2156,7 @@ internal class H1Pool(
                             tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
                             tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
                             viaProxy,
+                            connectTimeoutMillis = data.connectTimeoutMillis(config),
                         )
                     } catch (e: Throwable) {
                         try {

@@ -160,6 +160,10 @@ abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.kt
     abstract fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/AltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
     abstract fun remove(kotlin/String) // io.kuicksilver.ktor.client/AltSvcStore.remove|remove(kotlin.String){}[0]
     open fun clear() // io.kuicksilver.ktor.client/AltSvcStore.clear|clear(){}[0]
+
+    final object Companion { // io.kuicksilver.ktor.client/AltSvcStore.Companion|null[0]
+        final fun originOf(io.ktor.http/Url): kotlin/String // io.kuicksilver.ktor.client/AltSvcStore.Companion.originOf|originOf(io.ktor.http.Url){}[0]
+    }
 }
 
 abstract interface io.kuicksilver.ktor.client/FamilyDns : io.kuicksilver.ktor.client/Dns { // io.kuicksilver.ktor.client/FamilyDns|null[0]
@@ -601,6 +605,8 @@ final class io.kuicksilver.ktor.client/QuicConnectionSnapshot : io.kuicksilver.k
         final fun <get-smoothedRtt>(): kotlin.time/Duration // io.kuicksilver.ktor.client/QuicConnectionSnapshot.smoothedRtt.<get-smoothedRtt>|<get-smoothedRtt>(){}[0]
     final val transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport|{}transport[0]
         final fun <get-transport>(): io.kuicksilver.ktor.client/Transport // io.kuicksilver.ktor.client/QuicConnectionSnapshot.transport.<get-transport>|<get-transport>(){}[0]
+    final val version // io.kuicksilver.ktor.client/QuicConnectionSnapshot.version|{}version[0]
+        final fun <get-version>(): io.kuicksilver.quic/VersionProfile? // io.kuicksilver.ktor.client/QuicConnectionSnapshot.version.<get-version>|<get-version>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/QuicConnectionSnapshot.toString|toString(){}[0]
 }

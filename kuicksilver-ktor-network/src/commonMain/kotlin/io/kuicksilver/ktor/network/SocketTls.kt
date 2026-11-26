@@ -19,6 +19,7 @@ import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConfig
@@ -194,7 +195,7 @@ public class TlsSocket private constructor(
     /** The application's channel of a closed socket: it fails at once, nothing is read for it. */
     private fun closedForReading(channel: ByteChannel): WriterJob =
         writer(coroutineContext, channel) {
-            throw kotlinx.io.IOException("the TLS socket is closed: nothing more is read")
+            throw ConnectionEndedException.LocalClose("the TLS socket is closed: nothing more is read")
         }
 
     @OptIn(InternalAPI::class)
