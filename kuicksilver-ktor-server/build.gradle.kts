@@ -5,6 +5,7 @@
 plugins {
     id("kuicksilver.kmp")
     id("kuicksilver.publish")
+    id("kuicksilver.android-runtime-jars")
 }
 kotlin {
     // the device tests' network security config (src/androidDeviceTest/res/xml): the Kuicksilver client they use refuses
