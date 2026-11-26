@@ -158,7 +158,9 @@ The design left these cases open or met them only in the code; each was decided 
   `::` dual-stack on every platform, Windows included, and Kotlin/Native's `bindTcp` turns `IPV6_V6ONLY` off on `::`
   (Windows defaults it on), so the two-socket fallback of the design was not needed. An explicit `host = "::"` binds the
   same socket; only `host = null` falls back to `0.0.0.0` (logged at Info) where IPv6 cannot be bound (no IPv6 in the
-  kernel, `java.net.preferIPv4Stack`). The resolved connector reports `::`, so Ktor logs `Responding at https://:::443`.
+  kernel, `java.net.preferIPv4Stack`). The resolved connector reports `::`, so Ktor logs `Responding at https://:::443`:
+  a bracketed `[::]` would read better, but `resolvedConnectors()` hosts go back into socket APIs, and Kotlin/Native's
+  resolver does not take brackets, so the host stays bare and the guides say what the line means.
 - **Old configuration-file keys are refused, never read.** `RENAMED_KEYS` holds the four 0.2.x keys and every renamed key of
   the 0.3.0 snapshots. Any other unknown key gets the
   closest name: a renamed key within 3 edits, else a known key within 3 edits, else the one known key with the same last
@@ -221,3 +223,8 @@ The design left these cases open or met them only in the code; each was decided 
   low-level builder block cannot gain a field the low level does not have. With `loadBalancer` the QUIC-LB configuration
   dictates the length: an explicit assignment, even of the same value, fails the start as derived. Its `EngineMain` key is
   `kuicksilver.http3.endpoint.expert.connectionIdLength`.
+- **`EngineMain`'s deployment port without a host binds every interface too.** Ktor's `CommandLineConfig` gives its
+  connectors `0.0.0.0` when neither `-host` nor `ktor.deployment.host` is set; the engine now binds them as host-less
+  connectors of its own (`::` dual-stack, `0.0.0.0` without IPv6, logged), so `tlsConnector { }` and the configuration file
+  agree. It decides by the absence of both, never by the value: an explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4
+  alone. Ktor's `connector { }` in code keeps Ktor's `0.0.0.0`, as its block has a `host` with that default.

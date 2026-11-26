@@ -86,7 +86,7 @@ UDP on the same port.
 | `configure { tls { identity } }` | `TlsIdentity?` | `null` | stable | the certificate from code instead of files |
 | `configure { tls { versions } }` | `TlsVersions` | `Tls13` | stable | `Tls12And13` for old clients without TLS 1.3 |
 | `configure { tlsConnector { port } }` | `Int` | 443 | stable | TCP and UDP port; open both in the firewall |
-| `configure { tlsConnector { host } }` | `String?` | `null` (every interface, IPv6 and IPv4) | stable | one address only |
+| `configure { tlsConnector { host } }` | `String?` | `null` (every interface, IPv6 and IPv4: `::`, logged by Ktor as `https://:::443`) | stable | one address only |
 | `configure { http2 { enabled } }` | `Boolean` | `true` | stable | `false` for a middlebox that breaks HTTP/2 |
 | `configure { http3 { endpoint { maxConnectionsPerIp } } }` | `Int?` | 256 | stable | `null` behind a NAT or kube-proxy, where clients share one address |
 | `configure { tcp { maxConnectionsPerIp } }` | `Int?` | `null` | stable | 256 for a server that faces its clients directly |
@@ -309,8 +309,11 @@ and `observability { }`. Values are checked when the server starts. Guide: [Ktor
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | 0.2.0 | stable | | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
 Ktor's `connectionGroupSize`, `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`). Ktor's
-own connectors (`port = …`, `connector { }`, the deployment port of `EngineMain`) serve TLS once `tls { }` has an
-identity, and bind as Ktor says (`0.0.0.0` by default).
+own connectors (`port = …`, `connector { }`) serve TLS once `tls { }` has an identity, and bind as Ktor says (`0.0.0.0`
+by default). The deployment port of `EngineMain` without `ktor.deployment.host` (or `-host`) binds every interface as a
+`tlsConnector { }` without a `host` does ([HOCON keys](#hocon-keys)). A connector bound to `::` is reported with that
+host, so Ktor logs `Responding at https://:::443` for `[::]:443`; `resolvedConnectors()` keeps the bare `::`, which
+socket APIs take back.
 
 On the running engine (*experimental*):
 
@@ -511,9 +514,12 @@ RESET_STREAM_AT and needs QUIC datagrams.
 TLS files (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`, `ocspStapling`, `echKeys`), the
 `kuicksilver.connector` block for the deployment port (a Ktor connector, which has no DSL block) and Ktor's own
 `ktor.deployment.connectionIdleTimeoutSeconds`. Guide: [EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys).
+Without `ktor.deployment.host` (and `-host`) the deployment port binds every interface of both families, as a
+`tlsConnector { }` without a `host`: one dual-stack socket per protocol on `::`, or `0.0.0.0` where the host has no IPv6
+(logged at Info); Ktor's own engines bind `0.0.0.0` there. An explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4 alone.
 
 ```hocon
-ktor.deployment.port = 443
+ktor.deployment.port = 443                                               # no host: every interface, IPv6 and IPv4
 ktor.application.modules = [ com.example.ApplicationKt.module ]
 kuicksilver.tls {
     certificateChain = "/etc/letsencrypt/live/example.com/fullchain.pem"

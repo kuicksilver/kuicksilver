@@ -278,8 +278,10 @@ server.start(wait = true)
   port, client certificates on one port). Without an identity a plain `connector { port = ... }` or `plainConnector { }`
   serves cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests). A `tlsConnector` or `plainConnector` without a
   `host` binds every interface, IPv6 and IPv4, with one dual-stack socket on `::` (Ktor logs `Responding at
-  https://:::443`), or `0.0.0.0` where the host has no IPv6 (logged at Info); Ktor's own `connector { }` and
-  `ktor.deployment.host` keep Ktor's default, `0.0.0.0`.
+  https://:::443`, which is `[::]:443`: `resolvedConnectors()` reports the bare `::`, which socket APIs take back), or
+  `0.0.0.0` where the host has no IPv6 (logged at Info); so does the deployment port of `EngineMain` without
+  `ktor.deployment.host`. Ktor's own `connector { }` keeps Ktor's default, `0.0.0.0`, and so does an explicit
+  `ktor.deployment.host = "0.0.0.0"`.
 - On the JVM, Ktor's `sslConnector(keyStore, alias, ...) {}` (and the `ktor.security.ssl.*` keys) is accepted: the key
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
   Netty and Jetty engines. Its `enabledProtocols` (`ktor.security.ssl.enabledProtocols`) choose the TLS versions:

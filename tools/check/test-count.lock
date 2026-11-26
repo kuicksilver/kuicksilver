@@ -3378,6 +3378,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.keysRejectionSelectorAndRotation
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.negative_aPublicNameCertificateThatDoesNotCoverItFailsTheRejection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.connectorWithoutHostReportsTheWildcard
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.hostlessConnectorsFallBackToIpv4WithoutIpv6
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.ipv4ClientOfAHostlessConnectorIsSeenAsIpv4
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.ipv4ClientOfAHostlessPlainConnectorIsSeenAsIpv4
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEveryInterfaceTest.plainConnectorWithoutHostServesIpv4AndIpv6
@@ -3988,6 +3989,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTes
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainKeysTest.offIsTheOnlyNone
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.clientAuthKeyParsed
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.clientCaRequiredOnTheDeploymentPort
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.deploymentPortWithoutAHostBindsEveryInterface
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.echKeysKeyReadsTheKeyFiles
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideApplicationConfStarts
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideFirstScreenConfStarts

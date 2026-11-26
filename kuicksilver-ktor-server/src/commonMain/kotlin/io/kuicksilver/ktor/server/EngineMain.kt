@@ -26,7 +26,8 @@ import kotlin.time.Duration.Companion.seconds
  * which the DSL reads with `pemFiles`, `clientCaFile` and `ocspStaplingFile`), the `kuicksilver.connector` block (the
  * deployment port, a Ktor connector: `allowMisdirectedHosts`, `h2c`, `proxyProtocol.*`) and Ktor's own
  * `ktor.deployment.connectionIdleTimeoutSeconds` (`http1 { idleTimeout }`). Every key is in [KNOWN_KEYS]; the same keys
- * work in `application.yaml`.
+ * work in `application.yaml`. Without `ktor.deployment.host` (or `-host`) the deployment port binds every interface as a
+ * host-less `tlsConnector { }` does (`::` dual-stack, `0.0.0.0` where the host has no IPv6), not Ktor's `0.0.0.0`.
  *
  * Values: `true`/`false` for a switch (nothing else); a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1h`,
  * `PT30S`), in whole milliseconds; names of an enumeration in any case (`required`, `tls12And13`, `withHttp11`); `off` for
@@ -57,8 +58,14 @@ public object EngineMain {
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
+        // Ktor gives the deployment connectors 0.0.0.0 when no host is set; the engine binds them as host-less connectors
+        // of its own instead (`::`, both families): told by the absence of the key and of `-host`, not by the value
+        val hostGiven =
+            args.any { it.startsWith("-host=") } || config.rootConfig.environment.config
+                .propertyOrNull("ktor.deployment.host") != null
         return EmbeddedServer(config.rootConfig, Kuicksilver) {
             takeFrom(config.engineConfig)
+            deploymentEveryInterface = !hostGiven
             loadConfiguration(config.rootConfig.environment.config)
         }
     }

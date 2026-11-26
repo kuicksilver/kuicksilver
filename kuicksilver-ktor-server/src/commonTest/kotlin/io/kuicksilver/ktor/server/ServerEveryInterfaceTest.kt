@@ -190,6 +190,49 @@ class ServerEveryInterfaceTest {
         return words.drop(1)
     }
 
+    /**
+     * A host without IPv6 (Windows with it turned off, a kernel without it, `java.net.preferIPv4Stack`): a host-less connector
+     * binds `0.0.0.0` instead, says so at Info, and serves its IPv4 clients over TCP and UDP alike (the seam stands in for
+     * `ipv6Bindable() = false`).
+     */
+    @Test fun hostlessConnectorsFallBackToIpv4WithoutIpv6() =
+        h3ServerTest {
+            val log = CapturedLog()
+            val server =
+                kuicksilverServer(log, configure = {
+                    tlsConnector {
+                        tls { identity = ServerFixtures.identity() }
+                        port = 0
+                    }
+                    plainConnector { port = 0 }
+                    ipv6BindableForTest = false
+                    shutdownGracePeriod = 0
+                }) { routing { get("/") { call.respondText("ok") } } }
+            server.startSuspend(false)
+            try {
+                assertEquals(listOf("0.0.0.0", "0.0.0.0"), server.engine.resolvedConnectors().map { it.host })
+                assertEquals(
+                    2,
+                    log.infos.count { "no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)" in it },
+                    "${log.infos}",
+                )
+            } finally {
+                server.stopSuspend(0, 500)
+            }
+            startEverywhere({
+                tlsConnector {
+                    tls { identity = ServerFixtures.identity() }
+                    port = 0
+                }
+                ipv6BindableForTest = false
+            }) { port, token ->
+                client(null).use { c -> assertEquals("HTTP/2", body(c.get("https://127.0.0.1:$port/").bodyAsText(), token)) }
+                client(Http3Discovery.H3Only).use { c ->
+                    assertEquals("HTTP/3", body(c.get("https://127.0.0.1:$port/").bodyAsText(), token))
+                }
+            }
+        }
+
     @Test fun connectorWithoutHostReportsTheWildcard() =
         serverTest {
             val server =

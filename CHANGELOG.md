@@ -1253,8 +1253,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the host has no IPv6 (logged at Info). `call.request.local` reports such a client, and the local address it reached, as
   the IPv4 addresses they are (`127.0.0.1`, on Kotlin/Native too, where TCP sockets reported `::ffff:127.0.0.1`), and an
   HTTP/3 call's `localAddress` is the address the client sent to where the UDP socket reports it, else the connector's. 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
-  keeps IPv4 alone. `host` is `String?` now, and Ktor logs `Responding at https://:::443` for such a connector. Ktor's own
-  `connector { }` (and `ktor.deployment.host`) keeps Ktor's `0.0.0.0`.
+  keeps IPv4 alone. `host` is `String?` now, and Ktor logs `Responding at https://:::443` for such a connector (`[::]:443`;
+  `resolvedConnectors()` keeps the bare `::`, which socket APIs take back). The deployment port of `EngineMain` without
+  `ktor.deployment.host` (or `-host`) binds the same way; an explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4
+  alone. Ktor's own `connector { }` keeps Ktor's `0.0.0.0`.
 - QUIC: the NEW_TOKEN replay register grows on demand, from 128 KiB, doubling at 3/4 load, up to
   `newTokenReplayCapacity`, instead of allocating all of it (32 MiB at the default) with the first token. The protection
   is unchanged: a full register still treats a token as absent and never accepts one twice; the 0-RTT register does the

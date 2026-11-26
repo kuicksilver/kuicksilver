@@ -176,6 +176,45 @@ class EngineMainTest {
             }
         }
 
+    /**
+     * Without `ktor.deployment.host` (or `-host`) the deployment port binds every interface as a host-less connector of ours
+     * does: `::` with one dual-stack socket, `0.0.0.0` where the host has no IPv6. The absence of the key decides, not its
+     * value: an explicit `0.0.0.0` keeps IPv4 alone, as Ktor's own engines bind it. Nothing is sent: the binds are wildcard ones.
+     */
+    @Test fun deploymentPortWithoutAHostBindsEveryInterface() =
+        serverTest {
+            suspend fun host(
+                vararg args: String,
+                ipv6: Boolean? = null,
+            ): String {
+                val server = EngineMain.createServer(arrayOf("-port=0", "-P:kuicksilver.http3.enabled=false", *args))
+                server.engine.configuration.ipv6BindableForTest = ipv6
+                server.startSuspend(false)
+                try {
+                    return server.engine
+                        .resolvedConnectors()
+                        .single()
+                        .host
+                } finally {
+                    server.stop(0, 500)
+                }
+            }
+            assertEquals(
+                if (io.kuicksilver.ktor.network
+                        .ipv6Bindable()
+                ) {
+                    "::"
+                } else {
+                    "0.0.0.0"
+                },
+                host(),
+            )
+            assertEquals("0.0.0.0", host(ipv6 = false), "no IPv6 on this host")
+            assertEquals("127.0.0.1", host("-host=127.0.0.1"))
+            assertEquals("0.0.0.0", host("-P:ktor.deployment.host=0.0.0.0"), "an explicit 0.0.0.0 is kept")
+            assertEquals("127.0.0.1", host("-P:ktor.deployment.host=127.0.0.1"))
+        }
+
     @Test fun ktorSslKeysOnJvm() =
         serverTest {
             val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())

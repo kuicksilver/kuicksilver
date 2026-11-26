@@ -69,8 +69,8 @@ Every `tlsConnector` serves HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP **with 
 identity (with `EngineMain`, the `kuicksilver.tls.*` keys). A Kuicksilver connector without a `host` (the default since
 0.3.0; 0.2 bound `0.0.0.0`) binds every interface of both families: one dual-stack socket per protocol on `::`, IPv4
 clients arriving as IPv4-mapped addresses, or `0.0.0.0` on a host without IPv6, which the start logs at Info ("no IPv6 on
-this host, so every interface is every IPv4 one (0.0.0.0)"); `host = "0.0.0.0"` keeps IPv4 alone. Ktor's own
-`connector { }` and `ktor.deployment.host` keep Ktor's default, `0.0.0.0`. The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
+this host, so every interface is every IPv4 one (0.0.0.0)"); `host = "0.0.0.0"` keeps IPv4 alone. The deployment port of
+`EngineMain` without `ktor.deployment.host` does the same; Ktor's own `connector { }` keeps Ktor's default, `0.0.0.0`. The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
 ([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
 `<port>/udp` everywhere on the way.
 

@@ -181,6 +181,15 @@ public class KuicksilverApplicationEngine(
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var deploymentH2c: H2cMode = H2cMode.Off
 
+        /**
+         * Set by `EngineMain` when `ktor.deployment.host` (or `-host`) is not given: its deployment connectors bind every
+         * interface as a host-less connector of ours does (`::`, or `0.0.0.0` without IPv6), not Ktor's `0.0.0.0`.
+         */
+        internal var deploymentEveryInterface: Boolean = false
+
+        /** Tests: whether this host can bind IPv6 (false: the IPv4-only fallback of a host-less connector); null asks the system. */
+        internal var ipv6BindableForTest: Boolean? = null
+
         /** Tests shorten the HTTP/1.1 send-stall deadline with this; null keeps the engine's own. */
         internal var sendStallTimeoutForTest: Duration? = null
 
@@ -664,17 +673,42 @@ public class KuicksilverApplicationEngine(
 
     /**
      * A connector of ours without a host binds `::`, one dual-stack socket per protocol; on a host without IPv6 (a kernel
-     * with it disabled, a JVM with `java.net.preferIPv4Stack`) it binds `0.0.0.0` instead, and says so at Info.
+     * with it disabled, a JVM with `java.net.preferIPv4Stack`) it binds `0.0.0.0` instead, and says so at Info. So do the
+     * deployment connectors of `EngineMain` when `ktor.deployment.host` is not set ([Configuration.deploymentEveryInterface]):
+     * the cleartext port here, Ktor's `-sslPort` connector in [resolve].
      */
     private fun everyInterfaceOf(c: EngineConnectorConfig): EngineConnectorConfig {
-        val every = (c as? KuicksilverTlsConnector)?.everyInterface ?: (c as? KuicksilverPlainConnector)?.everyInterface ?: false
-        if (!every || ipv6Bindable()) return c
-        environment.log.info("$c: no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)")
+        val ours = (c as? KuicksilverTlsConnector)?.everyInterface ?: (c as? KuicksilverPlainConnector)?.everyInterface
+        val deployment = ours == null && configuration.deploymentEveryInterface
+        if (ours != true && !deployment) return c
+        val host = everyInterfaceHost(c)
         return when (c) {
-            is KuicksilverTlsConnector -> c.withHost(IPV4_EVERY_INTERFACE)
-            is KuicksilverPlainConnector -> c.withHost(IPV4_EVERY_INTERFACE)
-            else -> c
+            is KuicksilverTlsConnector -> {
+                if (host == c.host) c else c.withHost(host)
+            }
+
+            is KuicksilverPlainConnector -> {
+                if (host == c.host) c else c.withHost(host)
+            }
+
+            else -> {
+                if (c.type == ConnectorType.HTTP) {
+                    io.ktor.server.engine.EngineConnectorBuilder(ConnectorType.HTTP).also {
+                        it.host = host
+                        it.port = c.port
+                    }
+                } else {
+                    c // Ktor's sslConnector: its host is set where it becomes ours ([resolve])
+                }
+            }
         }
+    }
+
+    /** `::`, or `0.0.0.0` (said at Info for [c]) where this host cannot bind IPv6. */
+    private fun everyInterfaceHost(c: EngineConnectorConfig): String {
+        if (configuration.ipv6BindableForTest ?: ipv6Bindable()) return EVERY_INTERFACE
+        environment.log.info("$c: no IPv6 on this host, so every interface is every IPv4 one (0.0.0.0)")
+        return IPV4_EVERY_INTERFACE
     }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
@@ -763,7 +797,9 @@ public class KuicksilverApplicationEngine(
                             "read a PROXY header; serve that port with the kuicksilver.tls keys, or use tlsConnector { proxyProtocol { } } in code",
                     )
                 }
-                platformTlsConnector(c)?.let { Listener(it, it) }
+                platformTlsConnector(c)
+                    ?.let { if (configuration.deploymentEveryInterface) it.withHost(everyInterfaceHost(c)) else it }
+                    ?.let { Listener(it, it) }
                     ?: throw TlsException.Config(
                         "connector $c is not supported by the Kuicksilver engine: use tlsConnector { } or a plain connector",
                     )
