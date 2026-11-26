@@ -19,7 +19,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.neverIndex
 import io.kuicksilver.ktor.client.neverIndexedHeaders
 import io.kuicksilver.native.KslLoader
@@ -45,15 +45,15 @@ class ServerNeverIndexedWebSocketTest {
     /** What the server's WebSocket saw as never indexed, and what the client's handshake response reported. */
     private suspend fun exchange(
         port: Int,
-        discovery: Http3DiscoveryMode,
+        discovery: Http3Discovery?,
         version: HttpProtocolVersion,
     ): Pair<String, List<Pair<String, String>>> {
         val client =
             HttpClient(KuicksilverClient) {
                 install(ClientWebSockets)
                 engine {
-                    trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                    http3 { this.discovery = discovery }
+                    tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                    http3 { discovery?.let { this.discovery = it } ?: run { enabled = false } }
                 }
             }
         try {
@@ -99,7 +99,7 @@ class ServerNeverIndexedWebSocketTest {
         serverTest {
             val (server, port) = h2TlsServer { marking() }
             try {
-                assertEquals("x-secret=s1", exchange(port, Http3DiscoveryMode.H1Only, HttpProtocolVersion.HTTP_2_0).first)
+                assertEquals("x-secret=s1", exchange(port, null, HttpProtocolVersion.HTTP_2_0).first)
             } finally {
                 server.stop(100, 500)
             }
@@ -109,7 +109,7 @@ class ServerNeverIndexedWebSocketTest {
         serverTest {
             val (server, port) = h2TlsServer { marking() }
             try {
-                assertEquals(listOf("x-reply" to "r1"), exchange(port, Http3DiscoveryMode.H1Only, HttpProtocolVersion.HTTP_2_0).second)
+                assertEquals(listOf("x-reply" to "r1"), exchange(port, null, HttpProtocolVersion.HTTP_2_0).second)
             } finally {
                 server.stop(100, 500)
             }
@@ -119,7 +119,7 @@ class ServerNeverIndexedWebSocketTest {
         h3ServerTest {
             val (server, port) = tlsServer { marking() }
             try {
-                assertEquals("x-secret=s1", exchange(port, Http3DiscoveryMode.H3Only, HttpProtocolVersion.HTTP_3_0).first)
+                assertEquals("x-secret=s1", exchange(port, Http3Discovery.H3Only, HttpProtocolVersion.HTTP_3_0).first)
             } finally {
                 server.stop(100, 500)
             }
@@ -129,7 +129,7 @@ class ServerNeverIndexedWebSocketTest {
         h3ServerTest {
             val (server, port) = tlsServer { marking() }
             try {
-                assertEquals(listOf("x-reply" to "r1"), exchange(port, Http3DiscoveryMode.H3Only, HttpProtocolVersion.HTTP_3_0).second)
+                assertEquals(listOf("x-reply" to "r1"), exchange(port, Http3Discovery.H3Only, HttpProtocolVersion.HTTP_3_0).second)
             } finally {
                 server.stop(100, 500)
             }

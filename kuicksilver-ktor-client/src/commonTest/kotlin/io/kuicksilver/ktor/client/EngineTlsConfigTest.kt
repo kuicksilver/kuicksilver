@@ -15,33 +15,34 @@ class EngineTlsConfigTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
-     * ALPN and the server name belong to the request (`h3` or `http/1.1`, the URL's host): a `tls {}` block that set them
-     * made every HTTP/3 handshake fail on ALPN, or verified the certificate against another name (docs review before 0.2.0).
+     * ALPN and the server name belong to the request (`h3` or `http/1.1`, the URL's host): the `tls { }` block has neither
+     * (a 0.2 block that set them made every HTTP/3 handshake fail on ALPN, or verified the certificate against another name).
      */
     @Test fun alpnAndServerNameComeFromTheRequest() {
-        val config =
-            KuicksilverEngineConfig().apply {
-                tls = {
-                    alpn = listOf("bogus")
-                    serverName = "other.example"
-                }
-            }
-        val tls = config.tlsConfigFor("origin.example", listOf("h3"))
+        val tls = KuicksilverEngineConfig().tlsConfigFor("origin.example", listOf("h3"))
         assertEquals(listOf("h3"), tls.alpn)
         assertEquals("origin.example", tls.serverName)
     }
 
-    /** Everything else the block sets is kept, the engine's trust and identity included when the block replaces them. */
-    @Test fun otherSettingsOfTheBlockApply() {
+    /** Every option of the `tls { }` block reaches the connection's TlsConfig. */
+    @Test fun everyOptionOfTheBlockApplies() {
         val anchored = ClientFixtures.trust
+        val suites = CipherSuites(listOf(CipherSuites.AES_256_GCM))
         val config =
             KuicksilverEngineConfig().apply {
-                trust = TrustConfig.Platform
-                tls = {
+                tls {
                     trust = anchored
-                    cipherSuites = CipherSuites.Default
+                    versions = io.kuicksilver.tls.TlsVersions.Tls12And13
+                    cipherSuites = suites
+                    revocation = io.kuicksilver.tls.RevocationPolicy.Off
+                    certificateCompression = false
                 }
             }
-        assertSame(anchored, config.tlsConfigFor("origin.example", listOf("http/1.1")).trust)
+        val built = config.tlsConfigFor("origin.example", listOf("http/1.1"))
+        assertSame(anchored, built.trust)
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, built.versions)
+        assertSame(suites, built.cipherSuites)
+        assertEquals(io.kuicksilver.tls.RevocationPolicy.Off, built.revocation)
+        assertEquals(false, built.certificateCompression)
     }
 }

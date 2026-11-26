@@ -214,19 +214,15 @@ class ClientMigrationTest {
         log: KuicksilverLogger? = null,
         block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
-        testClient(Http3DiscoveryMode.Preferred, block = block, engine = {
-            log?.let { logger = it }
-            quic = quicConfig { maxIdleTimeout = maxIdle }
-            eventListener = listener
-            engineIdle?.let { idleTimeout = it }
+        testClient(Http3Discovery.Preferred, block = block, engine = {
+            log?.let { observability { logger = it } }
+            http3 { quic { maxIdleTimeout = maxIdle } }
+            observability { eventListener = listener }
+            engineIdle?.let { pool { idleTimeout = it } }
             http3 {
-                hardDelay = Duration.INFINITE
-                connectionMigration = migration
-                endpoint =
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply { runtime { io = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } } } }
-                        .build()
+                expert { raceHeadStart = RaceHeadStart.NoRace }
+                this.migration = migration
+                endpointIoForTest = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } }
             }
         })
 
@@ -569,7 +565,7 @@ class ClientMigrationTest {
             val (server, port) = server(g)
             val nets = Networks()
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = { http3 { connectionMigration = nets.hook } }).use { c ->
+                testClient(null, engine = { http3 { migration = nets.hook } }).use { c ->
                     assertEquals("HTTP/1.1", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     assertTrue(nets.made.tryReceive().isFailure, "TCP connections do not migrate")
                 }
@@ -585,9 +581,9 @@ class ClientMigrationTest {
             val cut = CompletableDeferred<CuttableIo>()
             val log = Lines()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    logger = log
-                    http3 { connectionMigration = Http3ConnectionMigration { _, _ -> error("no network source") } }
+                testClient(Http3Discovery.H3Only, engine = {
+                    observability { logger = log }
+                    http3 { migration = Http3ConnectionMigration { _, _ -> error("no network source") } }
                 }).use { c ->
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     withTimeout(10.seconds) {

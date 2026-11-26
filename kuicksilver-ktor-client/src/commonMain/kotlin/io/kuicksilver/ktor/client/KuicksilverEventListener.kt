@@ -209,7 +209,7 @@ public abstract class KuicksilverEventListener {
 /** Why the engine chose a protocol for a request ([KuicksilverEventListener.protocolSelected]). */
 @ExperimentalKuicksilverApi
 public enum class ProtocolReason {
-    /** `Http3DiscoveryMode.H1Only` or `H3Only`. */
+    /** `http3 { enabled = false }` or `Http3Discovery.H3Only`. */
     Configuration,
 
     /** `http://` (or `ws://`): HTTP/3 needs TLS. */
@@ -239,7 +239,7 @@ public enum class ProtocolReason {
     /** A proxy applies to the request: TCP through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
     Proxy,
 
-    /** `Http3ClientConfig.http3Allowed` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `H1Only`. */
+    /** `http3 { allowed }` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `http3 { enabled = false }`. */
     Http3Disabled,
 
     /**

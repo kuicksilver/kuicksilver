@@ -38,7 +38,7 @@ class ConnectTimeoutMessageTest {
         clientTest {
             testClient(engine = {
                 connectTimeout = 300.milliseconds
-                dns = Dns { awaitCancellation() }
+                network { dns = Dns { awaitCancellation() } }
             }).use { c ->
                 assertNames(300, assertFailsWith<ConnectTimeoutException> { c.get("https://never.test/") })
             }
@@ -48,7 +48,7 @@ class ConnectTimeoutMessageTest {
         clientTest {
             testClient(engine = {
                 connectTimeout = 300.milliseconds
-                dns = Dns { awaitCancellation() }
+                network { dns = Dns { awaitCancellation() } }
             }, block = { install(WebSockets) }).use { c ->
                 assertNames(300, assertFailsWith<ConnectTimeoutException> { c.webSocket("wss://never.test/") {} })
             }
@@ -58,7 +58,7 @@ class ConnectTimeoutMessageTest {
         clientTest {
             testClient(engine = {
                 connectTimeout = 30.seconds
-                dns = Dns { awaitCancellation() }
+                network { dns = Dns { awaitCancellation() } }
             }, block = { install(HttpTimeout) { connectTimeoutMillis = 250 } }).use { c ->
                 assertNames(250, assertFailsWith<ConnectTimeoutException> { c.get("https://never.test/") })
             }
@@ -70,9 +70,9 @@ class ConnectTimeoutMessageTest {
             val selector = SelectorManager(Dispatchers.IO)
             val (udp, port) = udpOn(selector, 0)
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     connectTimeout = 400.milliseconds
-                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                    quicHandshakeTimeoutForTest = 30.seconds
                 }).use { c ->
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     val e = assertFailsWith<ConnectTimeoutException> { c.webTransport("https://127.0.0.1:$port/wt?x=1") }
@@ -90,9 +90,9 @@ class ConnectTimeoutMessageTest {
             val selector = SelectorManager(Dispatchers.IO)
             val (udp, port) = udpOn(selector, 0)
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     connectTimeout = 400.milliseconds
-                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                    quicHandshakeTimeoutForTest = 30.seconds
                 }).use { c ->
                     assertNames(400, assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") })
                 }

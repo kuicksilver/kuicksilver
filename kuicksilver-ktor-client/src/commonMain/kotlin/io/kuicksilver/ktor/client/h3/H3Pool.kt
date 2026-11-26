@@ -46,7 +46,7 @@ import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.HeldTransportEnd
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
@@ -461,27 +461,26 @@ internal class H3Pool(
     /** The engine's endpoint with its logger, connection listener, qlog sink and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
-        config.http3.endpoint
-            .toBuilder()
-            .apply {
-                config.logger?.let { observability { logger = it } }
-                config.http3.connectionListener?.let { observability { connectionListener = it } }
-                config.http3.qlog?.let { observability { qlog = it } }
-                sessionCache = tickets
-            }.build()
-
-    /** The engine's QUIC settings; the endpoint applies its connection ID length and qlog sink to them. */
-    private val quic: io.kuicksilver.quic.QuicConfig = config.quic
-
-    init {
-        // RFC 9114 section 6.2: refused when the engine is created, not clamped (Http3Endpoint.connect refuses it too)
-        if (config.http3.discovery != Http3DiscoveryMode.H1Only) {
-            require(quic.maxUniStreams >= 3) {
-                "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the server opens its control and QPACK streams), " +
-                    "not ${quic.maxUniStreams}; Http3DiscoveryMode.H1Only does not use HTTP/3"
+        io.kuicksilver.quic.quicEndpointConfig {
+            connectionIdLength = config.http3.expert.connectionIdLength
+            observability {
+                logger = config.observability.logger
+                connectionListener = config.observability.connectionListener
+                qlog = config.observability.qlog
             }
+            runtime {
+                dispatcher = config.http3.expert.dispatcher
+                io = config.endpointIoForTest
+                config.cryptoForTest?.let { crypto = it }
+            }
+            sessionCache = tickets
         }
-    }
+
+    /** The engine's QUIC settings (`http3 { quic { } }` with what the engine derives); the endpoint applies its connection ID length and qlog sink to them. */
+    private val quic: io.kuicksilver.quic.QuicConfig = config.resolveQuic()
+
+    /** The engine's HTTP/3 settings (`http3 { settings { } }`, its derived options refused). */
+    private val h3Settings: io.kuicksilver.http3.Http3Settings = config.resolveHttp3Settings()
 
     /**
      * One set of endpoints, each bound at its first use ([endpointFor]) with [config]: [wildcard] for every destination
@@ -553,13 +552,13 @@ internal class H3Pool(
      */
     private fun goesEarly(data: HttpRequestData): Boolean =
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        config.http3.earlyData && !data.attributes.contains(WEBSOCKETS_KEY) &&
+        config.http3.earlyData.enabled && !data.attributes.contains(WEBSOCKETS_KEY) &&
             data.method.value in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS &&
             data.body.unwrap() is OutgoingContent.NoContent
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val stallSettings =
-        StallSettings(config.http3.stallProbeTimeouts, config.http3.stallMinSilence, config.http3.stallAbandonAfter)
+        StallSettings(config.http3.stall.probeTimeouts, config.http3.stall.minSilence, config.http3.stall.abandonAfter)
 
     /** The stall monitors of connections requests watch ([monitorFor]), under [monitorsLock]; each leaves as its connection ends. */
     private val monitors = HashMap<Http3Connection, H3StallMonitor>()
@@ -656,10 +655,10 @@ internal class H3Pool(
     private val retired = ArrayList<H3Entry>()
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val idleTimeoutMillis = config.idleTimeout.toMillisOrMax()
+    private val idleTimeoutMillis = config.pool.idleTimeout.toMillisOrMax()
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val maxLifetimeMillis = config.maxConnectionLifetime.toMillisOrMax()
+    private val maxLifetimeMillis = config.pool.maxConnectionLifetime?.toMillisOrMax() ?: Long.MAX_VALUE
 
     /** Set by [close]: nothing binds a new endpoint after it (a request or session after the client closed). */
     @kotlin.concurrent.Volatile
@@ -692,7 +691,7 @@ internal class H3Pool(
                         v6 -> set.loopback6
                         else -> set.loopback4
                     }
-                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, config.http3.settings).also {
+                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, h3Settings).also {
                     bound(it)
                     endpointBindStepForTest?.invoke(it, false)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
@@ -763,23 +762,26 @@ internal class H3Pool(
     internal val webTransportSessions = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val maxSessions = config.http3.maxWebTransportSessions
+    private val maxSessions = config.http3.webTransport.maxSessions
 
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        require(config.http3.maxWebTransportSessions >= 1) {
-            "http3.maxWebTransportSessions must be at least 1, not ${config.http3.maxWebTransportSessions}"
+        require(config.http3.webTransport.maxSessions >= 1) {
+            "http3.maxWebTransportSessions must be at least 1, not ${config.http3.webTransport.maxSessions}"
         }
     }
 
     /** The engine's HTTP/3 settings with WebTransport and Extended CONNECT on: a WebTransport-capable connection's. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val wtSettings: io.kuicksilver.http3.Http3Settings =
-        config.http3.settings
+        h3Settings
             .toBuilder()
             .apply {
                 enableConnectProtocol = true
-                webTransport { enabled = true }
+                webTransport {
+                    enabled = true
+                    maxSessions = config.http3.webTransport.maxSessionsPerConnection
+                }
             }.build()
 
     /**
@@ -1037,7 +1039,7 @@ internal class H3Pool(
         val left = -deadline.elapsedNow().inWholeMilliseconds
         if (left <= 0) throw data.connectTimeoutException(connectTimeoutMillis, null)
         ensureOpen()
-        val route = dns.echRoute(originHost) { config.ech.listFor(it) }
+        val route = dns.echRoute(originHost) { config.tls.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
@@ -1085,7 +1087,7 @@ internal class H3Pool(
         connect: suspend (InetSocketAddress) -> Http3Connection,
     ): Http3Connection {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val delay = config.connectionAttemptDelay
+        val delay = config.network.happyEyeballsDelay ?: kotlin.time.Duration.INFINITE
         return raceAddresses(
             host,
             dns.resolution(host, port),
@@ -1497,7 +1499,7 @@ internal class H3Pool(
         // connection, while a sibling whose handshake stalls (a black-holed alternative) does not hold this one up longer
         // than Happy Eyeballs holds up its next address
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val waitAtMost = config.connectionAttemptDelay
+        val waitAtMost = config.network.happyEyeballsDelay ?: kotlin.time.Duration.INFINITE
         if (candidates.isNotEmpty()) {
             withTimeoutOrNull(waitAtMost) {
                 for (e in candidates) {
@@ -1627,7 +1629,7 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
-        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+        val route = t.ech ?: dns.echRoute(t.originHost) { config.tls.ech.listFor(it) }
         // another origin's connection only for a request that may coalesce (ADR-0018); never a WebTransport session
         val coalesce = !wt && config.mayCoalesce(data, viaProxy = t.udpProxy != null)
         // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
@@ -1806,7 +1808,7 @@ internal class H3Pool(
                 proxyStep(step, data, started) { a ->
                     connectNoting(a) {
                         try {
-                            ep.connect(remote, proxyTls, quic, config.http3.settings)
+                            ep.connect(remote, proxyTls, quic, h3Settings)
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1855,7 +1857,7 @@ internal class H3Pool(
                 Http3Endpoint.bind(
                     InetSocketAddress("0.0.0.0", 0), // handed to the factory, which gives the tunnel: nothing is bound
                     tunnelConfig,
-                    config.http3.settings,
+                    h3Settings,
                 )
             inner = ep
             bound(ep)
@@ -1871,7 +1873,7 @@ internal class H3Pool(
                                 tunnel.remoteAddress,
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
                                 tunnelled,
-                                config.http3.settings,
+                                h3Settings,
                             )
                         }
                     }
@@ -2082,7 +2084,7 @@ internal class H3Pool(
         return if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-17 section 3.2)
             ep.connect(remote, tls, quic, wtSettings)
-        } else if (config.http3.earlyData && !noResumption.avoids(t.originHost)) {
+        } else if (config.http3.earlyData.enabled && !noResumption.avoids(t.originHost)) {
             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
             // the handshake timer (a request sent early then fails, and falls back, at that time).
             // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
@@ -2104,7 +2106,7 @@ internal class H3Pool(
                 }
             }
             try {
-                ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+                ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), h3Settings)
             } catch (e: Throwable) {
                 // the switched ServerHello can end the attempt before its 0-RTT keys were handed out
                 if (io.kuicksilver.ktor.client
@@ -2118,7 +2120,7 @@ internal class H3Pool(
                 noteServerCidChange(c, t.originHost)
             }
         } else {
-            ep.connect(remote, tls, quic, config.http3.settings)
+            ep.connect(remote, tls, quic, h3Settings)
         }
     }
 
@@ -2274,7 +2276,7 @@ internal class H3Pool(
         c: Http3Connection,
         data: HttpRequestData,
     ) {
-        val migration = config.http3.connectionMigration ?: return
+        val migration = config.http3.migration ?: return
         val scope = migrationScope ?: return
         val origin = originKeyOf(data.url)
         val job =
@@ -2509,7 +2511,7 @@ internal class H3Pool(
         var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val watched = watchStall && config.http3.stallDetection && !data.attributes.contains(WEBSOCKETS_KEY)
+        val watched = watchStall && config.http3.stall.enabled && !data.attributes.contains(WEBSOCKETS_KEY)
         while (true) {
             val (entry, conn) =
                 try {
@@ -2684,7 +2686,7 @@ internal class H3Pool(
                 ) {
                     echRetried = true
                     echEarlyRetriesForTest.addAndFetch(1)
-                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+                    val route = t.ech ?: dns.echRoute(t.originHost) { config.tls.ech.listFor(it) }
                     route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
                     lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
                     // a repeat on a new connection, counted as the RequestNotProcessed one below is
@@ -2858,7 +2860,7 @@ internal class H3Pool(
                             (touch?.let { TouchedBody(b, it) } ?: b).let { t -> activity?.let { ConsumedBody(t, it) } ?: t }
                         }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    allowEarlyData = config.http3.earlyData
+                    allowEarlyData = config.http3.earlyData.enabled
                     priority = data.priority
                 },
             )
@@ -3065,7 +3067,7 @@ internal class H3Pool(
                             context = lifetime.context,
                             inflate = handshake.inflate,
                             perMessageDeflate = handshake.perMessageDeflate,
-                            maxMessageSize = config.webSocketMaxMessageSize,
+                            maxMessageSize = config.webSockets.maxMessageSize,
                             checkText = handshake.checkText,
                             onEnd = { inputDone.complete(Unit) },
                         ),

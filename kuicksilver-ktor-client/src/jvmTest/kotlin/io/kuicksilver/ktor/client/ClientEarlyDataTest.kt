@@ -41,7 +41,7 @@ class ClientEarlyDataTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { earlyData = true } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { http3 { earlyData { enabled = true } } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val first = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, first.version)
@@ -87,14 +87,13 @@ class ClientEarlyDataTest {
         try {
             udpRelay(ep.localAddress.port, tcpTwin = true) { port, relay ->
                 val url = "https://127.0.0.1:$port/"
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     this.connectTimeout = connectTimeout
-                    quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 30.seconds }
-                    listener?.let { eventListener = it }
+                    listener?.let { observability { eventListener = it } }
                     http3 {
-                        earlyData = true
-                        this.networkId = networkId
+                        earlyData { enabled = true }
                     }
+                    network { this.networkId = networkId }
                     engine()
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -138,7 +137,7 @@ class ClientEarlyDataTest {
      */
     @Test fun udpBlockedWith0RttStallsOverToTcpInSeconds() =
         h3Test {
-            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stallMinSilence = 1.seconds } }) { url, c, _ ->
+            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stall { minSilence = 1.seconds } } }) { url, c, _ ->
                 val t0 = TimeSource.Monotonic.markNow()
                 val r = c.get(url)
                 val took = t0.elapsedNow()
@@ -162,16 +161,12 @@ class ClientEarlyDataTest {
                 }
             val ios = FaultyIos()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     http3 {
-                        earlyData = true
-                        hardDelay = kotlin.time.Duration.INFINITE
-                        stallMinSilence = 1.seconds
-                        endpoint =
-                            io.kuicksilver.quic.QuicEndpointConfig
-                                .Builder()
-                                .apply { runtime { io = { local -> ios.open(local) } } }
-                                .build()
+                        earlyData { enabled = true }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
+                        stall { minSilence = 1.seconds }
+                        endpointIoForTest = { local -> ios.open(local) }
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -195,7 +190,7 @@ class ClientEarlyDataTest {
      */
     @Test fun postWaitingForAStalledHandshakeFallsBackInSeconds() =
         h3Test {
-            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stallMinSilence = 1.seconds } }) { url, c, _ ->
+            ticketThenUdpBlocked(10.seconds, { null }, engine = { http3 { stall { minSilence = 1.seconds } } }) { url, c, _ ->
                 val t0 = TimeSource.Monotonic.markNow()
                 val r = c.post(url) { setBody("x") }
                 val took = t0.elapsedNow()

@@ -128,16 +128,16 @@ class ClientMigrationAndroidTest {
     private fun client(
         listener: KuicksilverEventListener,
         migrate: Boolean,
-    ) = testClient(Http3DiscoveryMode.Preferred, engine = {
-        trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) // the test certificate, reached as 10.0.2.2
-        quic = quicConfig { maxIdleTimeout = 10.seconds }
-        eventListener = listener
+    ) = testClient(Http3Discovery.Preferred, engine = {
+        tls { trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) } // the test certificate, reached as 10.0.2.2
+        http3 { quic { maxIdleTimeout = 10.seconds } }
+        observability { eventListener = listener }
         http3 {
-            hardDelay = Duration.INFINITE // HTTP/1.1 only after HTTP/3 failed
+            expert { raceHeadStart = RaceHeadStart.NoRace } // HTTP/1.1 only after HTTP/3 failed
             if (migrate) {
                 // guide:ktor:android-migration
-                connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
-                networkId = { connectivity.activeNetwork?.toString() }
+                migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
+                network { networkId = { connectivity.activeNetwork?.toString() } }
             }
         }
     })

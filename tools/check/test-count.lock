@@ -1610,6 +1610,15 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalesci
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_theChecksInOrder
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_tooManyRefusalsRefuseEveryNewHost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCoalescingTest.negative_webTransportNeverCoalesces
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.defaults
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.knownServers
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.lowLevelBlocksReachTheEngine
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_contradictoryCombinationsFailAtCreation
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_derivedOptionsAreRefusedByName
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.nullIsOff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.poolBlockReachesThePool
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.proxyTlsBlock
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.tlsBlockReachesTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.aUrlTheProxyDoesNotApplyToGoesDirectly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.credentialsGoToTheProxy
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.http3ThroughTheProxy
@@ -1727,7 +1736,6 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_serverWithoutEchIsRetriedWithoutEch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceWithTheRetryConfigurationsOverTcp
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.tlsBlockRunsOncePerConfigListsEntryAtCreation
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aDeadAlternativeReportsAltSvcRaceAndBrokenMark
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aFailedExchangeStillReleasesItsConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aListenerThrowingCancellationNeverFailsTheCall
@@ -2286,7 +2294,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negati
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.systemDnsAnswersLiteralsWithoutALookup
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineSessionCacheTest.engineCloseDropsItsSessions
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.alpnAndServerNameComeFromTheRequest
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.otherSettingsOfTheBlockApply
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.EngineTlsConfigTest.everyOptionOfTheBlockApplies
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.entriesSurviveANewInstance
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.expiredAndMalformedLinesAreDroppedOnLoad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.identicalPutDoesNotRewrite

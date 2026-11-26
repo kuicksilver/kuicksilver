@@ -26,7 +26,7 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.http2Settings
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
@@ -54,8 +54,8 @@ class ServerH2ResponseTest {
         HttpClient(KuicksilverClient) {
             expectSuccess = false
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false }
             }
         }
 
@@ -396,8 +396,8 @@ internal suspend fun respondBytesOverH2(size: Int) {
     try {
         HttpClient(KuicksilverClient) {
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false }
             }
         }.use { c ->
             withTimeout(60.seconds) {

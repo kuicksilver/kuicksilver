@@ -38,6 +38,9 @@ kotlin {
     }
 }
 tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+// the first screen of docs/guide/ktor.md without any opt-in (src/jvmFirstScreenTest, ADR-0026): compiled before the JVM tests
+kotlin { jvm { val main = compilations.getByName("main"); compilations.create("firstScreenTest") { associateWith(main) } } }
+tasks.named("jvmTest") { dependsOn("compileFirstScreenTestKotlinJvm") }
 // the same rule for a JVM application that shrinks: R8 reads META-INF/proguard/ of a jar on its own, ProGuard users add the file
 tasks.named<ProcessResources>("jvmProcessResources") { from("consumer-rules.pro") { into("META-INF/proguard"); rename { "kuicksilver-ktor-client.pro" } } }
 // the class jars an Android app links with this library, one path per line: tools/check/r8-inlining.sh shrinks them with the

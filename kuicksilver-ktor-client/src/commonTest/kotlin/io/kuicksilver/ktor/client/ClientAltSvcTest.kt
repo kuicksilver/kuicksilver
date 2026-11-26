@@ -30,7 +30,7 @@ class ClientAltSvcTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("used=${call.request.headers["Alt-Used"]}") } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val first = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, first.version)
                     assertEquals("used=null", first.bodyAsText())
@@ -66,7 +66,7 @@ class ClientAltSvcTest {
             try {
                 val store = FileAltSvcStore(path)
                 val origin = "https://127.0.0.1:$port"
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.altSvcWriteLock.lock() // the next write waits here
                     val request = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { c.get("$origin/") }
@@ -114,12 +114,12 @@ class ClientAltSvcTest {
                     var network = "a"
                     // Auto: the client records Alt-Svc (nothing listens for QUIC there, so requests fall back to HTTP/1.1)
                     testClient(
-                        Http3DiscoveryMode.Auto,
+                        Http3Discovery.Auto,
                         engine = {
                             http3 {
-                                networkId = { network }
-                                if (clear != null) clearOnNetworkChange = clear
+                                if (clear != null) expert { clearAltSvcOnNetworkChange = clear }
                             }
+                            network { networkId = { network } }
                         },
                     ).use { c ->
                         val engine = c.engine as KuicksilverEngine
@@ -139,7 +139,7 @@ class ClientAltSvcTest {
     /** The per-origin RTT memory is bounded like the Alt-Svc cache (threat-model 3.18). */
     @Test fun srttMapBounded() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto).use { c ->
+            testClient(Http3Discovery.Auto).use { c ->
                 val engine = c.engine as KuicksilverEngine
                 repeat(AltSvcCache.MAX_ORIGINS + 50) { engine.rememberSrtt("https://o$it.test:443", 10.milliseconds) }
                 assertEquals(AltSvcCache.MAX_ORIGINS, engine.srttOrigins)
@@ -159,7 +159,7 @@ class ClientAltSvcTest {
                 }
             try {
                 val store = InMemoryAltSvcStore()
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                     c.get("http://127.0.0.1:$port/").bodyAsText()
                     assertTrue(store.get("http://127.0.0.1:$port").isEmpty() && store.get("https://127.0.0.1:$port").isEmpty())
                 }
@@ -194,10 +194,9 @@ class ClientAltSvcTest {
             try {
                 val store = InMemoryAltSvcStore()
                 val origin = "https://127.0.0.1:$port"
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     http3 { altSvcStore = store }
-                    quic =
-                        io.kuicksilver.quic.quicConfig { handshakeTimeout = kotlin.time.Duration.parse("500ms") }
+                    quicHandshakeTimeoutForTest = kotlin.time.Duration.parse("500ms")
                 }).use { c ->
                     assertEquals("h1", c.get("$origin/").bodyAsText())
                     assertTrue(store.get(origin).isNotEmpty(), "the alternative was learned")
@@ -236,10 +235,9 @@ class ClientAltSvcTest {
             try {
                 val store = InMemoryAltSvcStore()
                 val origin = "https://127.0.0.1:$port"
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     http3 { altSvcStore = store }
-                    quic =
-                        io.kuicksilver.quic.quicConfig { handshakeTimeout = kotlin.time.Duration.parse("500ms") }
+                    quicHandshakeTimeoutForTest = kotlin.time.Duration.parse("500ms")
                 }).use { c ->
                     assertEquals("h1", c.get("$origin/").bodyAsText())
                     val learned = store.get(origin)
@@ -270,7 +268,7 @@ class ClientAltSvcTest {
                         .getTimeMillis() + 3_600_000
                 val store = InMemoryAltSvcStore()
                 store.put(origin, listOf(AltSvcEntry("h3", null, 1, far, false), AltSvcEntry("h3", null, port, far, false)))
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                     (c.engine as KuicksilverEngine).brokenAltSvc.markBroken(origin, "127.0.0.1:1")
                     val d = c.get("$origin/").kuicksilverDiagnostics!!
                     assertEquals("127.0.0.1:$port", d.alternative, "$d")
@@ -316,7 +314,7 @@ class ClientAltSvcTest {
                         ),
                     ),
                 )
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     c.get("$origin/").bodyAsText()
                     assertEquals(listOf(port), engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).map { it.port })
@@ -376,11 +374,11 @@ class ClientAltSvcTest {
                 val url = io.ktor.http.Url("https://127.0.0.1:$port/")
 
                 fun client(network: String) =
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         http3 {
                             altSvcStore = FileAltSvcStore(path)
-                            networkId = { network }
                         }
+                        network { networkId = { network } }
                     })
                 client("wifi").use { c ->
                     c.get(url).bodyAsText()
@@ -424,7 +422,7 @@ class ClientAltSvcTest {
 
                         override val networks = networks
                     }
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { connectionMigration = migration } }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { http3 { this.migration = migration } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.followedNetworkUpdates.first { it >= 1 }
                     c.get(url).bodyAsText()
@@ -451,7 +449,7 @@ class ClientAltSvcTest {
             val (server, port) = testServer(configure = { http2 = true }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val url = io.ktor.http.Url("https://127.0.0.1:$port/")
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val r = c.get(url)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
@@ -470,7 +468,7 @@ class ClientAltSvcTest {
      */
     @Test fun negative_altSvcFramesLearnedInOrderAndBounded() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto).use { c ->
+            testClient(Http3Discovery.Auto).use { c ->
                 val engine = c.engine as KuicksilverEngine
                 val url = io.ktor.http.Url("https://example.com/")
                 repeat(5_000) {
@@ -517,10 +515,10 @@ class ClientAltSvcTest {
                         .getTimeMillis() + 3_600_000
                 FileAltSvcStore(path).put(origin, listOf(AltSvcEntry("h3", null, 443, far, false), AltSvcEntry("h3", null, 444, far, true)))
                 val store = FileAltSvcStore(path)
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     http3 {
                         altSvcStore = store
-                        connectionMigration = following(kotlinx.coroutines.flow.MutableStateFlow<Any?>("100"))
+                        migration = following(kotlinx.coroutines.flow.MutableStateFlow<Any?>("100"))
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -550,10 +548,10 @@ class ClientAltSvcTest {
                     }
                 }
             val networks = kotlinx.coroutines.flow.MutableStateFlow<Any?>("wifi")
-            testClient(Http3DiscoveryMode.Auto, engine = {
+            testClient(Http3Discovery.Auto, engine = {
                 http3 {
                     altSvcStore = store
-                    connectionMigration = following(networks)
+                    migration = following(networks)
                 }
             }).use { c ->
                 val engine = c.engine as KuicksilverEngine
@@ -571,7 +569,7 @@ class ClientAltSvcTest {
      */
     @Test fun negative_brokenMarksRunOnAMonotonicClock() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto).use { c ->
+            testClient(Http3Discovery.Auto).use { c ->
                 val clock = (c.engine as KuicksilverEngine).brokenAltSvc.clock
                 assertTrue(clock() < 3_600_000, "a monotonic clock from the engine's start, not epoch time: ${clock()}")
             }
@@ -587,8 +585,8 @@ class ClientAltSvcTest {
             val (server, port) = advertisingOnce()
             try {
                 val url = io.ktor.http.Url("https://127.0.0.1:$port/")
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    http3 { connectionMigration = following(kotlinx.coroutines.flow.flow { kotlinx.coroutines.awaitCancellation() }) }
+                testClient(Http3Discovery.Auto, engine = {
+                    http3 { migration = following(kotlinx.coroutines.flow.flow { kotlinx.coroutines.awaitCancellation() }) }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     c.get(url).bodyAsText()
@@ -623,7 +621,7 @@ class ClientAltSvcTest {
                         inner.put(origin, entries)
                     }
                 }
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+            testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                 val engine = c.engine as KuicksilverEngine
                 engine.onAltSvcFrame(io.ktor.http.Url("https://bad.example/"), "h3=\":443\"")
                 engine.altSvcFramesApplied.first { it >= engine.altSvcFramesReceived }
@@ -654,7 +652,7 @@ class ClientAltSvcTest {
 
                     override fun clearNonPersistent() = inner.clearNonPersistent()
                 }
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = legacy } }).use { c ->
+            testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = legacy } }).use { c ->
                 assertFalse(c.clearAlternativeServices())
                 assertTrue(c.clearAlternativeServices(io.ktor.http.Url("https://example.com/")), "one origin is always complete")
             }

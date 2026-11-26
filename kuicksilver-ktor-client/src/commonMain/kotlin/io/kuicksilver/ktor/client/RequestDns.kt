@@ -388,9 +388,9 @@ internal fun KuicksilverEngineConfig.newRequestDns(events: DnsObserver? = null):
             once.get(name).filter { it.isIpv6 == ipv6 }
         }
     }
-    if (dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
+    if (network.dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
     // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
-    val app = dns
+    val app = network.dns
     return RequestDns(
         nat64ForTest ?: Nat64.system,
         familyEvents = events.takeIf { app is FamilyDns },

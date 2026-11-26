@@ -62,8 +62,8 @@ field; the whole feature is opt-in (`webTransport`), and draft-02 and draft-14 s
 full. Draft-17 (November 2026) keeps that model (§7.1 above) and changes nothing for these two drafts. Without the shim
 no browser can open a session: a page's `new WebTransport()` rejects, with no fallback. Security impact: none either way.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:15` (the versions,
-`offeredIn` at :63, `WtSettings.ours` at :198, `WtTokens.LEGACY` at :228),
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:18` (the versions,
+`offeredIn` at :66, `WtSettings.ours` at :201, `WtTokens.LEGACY` at :231),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:427` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:878` (the client's draft-02
@@ -119,7 +119,7 @@ costs other clients nothing.
 **Justification (kept, hardening audit 2026-11-21, S2).** It goes with shim 1: without it Chrome refuses the session.
 
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:801`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:234`.
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:237`.
 
 **On by default.** No, as shim 1; then always for a draft-02 session whose client sent the request field's value `1`.
 
@@ -198,8 +198,8 @@ document. The description of frame fields and some of the mandatory handling is 
 of this document remain interoperable with implementations that use the priority signaling described in RFC 7540." RFC
 9113 has no self-dependency rule (§6.3 keeps only the stream 0 and frame length errors).
 
-**Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:158` (HEADERS
-opening a stream), :203 (HEADERS on an open stream), :289 (PRIORITY).
+**Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:161` (HEADERS
+opening a stream), :206 (HEADERS on an open stream), :292 (PRIORITY).
 
 **On by default.** Yes; no switch.
 

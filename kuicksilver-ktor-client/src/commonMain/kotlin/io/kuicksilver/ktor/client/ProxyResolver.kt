@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class, DelicateKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -10,6 +10,7 @@ import io.ktor.http.URLDecodeException
 import io.ktor.http.Url
 import io.ktor.http.decodeURLPart
 import io.ktor.http.isSecure
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.quic.KuicksilverLogger
@@ -807,22 +808,22 @@ internal class ProxyRouting(
         // creation, not each request
         val proxy = config.proxy
         if (proxy != null && proxy.type == ProxyType.SOCKS) {
-            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireSocks5Password(it) }
+            (proxy.platformProxyCredentials() ?: config.proxies.credentials)?.let { requireSocks5Password(it) }
         } else if (proxy != null && proxy.type == ProxyType.HTTP) {
-            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireBasicCredentials(it) }
+            (proxy.platformProxyCredentials() ?: config.proxies.credentials)?.let { requireBasicCredentials(it) }
         }
     }
 
     /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
     private val explicitProxy: Result<ResolvedProxy?> by lazy {
-        runCatching { config.proxy?.toResolvedProxy(config.proxyCredentials) }
+        runCatching { config.proxy?.toResolvedProxy(config.proxies.credentials) }
     }
 
     /** See [explicitProxy]; a proxy the engine cannot use fails every request with the same exception. */
     fun explicit(): ResolvedProxy? = explicitProxy.getOrThrow()
 
     suspend fun lookup(url: Url): ResolvedProxy? {
-        val resolver = config.proxyResolver
+        val resolver = config.proxies.resolver
         if (resolver === ProxyResolvers.None) return null
         // a WebSocket's resource name is part of what a PAC script gets (RFC 6455 section 4.1), so of the key too
         val resource = if (url.protocol.name == "ws" || url.protocol.name == "wss") url.encodedPathAndQuery else ""
@@ -884,7 +885,7 @@ internal class ProxyRouting(
                 inFlight[key]?.takeUnless { it.isCompleted } ?: kotlinx.coroutines.GlobalScope
                     .async(resolverDispatcher) {
                         if (resolver is WarningProxyResolver) {
-                            resolver.proxyFor(url, ::warnOnce, config.pacFullWebSocketUrl)
+                            resolver.proxyFor(url, ::warnOnce, config.proxies.pacFullWebSocketUrl)
                         } else {
                             resolver.proxyFor(url)
                         }

@@ -52,7 +52,7 @@ class ClientH3EndpointChoiceTest {
                     .first()
                     .port
             val chosen = ArrayList<Pair<String, String>>()
-            testClient(Http3DiscoveryMode.H3Only).use { c ->
+            testClient(Http3Discovery.H3Only).use { c ->
                 (c.engine as KuicksilverEngine).h3.endpointChosenForTest = { remote, ep ->
                     chosen += remote.ipLiteral() to ep.localAddress.ipLiteral()
                 }
@@ -88,7 +88,7 @@ class ClientH3EndpointChoiceTest {
     @Test fun negative_aServerElsewhereIsReachedFromTheWildcard() =
         h3Test {
             val chosen = ArrayList<Pair<String, String>>()
-            testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds }).use { c ->
+            testClient(Http3Discovery.H3Only, engine = { connectTimeout = 300.milliseconds }).use { c ->
                 (c.engine as KuicksilverEngine).h3.endpointChosenForTest = { remote, ep ->
                     chosen += remote.ipLiteral() to ep.localAddress.ipLiteral()
                 }
@@ -123,7 +123,7 @@ class ClientH3EndpointChoiceTest {
             val target = if (host == "192.0.2.1") "192.0.2.1:443" else "$host:${sinkAddress.port}"
             var bound: Http3Endpoint? = null
             var attempts = 0
-            val c = testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds })
+            val c = testClient(Http3Discovery.H3Only, engine = { connectTimeout = 300.milliseconds })
             val pool = (c.engine as KuicksilverEngine).h3
             pool.endpointChosenForTest = { _, _ -> attempts++ }
             pool.endpointBindStepForTest = { ep, step ->

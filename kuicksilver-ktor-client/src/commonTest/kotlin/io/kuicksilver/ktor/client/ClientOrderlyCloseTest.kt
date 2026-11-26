@@ -500,7 +500,7 @@ class ClientOrderlyCloseTest {
                 h2Server(input, output, end, violate = false)
             }) { port ->
                 // 1 ms (the least the pool takes): the engine's reaper evicts the connection soon after the response
-                testClient(engine = { idleTimeout = 1.milliseconds }).use { c ->
+                testClient(engine = { pool { idleTimeout = 1.milliseconds } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     end.assertOneGoAwayThenCleanEnd(Http2ErrorCode.NO_ERROR)
                 }

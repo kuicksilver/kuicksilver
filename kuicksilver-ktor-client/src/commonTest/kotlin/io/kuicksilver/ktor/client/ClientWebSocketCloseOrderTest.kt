@@ -456,7 +456,7 @@ class ClientWebSocketCloseOrderTest {
                         ends = conn.events.all.value
                         result.complete(read)
                     }) { port ->
-                        testClient(engine = { eventListener = listener }, block = { install(WebSockets) }).use { c ->
+                        testClient(engine = { observability { eventListener = listener } }, block = { install(WebSockets) }).use { c ->
                             engine(c).h1.webSocketCloseWaitMillis = 200
                             coroutineScope {
                                 val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
@@ -755,8 +755,8 @@ class ClientWebSocketCloseOrderTest {
                 }
             try {
                 testClient(
-                    Http3DiscoveryMode.H3Only,
-                    engine = { http3 { qlog = FramesSent(events) } },
+                    Http3Discovery.H3Only,
+                    engine = { observability { qlog = FramesSent(events) } },
                     block = { install(WebSockets) },
                 ).use { c ->
                     engine(c).h3.webSocketClosingForTest = {
@@ -974,7 +974,7 @@ class ClientWebSocketCloseOrderTest {
                             kotlinx.coroutines.awaitCancellation()
                         }
                     try {
-                        testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                             engine(c).h3.webSocketClosingForTest = { hook += it }
                             engine(c).h3.webSocketServerEndForTest = { holdUntilCancelled(reached) }
                             engine(c).h3.webSocketCloseWaitMillis = closeWait

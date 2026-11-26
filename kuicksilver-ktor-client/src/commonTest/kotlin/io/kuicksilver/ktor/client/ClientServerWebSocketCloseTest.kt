@@ -51,7 +51,7 @@ class ClientServerWebSocketCloseTest {
             }
         val hook = MutableStateFlow(emptyList<String>())
         try {
-            val discovery = if (transport == Transport.H3) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only
+            val discovery = if (transport == Transport.H3) Http3Discovery.H3Only else null
             testClient(discovery, block = { install(WebSockets) }).use { c ->
                 val e = c.engine as KuicksilverEngine
                 val record: (String) -> Unit = { ev -> hook.update { it + ev } }

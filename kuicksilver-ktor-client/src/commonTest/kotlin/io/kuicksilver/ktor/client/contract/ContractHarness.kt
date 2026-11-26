@@ -29,7 +29,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.kuicksilver.ktor.client.CapturedLog
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.TestCerts
@@ -58,10 +58,10 @@ internal expect val contractOnWindows: Boolean
 /** One way of running the contract: the protocol and the URLs the tests see. */
 internal enum class ContractMode(
     val engineName: String,
-    val discovery: Http3DiscoveryMode,
+    val discovery: Http3Discovery?,
 ) {
-    H1("Kuicksilver-h1", Http3DiscoveryMode.H1Only),
-    H3("Kuicksilver-h3", Http3DiscoveryMode.H3Only),
+    H1("Kuicksilver-h1", null),
+    H3("Kuicksilver-h3", Http3Discovery.H3Only),
 }
 
 /** The shared test server: the vendored routes of ktor-test-server on the Kuicksilver server engine, cleartext and TLS (+ HTTP/3). */
@@ -223,8 +223,8 @@ abstract class ClientLoader(
             val client =
                 HttpClient(Kuicksilver) {
                     engine {
-                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                        http3 { discovery = mode.discovery }
+                        tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                        http3 { mode.discovery?.let { discovery = it } ?: run { enabled = false } }
                     }
                     (builder.config as HttpClientConfig<KuicksilverEngineConfig>.() -> Unit)(this)
                 }

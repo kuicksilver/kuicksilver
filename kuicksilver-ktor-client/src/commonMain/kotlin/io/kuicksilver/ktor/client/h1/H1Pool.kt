@@ -319,6 +319,9 @@ internal class H1Pool(
      */
     private val altSvcFrame: (Url, String) -> Unit = { _, _ -> },
 ) {
+    /** The HTTP/2 settings of the engine's connections (`http2 { settings { } }`). */
+    private val h2Settings: io.kuicksilver.http2.Http2Settings = config.resolveHttp2Settings()
+
     /**
      * Orderly closes in progress ([closeOrderly]): TLS close_notify after what was written, bounded by
      * [ORDERLY_CLOSE_TIMEOUT]. Not the engine's request job; [closeAll] waits for them before the selector goes.
@@ -453,9 +456,8 @@ internal class H1Pool(
         proxy: ResolvedProxy?,
         tunneled: Boolean,
     ): Boolean {
-        if (config.assumeHttp11) return true
-        val hints = config.http11Hints
-        if (hints.isEmpty()) return false
+        val known = config.http1.knownServers
+        if (known == io.kuicksilver.ktor.client.KnownServers.None) return false
         val server =
             if (proxy != null && !tunneled) {
                 io.kuicksilver.ktor.client
@@ -464,7 +466,7 @@ internal class H1Pool(
                 io.kuicksilver.ktor.client
                     .HostPort(data.url.host, data.url.port)
             }
-        return server in hints
+        return known.knows(server)
     }
 
     /** Tests: [data]'s route is known to handle HTTP/1.1, as after an earlier HTTP/1.1 response on it. */
@@ -476,14 +478,12 @@ internal class H1Pool(
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val ping = config.http2.pingInterval
-        require(
-            ping.isInfinite() || ping >= MIN_PING_INTERVAL,
-        ) { "http2.pingInterval must be at least 100 ms or Duration.INFINITE, was $ping" }
+        require(ping == null || ping >= MIN_PING_INTERVAL) { "http2 { pingInterval } must be at least 100 ms, or null (none), was $ping" }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val delay = config.connectionAttemptDelay
+        val delay = config.network.happyEyeballsDelay
         // RFC 8305 section 8: the Minimum Connection Attempt Delay (100 ms) to the Maximum (2 s)
-        require(delay.isInfinite() || delay in MIN_ATTEMPT_DELAY..MAX_ATTEMPT_DELAY) {
-            "connectionAttemptDelay must be 100 ms..2 s or Duration.INFINITE (RFC 8305 section 8), was $delay"
+        require(delay == null || delay in MIN_ATTEMPT_DELAY..MAX_ATTEMPT_DELAY) {
+            "network { happyEyeballsDelay } must be 100 ms..2 s, or null (one address after another; RFC 8305 section 8), was $delay"
         }
     }
 
@@ -1285,7 +1285,7 @@ internal class H1Pool(
                                 callContext,
                                 events,
                                 webSocketCloseWaitMillis,
-                                config.webSocketMaxMessageSize,
+                                config.webSockets.maxMessageSize,
                                 h2WebSocketOutputForTest,
                                 { h2WebSocketClosingForTest?.invoke(it) },
                                 h2WebSocketServerEndForTest,
@@ -1486,7 +1486,7 @@ internal class H1Pool(
                             continueBody,
                             requestBodySent = { bodyJob?.sent },
                             webSocketKey = webSocketKey,
-                            webSocketMaxMessageSize = config.webSocketMaxMessageSize,
+                            webSocketMaxMessageSize = config.webSockets.maxMessageSize,
                             webSocketCloseWaitMillis = webSocketCloseWaitMillis,
                             onHandOver = { webSocket = it },
                         ) { after ->
@@ -1812,7 +1812,7 @@ internal class H1Pool(
         // (proxyTlsConfigFor), and a rejection there is the proxy's (echRejectionIn stops at a ProxyTlsException).
         // A rejection is retried once on a new connection with the server's retry configurations, or without ECH when it
         // sent none (section 6.1.6), within the same connect timeout
-        val route = dns.echRoute(url.host) { config.ech.listFor(it) }
+        val route = dns.echRoute(url.host) { config.tls.ech.listFor(it) }
         return withEchRetry(route) { offer -> connectOnce(data, url, true, proxy, key, dns, h2Ok, connectStarted, progress, offer) }
     }
 
@@ -1846,7 +1846,7 @@ internal class H1Pool(
             // the literal each connected socket went to: the winner's is a direct HTTP/2 connection's destination, which
             // coalescing compares another origin's addresses with (ADR-0018); kept only when coalescing is on
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val coalescingOn = config.connectionCoalescing && proxy == null
+            val coalescingOn = config.pool.coalescing && proxy == null
 
             @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
             val connected = if (coalescingOn) kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Socket, TcpAddress>>()) else null
@@ -1860,7 +1860,7 @@ internal class H1Pool(
                 io.kuicksilver.ktor.network.raceAddresses(
                     host,
                     dns.resolution(host, port),
-                    config.connectionAttemptDelay,
+                    config.network.happyEyeballsDelay ?: kotlin.time.Duration.INFINITE,
                     dns.order(),
                     connect = { a ->
                         val inet = a.toInet()
@@ -2005,9 +2005,9 @@ internal class H1Pool(
                                 H2ClientConnection.start(
                                     tls.input,
                                     tls.output,
-                                    config.http2.settings,
+                                    h2Settings,
                                     h2Scope,
-                                    config.http2.pingInterval,
+                                    config.http2.pingInterval ?: kotlin.time.Duration.INFINITE,
                                     closeTransport = {
                                         tls.close()
                                         tcp.close()
@@ -2131,9 +2131,9 @@ internal class H1Pool(
                         H2ClientConnection.start(
                             rawIn,
                             rawOut,
-                            config.http2.settings,
+                            h2Settings,
                             h2Scope,
-                            config.http2.pingInterval,
+                            config.http2.pingInterval ?: kotlin.time.Duration.INFINITE,
                             closeTransport = { tcp.close() },
                             // the last GOAWAY is in rawOut: it goes out, then the FIN (RFC 9113 sections 5.4.1 and 6.8)
                             closeTransportGracefully = { closeOrderly(null, rawOut, tcp) },
@@ -2301,11 +2301,11 @@ internal fun monotonicMillis(): () -> Long {
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverEngineConfig.poolLimits(): PoolLimits =
     PoolLimits(
-        maxTotal = maxConnectionsCount,
-        maxPerRoute = maxConnectionsPerRoute,
-        maxIdlePerRoute = maxIdleConnectionsPerRoute,
-        idleTimeoutMillis = idleTimeout.toMillisOrMax(),
-        maxLifetimeMillis = maxConnectionLifetime.toMillisOrMax(),
+        maxTotal = pool.maxConnections,
+        maxPerRoute = pool.maxConnectionsPerRoute,
+        maxIdlePerRoute = pool.maxIdleConnectionsPerRoute,
+        idleTimeoutMillis = pool.idleTimeout.toMillisOrMax(),
+        maxLifetimeMillis = pool.maxConnectionLifetime?.toMillisOrMax() ?: Long.MAX_VALUE,
     )
 
 internal fun kotlin.time.Duration.toMillisOrMax(): Long = if (isInfinite()) Long.MAX_VALUE else inWholeMilliseconds

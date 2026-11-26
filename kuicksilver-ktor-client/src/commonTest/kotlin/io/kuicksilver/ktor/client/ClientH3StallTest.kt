@@ -178,9 +178,9 @@ class ClientH3StallTest {
         windows: Boolean = false,
         block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
-        testClient(Http3DiscoveryMode.Auto, engine = {
-            quic =
-                quicConfig {
+        testClient(Http3Discovery.Auto, engine = {
+            http3 {
+                quic {
                     maxIdleTimeout = idle
                     if (windows) {
                         flowControl { initialStreamWindow = 8L * 1024 * 1024 }
@@ -189,17 +189,14 @@ class ClientH3StallTest {
                         flowControl { maxConnectionWindow = 16L * 1024 * 1024 }
                     }
                 }
-            eventListener = heard
+            }
+            observability { eventListener = heard }
             http3 {
-                this.hardDelay = hardDelay
-                stallDetection = detection
-                stallMinSilence = minSilence
-                stallAbandonAfter = abandonAfter
-                endpoint =
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply { runtime { io = { local -> ios.open(local) } } }
-                        .build()
+                expert { raceHeadStart = hardDelay?.let { RaceHeadStart.Fixed(it) } ?: RaceHeadStart.Adaptive }
+                stall { enabled = detection }
+                stall { this.minSilence = minSilence }
+                stall { this.abandonAfter = abandonAfter }
+                endpointIoForTest = { local -> ios.open(local) }
             }
         }, block = block)
 
@@ -902,22 +899,22 @@ class ClientH3StallTest {
 
     @Test fun negative_stallThresholdsOutOfRangeAreRefused() {
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallProbeTimeouts = 0 } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { probeTimeouts = 0 } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallProbeTimeouts = 11 } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { probeTimeouts = 11 } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallMinSilence = 99.milliseconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { minSilence = 99.milliseconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallMinSilence = 61.seconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { minSilence = 61.seconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 99.milliseconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { abandonAfter = 99.milliseconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 11.minutes } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { abandonAfter = 11.minutes } } }).close()
         }
     }
 }

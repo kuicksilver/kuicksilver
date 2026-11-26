@@ -15,7 +15,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.IoCapabilities
@@ -389,7 +389,7 @@ internal class Workload(
 
     /** A new HttpClient (engine, selector, HTTP/3 endpoint, pools) for two requests, then closed. */
     private suspend fun clientChurn(r: Random): Outcome {
-        val client = soakHttpClient(if (r.nextBoolean()) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.Auto)
+        val client = soakHttpClient(if (r.nextBoolean()) Http3Discovery.H3Only else Http3Discovery.Auto)
         try {
             repeat(2) { ktor(client, r) }
         } finally {
@@ -405,12 +405,12 @@ internal object SoakQlog {
 }
 
 /** A Kuicksilver HttpClient that trusts the soak CA. */
-internal fun soakHttpClient(discovery: Http3DiscoveryMode): HttpClient =
+internal fun soakHttpClient(discovery: Http3Discovery?): HttpClient =
     HttpClient(Kuicksilver) {
         engine {
-            trust = SoakPki.trust
-            http3 { this.discovery = discovery }
-            SoakQlog.sink?.let { sink -> http3 { qlog = sink } }
+            tls { trust = SoakPki.trust }
+            http3 { discovery?.let { this.discovery = it } ?: run { enabled = false } }
+            SoakQlog.sink?.let { sink -> observability { qlog = sink } }
         }
     }
 

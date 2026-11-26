@@ -50,7 +50,7 @@ class ClientH3ConnectionReuseTest {
 
     /** Every name resolves to 127.0.0.1: the server's certificate names `server.test` and `*.wild.test`. */
     private fun client() =
-        testClient(Http3DiscoveryMode.H3Only, engine = {
+        testClient(Http3Discovery.H3Only, engine = {
             resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
         })
 
@@ -142,9 +142,9 @@ class ClientH3ConnectionReuseTest {
     private fun autoClient(
         viaDns: Boolean = false,
         resolve: (String) -> List<TcpAddress>,
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         if (viaDns) {
-            dns = Dns { host -> resolve(host).map { IpAddress.of(it.bytes) } }
+            network { dns = Dns { host -> resolve(host).map { IpAddress.of(it.bytes) } } }
         } else {
             resolverForTest = { host, p -> resolve(host).map { TcpAddress(it.bytes, p) } }
         }
@@ -259,7 +259,7 @@ class ClientH3ConnectionReuseTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                     connectTimeout = 60.seconds
                 }).use { c ->
@@ -302,7 +302,7 @@ class ClientH3ConnectionReuseTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                     connectTimeout = 30.seconds
                 }).use { c ->

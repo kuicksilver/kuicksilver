@@ -229,7 +229,7 @@ class ClientH2cTest {
                                 }
                             }
                         }
-                    h2cClient(port, engine = { http3 { discovery = Http3DiscoveryMode.Auto } }).use { c ->
+                    h2cClient(port, engine = { http3 { discovery = Http3Discovery.Auto } }).use { c ->
                         val r = c.get("http://127.0.0.1:$port/")
                         assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
                         assertEquals("ok", r.bodyAsText())

@@ -25,7 +25,7 @@ internal suspend fun reapIdleConnections(
     h3: H3Pool,
     config: KuicksilverEngineConfig,
 ) {
-    val idle = config.idleTimeout.toMillisOrMax()
+    val idle = config.pool.idleTimeout.toMillisOrMax()
     while (true) {
         val next = listOfNotNull(h1.evictExpired(), h3.evictExpired()).minOrNull() ?: idle
         delay(next.coerceIn(REAPER_MIN_SLEEP_MILLIS, minOf(idle, REAPER_MAX_SLEEP_MILLIS).coerceAtLeast(REAPER_MIN_SLEEP_MILLIS)))

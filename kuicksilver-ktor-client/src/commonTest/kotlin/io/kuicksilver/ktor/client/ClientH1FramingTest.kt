@@ -617,8 +617,8 @@ class ClientH1FramingTest {
     fun negative_configuredHttp11ServerGetsNoProbe() =
         clientTest {
             for (configure in listOf<KuicksilverEngineConfig.(Int) -> Unit>(
-                { port -> http11Hints = setOf(HostPort("127.0.0.1", port)) },
-                { _ -> assumeHttp11 = true },
+                { port -> http1 { knownServers = KnownServers.Listed(setOf(HostPort("127.0.0.1", port))) } },
+                { _ -> http1 { knownServers = KnownServers.All } },
             )) {
                 val heads = ArrayList<List<String>>()
                 rawServerPerConnection({ _, input, output ->
@@ -659,7 +659,7 @@ class ClientH1FramingTest {
                     )
                 }
             }) { port ->
-                testClient(engine = { http11Hints = setOf(HostPort("127.0.0.1", port + 1)) }).use { c ->
+                testClient(engine = { http1 { knownServers = KnownServers.Listed(setOf(HostPort("127.0.0.1", port + 1))) } }).use { c ->
                     assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText())
                 }
             }

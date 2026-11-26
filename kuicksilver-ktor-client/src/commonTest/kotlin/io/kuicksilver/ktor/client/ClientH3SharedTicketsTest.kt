@@ -100,8 +100,8 @@ class ClientH3SharedTicketsTest {
                     )
                 try {
                     var v6Only = false
-                    testClient(Http3DiscoveryMode.H3Only, engine = {
-                        http3 { earlyData = true }
+                    testClient(Http3Discovery.H3Only, engine = {
+                        http3 { earlyData { enabled = true } }
                         familyResolverForTest = { _, v6 -> if (v6 == v6Only) listOf(if (v6) loopback6 else loopback4) else emptyList() }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine

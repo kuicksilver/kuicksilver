@@ -3,7 +3,6 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.util.date.getTimeMillis
-import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.io.IOException
 import kotlinx.io.files.Path
 import java.io.File
@@ -16,7 +15,6 @@ import java.io.File
  * @param file the store file; it need not exist yet, and an unreadable file starts an empty store.
  * @param clock the current time in epoch milliseconds, used to drop expired records on load.
  */
-@ExperimentalKuicksilverApi
 public fun FileAltSvcStore(
     file: File,
     clock: () -> Long = { getTimeMillis() },

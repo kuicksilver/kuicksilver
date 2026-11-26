@@ -71,12 +71,12 @@ class ClientCoalescingTest {
     private fun client(
         coalescing: Boolean = true,
         dns: Dns = MapDns(),
-        discovery: Http3DiscoveryMode = Http3DiscoveryMode.H1Only,
+        discovery: Http3Discovery? = null,
         engine: KuicksilverEngineConfig.() -> Unit = {},
     ) = testClient(discovery, engine = {
-        connectionCoalescing = coalescing
-        this.dns = dns
-        proxyResolver = ProxyResolvers.None
+        pool { this.coalescing = coalescing }
+        network { this.dns = dns }
+        proxies { resolver = ProxyResolvers.None }
         engine()
     })
 
@@ -165,7 +165,7 @@ class ClientCoalescingTest {
     /** ADR-0018, off by default: without the setting every origin gets connections of its own, as before. */
     @Test fun negative_h2OffByDefaultNeverCoalesces() =
         clientTest {
-            assertFalse(KuicksilverEngineConfig().connectionCoalescing)
+            assertFalse(KuicksilverEngineConfig().pool.coalescing)
             val (server, port) = h2Server()
             try {
                 client(coalescing = false).use { c ->
@@ -344,8 +344,10 @@ class ClientCoalescingTest {
             try {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
                     client(engine = {
-                        proxyResolver =
-                            ProxyResolver { u -> if (u.host == "b.wild.test") ResolvedProxy.http("127.0.0.1", proxyPort) else null }
+                        proxies {
+                            resolver =
+                                ProxyResolver { u -> if (u.host == "b.wild.test") ResolvedProxy.http("127.0.0.1", proxyPort) else null }
+                        }
                     }).use { c ->
                         val a = c.text("https://a.wild.test:$port/")
                         val b = c.text("https://b.wild.test:$port/")
@@ -365,8 +367,10 @@ class ClientCoalescingTest {
             try {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
                     client(engine = {
-                        proxyResolver =
-                            ProxyResolver { u -> if (u.host == "a.wild.test") ResolvedProxy.http("127.0.0.1", proxyPort) else null }
+                        proxies {
+                            resolver =
+                                ProxyResolver { u -> if (u.host == "a.wild.test") ResolvedProxy.http("127.0.0.1", proxyPort) else null }
+                        }
                     }).use { c ->
                         val a = c.text("https://a.wild.test:$port/")
                         val b = c.text("https://b.wild.test:$port/")
@@ -398,7 +402,7 @@ class ClientCoalescingTest {
                             pins[name] = pin
                         }
                     }
-                client(engine = { trust = TrustConfig.Tofu(store) }).use { c ->
+                client(engine = { tls { trust = TrustConfig.Tofu(store) } }).use { c ->
                     val a = c.text("https://a.wild.test:$port/")
                     val b = c.text("https://b.wild.test:$port/")
                     assertNotEquals(a.second, b.second)
@@ -438,7 +442,7 @@ class ClientCoalescingTest {
                 val named = TrustConfig.ExpectedName("server.test", ClientFixtures.trust)
                 val pinned = TrustConfig.Pinned(setOf(Certificate(TestCerts.server).spkiSha256), base = named)
                 for (trust in listOf(named, pinned)) {
-                    client(engine = { this.trust = trust }).use { c ->
+                    client(engine = { tls { this.trust = trust } }).use { c ->
                         val a = c.text("https://a.wild.test:$port/")
                         val b = c.text("https://b.wild.test:$port/")
                         assertNotEquals(a.second, b.second, "$trust")
@@ -481,8 +485,8 @@ class ClientCoalescingTest {
                 val sw = Switchable()
                 val log = RecordingLogger()
                 client(engine = {
-                    trust = sw.trust
-                    logger = log
+                    tls { trust = sw.trust }
+                    observability { logger = log }
                 }).use { c ->
                     val a = c.text("https://a.wild.test:$port/")
                     sw.revoked = true
@@ -506,7 +510,7 @@ class ClientCoalescingTest {
             val (server, port) = h2Server()
             try {
                 val sw = Switchable()
-                client(engine = { trust = sw.trust }).use { c ->
+                client(engine = { tls { trust = sw.trust } }).use { c ->
                     val a = c.text("https://a.wild.test:$port/")
                     sw.refusedHosts = setOf("b.wild.test")
                     assertFailsWith<Throwable> { c.get("https://b.wild.test:$port/") }
@@ -638,7 +642,7 @@ class ClientCoalescingTest {
                 r.sendBody(ByteReadChannel("ok".encodeToByteArray()))
             }) { port, _ ->
                 for (coalescing in listOf(true, false)) {
-                    client(coalescing = coalescing, discovery = Http3DiscoveryMode.Auto).use { c ->
+                    client(coalescing = coalescing, discovery = Http3Discovery.Auto).use { c ->
                         assertEquals("ok", c.get("https://a.wild.test:$port/").bodyAsText())
                         assertEquals("ok", c.get("https://b.wild.test:$port/").bodyAsText())
                         assertEquals(if (coalescing) 1 else 2, engine(c).h1.h2.connectionCount)
@@ -666,7 +670,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server()
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     assertEquals("a.wild.test|HTTP/3", c.h3("https://a.wild.test:$port/"))
                     assertEquals("b.wild.test|HTTP/3", c.h3("https://b.wild.test:$port/"))
                     assertEquals("b.wild.test|HTTP/3", c.h3("https://b.wild.test:$port/"))
@@ -682,7 +686,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server()
             try {
-                client(coalescing = false, discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(coalescing = false, discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     c.h3("https://b.wild.test:$port/")
                     assertEquals(2, engine(c).h3.connectionsForTest().size)
@@ -701,7 +705,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server()
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val e = assertFailsWith<Throwable> { c.get("https://other.test:$port/") }
                     assertTrue(generateSequence(e) { it.cause }.any { it is TlsException }, "$e")
@@ -717,7 +721,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server(sni = true)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val r = c.get("https://b.wild.test:$port/")
                     assertEquals(HttpStatusCode.OK, r.status)
@@ -738,7 +742,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server()
             try {
-                client(discovery = Http3DiscoveryMode.H3Only, engine = { trust = TrustConfig.Tofu(tofuStore()) }).use { c ->
+                client(discovery = Http3Discovery.H3Only, engine = { tls { trust = TrustConfig.Tofu(tofuStore()) } }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val a = engine(c).h3.connectionsForTest().single()
                     c.h3("https://b.wild.test:$port/")
@@ -758,7 +762,7 @@ class ClientCoalescingTest {
             val (server, port) = h3Server()
             try {
                 val dns = MapDns(mapOf("b.wild.test" to listOf(IpAddress.parse("::1"))))
-                client(dns = dns, discovery = Http3DiscoveryMode.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
+                client(dns = dns, discovery = Http3Discovery.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     assertFailsWith<Throwable> { c.get("https://b.wild.test:$port/") }
                     assertEquals(0, engine(c).h3.sharedForTest.load())
@@ -774,7 +778,7 @@ class ClientCoalescingTest {
             val (server, port) = h3Server()
             try {
                 val dns = MapDns()
-                client(dns = dns, discovery = Http3DiscoveryMode.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
+                client(dns = dns, discovery = Http3Discovery.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     c.h3("https://b.wild.test:$port/")
                     assertEquals(1, engine(c).h3.sharedForTest.load())
@@ -792,7 +796,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server(sni = true)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val a = engine(c).h3.connectionsForTest().single()
                     assertEquals(2, c.get("https://b.wild.test:$port/").kuicksilverDiagnostics!!.attempts)
@@ -831,7 +835,7 @@ class ClientCoalescingTest {
             val asked = AtomicInt(0)
             val (server, port) = h3StrictServer(asked)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val r = c.get("https://b.wild.test:$port/always")
                     assertEquals(421, r.status.value)
@@ -850,7 +854,7 @@ class ClientCoalescingTest {
             val asked = AtomicInt(0)
             val (server, port) = h3StrictServer(asked)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     assertFailsWith<H3BodyConsumed> {
                         c.post("https://b.wild.test:$port/always") { setBody(ByteReadChannel("streamed".encodeToByteArray())) }
@@ -881,7 +885,7 @@ class ClientCoalescingTest {
                     }
                 }
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val body =
                         io.ktor.utils.io
@@ -919,7 +923,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server()
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     val pool = engine(c).h3
                     c.h3("https://a.wild.test:$port/")
                     val a = pool.connectionsForTest().single()
@@ -952,7 +956,7 @@ class ClientCoalescingTest {
         h3Test {
             val (server, port) = h3Server(sni = true)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     val pool = engine(c).h3
                     c.h3("https://a.wild.test:$port/")
                     assertEquals(2, c.get("https://c.wild.test:$port/").kuicksilverDiagnostics!!.attempts) // c: a 421, then its own
@@ -996,7 +1000,7 @@ class ClientCoalescingTest {
                 }
             try {
                 val dns = MapDns(mapOf("b.wild.test" to listOf(IpAddress.parse("::1"))))
-                client(dns = dns, discovery = Http3DiscoveryMode.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
+                client(dns = dns, discovery = Http3Discovery.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
                     val pool = engine(c).h3
                     c.h3("https://a.wild.test:$port/")
                     val once = kotlin.concurrent.atomics.AtomicBoolean(true)
@@ -1026,7 +1030,7 @@ class ClientCoalescingTest {
             val (server, port) = h3Server()
             try {
                 val dns = MapDns(mapOf("b.wild.test" to listOf(IpAddress.parse("::1"))))
-                client(dns = dns, discovery = Http3DiscoveryMode.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
+                client(dns = dns, discovery = Http3Discovery.H3Only, engine = { connectTimeout = 3.seconds }).use { c ->
                     val pool = engine(c).h3
                     c.h3("https://a.wild.test:$port/")
                     val rounds = AtomicInt(0)
@@ -1072,7 +1076,7 @@ class ClientCoalescingTest {
             var consumed = 0
             try {
                 repeat(20) {
-                    client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                    client(discovery = Http3Discovery.H3Only).use { c ->
                         c.h3("https://a.wild.test:$port/")
                         val body =
                             io.ktor.utils.io
@@ -1122,7 +1126,7 @@ class ClientCoalescingTest {
             val arrived = kotlinx.coroutines.CompletableDeferred<Unit>()
             val (server, port) = h3EchoServer(arrived)
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val content = FreshChannels()
                     kotlinx.coroutines.coroutineScope {
@@ -1199,7 +1203,7 @@ class ClientCoalescingTest {
             val (server, port) = h3EchoServer()
             try {
                 val sw = Switchable()
-                client(discovery = Http3DiscoveryMode.H3Only, engine = { trust = sw.trust }).use { c ->
+                client(discovery = Http3Discovery.H3Only, engine = { tls { trust = sw.trust } }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     engine(c).h3.misdirectedForTest = { sw.refusedHosts = setOf("b.wild.test") }
                     val content = FreshChannels()
@@ -1220,9 +1224,9 @@ class ClientCoalescingTest {
             try {
                 val sw = Switchable()
                 val log = RecordingLogger()
-                client(discovery = Http3DiscoveryMode.H3Only, engine = {
-                    trust = sw.trust
-                    logger = log
+                client(discovery = Http3Discovery.H3Only, engine = {
+                    tls { trust = sw.trust }
+                    observability { logger = log }
                 }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val a = engine(c).h3.connectionsForTest().single()
@@ -1244,7 +1248,7 @@ class ClientCoalescingTest {
             val (server, port) = h3Server()
             try {
                 val sw = Switchable()
-                client(discovery = Http3DiscoveryMode.H3Only, engine = { trust = sw.trust }).use { c ->
+                client(discovery = Http3Discovery.H3Only, engine = { tls { trust = sw.trust } }).use { c ->
                     c.h3("https://a.wild.test:$port/")
                     val a = engine(c).h3.connectionsForTest().single()
                     sw.refusedHosts = setOf("b.wild.test")
@@ -1269,14 +1273,10 @@ class ClientCoalescingTest {
                 }
             val ios = FaultyIos()
             try {
-                client(discovery = Http3DiscoveryMode.H3Only, engine = {
+                client(discovery = Http3Discovery.H3Only, engine = {
                     http3 {
-                        earlyData = true
-                        endpoint =
-                            io.kuicksilver.quic.QuicEndpointConfig
-                                .Builder()
-                                .apply { runtime { io = { local -> ios.open(local) } } }
-                                .build()
+                        earlyData { enabled = true }
+                        endpointIoForTest = { local -> ios.open(local) }
                     }
                 }).use { c ->
                     val engine = engine(c)
@@ -1315,7 +1315,7 @@ class ClientCoalescingTest {
                     routing { webTransport("/wt") { it.closed.await() } }
                 }
             try {
-                client(discovery = Http3DiscoveryMode.H3Only).use { c ->
+                client(discovery = Http3Discovery.H3Only).use { c ->
                     val a = c.webTransport("https://a.wild.test:$port/wt")
                     val b = c.webTransport("https://b.wild.test:$port/wt")
                     assertEquals(0, engine(c).h3.sharedForTest.load())
@@ -1332,7 +1332,7 @@ class ClientCoalescingTest {
 
     /** The gate: on, https, direct, no WebSocket, not the repeat of a 421'd attempt. */
     @Test fun negative_onlyDirectHttpsRequestsMayCoalesce() {
-        val on = KuicksilverEngineConfig().apply { connectionCoalescing = true }
+        val on = KuicksilverEngineConfig().apply { pool { coalescing = true } }
 
         fun data(
             url: String,
@@ -1365,8 +1365,8 @@ class ClientCoalescingTest {
         )) {
             val config =
                 KuicksilverEngineConfig().apply {
-                    connectionCoalescing = true
-                    trust = t
+                    pool { coalescing = true }
+                    tls { trust = t }
                 }
             assertFalse(config.mayCoalesce(data("https://b.wild.test/"), viaProxy = false), "$t")
         }
@@ -1419,16 +1419,18 @@ class ClientCoalescingTest {
             val sw = Switchable()
             val config =
                 KuicksilverEngineConfig().apply {
-                    trust =
-                        TrustConfig.Custom { chain, name, _ ->
-                            verified.addAndFetch(1)
-                            when {
-                                name == "a.wild.test" && name in sw.refusedHosts -> VerifyResult.Rejected(sw.ownReason)
-                                name in sw.refusedHosts -> VerifyResult.Rejected(io.kuicksilver.tls.VerifyReason.Revoked)
-                                else -> VerifyResult.Accepted(chain)
+                    tls {
+                        trust =
+                            TrustConfig.Custom { chain, name, _ ->
+                                verified.addAndFetch(1)
+                                when {
+                                    name == "a.wild.test" && name in sw.refusedHosts -> VerifyResult.Rejected(sw.ownReason)
+                                    name in sw.refusedHosts -> VerifyResult.Rejected(io.kuicksilver.tls.VerifyReason.Revoked)
+                                    else -> VerifyResult.Accepted(chain)
+                                }
                             }
-                        }
-                    dns = MapDns(mapOf("far.wild.test" to listOf(IpAddress.parse("127.0.0.2"))))
+                    }
+                    network { dns = MapDns(mapOf("far.wild.test" to listOf(IpAddress.parse("127.0.0.2")))) }
                 }
             val chain = listOf(Certificate(TestCerts.server))
             val here = Destination(byteArrayOf(127, 0, 0, 1), 443, 0)
@@ -1486,8 +1488,8 @@ class ClientCoalescingTest {
             val expired = listOf(Certificate(TestCerts.expired))
             val anchored =
                 KuicksilverEngineConfig().apply {
-                    trust = ClientFixtures.trust
-                    this.dns = MapDns()
+                    tls { trust = ClientFixtures.trust }
+                    network { this.dns = MapDns() }
                 }
             assertEquals(
                 Coalesce.Retire,
@@ -1496,8 +1498,8 @@ class ClientCoalescingTest {
             // under Tofu nothing is coalesced, and a's connection is never retired for it
             val tofu =
                 KuicksilverEngineConfig().apply {
-                    trust = TrustConfig.Tofu(tofuStore())
-                    this.dns = MapDns()
+                    tls { trust = TrustConfig.Tofu(tofuStore()) }
+                    network { this.dns = MapDns() }
                 }
             assertEquals(Coalesce.No, tofu.checkCoalescing(peer(expired), "b.wild.test", 443, tofu.newRequestDns(), alpn))
             // a host refused on the connection stays refused (no lookup, no verification)

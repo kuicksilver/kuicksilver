@@ -13,7 +13,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Encrypted Client Hello of the client engine (RFC 9849; docs/guide/ktor.md, "Encrypted Client Hello"); change it with
- * [KuicksilverEngineConfig.ech]. The configuration a connection offers comes from, in this order: the `ech` parameter of
+ * `tls { ech { } }` ([ClientTlsConfig.ech]). The configuration a connection offers comes from, in this order: the `ech` parameter of
  * the HTTPS record whose endpoint it goes to ([fromHttpsRecords], RFC 9848), the [configLists] entry of the request's host,
  * else none, and then GREASE ECH ([grease]). Over TCP and QUIC alike; TLS 1.3 only.
  */
@@ -30,10 +30,8 @@ public class EchClientConfig {
      * given here never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` without a usable
      * ECHConfig is different: the connection sends GREASE then, as RFC 9849 section 6.1 allows.
      *
-     * The engine runs its `tls` block when it is created: to read the TLS versions, and once per entry here, whose client
-     * configuration it builds for the check (and again for every connection, as always), so keep the block free of side
-     * effects. A `TlsException.Config` from that build becomes the entry's IllegalArgumentException (its message names the
-     * host); any other exception the block throws reaches the caller of the engine's creation unchanged.
+     * The engine builds each entry's client configuration when it is created, for the check: a `TlsException.Config` from
+     * that build becomes the entry's IllegalArgumentException (its message names the host).
      */
     public var configLists: Map<String, EchConfigList> = emptyMap()
 
@@ -54,8 +52,8 @@ public class EchClientConfig {
     public var grease: Boolean = true
 
     /**
-     * Use the `ech` parameter of the origin's HTTPS records (RFC 9848; [Http3ClientConfig.httpsRecords] must look them
-     * up, which happens in [Http3DiscoveryMode.Auto]); default true. Then, as RFC 9848 requires of a client that supports ECH:
+     * Use the `ech` parameter of the origin's HTTPS records (RFC 9848; [ClientNetworkConfig.httpsRecords] must look them
+     * up, which happens in [Http3Discovery.Auto]); default true. Then, as RFC 9848 requires of a client that supports ECH:
      * no ClientHello goes out before the origin's SVCB resolution completed (section 5.3, MUST; within the connect timeout,
      * a resolution that fails counting as no records), and when every endpoint of the records has an `ech` parameter the
      * request never falls back to a connection without them (section 5.1, SVCB-reliant), so a failure is reported instead.
@@ -169,8 +167,4 @@ internal fun echHostKey(host: String): String =
 
 /** Whether the engine's connections can offer ECH at all: TLS 1.3 only (RFC 9849 section 6.1, rule 1). */
 @OptIn(ExperimentalKuicksilverApi::class)
-internal fun KuicksilverEngineConfig.echCapable(): Boolean =
-    io.kuicksilver.tls.TlsConfig
-        .Builder(io.kuicksilver.tls.TlsRole.Client)
-        .apply(tls)
-        .versions == io.kuicksilver.tls.TlsVersions.Tls13
+internal fun KuicksilverEngineConfig.echCapable(): Boolean = tls.versions == io.kuicksilver.tls.TlsVersions.Tls13

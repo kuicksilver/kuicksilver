@@ -12,7 +12,7 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.neverIndex
 import io.kuicksilver.ktor.client.neverIndexedHeaders
 import io.kuicksilver.native.KslLoader
@@ -49,8 +49,8 @@ class ServerNeverIndexedH3Test {
                 HttpClient(KuicksilverClient) {
                     expectSuccess = false
                     engine {
-                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                        http3 { discovery = Http3DiscoveryMode.H3Only }
+                        tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                        http3 { discovery = Http3Discovery.H3Only }
                     }
                 }
             try {

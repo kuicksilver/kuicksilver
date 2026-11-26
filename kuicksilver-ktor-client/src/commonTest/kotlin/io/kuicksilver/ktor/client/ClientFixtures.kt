@@ -87,16 +87,16 @@ internal suspend fun testServer(
             .port
 }
 
-/** A client with the test trust; HTTP/1.1 only unless [discovery] says otherwise. */
+/** A client with the test trust; HTTP/3 off (null) unless [discovery] says otherwise. */
 internal fun testClient(
-    discovery: Http3DiscoveryMode = Http3DiscoveryMode.H1Only,
+    discovery: Http3Discovery? = null,
     engine: KuicksilverEngineConfig.() -> Unit = {},
     block: HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
 ): HttpClient =
     HttpClient(Kuicksilver) {
         engine {
-            trust = ClientFixtures.trust
-            http3 { this.discovery = discovery }
+            tls { trust = ClientFixtures.trust }
+            http3 { discovery?.let { this.discovery = it } ?: run { enabled = false } }
             engine()
         }
         block()

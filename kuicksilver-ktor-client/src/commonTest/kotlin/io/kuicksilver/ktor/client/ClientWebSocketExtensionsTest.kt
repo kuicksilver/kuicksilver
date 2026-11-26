@@ -80,7 +80,7 @@ class ClientWebSocketExtensionsTest {
         h3Test {
             val (server, port) = testServer { echoOfferedExtensions() } // TLS: HTTP/1.1 and HTTP/3
             try {
-                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) { extensions { install(XTest) } } }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) { extensions { install(XTest) } } }).use { c ->
                     c.webSocket("wss://127.0.0.1:$port/ws") {
                         assertEquals("x-test", (incoming.receive() as Frame.Text).readText())
                         assertEquals(listOf("x-test"), extensions.flatMap { e -> e.protocols.map { it.name } })
@@ -108,7 +108,7 @@ class ClientWebSocketExtensionsTest {
         h3Test {
             var opened = false
             rawH3WebSocketServer(extensions = "x-foo", frames = ByteArray(0)) { port, _ ->
-                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                     assertFailsWith<WebSocketException> { c.webSocket("wss://127.0.0.1:$port/ws") { opened = true } }
                 }
             }
@@ -123,7 +123,7 @@ class ClientWebSocketExtensionsTest {
         h3Test {
             var opened = false
             rawH3WebSocketServer(extensions = null, frames = ByteArray(0), protocol = "chat") { port, _ ->
-                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                     val e = assertFailsWith<WebSocketException> { c.webSocket("wss://127.0.0.1:$port/ws") { opened = true } }
                     assertTrue("chat" in e.message.orEmpty(), e.message)
                 }
@@ -154,7 +154,7 @@ class ClientWebSocketExtensionsTest {
         h3Test {
             val reply =
                 rawH3WebSocketServer(extensions = null, frames = byteArrayOf(0xC1.toByte(), 0x00)) { port, served ->
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         c.webSocket("wss://127.0.0.1:$port/ws") {
                             assertTrue(runCatching { incoming.receive() }.isFailure)
                             assertEquals(1002.toShort(), closeReason.await()?.code)
@@ -177,7 +177,7 @@ class ClientWebSocketExtensionsTest {
             val reply =
                 rawH3WebSocketServer(extensions = null, frames = ByteArray(0), endsWithFin = true) { port, served ->
                     udpRelay(port) { relayPort, relay ->
-                        testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                             val closeSent = CompletableDeferred<Unit>()
                             coroutineScope {
                                 val call =

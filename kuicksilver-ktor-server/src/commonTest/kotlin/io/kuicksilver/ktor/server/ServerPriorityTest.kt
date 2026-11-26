@@ -20,7 +20,7 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.updatePriority
 import io.kuicksilver.native.KslLoader
@@ -178,8 +178,8 @@ class ServerPriorityTest {
                 val client =
                     HttpClient(KuicksilverClient) {
                         engine {
-                            trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                            http3 { discovery = Http3DiscoveryMode.H1Only }
+                            tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                            http3 { enabled = false }
                         }
                     }
                 client.use { c ->
@@ -234,8 +234,8 @@ class ServerPriorityTest {
                 val client =
                     HttpClient(KuicksilverClient) {
                         engine {
-                            trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                            http3 { discovery = Http3DiscoveryMode.H1Only }
+                            tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                            http3 { enabled = false }
                         }
                     }
                 client.use { c ->

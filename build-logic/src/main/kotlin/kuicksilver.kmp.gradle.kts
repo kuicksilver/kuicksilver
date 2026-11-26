@@ -155,7 +155,9 @@ kotlin {
     sourceSets.matching { !it.name.endsWith("Test") }.configureEach {
         languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
     }
-    sourceSets.matching { it.name.endsWith("Test") }.configureEach {
+    // a `firstScreenTest` compilation (src/jvmFirstScreenTest) opts in to nothing, as an application would: the first screen of
+    // the guides compiles there with warnings as errors, so an experimental option on it fails the build (ADR-0026)
+    sourceSets.matching { it.name.endsWith("Test") && !it.name.contains("FirstScreen") }.configureEach {
         languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi")
         languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
         languageSettings.optIn("io.kuicksilver.annotations.DelicateKuicksilverApi") // tests drive the delicate knobs on purpose

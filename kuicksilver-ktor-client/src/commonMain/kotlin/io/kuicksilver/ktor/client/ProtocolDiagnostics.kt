@@ -54,7 +54,7 @@ public class ProtocolDiagnostics internal constructor() {
      * The transport the response (or, for a failed call, the thrown failure) came over: [Transport.Quic] for HTTP/3,
      * [Transport.Tcp] for HTTP/1.1 and HTTP/2. A failed call over TCP after HTTP/3 had failed has [h3Failure] too. Null only
      * for a call that failed before it tried either (a configuration the request cannot use, such as an `http://` URL in
-     * `Http3DiscoveryMode.H3Only`). While the call runs it follows the attempt in progress.
+     * `Http3Discovery.H3Only`). While the call runs it follows the attempt in progress.
      */
     @kotlin.concurrent.Volatile
     public var transport: Transport? = null
@@ -351,7 +351,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * |---|---|---|
  * | [NotSecure] | an `http://` or `ws://` URL | HTTP/3 needs `https` (RFC 9114 section 3.1) |
  * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxyResolver`; `ProxyResolvers.None` connects directly |
- * | [Configuration] | `Http3DiscoveryMode.H1Only` | the discovery mode |
+ * | [Configuration] | `http3 { enabled = false }` | the configuration |
  * | [Http3Disabled] | `http3 { http3Allowed }` said false | your remote configuration |
  * | [NoAlternative] | `Auto` and the origin announced no `Alt-Svc` (yet) | the server's `Alt-Svc` header |
  * | [MisdirectedRequest] | the alternative answered 421 and was dropped; the origin served the request over HTTP/1.1 | the alternative's certificate and virtual hosts |
@@ -382,7 +382,7 @@ public enum class FallbackReason {
     /** A proxy applies to the request: through it only TCP (HTTP/1.1, or HTTP/2 inside the tunnel). */
     Proxy,
 
-    /** `Http3DiscoveryMode.H1Only`. */
+    /** `http3 { enabled = false }`. */
     Configuration,
 
     /** `Http3ClientConfig.http3Allowed` returned false for this request. */
@@ -482,19 +482,19 @@ public enum class FallbackReason {
 /** Where the HTTP/3 endpoint of a call came from ([ProtocolDiagnostics.alternativeSource]). */
 @ExperimentalKuicksilverApi
 public enum class AlternativeSource {
-    /** An `Alt-Svc` header of the origin (RFC 7838), in `Http3DiscoveryMode.Auto`. */
+    /** An `Alt-Svc` header of the origin (RFC 7838), in `Http3Discovery.Auto`. */
     AltSvc,
 
     /** The origin is in `Http3ClientConfig.quicHints`. */
     QuicHint,
 
-    /** `Http3DiscoveryMode.Preferred`: the origin itself, by prior knowledge. */
+    /** `Http3Discovery.Preferred`: the origin itself, by prior knowledge. */
     Preferred,
 
-    /** `Http3DiscoveryMode.H3Only`: the origin itself, without a fallback. */
+    /** `Http3Discovery.H3Only`: the origin itself, without a fallback. */
     H3Only,
 
-    /** An HTTPS resource record of the origin (RFC 9460, `Http3ClientConfig.httpsRecords`), in `Http3DiscoveryMode.Auto`. */
+    /** An HTTPS resource record of the origin (RFC 9460, `Http3ClientConfig.httpsRecords`), in `Http3Discovery.Auto`. */
     HttpsRecord,
 }
 

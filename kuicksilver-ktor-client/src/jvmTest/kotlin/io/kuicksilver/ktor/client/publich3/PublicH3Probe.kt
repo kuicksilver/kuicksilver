@@ -19,7 +19,7 @@ import io.ktor.http.contentType
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.ktor.client.AlternativeSource
 import io.kuicksilver.ktor.client.FallbackReason
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey
 import io.kuicksilver.ktor.client.KuicksilverEngine
@@ -263,7 +263,7 @@ internal class PublicH3Probe(
 ) {
     /** The client of an attempt: no redirect followed (any status is an answer), the deadlines below [attemptTimeout]. */
     private fun client(
-        mode: Http3DiscoveryMode,
+        mode: Http3Discovery?,
         rec: Recorder,
         qlogDir: Path,
         configure: KuicksilverEngineConfig.() -> Unit = {},
@@ -273,14 +273,12 @@ internal class PublicH3Probe(
             expectSuccess = false
             install(UserAgent) { agent = USER_AGENT }
             engine {
-                eventListener = rec.calls
-                connectTimeout = 15.seconds
-                quic = quicConfig { handshakeTimeout = 15.seconds }
-                http3 {
-                    discovery = mode
-                    connectionListener = rec
-                    qlog = DirectoryQlogSink(qlogDir.toString())
-                }
+                observability { eventListener = rec.calls }
+                quicHandshakeTimeoutForTest = 15.seconds
+                quicHandshakeTimeoutForTest = 15.seconds
+                http3 { mode?.let { discovery = it } ?: run { enabled = false } }
+                observability { connectionListener = rec }
+                observability { qlog = DirectoryQlogSink(qlogDir.toString()) }
                 configure()
             }
         }
@@ -332,7 +330,7 @@ internal class PublicH3Probe(
         rec: Recorder,
         dir: Path,
     ): Judged =
-        client(Http3DiscoveryMode.H3Only, rec, dir).use { c ->
+        client(Http3Discovery.H3Only, rec, dir).use { c ->
             val r = c.get(t.url).drain()
             val d = r.kuicksilverDiagnostics
             if (r.version != HttpProtocolVersion.HTTP_3_0) return Judged.fail("H3Only answered over ${r.version}")
@@ -351,7 +349,7 @@ internal class PublicH3Probe(
         rec: Recorder,
         dir: Path,
     ): Judged =
-        client(Http3DiscoveryMode.Auto, rec, dir).use { c ->
+        client(Http3Discovery.Auto, rec, dir).use { c ->
             val first = c.get(t.url).drain()
             if (first.version == HttpProtocolVersion.HTTP_3_0) {
                 return Judged.fail("the first request went over HTTP/3 with no alternative known yet")
@@ -420,7 +418,7 @@ internal class PublicH3Probe(
         rec: Recorder,
         dir: Path,
     ): Judged =
-        client(Http3DiscoveryMode.H3Only, rec, dir, configure = { http3 { earlyData = true } }).use { c ->
+        client(Http3Discovery.H3Only, rec, dir, configure = { http3 { earlyData { enabled = true } } }).use { c ->
             // two requests on the first connection: the session ticket follows the handshake, the second gives it time
             repeat(2) { c.get(t.url).drain() }
             (c.engine as KuicksilverEngine).h3.dropConnectionsForTest().forEach { it.close() }
@@ -450,7 +448,7 @@ internal class PublicH3Probe(
         rec: Recorder,
         dir: Path,
     ): Judged =
-        client(Http3DiscoveryMode.H3Only, rec, dir).use { c ->
+        client(Http3Discovery.H3Only, rec, dir).use { c ->
             c.get(t.url).drain()
             val (hs, wrong) = handshakeFacts(rec)
             if (wrong != null) return wrong
@@ -504,7 +502,7 @@ internal class PublicH3Probe(
     private suspend fun echConfigOf(host: String): ByteArray? =
         HttpClient(Kuicksilver) {
             install(UserAgent) { agent = USER_AGENT }
-            engine { http3 { discovery = Http3DiscoveryMode.H1Only } }
+            engine { http3 { enabled = false } }
         }.use { doh ->
             val answer =
                 doh
@@ -532,7 +530,7 @@ internal class PublicH3Probe(
             } catch (e: IllegalArgumentException) {
                 return Judged.fail("our parser rejects the ECHConfigList the record publishes: ${e.message}")
             }
-        return client(Http3DiscoveryMode.H3Only, rec, dir, configure = { ech { configLists = mapOf(t.host to list) } }).use { c ->
+        return client(Http3Discovery.H3Only, rec, dir, configure = { tls { ech { configLists = mapOf(t.host to list) } } }).use { c ->
             val r = c.get("https://${t.host}/cdn-cgi/trace")
             val trace = r.bodyAsText()
             if (r.version != HttpProtocolVersion.HTTP_3_0) return Judged.fail("H3Only answered over ${r.version}")

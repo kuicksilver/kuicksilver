@@ -40,7 +40,7 @@ fun main(args: Array<String>): Unit =
                 if (args.size !in 4..5) usage()
                 val caFile = args.getOrNull(4) ?: System.getenv("CHAT_TLS_CA")
                 val trust = orExit("chat client") { if (caFile == null) ChatTls.clientTrust() else ChatTls.clientTrust(File(caFile).readText()) }
-                HttpClient(Kuicksilver) { engine { this.trust = trust } }.use { http ->
+                HttpClient(Kuicksilver) { engine { tls { this.trust = trust } } }.use { http ->
                     val chat = ChatClient.join(http, "https://${urlHost(args[1])}:${args[2]}${ChatProtocol.PATH}", args[3])
                     println("joined as ${chat.name}; in the room: ${chat.members.joinToString()}")
                     val quitting = AtomicBoolean(false)

@@ -83,7 +83,7 @@ class ClientH3WebSocketWebTransportPoolTest {
                 }
             }
         try {
-            testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { client ->
+            testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { client ->
                 block(client, client.engine as KuicksilverEngine, port)
             }
         } finally {

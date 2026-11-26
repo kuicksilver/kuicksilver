@@ -304,10 +304,12 @@ class ServerWebSocketH2Test {
                     .HttpClient(io.kuicksilver.ktor.client.Kuicksilver) {
                         install(io.ktor.client.plugins.websocket.WebSockets)
                         engine {
-                            trust =
-                                io.kuicksilver.tls.TrustConfig
-                                    .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
-                            http3 { discovery = io.kuicksilver.ktor.client.Http3DiscoveryMode.H1Only }
+                            tls {
+                                trust =
+                                    io.kuicksilver.tls.TrustConfig
+                                        .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
+                            }
+                            http3 { enabled = false }
                         }
                     }.use { c ->
                         assertEquals(
@@ -857,10 +859,12 @@ class ServerWebSocketH2Test {
                             extensions { install(io.kuicksilver.ktor.network.websocket.PerMessageDeflate) }
                         }
                         engine {
-                            trust =
-                                io.kuicksilver.tls.TrustConfig
-                                    .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
-                            http3 { discovery = io.kuicksilver.ktor.client.Http3DiscoveryMode.H1Only }
+                            tls {
+                                trust =
+                                    io.kuicksilver.tls.TrustConfig
+                                        .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
+                            }
+                            http3 { enabled = false }
                         }
                     }.use { c ->
                         c.clientGet("https://127.0.0.1:$port/")

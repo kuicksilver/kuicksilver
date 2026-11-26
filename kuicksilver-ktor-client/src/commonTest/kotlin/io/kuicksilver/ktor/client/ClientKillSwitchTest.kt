@@ -112,9 +112,9 @@ class ClientKillSwitchTest {
             val allowed = AtomicBoolean(false)
             val events = Events()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    http3 { http3Allowed = { allowed.load() } }
-                    eventListener = events
+                testClient(Http3Discovery.Preferred, engine = {
+                    http3 { this.allowed = { allowed.load() } }
+                    observability { eventListener = events }
                 }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("ok", r.bodyAsText())
@@ -137,12 +137,12 @@ class ClientKillSwitchTest {
             val allowed = AtomicBoolean(false)
             val events = Events()
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     http3 {
-                        http3Allowed = { allowed.load() }
-                        hardDelay = Duration.INFINITE
+                        this.allowed = { allowed.load() }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
-                    eventListener = events
+                    observability { eventListener = events }
                 }).use { c ->
                     val url = "https://127.0.0.1:$port/"
                     repeat(2) { assertEquals(HttpProtocolVersion.HTTP_1_1, c.get(url).version) }
@@ -179,10 +179,10 @@ class ClientKillSwitchTest {
                 }
             val allowed = AtomicBoolean(true)
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     http3 {
-                        http3Allowed = { allowed.load() }
-                        hardDelay = Duration.INFINITE
+                        this.allowed = { allowed.load() }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -216,9 +216,9 @@ class ClientKillSwitchTest {
         clientTest {
             val served = AtomicInt(0)
             tlsH1WithSilentUdp(handler = { _, _, _ -> served.addAndFetch(1) }) { port ->
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { http3Allowed = { false } } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { http3 { allowed = { false } } }).use { c ->
                     val e = assertFailsWith<UnsupportedOperationException> { c.get("https://127.0.0.1:$port/") }
-                    assertTrue("http3Allowed" in (e.message ?: ""), "${e.message}")
+                    assertTrue("http3 { allowed }" in (e.message ?: ""), "${e.message}")
                     val engine = c.engine as KuicksilverEngine
                     assertFalse(engine.h3.endpointBoundForTest, "no UDP socket was bound")
                     assertEquals(0, engine.h1.pool.liveCount, "no TCP connection was made")
@@ -233,17 +233,17 @@ class ClientKillSwitchTest {
             val (server, port) = testServer(module = ok)
             val warnings = Warnings()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     http3 {
-                        http3Allowed = { throw IllegalStateException("remote config not loaded") }
-                        hardDelay = Duration.INFINITE
+                        allowed = { throw IllegalStateException("remote config not loaded") }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
-                    logger = warnings
+                    observability { logger = warnings }
                 }).use { c ->
                     (c.engine as KuicksilverEngine).http3SwitchWarning.clock = { 0L } // no time passes: one warning at most
                     repeat(10) { assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://127.0.0.1:$port/").version) }
                 }
-                assertEquals(1, warnings.lines.load().count { "http3Allowed" in it }, "${warnings.lines.load()}")
+                assertEquals(1, warnings.lines.load().count { "http3 { allowed }" in it }, "${warnings.lines.load()}")
             } finally {
                 server.stop(100, 500)
             }
@@ -328,7 +328,7 @@ class ClientKillSwitchTest {
                 val ep = recordingH3(gate, accepted)
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val head = CompletableDeferred<Unit>()
                         val slow =
                             async {
@@ -372,7 +372,7 @@ class ClientKillSwitchTest {
                 val ep = recordingH3(gate, accepted, earlyData)
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, engine = { http3 { this.earlyData = earlyData } }).use { c ->
+                    testClient(Http3Discovery.H3Only, engine = { http3 { earlyData { enabled = earlyData } } }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                         // with 0-RTT: forget the connection, so the next request resumes on a new one in 0-RTT
@@ -411,7 +411,7 @@ class ClientKillSwitchTest {
                 val inSetup = CompletableDeferred<Unit>()
                 val proceed = CompletableDeferred<Unit>()
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         engine.h3.beforeSetupForTest = {
                             inSetup.complete(Unit)
@@ -445,9 +445,9 @@ class ClientKillSwitchTest {
     /** WebTransport has no TCP fallback: switched off, `webTransport` fails before any connection. */
     @Test fun negative_webTransportWhileDisabledFails() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { http3Allowed = { false } } }).use { c ->
+            testClient(Http3Discovery.Auto, engine = { http3 { allowed = { false } } }).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:443/wt") }
-                assertTrue("http3Allowed" in (e.message ?: ""), "${e.message}")
+                assertTrue("http3 { allowed }" in (e.message ?: ""), "${e.message}")
                 val engine = c.engine as KuicksilverEngine
                 assertFalse(engine.h3.endpointBoundForTest)
                 assertEquals(0, engine.h3.webTransportSessions.value)
@@ -474,7 +474,7 @@ class ClientKillSwitchTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val session = c.webTransport("https://127.0.0.1:$port/wt")
                     assertEquals(1, (c.engine as KuicksilverEngine).h3.sessionCountForTest)
                     c.closeHttp3Connections()
@@ -498,7 +498,7 @@ class ClientKillSwitchTest {
                     routing { webSocket("/ws") { close() } }
                 }
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { http3Allowed = { false } } }) {
+                testClient(Http3Discovery.Preferred, engine = { http3 { allowed = { false } } }) {
                     install(io.ktor.client.plugins.websocket.WebSockets)
                 }.use { c ->
                     var d: ProtocolDiagnostics? = null
@@ -524,7 +524,7 @@ class ClientKillSwitchTest {
                 val ep = recordingH3(gate, accepted)
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                         val fired = AtomicBoolean(false)
@@ -561,7 +561,7 @@ class ClientKillSwitchTest {
                 val ep = recordingH3(gate, accepted)
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                         val held = AtomicReference<Http3Connection?>(null)
@@ -607,7 +607,7 @@ class ClientKillSwitchTest {
                 val ep = recordingH3(gate, accepted)
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                         val fired = AtomicBoolean(false)
@@ -659,7 +659,7 @@ class ClientKillSwitchTest {
                 val proceed = CompletableDeferred<Unit>()
                 try {
                     // INFINITE: HTTP/1.1 only after HTTP/3 failed, and nothing listens on TCP
-                    testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         engine.h3.beforeSetupForTest = {
                             inSetup.complete(Unit)
@@ -690,7 +690,7 @@ class ClientKillSwitchTest {
         h3Test {
             val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.h3.webTransportStepForTest = { step -> if (step == "connection") c.closeHttp3Connections() }
                     val e = assertFailsWith<IllegalStateException> { c.webTransport("https://127.0.0.1:$port/wt") }
@@ -722,7 +722,7 @@ class ClientKillSwitchTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.h3.webTransportStepForTest = { step -> if (step == "connected") c.closeHttp3Connections() }
                     val session = c.webTransport("https://127.0.0.1:$port/wt")

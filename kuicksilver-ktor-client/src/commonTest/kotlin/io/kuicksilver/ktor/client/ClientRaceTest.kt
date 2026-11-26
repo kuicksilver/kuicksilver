@@ -35,7 +35,7 @@ class ClientRaceTest {
                 }
             }) { port ->
                 // the HTTP/3 setup stays pending (UDP is silent), so the race runs again for the second request
-                testClient(Http3DiscoveryMode.Preferred, engine = { connectTimeout = 30.seconds }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { connectTimeout = 30.seconds }).use { c ->
                     val r1 = c.get("https://127.0.0.1:$port/1")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r1.version)
                     assertEquals("ok", r1.bodyAsText())
@@ -61,7 +61,7 @@ class ClientRaceTest {
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
                 readRequest(input)
             }) { port ->
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     connectTimeout = 30.seconds
                     resolverForTest = { host, p ->
                         lookups += host to p

@@ -67,7 +67,7 @@ public open class ProxyException(
 
 /**
  * The TLS handshake with an `https://` proxy ([ResolvedProxy.https]) or with a CONNECT-UDP proxy ([ConnectUdpProxy], over
- * QUIC) failed: its certificate did not verify against the proxy's name or trust (`KuicksilverEngineConfig.proxyTls`), it
+ * QUIC) failed: its certificate did not verify against the proxy's name or trust (`proxies { tls { } }`), it
  * refused the handshake, or it closed the connection during it. [cause][Throwable.cause] is what the TLS layer reported: a
  * `TlsException` (its `Verify` subclass says why the certificate was rejected, `AlertReceived` which alert the proxy
  * sent), or, over TCP only, an IOException for a connection that ended; over QUIC it is always a `TlsException`, and a
@@ -177,7 +177,7 @@ public class ResolvedProxy private constructor(
          * An HTTPS proxy at [host]:[port]: TLS to the proxy itself (an `https://` proxy URL), then the same requests as
          * [http] inside it, so [credentials] and the CONNECT's target never cross the network in clear. The proxy's
          * certificate is verified against [host] (a DNS name, or an IP address as an IP-ID; RFC 9525), which is also its
-         * SNI unless it is an IP address (RFC 6066 section 3), with `KuicksilverEngineConfig.proxyTls` (by default the
+         * SNI unless it is an IP address (RFC 6066 section 3), with `proxies { tls { } }` (by default the
          * engine's own trust without the origin's pins and expected name); ALPN offers `http/1.1` only. A request to an
          * `https` origin runs the origin's TLS inside the tunnel (TLS in TLS), verified as without a proxy. [host] goes
          * through the engine's `dns`. [credentials] are checked as for [http].

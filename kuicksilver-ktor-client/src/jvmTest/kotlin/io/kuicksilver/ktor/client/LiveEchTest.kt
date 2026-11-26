@@ -31,7 +31,7 @@ import kotlin.time.Duration.Companion.seconds
 class LiveEchTest {
     private val enabled = System.getProperty("kuicksilver.liveEch") == "true"
 
-    private val doh by lazy { HttpClient(Kuicksilver) { engine { http3 { discovery = Http3DiscoveryMode.H1Only } } } }
+    private val doh by lazy { HttpClient(Kuicksilver) { engine { http3 { enabled = false } } } }
 
     private val exchange: suspend (ByteArray) -> ByteArray = { query ->
         doh
@@ -53,7 +53,7 @@ class LiveEchTest {
             withTimeout(60.seconds) {
                 HttpClient(Kuicksilver) {
                     engine {
-                        http3 { httpsRecords = HttpsRecordSource.Exchange(secure = true, exchange = exchange) }
+                        network { httpsRecords = HttpsRecordSource.Exchange(secure = true, exchange = exchange) }
                     }
                 }.use { c ->
                     val trace = c.get("https://crypto.cloudflare.com/cdn-cgi/trace").bodyAsText()
@@ -72,11 +72,11 @@ class LiveEchTest {
                 val answer = DnsMessage.read(exchange(DnsMessage.query(name)), name)
                 val ech = assertNotNull(answer.records.firstNotNullOfOrNull { it.ech }, "no ech in the HTTPS record of $name")
                 val list = EchConfigList.parse(ech)
-                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.H3Only)) {
+                for (mode in listOf(null, Http3Discovery.H3Only)) {
                     HttpClient(Kuicksilver) {
                         engine {
-                            http3 { discovery = mode }
-                            ech { configLists = mapOf(name to list) }
+                            http3 { mode?.let { discovery = it } ?: run { enabled = false } }
+                            tls { ech { configLists = mapOf(name to list) } }
                         }
                     }.use { c ->
                         val trace = c.get("https://$name/cdn-cgi/trace").bodyAsText()

@@ -31,7 +31,7 @@ class ClientAltSvcH3Test {
                     val store = InMemoryAltSvcStore()
                     store.put(origin, listOf(AltSvcEntry("h3", null, port, getTimeMillis() + 3_600_000, false)))
                     // nothing listens on the TCP port: the race goes to HTTP/3
-                    testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                    testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                         val r = c.get("$origin/")
                         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                         assertEquals("h3", r.bodyAsText())
@@ -53,7 +53,7 @@ class ClientAltSvcH3Test {
                     val origin = "https://127.0.0.1:$port"
                     val store = InMemoryAltSvcStore()
                     store.put(origin, listOf(AltSvcEntry("h3", null, port, getTimeMillis() + 3_600_000, false)))
-                    testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                    testClient(Http3Discovery.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
                         assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("$origin/").version)
                     }
                     assertEquals(listOf("alt.example:8443"), store.get(origin).map { "${it.host}:${it.port}" })

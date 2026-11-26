@@ -11,16 +11,16 @@ import kotlin.time.Duration.Companion.milliseconds
 enum class Mode(
     val flag: String?,
 ) {
-    /** HTTP/2 or HTTP/1.1 first, HTTP/3 once the origin announced it with `Alt-Svc` (`Http3DiscoveryMode.Auto`). */
+    /** HTTP/2 or HTTP/1.1 first, HTTP/3 once the origin announced it with `Alt-Svc` (`Http3Discovery.Auto`). */
     Auto(null),
 
-    /** HTTP/3 by prior knowledge, raced against TCP and falling back to it (`Http3DiscoveryMode.Preferred`). */
+    /** HTTP/3 by prior knowledge, raced against TCP and falling back to it (`Http3Discovery.Preferred`). */
     Http3("--http3"),
 
-    /** HTTP/3 only, no fallback (`Http3DiscoveryMode.H3Only`). */
+    /** HTTP/3 only, no fallback (`Http3Discovery.H3Only`). */
     Http3Only("--http3-only"),
 
-    /** TCP only: HTTP/2 when the server offers `h2` in ALPN, else HTTP/1.1 (`Http3DiscoveryMode.H1Only`). */
+    /** TCP only: HTTP/2 when the server offers `h2` in ALPN, else HTTP/1.1 (`null`). */
     Http2("--http2"),
 
     /** TCP only, HTTP/1.1 only (`H1Only` with `http2 { enabled = false }`). */

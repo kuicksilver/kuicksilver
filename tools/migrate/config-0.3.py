@@ -144,15 +144,221 @@ rule(
 # Http2Settings: constructor calls are rewritten by rewrite_h2_calls (no builder block existed before)
 rule("http2", r"(?!x)x", {})
 
+# ---- the Ktor client engine (engine { }) ----
+
+def _wrap(stmt, *groups):
+    for g in reversed(groups):
+        stmt = f"{g} {{ {stmt} }}"
+    return stmt
+
+
+def _lambda_body(value):
+    """`{ a = 1 }` -> `a = 1` (None when the value is no lambda literal)."""
+    v = value.strip()
+    return v[1:-1].strip() if v.startswith("{") and v.endswith("}") else None
+
+
+def _builder_body(value, dsl):
+    """`dsl { a = 1 }` -> `a = 1` (None otherwise)."""
+    m = re.match(r"(?:[\w.]*\.)?" + dsl + r"\s*(\{.*\})\s*$", value.strip(), re.S)
+    return _lambda_body(m.group(1)) if m else None
+
+
+def _duration_or_null(v):
+    return "null" if re.match(r"^(?:kotlin\.time\.)?Duration\.INFINITE$", v.strip()) else v
+
+
+def _c_quic(value, report, where):
+    body = _builder_body(value, "quicConfig")
+    if body is None:
+        if value.strip() in ("QuicConfig.Default", "io.kuicksilver.quic.QuicConfig.Default"):
+            return "replace", ""
+        report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
+        return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
+    return "replace", f"http3 {{ quic {{ {body} }} }}"
+
+
+def _c_tls(value, report, where):
+    body = _lambda_body(value)
+    if body is None:
+        report.append(f"{where}: tls = {value}: the tls block is typed now, tls {{ ... }}")
+        return "replace", f"tls {{ /* was tls = {value.replace('*/', '* /')} */ }}"
+    return "replace", f"tls {{ {body} }}"
+
+
+def _c_proxy_tls(value, report, where):
+    body = _lambda_body(value)
+    if value.strip() == "null":
+        return "replace", ""
+    if body is None:
+        report.append(f"{where}: proxyTls = {value}: now proxies {{ tls {{ ... }} }}")
+        return "replace", f"proxies {{ tls {{ /* was proxyTls = {value.replace('*/', '* /')} */ }} }}"
+    return "replace", f"proxies {{ tls {{ {body} }} }}"
+
+
+def _c_h2_settings(value, report, where):
+    body = _builder_body(value, "http2Settings")
+    if value.strip() in ("Http2Settings.Default", "io.kuicksilver.http2.Http2Settings.Default", "Http2Settings()"):
+        return "replace", ""
+    if body is None:
+        report.append(f"{where}: settings = {value}: now settings {{ ... }}")
+        return "replace", f"settings {{ /* was settings = {value.replace('*/', '* /')} */ }}"
+    return "replace", f"settings {{ {body} }}"
+
+
+def _c_h3_settings(value, report, where):
+    body = _builder_body(value, "http3Settings")
+    if value.strip() in ("Http3Settings.Default", "io.kuicksilver.http3.Http3Settings.Default"):
+        return "replace", ""
+    if body is None:
+        report.append(f"{where}: settings = {value}: now settings {{ ... }}")
+        return "replace", f"settings {{ /* was settings = {value.replace('*/', '* /')} */ }}"
+    return "replace", f"settings {{ {body} }}"
+
+
+def _c_endpoint(value, report, where):
+    body = _builder_body(value, "quicEndpointConfig")
+    if body is not None:
+        m = re.fullmatch(r"\s*connectionIdLength\s*=\s*([^;\n]+?)\s*", body)
+        if m:
+            return "replace", f"expert {{ connectionIdLength = {m.group(1)} }}"
+    report.append(f"{where}: endpoint = {value}: gone; http3 {{ expert {{ connectionIdLength, dispatcher }} }} (tests: endpointIoForTest, cryptoForTest)")
+    return "replace", f"/* was endpoint = {value.replace('*/', '* /')} */"
+
+
+def _c_discovery(value, report, where):
+    v = value.strip()
+    if v.endswith("H1Only"):
+        return "replace", "enabled = false"
+    return "replace", "discovery = " + re.sub(r"\bHttp3DiscoveryMode\b", "Http3Discovery", v)
+
+
+def _c_hard_delay(value, report, where):
+    v = value.strip()
+    if v == "null":
+        return "replace", "expert { raceHeadStart = RaceHeadStart.Adaptive }"
+    if re.match(r"^(?:kotlin\.time\.)?Duration\.INFINITE$", v):
+        return "replace", "expert { raceHeadStart = RaceHeadStart.NoRace }"
+    return "replace", f"expert {{ raceHeadStart = RaceHeadStart.Fixed({v}) }}"
+
+
+def _c_http11_hints(value, report, where):
+    return "hoist", f"http1 {{ knownServers = KnownServers.Listed({value}) }}"
+
+
+def _c_assume_http11(value, report, where):
+    v = value.strip()
+    if v == "true":
+        return "replace", "http1 { knownServers = KnownServers.All }"
+    if v == "false":
+        return "replace", ""
+    report.append(f"{where}: assumeHttp11 = {v}: now http1 {{ knownServers = ... }}")
+    return "replace", f"http1 {{ knownServers = if ({v}) KnownServers.All else KnownServers.None }}"
+
+
+def _c_wt_ignores(kind):
+    def f(value, report, where):
+        v = value.strip()
+        if v == "false":
+            return "replace", ""
+        policy = "BypassHttpProxy" if kind == "http" else "BypassConnectUdpProxy"
+        if v != "true":
+            report.append(f"{where}: webTransportIgnores... = {v}: now webTransport {{ proxyPolicy = ... }}")
+        return "replace", f"webTransport {{ proxyPolicy = WebTransportProxyPolicy.{policy} }}"
+    return f
+
+
+def _c_network_id(value, report, where):
+    return "hoist", f"network {{ networkId = {value} }}"
+
+
+def _c_early_data(value, report, where):
+    return "replace", f"earlyData {{ enabled = {value} }}"
+
+
+def _c_logger(value, report, where):
+    v = value.strip()
+    if v == "null":
+        return "replace", ""
+    return "replace", _wrap(f"logger = {v}", "observability")
+
+
+def _hoist(path, new):
+    return lambda value, report, where: ("hoist", _wrap(f"{new} = {value}", *path))
+
+
+ENGINE_MOVES = {
+    "trust": (("tls",), "trust"),
+    "identity": (("tls",), "identity"),
+    "tls": _c_tls,
+    "quic": _c_quic,
+    "maxIdleConnectionsPerRoute": (("pool",), "maxIdleConnectionsPerRoute"),
+    "maxConnectionsCount": (("pool",), "maxConnections"),
+    "maxConnectionsPerRoute": (("pool",), "maxConnectionsPerRoute"),
+    "idleTimeout": (("pool",), "idleTimeout"),
+    "maxConnectionLifetime": lambda v, r, w: ("replace", _wrap(f"maxConnectionLifetime = {_duration_or_null(v)}", "pool")),
+    "connectionCoalescing": (("pool",), "coalescing"),
+    "connectionAttemptDelay": lambda v, r, w: ("replace", _wrap(f"happyEyeballsDelay = {_duration_or_null(v)}", "network")),
+    "dns": (("network",), "dns"),
+    "webSocketMaxMessageSize": (("webSockets",), "maxMessageSize"),
+    "logger": _c_logger,
+    "eventListener": (("observability",), "eventListener"),
+    "proxyResolver": (("proxies",), "resolver"),
+    "connectUdpProxy": (("proxies",), "connectUdp"),
+    "pacFullWebSocketUrl": (("proxies",), "pacFullWebSocketUrl"),
+    "proxyCredentials": (("proxies",), "credentials"),
+    "proxyTls": _c_proxy_tls,
+    "http11Hints": lambda v, r, w: ("replace", f"http1 {{ knownServers = KnownServers.Listed({v}) }}"),
+    "assumeHttp11": _c_assume_http11,
+    "ech{}": (("tls",), None),
+}
+
+HTTP3_CLIENT_MOVES = {
+    "discovery": _c_discovery,
+    "quicHints": ((), "hints"),
+    "clearOnNetworkChange": (("expert",), "clearAltSvcOnNetworkChange"),
+    "httpsRecords": _hoist(("network",), "httpsRecords"),
+    "httpsRecordExtraWait": _hoist(("network",), "httpsRecordWait"),
+    "hardDelay": _c_hard_delay,
+    "stallDetection": (("stall",), "enabled"),
+    "stallProbeTimeouts": (("stall",), "probeTimeouts"),
+    "stallMinSilence": (("stall",), "minSilence"),
+    "stallAbandonAfter": (("stall",), "abandonAfter"),
+    "networkId": _c_network_id,
+    "settings": _c_h3_settings,
+    "endpoint": _c_endpoint,
+    "earlyData": _c_early_data,
+    "qlog": _hoist(("observability",), "qlog"),
+    "connectionListener": _hoist(("observability",), "connectionListener"),
+    "webTransportIgnoresProxy": _c_wt_ignores("http"),
+    "webTransportIgnoresConnectUdpProxy": _c_wt_ignores("udp"),
+    "maxWebTransportSessions": (("webTransport",), "maxSessions"),
+    "http3Allowed": ((), "allowed"),
+    "diagnosticsLogLevel": _hoist(("observability",), "protocolChoiceLogLevel"),
+    "connectionMigration": ((), "migration"),
+}
+
+HTTP2_CLIENT_MOVES = {
+    "settings": _c_h2_settings,
+}
+
+rule("client", r"\bengine\s*(?:=\s*)?\{|\bKuicksilverEngineConfig\(\)\s*\.\s*(?:apply|run|also)\s*\{", ENGINE_MOVES,
+     receiver="KuicksilverEngineConfig")
+rule("client-http3", r"\bhttp3\s*\{", HTTP3_CLIENT_MOVES, receiver="Http3ClientConfig")
+rule("client-http2", r"\bhttp2\s*\{", HTTP2_CLIENT_MOVES, receiver="Http2ClientConfig")
+
 # Calls that moved into a group: (pattern, replacement), applied everywhere.
 CALLS = {
     "http3": [(re.compile(r"(?<![.\w])enableQpackDynamicTable\(\)"), "qpack { enableDynamicTable() }")],
+    "client-http2": [(re.compile(r"\bpingInterval\s*=\s*(?:kotlin\.time\.)?Duration\.INFINITE\b"), "pingInterval = null")],
+    "client": [(re.compile(r"\bHttp3DiscoveryMode\.(Auto|Preferred|H3Only)\b"), "Http3Discovery.\\1")],
 }
 
 # The same moves in any block: the names are TlsConfig.Builder's alone (test fixtures that take a builder lambda).
 rule("tls-any", r"\{", RULES["tls"][1])
 
 _ASSIGN = re.compile(r"(?:this\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
+_BLOCK_CALL = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\{")
 
 
 _CONTINUES_BEFORE = tuple("=+-*/%,(.&|<>?:[")
@@ -192,7 +398,8 @@ def _trim(code, text, s, e):
                 last = pos + 1
             pos += 1
         elif text.startswith("//", pos):
-            break
+            nl = text.find("\n", pos)
+            pos = e if nl < 0 or nl > e else nl
         elif text.startswith("/*", pos):
             pos = kotlin_scan._comment_end(text, pos + 2)
         elif text[pos] == '"':
@@ -238,9 +445,28 @@ def _direct_statements(code, start, end, text):
                     i = e
                     at_statement = False
                     continue
+                m = _BLOCK_CALL.match(code, i)
+                if m:
+                    close = _match_brace(code, m.end() - 1)
+                    out.append((i, m.end() - 1, close + 1, m.group(1) + "{}"))
+                    i = close + 1
+                    at_statement = False
+                    continue
             at_statement = False
         i += 1
     return out
+
+
+def _match_brace(code, open_pos):
+    depth = 0
+    for i in range(open_pos, len(code)):
+        if code[i] == "{":
+            depth += 1
+        elif code[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(code) - 1
 
 
 def _braces(code):
@@ -260,7 +486,10 @@ def _one_change(text, code, names, report, where):
     candidates = []
     for name in names:
         openers, moves, warn = RULES[name]
-        word = re.compile(r"\b(?:" + "|".join(map(re.escape, moves)) + r")\s*=(?!=)")
+        if not moves:
+            continue
+        keys = [k[:-2] if k.endswith("{}") else k for k in moves]
+        word = re.compile(r"\b(?:" + "|".join(map(re.escape, keys)) + r")\b")
         for m in openers.finditer(code):
             open_pos = m.end() - 1
             close = closes.get(open_pos, len(code))
@@ -268,25 +497,48 @@ def _one_change(text, code, names, report, where):
                 continue
             inside = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", code[max(0, open_pos - 80):open_pos])
             for st in _direct_statements(code, open_pos + 1, close, text):
-                if st[3] in moves:
-                    path, new = moves[st[3]]
-                    if not path and new == st[3]:
-                        none = NONE_VALUES.get(st[3])
-                        value = text[st[1]:st[2]].strip()
-                        if not (none and re.match(none[0], value)):
-                            continue  # in place under the same name: only an "off" value changes
+                if st[3] not in moves:
+                    continue
+                move = moves[st[3]]
+                if callable(move) and not st[3].endswith("{}"):
+                    kind, out = move(text[st[1]:st[2]].strip(), [], "")
+                    if kind == "keep" or (kind == "replace" and out.strip() == text[st[0]:st[2]].strip()):
+                        continue  # already in the 0.3.0 form
+                if not callable(move):
+                    path, new = move
                     if path and inside and inside.group(1) == path[-1]:
                         continue  # already in its group
-                    candidates.append((st, moves, warn))
+                    if not path and new == st[3]:
+                        none = NONE_VALUES.get(st[3])
+                        if not (none and re.match(none[0], text[st[1]:st[2]].strip())):
+                            continue  # in place under the same name: only an "off" value changes
+                candidates.append((st, moves, warn, (open_pos, close)))
     if not candidates:
         return None
-    (s, eq, e, opt), moves, warn = max(candidates, key=lambda c: c[0][0])  # the last one: earlier offsets stay valid
-    path, new = moves[opt]
+    (s, eq, e, opt), moves, warn, (open_pos, close) = max(candidates, key=lambda c: c[0][0])  # the last one: earlier offsets stay valid
+    move = moves[opt]
+    line = text.count("\n", 0, s) + 1
+    if opt.endswith("{}"):  # a block call: wrapped whole
+        stmt_text = text[s:e]
+        if callable(move):
+            kind, new_stmt = move(stmt_text, report, f"{where}:{line}")
+        else:
+            path, _ = move
+            new_stmt = stmt_text
+            for group in reversed(path):
+                new_stmt = f"{group} {{ {new_stmt} }}"
+            kind = "replace"
+        return _apply(text, s, e, kind, new_stmt, open_pos, close)
     value = text[eq:e].strip()
+    if callable(move):
+        kind, new_stmt = move(value, report, f"{where}:{line}")
+        if kind == "keep":
+            return None
+        return _apply(text, s, e, kind, new_stmt, open_pos, close)
+    path, new = move
     none = NONE_VALUES.get(opt)
     if none and re.match(none[0], value):
         value = none[1]
-    line = text.count("\n", 0, s) + 1
     if new is None:
         report.append(f"{where}:{line}: {opt} was removed; delete `{text[s:e].strip()}`")
         return text[:s] + "/* removed in 0.3.0: " + text[s:e].strip().replace("*/", "* /") + " */" + text[e:]
@@ -296,9 +548,39 @@ def _one_change(text, code, names, report, where):
     # `keys = keys` inside the group would assign the caller's variable of that name, as would `this.io = ...` without this
     this = value == new or re.match(r"this\s*\.", text[s:eq]) is not None
     stmt = f"{'this.' if this else ''}{new} = {value}"
+    if path and path[0] == "..":
+        for group in reversed(path[1:]):
+            stmt = f"{group} {{ {stmt} }}"
+        return _apply(text, s, e, "hoist", stmt, open_pos, close)
     for group in reversed(path):
         stmt = f"{group} {{ {stmt} }}"
     return text[:s] + stmt + text[e:]
+
+
+def _apply(text, s, e, kind, new_stmt, open_pos, close):
+    """Replaces text[s:e] by new_stmt, or (hoist) removes it and puts new_stmt after the enclosing block's closing brace."""
+    if kind == "replace":
+        return text[:s] + new_stmt + text[e:]
+    # hoist: drop the statement (its line when nothing else is on it), insert after the block that held it
+    ls = text.rfind("\n", 0, s) + 1
+    le = text.find("\n", e)
+    le = len(text) if le < 0 else le
+    if text[ls:s].strip() == "" and text[e:le].strip() in ("", ";"):
+        rs, re_ = ls, le + 1
+    else:
+        rs, re_ = s, e
+    opener_line = text[text.rfind("\n", 0, open_pos) + 1:open_pos]
+    indent = re.match(r"[ \t]*", opener_line).group(0)
+    removed = re_ - rs
+    close_after = close - removed if close > rs else close
+    text = text[:rs] + text[re_:]
+    if text[:close_after + 1].rstrip().endswith("}") and text[close_after] == "}":
+        insert_at = close_after + 1
+    else:
+        insert_at = text.find("}", close_after) + 1
+    new = text[:insert_at] + "\n" + indent + new_stmt + text[insert_at:]
+    # an empty block left behind (`http3 { }`) goes
+    return re.sub(r"\b(http3|http2|tls|pool|network|proxies)\s*\{\s*\}\s*\n?", "", new)
 
 
 def rewrite_code(text, names, report, where):
@@ -419,7 +701,17 @@ def fix_from_errors(log, names, report):
             name = name or m.group(0)
             if m.group(0) != name:
                 continue
-            cands = [r for r in names if name in RULES[r][1]]
+            if any(name + "{}" in RULES[r][1] for r in names) and re.match(r"\s*\{", text[m.end() + pos:]):
+                r = next(r for r in names if name + "{}" in RULES[r][1])
+                groups = RULES[r][1][name + "{}"][0]
+                code = kotlin_scan.blank(text)
+                close = _match_brace(code, code.index("{", pos))
+                stmt = text[pos:close + 1]
+                for g in reversed(groups):
+                    stmt = f"{g} {{ {stmt} }}"
+                text = text[:pos] + stmt + text[close + 1:]
+                continue
+            cands = [r for r in names if name in RULES[r][1] and not callable(RULES[r][1][name])]
             if receiver:
                 cands = [r for r in cands if RECEIVERS.get(r) == receiver.rstrip("?")] or cands
             if not cands:

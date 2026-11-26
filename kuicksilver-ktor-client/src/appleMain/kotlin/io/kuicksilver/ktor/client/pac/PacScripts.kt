@@ -15,7 +15,7 @@ import io.ktor.http.Url
 import io.ktor.http.contentLength
 import io.ktor.http.decodeURLPart
 import io.ktor.utils.io.readBuffer
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.PAC_TIMEOUT_MILLIS
 import io.kuicksilver.ktor.client.ProxyResolvers
@@ -105,8 +105,8 @@ internal object PacScripts {
             expectSuccess = false
             followRedirects = true
             engine {
-                proxyResolver = ProxyResolvers.None // a PAC script is fetched directly
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                proxies { resolver = ProxyResolvers.None } // a PAC script is fetched directly
+                http3 { enabled = false }
                 connectTimeout = (PAC_TIMEOUT_MILLIS / 1000).seconds
             }
         }

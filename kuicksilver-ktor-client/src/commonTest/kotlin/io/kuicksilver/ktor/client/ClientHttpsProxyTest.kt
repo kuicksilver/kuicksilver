@@ -77,8 +77,8 @@ class ClientHttpsProxyTest {
     }
 
     private fun KuicksilverEngineConfig.through(proxy: ResolvedProxy) {
-        if (dns === Dns.System) dns = Recording(setOf("proxy.internal", "server.test"))
-        proxyResolver = ProxyResolver { proxy }
+        if (network.dns === Dns.System) network { dns = Recording(setOf("proxy.internal", "server.test")) }
+        proxies { resolver = ProxyResolver { proxy } }
         connectTimeout = 10.seconds
     }
 
@@ -117,7 +117,7 @@ class ClientHttpsProxyTest {
                 tlsProxy(originPort) { proxyPort, seen ->
                     val dns = Recording(setOf("proxy.internal"))
                     testClient(engine = {
-                        this.dns = dns
+                        network { this.dns = dns }
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
                     }).use { c ->
                         assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
@@ -188,7 +188,7 @@ class ClientHttpsProxyTest {
             tlsProxy(cert = TestCerts.server, key = TestCerts.serverKey) { proxyPort, seen ->
                 for (originTrust in listOf(ClientFixtures.trust, TrustConfig.ExpectedName("server.test", ClientFixtures.trust))) {
                     testClient(engine = {
-                        trust = originTrust
+                        tls { trust = originTrust }
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
                     }).use { c ->
                         val e = assertFailsWith<ProxyTlsException>("$originTrust") { c.get("https://server.test:1/").bodyAsText() }
@@ -241,7 +241,7 @@ class ClientHttpsProxyTest {
                 tlsProxy(originPort) { proxyPort, _ ->
                     val right = TrustConfig.Pinned(setOf(SpkiSha256(TestCerts.serverSpkiSha256)), base = ClientFixtures.trust)
                     testClient(engine = {
-                        trust = right
+                        tls { trust = right }
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
                     }).use { c ->
                         assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
@@ -250,7 +250,7 @@ class ClientHttpsProxyTest {
                 tlsProxy(originPort) { proxyPort, _ ->
                     val wrong = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
                     testClient(engine = {
-                        trust = wrong
+                        tls { trust = wrong }
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
                     }).use { c ->
                         val e = assertFailsWith<Throwable> { c.get("https://server.test:$originPort/").bodyAsText() }
@@ -276,7 +276,7 @@ class ClientHttpsProxyTest {
                 tlsProxy(originPort, cert = TestCerts.serverOtherCa, key = TestCerts.serverOtherCaKey) { proxyPort, _ ->
                     testClient(engine = {
                         through(ResolvedProxy.https("server.test", proxyPort))
-                        proxyTls = { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa))) }
+                        proxies { tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa))) } }
                     }).use { c ->
                         assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
                     }
@@ -412,7 +412,7 @@ class ClientHttpsProxyTest {
     @Test fun negative_h3OnlyThroughAnHttpsProxyFails() =
         clientTest {
             tlsProxy { proxyPort, seen ->
-                testClient(Http3DiscoveryMode.H3Only, engine = { through(ResolvedProxy.https("proxy.internal", proxyPort)) }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { through(ResolvedProxy.https("proxy.internal", proxyPort)) }).use { c ->
                     val e = assertFailsWith<UnsupportedOperationException> { c.get("https://server.test:1/").bodyAsText() }
                     assertTrue("proxy" in e.message!!, e.message)
                 }
@@ -435,7 +435,7 @@ class ClientHttpsProxyTest {
                 }
             origin(altSvc = true) { originPort ->
                 tlsProxy(originPort) { proxyPort, _ ->
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         http3 { altSvcStore = store }
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
                     }).use { c ->
@@ -474,7 +474,7 @@ class ClientHttpsProxyTest {
         val pins = setOf(SpkiSha256(ByteArray(32)))
         assertTrue(proxyTrustOf(TrustConfig.Pinned(pins, base = ca)) === ca)
         assertTrue(proxyTrustOf(TrustConfig.Pinned(pins, base = TrustConfig.ExpectedName("server.test", ca))) === ca)
-        val config = KuicksilverEngineConfig().apply { trust = TrustConfig.ExpectedName("server.test", ca) }
+        val config = KuicksilverEngineConfig().apply { tls { trust = TrustConfig.ExpectedName("server.test", ca) } }
         val built = config.proxyTlsConfigFor("proxy.internal")
         assertEquals("proxy.internal", built.serverName)
         assertEquals(listOf("http/1.1"), built.alpn)
@@ -565,18 +565,15 @@ class ClientHttpsProxyTest {
         }
 
     /**
-     * A `proxyTls` block that sets `serverName` or `alpn` changes neither: the proxy is still verified as `proxy.internal`
-     * (the origin's certificate there fails) and offered `http/1.1` alone.
+     * A `proxies { tls { } }` block has no server name or ALPN to set: the proxy is verified as `proxy.internal` (the
+     * origin's certificate there fails) and offered `http/1.1` alone.
      */
     @Test fun negative_proxyTlsBlockCannotChangeTheProxysName() =
         clientTest {
             tlsProxy(cert = TestCerts.server, key = TestCerts.serverKey) { proxyPort, _ ->
                 testClient(engine = {
                     through(ResolvedProxy.https("proxy.internal", proxyPort))
-                    proxyTls = {
-                        trust = ClientFixtures.trust
-                        serverName = "server.test"
-                    }
+                    proxies { tls { trust = ClientFixtures.trust } }
                 }).use { c ->
                     val e = assertFailsWith<ProxyTlsException> { c.get("https://server.test:1/").bodyAsText() }
                     assertIs<VerifyReason.HostnameMismatch>(assertIs<TlsException.Verify>(e.cause).reason)
@@ -586,10 +583,7 @@ class ClientHttpsProxyTest {
                 tlsProxy(originPort) { proxyPort, seen ->
                     testClient(engine = {
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
-                        proxyTls = {
-                            trust = ClientFixtures.trust
-                            alpn = listOf("h2")
-                        }
+                        proxies { tls { trust = ClientFixtures.trust } }
                     }).use { c ->
                         assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
                     }
@@ -643,8 +637,8 @@ class ClientHttpsProxyTest {
             for (h2 in listOf(false, true)) {
                 origin(http2 = h2) { originPort ->
                     testClient(engine = {
-                        dns = Recording(setOf("server.test"))
-                        proxyResolver = ProxyResolvers.None
+                        network { dns = Recording(setOf("server.test")) }
+                        proxies { resolver = ProxyResolvers.None }
                     }).use { c ->
                         val r = c.get("https://server.test:$originPort/") { header(HttpHeaders.ProxyAuthorization, "Basic Ym9iOng=") }
                         assertEquals(
@@ -677,8 +671,8 @@ class ClientHttpsProxyTest {
             }
             origin { originPort ->
                 testClient(engine = {
-                    dns = Recording(setOf("server.test"))
-                    proxyResolver = ProxyResolvers.None
+                    network { dns = Recording(setOf("server.test")) }
+                    proxies { resolver = ProxyResolvers.None }
                 }).use { c ->
                     assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
                     val h1 = (c.engine as KuicksilverEngine).h1

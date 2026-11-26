@@ -4,7 +4,7 @@ package io.kuicksilver.sample.compose
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.prepareGet
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.quic.MigrationEvent
@@ -322,7 +322,7 @@ class DemoApp(
 
     val diagnostics: DiagnosticsModel =
         DiagnosticsModel(scope) { trust, allowed ->
-            kuicksilverClient(trust, Http3DiscoveryMode.Auto, migration = null, networkId = null, http3Allowed = allowed)
+            kuicksilverClient(trust, Http3Discovery.Auto, migration = null, networkId = null, http3Allowed = allowed)
         }
 
     init {

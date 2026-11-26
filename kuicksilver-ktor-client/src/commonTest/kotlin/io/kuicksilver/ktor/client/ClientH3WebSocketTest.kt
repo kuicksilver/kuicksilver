@@ -86,7 +86,7 @@ class ClientH3WebSocketTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         // the session ends on the Close exchange, not on the FIN
                         withTimeout(
                             10.seconds,
@@ -138,7 +138,7 @@ class ClientH3WebSocketTest {
                         readClientFrames(s.input)
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
                         val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
                         session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
@@ -205,7 +205,7 @@ class ClientH3WebSocketTest {
                                     readClientFrames(s.input)
                                 }
                             try {
-                                testClient(Http3DiscoveryMode.H3Only, engine = { eventListener = listener }, block = {
+                                testClient(Http3Discovery.H3Only, engine = { observability { eventListener = listener } }, block = {
                                     install(WebSockets)
                                 }).use { c ->
                                     (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 200
@@ -270,7 +270,7 @@ class ClientH3WebSocketTest {
                         readClientFrames(s.input)
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
                         val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
                         session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
@@ -327,7 +327,7 @@ class ClientH3WebSocketTest {
                         frames
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).let { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).let { c ->
                         (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
                         val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
                         session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
@@ -398,7 +398,7 @@ class ClientH3WebSocketTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         withTimeout(10.seconds) {
                             c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") {
                                 sessionMasking = masking
@@ -462,7 +462,7 @@ class ClientH3WebSocketTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
                         coroutineScope {
@@ -542,7 +542,7 @@ class ClientH3WebSocketTest {
                     }
                 try {
                     testClient(
-                        Http3DiscoveryMode.H3Only,
+                        Http3Discovery.H3Only,
                         engine = { connectTimeout = 500.milliseconds },
                         block = {
                             install(WebSockets)
@@ -620,7 +620,7 @@ class ClientH3WebSocketTest {
                         held.respond(200).finish()
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         val port = ep.localAddress.port
                         val target =

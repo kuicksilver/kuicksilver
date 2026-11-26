@@ -86,56 +86,62 @@ internal class KuicksilverEngine(
     private val requests = SupervisorJob(coroutineContext[Job])
 
     init {
+        require(config.http3.enabled || config.http3.discovery != Http3Discovery.H3Only) {
+            "http3 { discovery = H3Only } needs http3 { enabled }: with HTTP/3 off no request could be sent"
+        }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val extraWait = config.http3.httpsRecordExtraWait
+        val extraWait = config.network.httpsRecordWait
         // RFC 9460 section 5.1: "Clients implementing this optimization SHOULD wait for 50 milliseconds"
         require(extraWait >= MIN_HTTPS_RECORD_EXTRA_WAIT && extraWait <= MAX_HTTPS_RECORD_EXTRA_WAIT) {
-            "httpsRecordExtraWait must be 50 ms..1 s, was $extraWait"
+            "network { httpsRecordWait } must be 50 ms..1 s, was $extraWait"
         }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val wsLimit = config.webSocketMaxMessageSize
-        require(wsLimit >= 1) { "webSocketMaxMessageSize must be at least 1, was $wsLimit" }
+        val wsLimit = config.webSockets.maxMessageSize
+        require(wsLimit >= 1) { "webSockets { maxMessageSize } must be at least 1, was $wsLimit" }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val stallPtos = config.http3.stallProbeTimeouts
-        require(stallPtos in 1..10) { "stallProbeTimeouts must be 1..10, was $stallPtos" }
+        val stallPtos = config.http3.stall.probeTimeouts
+        require(stallPtos in 1..10) { "http3 { stall { probeTimeouts } } must be 1..10, was $stallPtos" }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val stallSilence = config.http3.stallMinSilence
+        val stallSilence = config.http3.stall.minSilence
         require(stallSilence >= MIN_STALL_SILENCE && stallSilence <= MAX_STALL_SILENCE) {
-            "stallMinSilence must be 100 ms..60 s, was $stallSilence"
+            "http3 { stall { minSilence } } must be 100 ms..60 s, was $stallSilence"
         }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val abandon = config.http3.stallAbandonAfter
+        val abandon = config.http3.stall.abandonAfter
         require(abandon >= MIN_STALL_SILENCE && abandon <= MAX_STALL_ABANDON) {
-            "stallAbandonAfter must be 100 ms..10 min, was $abandon"
+            "http3 { stall { abandonAfter } } must be 100 ms..10 min, was $abandon"
         }
         // RFC 9849 section 6.1, rule 1: ECH is TLS 1.3 only, and a configuration given for a host must be offered
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        require(config.ech.configLists.isEmpty() || config.echCapable()) {
-            "ech.configLists needs TLS 1.3 only: the tls block allows TLS 1.2 (RFC 9849 section 6.1)"
+        require(
+            config.tls.ech.configLists
+                .isEmpty() || config.echCapable(),
+        ) {
+            "tls { ech { configLists } } needs TLS 1.3 only: tls { versions } allows TLS 1.2 (RFC 9849 section 6.1)"
         }
         // a list given for a host is offered or refused now: one without a usable ECHConfig, or any in a build without ECH,
         // would otherwise send the host's name in the clear (with GREASE) on every connection
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        config.ech.configLists.keys.groupBy(::echHostKey).values.firstOrNull { it.size > 1 }?.let {
-            throw IllegalArgumentException("ech.configLists: ${it.joinToString()} name one host (${echHostKey(it.first())})")
+        config.tls.ech.configLists.keys.groupBy(::echHostKey).values.firstOrNull { it.size > 1 }?.let {
+            throw IllegalArgumentException("tls { ech { configLists } }: ${it.joinToString()} name one host (${echHostKey(it.first())})")
         }
 
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        for ((host, list) in config.ech.configLists) {
+        for ((host, list) in config.tls.ech.configLists) {
             try {
                 io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
-                    config.tls(this)
+                    config.tls.applyTo(this)
                     ech { configList = list }
                 }
             } catch (e: io.kuicksilver.tls.TlsException.Config) {
-                throw IllegalArgumentException("ech.configLists[\"$host\"]: ${e.message}", e)
+                throw IllegalArgumentException("tls { ech { configLists } }[\"$host\"]: ${e.message}", e)
             }
         }
     }
 
     /** Whether connections offer the `ech` of the HTTPS records (RFC 9848; `ech.fromHttpsRecords`, TLS 1.3 only). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val echFromRecords: Boolean = config.ech.fromHttpsRecords && config.echCapable()
+    private val echFromRecords: Boolean = config.tls.ech.fromHttpsRecords && config.echCapable()
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
@@ -150,7 +156,7 @@ internal class KuicksilverEngine(
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val followedNetworks: kotlinx.coroutines.flow.Flow<Any?>? =
-        if (config.http3.networkIdSet) null else config.http3.connectionMigration?.networks
+        if (config.network.networkId != null) null else config.http3.migration?.networks
 
     /** The last network [followedNetworks] reported (`toString()`), once it reported one ([followedNetworkKnown]). */
     @kotlin.concurrent.Volatile
@@ -184,7 +190,7 @@ internal class KuicksilverEngine(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     internal val httpsRecordsForTest: HttpsRecords? =
         minOf(config.connectTimeout, MAX_HTTPS_RECORD_QUERY).let { timeout ->
-            config.http3.httpsRecords
+            config.network.httpsRecords
                 .lookup(timeout)
                 // RFC 9460 section 12: answers are cached only where a network change can be seen (networkId, or the
                 // networks connectionMigration follows). TTLs run on an ExpiryClock: neither a wall clock stepped back nor a
@@ -196,7 +202,7 @@ internal class KuicksilverEngine(
                         timeout,
                         ExpiryClock(),
                         caching =
-                            followedNetworks != null || config.http3.networkIdSet,
+                            followedNetworks != null || config.network.networkId != null,
                     )
                 }
         }
@@ -204,7 +210,7 @@ internal class KuicksilverEngine(
 
     /** The [KuicksilverEventListener] of the configuration, behind a guard that never fails a call. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val events = EngineEvents(config.eventListener, config.logger ?: config.http3.endpoint.logger)
+    private val events = EngineEvents(config.observability.eventListener, config.observability.logger)
 
     /**
      * The jobs that let HTTP/3 connections follow the network (`http3.connectionMigration`): outside the requests' job, so
@@ -253,7 +259,17 @@ internal class KuicksilverEngine(
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc(monotonicMillis(), ::getTimeMillis) // ends on either: wall steps, deep sleep
-    private val race = ProtocolRace(config.http3.hardDelay)
+
+    /** Races HTTP/3 against TCP with the configured head start (`http3 { expert { raceHeadStart } }`). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val race =
+        ProtocolRace(
+            when (val h = config.http3.expert.raceHeadStart) {
+                RaceHeadStart.Adaptive -> null
+                RaceHeadStart.NoRace -> Duration.INFINITE
+                is RaceHeadStart.Fixed -> h.delay
+            },
+        )
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
     private var networkSeen = false
@@ -430,7 +446,7 @@ internal class KuicksilverEngine(
         data: HttpRequestData,
         d: ProtocolDiagnostics,
     ) {
-        val wanted = config.http3.diagnosticsLogLevel ?: return
+        val wanted = config.observability.protocolChoiceLogLevel ?: return
         val level =
             when (d.fallback) {
                 null, FallbackReason.NotSecure, FallbackReason.Configuration, FallbackReason.NoAlternative -> LogLevel.Debug
@@ -537,28 +553,28 @@ internal class KuicksilverEngine(
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
         // RFC 9298, or SOCKS5 UDP ASSOCIATE, neither supported), so the request fails instead of going over HTTP/1.1
         // HTTP/3 is only for https (RFC 9114 section 3.1): an http:// or ws:// request fails too, never goes over TCP
-        if (!url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+        if (!url.protocol.isSecure() && config.http3.discovery == Http3Discovery.H3Only) {
             throw UnsupportedOperationException(
-                "Http3DiscoveryMode.H3Only: HTTP/3 needs an https URL (RFC 9114 section 3.1), not ${url.protocol.name}; " +
+                "Http3Discovery.H3Only: HTTP/3 needs an https URL (RFC 9114 section 3.1), not ${url.protocol.name}; " +
                     "use https or another discovery mode",
             )
         }
         // the kill switch, read once per request before anything connects; H3Only cannot fall back, so it fails
         val disabled =
-            url.protocol.isSecure() && config.http3.discovery != Http3DiscoveryMode.H1Only && !http3Allowed()
-        if (disabled && config.http3.discovery == Http3DiscoveryMode.H3Only) {
-            throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed; Http3DiscoveryMode.H3Only never uses TCP")
+            url.protocol.isSecure() && config.http3.enabled && !http3Allowed()
+        if (disabled && config.http3.discovery == Http3Discovery.H3Only) {
+            throw UnsupportedOperationException("HTTP/3 is disabled by http3 { allowed }; Http3Discovery.H3Only never uses TCP")
         }
         // a CONNECT-UDP proxy carries the https requests it applies to over HTTP/3 only: no TCP path, which would leave it out
-        config.connectUdpProxy?.takeIf { url.protocol.isSecure() && it.applies(url) }?.let { udp ->
-            if (config.http3.discovery == Http3DiscoveryMode.H1Only) {
+        config.proxies.connectUdp?.takeIf { url.protocol.isSecure() && it.applies(url) }?.let { udp ->
+            if (!config.http3.enabled) {
                 throw UnsupportedOperationException(
-                    "connectUdpProxy carries HTTP/3 only, which http3 { discovery = H1Only } turns off; exempt ${url.host} with " +
+                    "proxies { connectUdp } carries HTTP/3 only, which http3 { enabled = false } turns off; exempt ${url.host} with " +
                         "its applies, or use another discovery mode",
                 )
             }
             if (disabled) {
-                throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed, and connectUdpProxy never uses TCP")
+                throw UnsupportedOperationException("HTTP/3 is disabled by http3 { allowed }, and proxies { connectUdp } never uses TCP")
             }
             selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Proxy, d)
             // the call's transport, as on the direct HTTP/3 path: a failed proxied call says Quic too
@@ -573,20 +589,20 @@ internal class KuicksilverEngine(
         // a proxy that cannot carry HTTP/3 (today every one: ResolvedProxy.carriesHttp3, the seam for CONNECT-UDP) keeps
         // the request on TCP through it, an https:// proxy included
         val tcpOnlyProxy = proxy != null && !proxy.carriesHttp3
-        if (tcpOnlyProxy && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+        if (tcpOnlyProxy && url.protocol.isSecure() && config.http3.discovery == Http3Discovery.H3Only) {
             throw UnsupportedOperationException(
-                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the proxy for ${url.host} (UDP through an HTTP CONNECT, " +
+                "Http3Discovery.H3Only: HTTP/3 cannot go through the proxy for ${url.host} (UDP through an HTTP CONNECT, " +
                     "plain or over TLS, or a SOCKS5 proxy is not supported); remove the proxy or use another discovery mode",
             )
         }
         // HTTP/3 needs TLS and no proxy (through a proxy only TCP)
         if (!url.protocol.isSecure() || tcpOnlyProxy ||
-            config.http3.discovery == Http3DiscoveryMode.H1Only || disabled
+            !config.http3.enabled || disabled
         ) {
             val reason =
                 when {
                     proxy != null -> ProtocolReason.Proxy
-                    config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() -> ProtocolReason.Configuration
+                    !config.http3.enabled && url.protocol.isSecure() -> ProtocolReason.Configuration
                     disabled -> ProtocolReason.Http3Disabled
                     else -> ProtocolReason.NotSecure
                 }
@@ -594,7 +610,7 @@ internal class KuicksilverEngine(
             // no Alt-Svc is used or learned through a proxy
             val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(events.dnsObserver(data)), proxy = proxy)
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
-            if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
+            if (disabled && proxy == null && config.http3.discovery == Http3Discovery.Auto) {
                 learnAltSvc(url, r, verifiedTls = true)
             }
             return r
@@ -606,7 +622,7 @@ internal class KuicksilverEngine(
         val webSocket = data.attributes.contains(WEBSOCKETS_KEY)
         val network = checkNetwork()
         return when {
-            config.http3.discovery == Http3DiscoveryMode.H3Only -> {
+            config.http3.discovery == Http3Discovery.H3Only -> {
                 d.alternative(target.host, target.port, AlternativeSource.H3Only)
                 selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Configuration, d)
                 overQuic(d)
@@ -618,11 +634,11 @@ internal class KuicksilverEngine(
                 }
             }
 
-            config.http3.discovery == Http3DiscoveryMode.Preferred || HostPort(url.host, url.port) in config.http3.quicHints -> {
+            config.http3.discovery == Http3Discovery.Preferred || HostPort(url.host, url.port) in config.http3.hints -> {
                 d.alternative(
                     target.host,
                     target.port,
-                    if (config.http3.discovery == Http3DiscoveryMode.Preferred) AlternativeSource.Preferred else AlternativeSource.QuicHint,
+                    if (config.http3.discovery == Http3Discovery.Preferred) AlternativeSource.Preferred else AlternativeSource.QuicHint,
                 )
                 // WebSockets take HTTP/3 only on a connection that already allows Extended CONNECT (RFC 9220; else h1.1 Upgrade first)
                 if (webSocket &&
@@ -656,7 +672,7 @@ internal class KuicksilverEngine(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     internal fun http3Allowed(): Boolean =
         try {
-            config.http3.http3Allowed()
+            config.http3.allowed()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -664,7 +680,7 @@ internal class KuicksilverEngine(
                 runCatching {
                     val logger = events.logger
                     if (logger.isEnabled(LogLevel.Warn)) {
-                        logger.log(LogLevel.Warn, "http3Allowed threw; HTTP/3 stays allowed (reported at most once per 5 minutes)", e)
+                        logger.log(LogLevel.Warn, "http3 { allowed } threw; HTTP/3 stays allowed (reported at most once per 5 minutes)", e)
                     }
                 }
             }
@@ -714,7 +730,8 @@ internal class KuicksilverEngine(
      * and nothing is compared.
      */
     private suspend fun checkNetwork(): String? {
-        if (!config.http3.networkIdSet) {
+        val networkId = config.network.networkId
+        if (networkId == null) {
             if (followedNetworks == null) return null
             if (!followedNetworkKnown && !firstFollowedNetwork.isCompleted) {
                 val left = -firstNetworkDeadline.elapsedNow()
@@ -729,19 +746,19 @@ internal class KuicksilverEngine(
         var changed = false
         val network =
             altSvcUpdate {
-                val fromNetworkId = config.http3.networkIdSet
-                val id = if (fromNetworkId) config.http3.networkId() else followedNetwork
+                val fromNetworkId = networkId != null
+                val id = if (networkId != null) networkId() else followedNetwork
                 if (networkSeen) {
                     if (id != lastNetwork) {
                         brokenAltSvc.onNetworkChanged()
-                        altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                        altSvc.onNetworkChanged(config.http3.expert.clearAltSvcOnNetworkChange)
                         changed = true
                     }
                 } else if (!fromNetworkId || id != altSvc.network) {
                     // learned on another network, on one nobody recorded, or before the followed source said which one
                     // (RFC 7838 section 3.1: "cached alternative services will be cleared when the client detects a network
                     // change"); the HTTPS records kept meanwhile go too
-                    altSvc.onNetworkChanged(config.http3.clearOnNetworkChange)
+                    altSvc.onNetworkChanged(config.http3.expert.clearAltSvcOnNetworkChange)
                     changed = !fromNetworkId
                 }
                 networkSeen = true
@@ -794,7 +811,7 @@ internal class KuicksilverEngine(
 
     /**
      * An ALTSVC frame (RFC 7838 section 4) from an HTTP/2 connection to the origin of [url]: learned as an `Alt-Svc` header
-     * of a response is, in [Http3DiscoveryMode.Auto] (the mode that learns), and never through a proxy (the pool passes none).
+     * of a response is, in [Http3Discovery.Auto] (the mode that learns), and never through a proxy (the pool passes none).
      * Called on the connection's reader without blocking: the frame waits in [pendingAltSvcFrames], replacing an older one
      * of its origin, and one coroutine learns the waiting frames in order, so the last frame an origin sent is the one that
      * holds (an `h3` then a `clear` ends cleared) and a flood costs no more than one value per origin. Internal for tests.
@@ -804,7 +821,7 @@ internal class KuicksilverEngine(
         url: io.ktor.http.Url,
         value: String,
     ) {
-        if (config.http3.discovery != Http3DiscoveryMode.Auto) return
+        if (config.http3.discovery != Http3Discovery.Auto) return
         val origin = originKey(url)
         while (true) {
             val m = pendingAltSvcFrames.load()
@@ -1272,7 +1289,7 @@ internal class KuicksilverEngine(
                     protocol = io.ktor.http.URLProtocol.HTTPS
                     port = if (url.specifiedPort == 0 || url.specifiedPort == 80) io.ktor.http.DEFAULT_PORT else url.specifiedPort
                 }.build()
-        val secure = config.http3.httpsRecords.isSecure()
+        val secure = config.network.httpsRecords.isSecure()
         // waited for as before an https request: while the origin's addresses resolve and the extra wait after them
         // (section 5.1), all of it for a secure source (section 3.1); an answer that comes later is cached for the next
         // set inside the scope, as it is made: a decision made as the connect timeout fires is the decision (the timeout
@@ -1290,7 +1307,7 @@ internal class KuicksilverEngine(
                 if (secure) {
                     query.join()
                 } else if (!query.isCompleted) {
-                    withTimeoutOrNull(config.http3.httpsRecordExtraWait) { query.join() }
+                    withTimeoutOrNull(config.network.httpsRecordWait) { query.join() }
                 }
                 val answer =
                     if (query.isCompleted && !query.isCancelled) {
@@ -1365,7 +1382,7 @@ internal class KuicksilverEngine(
         val url = data.url
         val dns = config.newRequestDns(events.dnsObserver(data))
         val supported = supportedAlpn(webSocket)
-        val secure = config.http3.httpsRecords.isSecure()
+        val secure = config.network.httpsRecords.isSecure()
         val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
         val (origin, altResolution) = awaitResolutions(records, url, dns, supported, secure, altAuthority, echFromRecords)
         // the addresses the answers carried for endpoint names: no follow-up query for them (section 5)
@@ -1665,7 +1682,7 @@ internal class KuicksilverEngine(
                 if (secure || ech) {
                     https.join()
                 } else if (!https.isCompleted) {
-                    withTimeoutOrNull(config.http3.httpsRecordExtraWait) { https.join() }
+                    withTimeoutOrNull(config.network.httpsRecordWait) { https.join() }
                 }
 
                 fun outcome(

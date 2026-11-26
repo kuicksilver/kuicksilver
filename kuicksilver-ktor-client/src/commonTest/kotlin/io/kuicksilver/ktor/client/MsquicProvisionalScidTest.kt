@@ -80,7 +80,7 @@ class MsquicProvisionalScidTest {
     @Test fun negative_msquicProvisionalScidFallsBackToTcp() =
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = true) { port, relay ->
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                     val t0 = TimeSource.Monotonic.markNow()
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("h1", r.bodyAsText())
@@ -108,7 +108,7 @@ class MsquicProvisionalScidTest {
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = true) { port, _ ->
                 val marks = BrokenMarks()
-                testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = marks }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { observability { eventListener = marks } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val t0 = TimeSource.Monotonic.markNow()
                     val r = c.get("https://127.0.0.1:$port/")
@@ -152,7 +152,7 @@ class MsquicProvisionalScidTest {
     ) {
         val tcpOpen = CompletableDeferred<Unit>()
         msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true, acceptAfter = tcpOpen) { port, relay ->
-            testClient(Http3DiscoveryMode.Preferred, engine = { http3 { earlyData = true } }).use { c ->
+            testClient(Http3Discovery.Preferred, engine = { http3 { earlyData { enabled = true } } }).use { c ->
                 val engine = c.engine as KuicksilverEngine
                 val url = "https://127.0.0.1:$port/"
                 assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
@@ -218,12 +218,12 @@ class MsquicProvisionalScidTest {
             val tcpOpen = CompletableDeferred<Unit>()
             msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true, acceptAfter = tcpOpen) { port, relay ->
                 val marks = BrokenMarks()
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    eventListener = marks
+                testClient(Http3Discovery.Preferred, engine = {
+                    observability { eventListener = marks }
                     // TCP only once HTTP/3 failed: a TCP win would cancel the resumed attempt before its ServerHello came
                     http3 {
-                        earlyData = true
-                        hardDelay = Duration.INFINITE
+                        earlyData { enabled = true }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -292,10 +292,10 @@ class MsquicProvisionalScidTest {
         h3Test {
             val tcpOpen = CompletableDeferred<Unit>()
             msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true, acceptAfter = tcpOpen) { port, relay ->
-                testClient(Http3DiscoveryMode.Preferred, engine = {
+                testClient(Http3Discovery.Preferred, engine = {
                     http3 {
-                        earlyData = true
-                        hardDelay = Duration.INFINITE
+                        earlyData { enabled = true }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -346,11 +346,11 @@ class MsquicProvisionalScidTest {
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = true, earlyData = true) { port, relay ->
                 val marks = BrokenMarks()
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    eventListener = marks
+                testClient(Http3Discovery.Preferred, engine = {
+                    observability { eventListener = marks }
                     http3 {
-                        earlyData = true
-                        hardDelay = Duration.INFINITE
+                        earlyData { enabled = true }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -378,7 +378,7 @@ class MsquicProvisionalScidTest {
     @Test fun negative_clearingTheBackoffDropsTheHostsTickets() =
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = false, earlyData = true) { port, _ ->
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { earlyData = true } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { http3 { earlyData { enabled = true } } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val url = "https://127.0.0.1:$port/"
                     assertEquals("h3", c.get(url).bodyAsText())
@@ -396,7 +396,7 @@ class MsquicProvisionalScidTest {
     @Test fun withoutTheProvisionalInitialTheRigConnectsOverHttp3() =
         h3Test {
             msquicLikeOrigin(msquicProvisionalScid = false) { port, relay ->
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("h3", r.bodyAsText())
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)

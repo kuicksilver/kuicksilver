@@ -88,11 +88,11 @@ class ClientHttpsRecordTest {
         source: HttpsRecordSource,
         events: KuicksilverEventListener? = null,
         more: KuicksilverEngineConfig.() -> Unit = {},
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         resolverForTest = loopback
-        eventListener = events
+        observability { eventListener = events }
         connectTimeout = 30.seconds
-        http3 { httpsRecords = source }
+        network { httpsRecords = source }
         more()
     })
 
@@ -178,11 +178,12 @@ class ClientHttpsRecordTest {
                 // TCP starts only once QUIC failed: the pooled HTTP/1.1 connection of the first request cannot win the race.
                 // Without ECH: a client that offers ECH from the records waits for them (RFC 9848 section 5.3)
                 client(source, more = {
-                    ech { fromHttpsRecords = false }
+                    tls { ech { fromHttpsRecords = false } }
                     http3 {
-                        hardDelay = Duration.INFINITE
-                        networkId = { "wifi" } // answers are cached only where a network change can be seen
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
+                        // answers are cached only where a network change can be seen
                     }
+                    network { networkId = { "wifi" } }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     val settled = CompletableDeferred<String>()
@@ -212,7 +213,7 @@ class ClientHttpsRecordTest {
                 // (without ECH from the records: with it the request waits, RFC 9848 section 5.3, see the next test)
                 client(source, more = {
                     connectTimeout = 120.seconds
-                    ech { fromHttpsRecords = false }
+                    tls { ech { fromHttpsRecords = false } }
                 }).use { c ->
                     val r = withTimeout(5.seconds) { c.get("https://server.test:$port/") } // the extra wait, not the 120 s timeout
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
@@ -335,7 +336,7 @@ class ClientHttpsRecordTest {
                 val name = "_$port._https.server.test"
                 val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
                 var network = "wifi"
-                client(records.source, more = { http3 { networkId = { network } } }).use { c ->
+                client(records.source, more = { network { networkId = { network } } }).use { c ->
                     c.get("https://server.test:$port/")
                     c.get("https://server.test:$port/")
                     assertEquals(1, records.asked.size, "cached: ${records.asked}")
@@ -398,7 +399,7 @@ class ClientHttpsRecordTest {
                 val name = "_$port._https.server.test"
                 val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
                 val networks = kotlinx.coroutines.flow.MutableStateFlow<Any?>("wifi")
-                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                client(records.source, more = { http3 { migration = following(networks) } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.followedNetworkUpdates.first { it >= 1 }
                     c.get("https://server.test:$port/")
@@ -436,7 +437,7 @@ class ClientHttpsRecordTest {
                         emit("wifi")
                         awaitCancellation()
                     }
-                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                client(records.source, more = { http3 { migration = following(networks) } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     c.get("https://server.test:$port/")
                     c.get("https://server.test:$port/")
@@ -468,7 +469,7 @@ class ClientHttpsRecordTest {
                 val records = Records(mapOf(name to listOf(record(name, 1, ".", "h2"))))
                 val networks = kotlinx.coroutines.flow.MutableSharedFlow<Any?>(replay = 1)
                 networks.emit("wifi")
-                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                client(records.source, more = { http3 { migration = following(networks) } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.followedNetworkUpdates.first { it >= 1 }
                     c.get("https://server.test:$port/")
@@ -506,7 +507,7 @@ class ClientHttpsRecordTest {
                         fail.await()
                         throw kotlinx.io.IOException("no more network callbacks")
                     }
-                client(records.source, more = { http3 { connectionMigration = following(networks) } }).use { c ->
+                client(records.source, more = { http3 { migration = following(networks) } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.followedNetworkUpdates.first { it >= 1 }
                     c.get("https://server.test:$port/")
@@ -598,7 +599,7 @@ class ClientHttpsRecordTest {
     @Test fun negative_extraWaitOutOfRangeFailsTheEngine() {
         for (bad in listOf((-1).seconds, 0.seconds, 49.milliseconds, 2.seconds)) { // 50 ms..1 s (RFC 9460 section 5.1)
             kotlin.test.assertFailsWith<IllegalArgumentException> {
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { httpsRecordExtraWait = bad } }).close()
+                testClient(Http3Discovery.Auto, engine = { network { httpsRecordWait = bad } }).close()
             }
         }
     }

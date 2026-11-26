@@ -71,7 +71,7 @@ class ClientCloseJoinTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val sink = CountingQlogSink()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { qlog = sink } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { observability { qlog = sink } }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     assertEquals(1, sink.opened.load())
                     val job = c.engine.coroutineContext.job
@@ -91,7 +91,7 @@ class ClientCloseJoinTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val sink = CountingQlogSink()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { qlog = sink } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { observability { qlog = sink } }).use { c ->
                     val job = c.engine.coroutineContext.job
                     c.prepareGet("https://127.0.0.1:$port/").execute { r ->
                         c.close() // the call in flight finishes first, then the cleanup

@@ -22,14 +22,14 @@ import kotlin.time.Duration.Companion.seconds
 
 /** The chat server and its clients in one JVM, over real UDP on loopback: Kuicksilver's Ktor engines on both sides. */
 class ChatTest {
-    private fun client() = HttpClient(Kuicksilver) { engine { trust = ChatTls.clientTrust() } }
+    private fun client() = HttpClient(Kuicksilver) { engine { tls { trust = ChatTls.clientTrust() } } }
 
     /** A client that gives each WebTransport session 64 KiB of data credit: a reader that stops is full after that. */
     private fun smallWindowClient() =
         HttpClient(Kuicksilver) {
             engine {
-                trust = ChatTls.clientTrust()
-                http3 { settings = http3Settings { webTransport { initialMaxData = 64L * 1024 } } }
+                tls { trust = ChatTls.clientTrust() }
+                http3 { settings { webTransport { initialMaxData = 64L * 1024 } } }
             }
         }
 

@@ -165,10 +165,10 @@ class ClientConnectUdpProxyTlsTest {
             val seen = Seen()
             val proxy = loopbackProxy()
             withProxyAndOrigin(proxy, seen) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    identity = clientIdentity()
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    tls { identity = clientIdentity() }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     assertEquals("origin", c.get("https://127.0.0.1:$originPort/").bodyAsText())
                 }
@@ -184,10 +184,10 @@ class ClientConnectUdpProxyTlsTest {
         h3Test {
             val seen = Seen()
             withProxyAndOrigin(loopbackProxy(), seen) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    proxyTls = { identity = clientIdentity() }
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    proxies { tls { identity = clientIdentity() } }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     assertEquals("origin", c.get("https://127.0.0.1:$originPort/").bodyAsText())
                 }
@@ -214,19 +214,19 @@ class ClientConnectUdpProxyTlsTest {
             val proxy = loopbackProxy()
             withProxyAndOrigin(proxy, seen) { proxyPort, originPort ->
                 val right = TrustConfig.Pinned(setOf(SpkiSha256(TestCerts.serverSpkiSha256)), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    trust = right
-                    dns = ProxyName
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    tls { trust = right }
+                    network { dns = ProxyName }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     assertEquals("origin", c.get("https://127.0.0.1:$originPort/").bodyAsText())
                 }
                 assertEquals(1, proxy.stats.tunnelsOpened)
                 val wrong = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    trust = wrong
-                    dns = ProxyName
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    tls { trust = wrong }
+                    network { dns = ProxyName }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
                     val chain = generateSequence(e) { it.cause }.toList()
@@ -248,10 +248,10 @@ class ClientConnectUdpProxyTlsTest {
             val seen = Seen()
             val proxy = loopbackProxy()
             withProxyAndOrigin(proxy, seen) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    proxyTls = { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) }
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    proxies { tls { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) } }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
                     assertIs<VerifyReason.PinMismatch>(assertIs<TlsException.Verify>(e.cause, "$e").reason)
@@ -272,10 +272,10 @@ class ClientConnectUdpProxyTlsTest {
             val seen = Seen()
             val proxy = loopbackProxy()
             withProxyAndOrigin(proxy, seen, proxyCert = TestCerts.server, proxyKey = TestCerts.serverKey) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust)
-                    dns = ProxyName
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    tls { trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) }
+                    network { dns = ProxyName }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
                     assertIs<VerifyReason.HostnameMismatch>(assertIs<TlsException.Verify>(e.cause, "$e").reason)
@@ -297,10 +297,10 @@ class ClientConnectUdpProxyTlsTest {
         h3Test {
             val seen = Seen()
             withProxyAndOrigin(loopbackProxy(), seen, proxyIssuesTickets = true) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    connectUdpProxy = udpProxy(proxyPort)
-                    http3 { earlyData = true }
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    proxies { connectUdp = udpProxy(proxyPort) }
+                    http3 { earlyData { enabled = true } }
                 }).use { c ->
                     val h3 = (c.engine as KuicksilverEngine).h3
                     val chosen = AtomicReference(emptyList<Pair<Int, Http3Endpoint>>())
@@ -362,10 +362,10 @@ class ClientConnectUdpProxyTlsTest {
      */
     private suspend fun assertProxyTlsFailure(proxyPort: Int): ProxyTlsException {
         lateinit var e: ProxyTlsException
-        testClient(Http3DiscoveryMode.H3Only, engine = {
-            dns = ProxyName
-            identity = clientIdentity()
-            connectUdpProxy = udpProxy(proxyPort)
+        testClient(Http3Discovery.H3Only, engine = {
+            network { dns = ProxyName }
+            tls { identity = clientIdentity() }
+            proxies { connectUdp = udpProxy(proxyPort) }
             connectTimeout = 30.seconds
         }).use { c ->
             e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:1/").bodyAsText() }
@@ -430,9 +430,9 @@ class ClientConnectUdpProxyTlsTest {
                     )
                 if (!silent) listening.close()
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, engine = {
-                        dns = TwoProxyAddresses
-                        connectUdpProxy = udpProxy(port)
+                    testClient(Http3Discovery.H3Only, engine = {
+                        network { dns = TwoProxyAddresses }
+                        proxies { connectUdp = udpProxy(port) }
                         connectTimeout = 1.seconds
                     }).use { c ->
                         val e = assertFailsWith<ProxyTlsException>("silent = $silent") { c.get("https://127.0.0.1:1/").bodyAsText() }
@@ -483,9 +483,9 @@ class ClientConnectUdpProxyTlsTest {
                     { it.closeAndJoin() },
                 )
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = TwoProxyAddresses
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = TwoProxyAddresses }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                     connectTimeout = 3.seconds
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:${silentTarget.localAddress.port}/").bodyAsText() }
@@ -562,9 +562,9 @@ class ClientConnectUdpProxyTlsTest {
     @Test fun negative_aProxyTlsAlertAfterOurHandshakeIsStillAProxyTlsFailure() =
         h3Test {
             withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     (c.engine as KuicksilverEngine).h3.proxyConnectedForTest = {
                         throw io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed(
@@ -602,11 +602,11 @@ class ClientConnectUdpProxyTlsTest {
         h3Test {
             val heard = SetupFailures()
             withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    eventListener = heard
-                    proxyTls = { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) }
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    observability { eventListener = heard }
+                    proxies { tls { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) } }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
                 }
@@ -638,10 +638,10 @@ class ClientConnectUdpProxyTlsTest {
     @Test fun negative_aFailedProxiedCallSaysItsTransportIsQuic() =
         h3Test {
             withProxyAndOrigin(loopbackProxy(), Seen()) { proxyPort, originPort ->
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    proxyTls = { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) }
-                    connectUdpProxy = udpProxy(proxyPort)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    proxies { tls { trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust) } }
+                    proxies { connectUdp = udpProxy(proxyPort) }
                 }).use { c ->
                     val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }
                     val d = e.kuicksilverDiagnostics
@@ -660,10 +660,10 @@ class ClientConnectUdpProxyTlsTest {
             val heard = SetupFailures()
             try {
                 val port = silent.localAddress.port
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    dns = ProxyName
-                    eventListener = heard
-                    connectUdpProxy = udpProxy(port)
+                testClient(Http3Discovery.H3Only, engine = {
+                    network { dns = ProxyName }
+                    observability { eventListener = heard }
+                    proxies { connectUdp = udpProxy(port) }
                     connectTimeout = 1.seconds
                 }).use { c ->
                     assertFailsWith<Throwable> { c.get("https://127.0.0.1:1/").bodyAsText() }
@@ -692,10 +692,10 @@ class ClientConnectUdpProxyTlsTest {
             val proxy = loopbackProxy()
             try {
                 withProxyAndOrigin(proxy, Seen()) { proxyPort, _ ->
-                    testClient(Http3DiscoveryMode.H3Only, engine = {
-                        dns = ProxyName
-                        eventListener = heard
-                        connectUdpProxy = udpProxy(proxyPort)
+                    testClient(Http3Discovery.H3Only, engine = {
+                        network { dns = ProxyName }
+                        observability { eventListener = heard }
+                        proxies { connectUdp = udpProxy(proxyPort) }
                         connectTimeout = 2.seconds
                     }).use { c ->
                         assertFailsWith<Throwable> { c.get("https://127.0.0.1:${silentTarget.localAddress.port}/").bodyAsText() }

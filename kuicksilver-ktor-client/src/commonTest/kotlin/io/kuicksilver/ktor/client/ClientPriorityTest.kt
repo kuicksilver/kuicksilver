@@ -53,7 +53,7 @@ class ClientPriorityTest {
         h3Test {
             val (server, port) = fieldServer()
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get("https://127.0.0.1:$port/f") { priority(1, incremental = true) }
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("[u=1, i]", r.bodyAsText())
@@ -67,7 +67,7 @@ class ClientPriorityTest {
         h3Test {
             val (server, port) = fieldServer()
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     assertEquals("null", c.get("https://127.0.0.1:$port/f") { priority() }.bodyAsText())
                     assertEquals("null", c.get("https://127.0.0.1:$port/f").bodyAsText())
                 }
@@ -81,7 +81,7 @@ class ClientPriorityTest {
         h3Test {
             val (server, port) = fieldServer()
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r =
                         c.get("https://127.0.0.1:$port/f") {
                             header("Priority", "u=5")
@@ -137,7 +137,7 @@ class ClientPriorityTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val done =
                         c.prepareGet("https://127.0.0.1:$port/u") { priority(1) }.execute { r ->
                             assertTrue(r.updatePriority(6, incremental = false))
@@ -166,7 +166,7 @@ class ClientPriorityTest {
                     routing { get("/r") { call.respondRedirect("http://127.0.0.1:$plainPort/f") } }
                 }
             try {
-                testClient(Http3DiscoveryMode.Preferred, block = { install(HttpRedirect) { allowHttpsDowngrade = true } }).use { c ->
+                testClient(Http3Discovery.Preferred, block = { install(HttpRedirect) { allowHttpsDowngrade = true } }).use { c ->
                     c.prepareGet("https://127.0.0.1:$port/r") { priority(1) }.execute { r ->
                         assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                         assertEquals("ok", r.bodyAsText())
@@ -197,7 +197,7 @@ class ClientPriorityTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     // the first request learns Alt-Svc over HTTP/1.1, the next race HTTP/3 against the pooled HTTP/1.1
                     // connection, which wins on loopback while QUIC comes up (as ClientAltSvcTest.autoUpgradesToH3AfterAltSvc):
                     // requests go on until one reaches the alternative and is sent again over HTTP/1.1 after its 421
@@ -238,7 +238,7 @@ class ClientPriorityTest {
                     routing { serverWebSocket("/ws") { send(Frame.Text("${call.request.serverPriority}")) } }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                     c.webSocket("wss://127.0.0.1:$port/ws", request = { priority(2) }) {
                         val f = withTimeout(5.seconds) { incoming.receive() } as Frame.Text
                         assertEquals("${StreamPriority(2)}", f.readText())

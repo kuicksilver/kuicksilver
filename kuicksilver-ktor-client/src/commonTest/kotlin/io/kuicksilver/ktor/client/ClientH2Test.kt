@@ -146,7 +146,7 @@ class ClientH2Test {
         clientTest {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
                 val listener = EventRecorder()
-                testClient(engine = { eventListener = listener }).use { c ->
+                testClient(engine = { observability { eventListener = listener } }).use { c ->
                     repeat(3) { assertEquals("h2", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                     assertEquals(1, log.acceptCount)
                     assertEquals(listOf(false, true, true), listener.acquired.map { it.second })
@@ -196,7 +196,7 @@ class ClientH2Test {
     @Test fun tls12AllowedStillOffersH2() =
         clientTest {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, log ->
-                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                testClient(engine = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(listOf<String?>("h2"), log.protocols)
                 }
@@ -310,7 +310,7 @@ class ClientH2Test {
     @Test fun http3SwitchedOffStillUsesH2() =
         clientTest {
             tlsH2WithSilentUdp(onRequest = { _, r -> ok(r) }) { port, _ ->
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { http3Allowed = { false } } }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { http3 { allowed = { false } } }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
                     assertEquals(FallbackReason.Http3Disabled, r.kuicksilverDiagnostics!!.fallback)
@@ -322,9 +322,9 @@ class ClientH2Test {
         clientTest {
             tlsH2WithSilentUdp(silentUdp = true, onRequest = { _, r -> ok(r) }) { port, _ ->
                 val listener = EventRecorder()
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    eventListener = listener
-                    http3 { hardDelay = 10.milliseconds }
+                testClient(Http3Discovery.Preferred, engine = {
+                    observability { eventListener = listener }
+                    http3 { expert { raceHeadStart = RaceHeadStart.Fixed(10.milliseconds) } }
                 })
                     .use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
@@ -382,7 +382,7 @@ class ClientH2Test {
                     ok(r)
                 },
             ) { port, log ->
-                testClient(engine = { maxConnectionsPerRoute = 1 }).use { c ->
+                testClient(engine = { pool { maxConnectionsPerRoute = 1 } }).use { c ->
                     coroutineScope {
                         val first = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
                         withTimeout(10.seconds) { arrived.receive() }
@@ -404,7 +404,7 @@ class ClientH2Test {
                 if (n.addAndFetch(1) == 1) r.reset(Http2ErrorCode.REFUSED_STREAM) else ok(r)
             }) { port, _ ->
                 val listener = EventRecorder()
-                testClient(engine = { eventListener = listener }).use { c ->
+                testClient(engine = { observability { eventListener = listener } }).use { c ->
                     val r = c.post("https://127.0.0.1:$port/") { setBody("payload") }
                     assertEquals("h2", r.bodyAsText())
                     // RFC 9113 section 8.7: REFUSED_STREAM means nothing was processed, so even a POST goes again
@@ -431,7 +431,7 @@ class ClientH2Test {
                 },
             ) { port, log ->
                 testClient(engine = {
-                    maxConnectionsPerRoute = 1
+                    pool { maxConnectionsPerRoute = 1 }
                     connectTimeout = 3.seconds
                 }).use { c ->
                     assertEquals("h2", c.post("https://127.0.0.1:$port/") { setBody("payload") }.bodyAsText())
@@ -459,7 +459,7 @@ class ClientH2Test {
                 }
             }) { port, log ->
                 testClient(engine = {
-                    maxConnectionsPerRoute = 1
+                    pool { maxConnectionsPerRoute = 1 }
                     connectTimeout = 3.seconds
                 }).use { c ->
                     assertEquals("h2", c.post("https://127.0.0.1:$port/") { setBody("payload") }.bodyAsText())
@@ -514,7 +514,7 @@ class ClientH2Test {
                     }
                 }) { port ->
                     testClient(engine = {
-                        maxConnectionsPerRoute = 1
+                        pool { maxConnectionsPerRoute = 1 }
                         connectTimeout = 10.seconds
                     }).use { c ->
                         val pool = engine(c).h1.pool
@@ -863,7 +863,7 @@ class ClientH2Test {
             }) { port ->
                 // one connection per route, so that the server sees every request (a second connection would also be fine,
                 // but its server could not tell the last request it gets)
-                testClient(engine = { maxConnectionsPerRoute = 1 }).use { c ->
+                testClient(engine = { pool { maxConnectionsPerRoute = 1 } }).use { c ->
                     val bodies =
                         coroutineScope {
                             (1..calls)

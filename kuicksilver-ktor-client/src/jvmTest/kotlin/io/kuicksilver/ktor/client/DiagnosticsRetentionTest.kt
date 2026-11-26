@@ -53,7 +53,7 @@ class DiagnosticsRetentionTest {
                 }
             val held = ArrayList<Any>() // what the application keeps: a response's diagnostics, a failure
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { connectionListener = listener } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { observability { connectionListener = listener } }).use { c ->
                     // the whole diagnostics of a response (a handle kept past the call's end would show) and its snapshot
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     held += d

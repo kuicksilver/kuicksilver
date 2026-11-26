@@ -1043,11 +1043,10 @@ class ClientH2WebSocketTest {
                 testClient(
                     engine = {
                         http2 {
-                            settings =
-                                http2Settings {
-                                    initialStreamWindow = 65_536
-                                    maxStreamWindow = 65_536
-                                }
+                            settings {
+                                initialStreamWindow = 65_536
+                                maxStreamWindow = 65_536
+                            }
                         }
                     },
                     block = { install(WebSockets) },

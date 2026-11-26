@@ -29,7 +29,7 @@ class ClientH3EndpointCloseTest {
                 val chosen = LinkedHashMap<String, Http3Endpoint>()
                 // closed also when a request or a check fails: the leak sentinel would otherwise wait for its endpoints and
                 // report them beside the failure, in this test and in the class's check
-                testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { connectTimeout = 300.milliseconds }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.h3.endpointChosenForTest = { _, ep -> chosen[ep.localAddress.ipLiteral()] = ep }
                     assertEquals("ok", c.get("https://127.0.0.1:$p4/").bodyAsText())

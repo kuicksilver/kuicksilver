@@ -52,7 +52,7 @@ class ProxyBasicCredentialsTest {
                 HttpClient(Kuicksilver) {
                     engine {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:3128"))
-                        proxyCredentials = ProxyCredentials("a:b", "p")
+                        proxies { credentials = ProxyCredentials("a:b", "p") }
                     }
                 }.close()
             }

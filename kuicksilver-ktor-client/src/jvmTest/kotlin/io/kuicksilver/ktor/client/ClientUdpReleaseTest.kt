@@ -30,11 +30,11 @@ class ClientUdpReleaseTest {
                 }
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c -> assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText()) }
+                testClient(Http3Discovery.H3Only).use { c -> assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                 delay(300)
                 val baseline = receivers()
                 repeat(6) {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     }
                 }

@@ -83,9 +83,9 @@ class ClientFallbackTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    quic = quicConfig { handshakeTimeout = 500.milliseconds }
-                    eventListener = listener
+                testClient(Http3Discovery.Auto, engine = {
+                    quicHandshakeTimeoutForTest = 500.milliseconds
+                    observability { eventListener = listener }
                 }).use { c ->
                     assertEquals("h1", c.get("https://127.0.0.1:$port/").bodyAsText()) // learns the alternative
                     val t0 = TimeSource.Monotonic.markNow()
@@ -116,8 +116,8 @@ class ClientFallbackTest {
                 ) { routing { get("/") { call.respondText("must not be reached") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    trust = pinned
+                testClient(Http3Discovery.Preferred, engine = {
+                    tls { trust = pinned }
                     connectTimeout = 1.seconds
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
@@ -320,9 +320,9 @@ class ClientFallbackTest {
                 // the losing HTTP/3 setup is settled (marked or not) in the background: each call waits for it
                 val settled = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        eventListener = listener
-                        http3 { hardDelay = Duration.INFINITE }
+                    testClient(Http3Discovery.Auto, engine = {
+                        observability { eventListener = listener }
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         engine.raceLoserSettledForTest = { settled.trySend(Unit) }
@@ -362,7 +362,7 @@ class ClientFallbackTest {
     /** A client on [port]'s alternative, with an HTTP/3 connection open: learns `Alt-Svc`, then one call goes over HTTP/3. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun h3Client(port: Int): io.ktor.client.HttpClient {
-        val c = testClient(Http3DiscoveryMode.Auto, engine = { http3 { hardDelay = Duration.INFINITE } })
+        val c = testClient(Http3Discovery.Auto, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } })
         c.get("https://127.0.0.1:$port/") // learns h3
         val r = c.get("https://127.0.0.1:$port/")
         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
@@ -531,9 +531,9 @@ class ClientFallbackTest {
                     }
                 val origin = "https://127.0.0.1:$port"
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        eventListener = listener
-                        http3 { hardDelay = Duration.INFINITE }
+                    testClient(Http3Discovery.Auto, engine = {
+                        observability { eventListener = listener }
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         c.get("$origin/") // learns h3
@@ -599,9 +599,9 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        http3 { quicHints = setOf(HostPort("127.0.0.1", port)) }
-                        quic = quicConfig { handshakeTimeout = 500.milliseconds }
+                    testClient(Http3Discovery.Auto, engine = {
+                        http3 { hints = setOf(HostPort("127.0.0.1", port)) }
+                        quicHandshakeTimeoutForTest = 500.milliseconds
                     }).use { c ->
                         assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     }
@@ -648,7 +648,7 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = listener }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { observability { eventListener = listener } }).use { c ->
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                         val engine = c.engine as KuicksilverEngine
                         if (winners.single() == HttpProtocolVersion.HTTP_1_1) {
@@ -677,7 +677,7 @@ class ClientFallbackTest {
                 val (server, ep, port) =
                     h1AndH3({ routing { get("/") { call.respondText("h1") } } }) { p -> failingH3(okPaths = setOf("/warmup"), port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         // the first request may be won by HTTP/1.1 outright; wait for the HTTP/3 connection the race left behind
                         c.get("https://127.0.0.1:$port/warmup")
@@ -710,7 +710,7 @@ class ClientFallbackTest {
                         }
                     }) { p -> failingH3(port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
                         assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                         assertEquals(1, h1Calls)
@@ -737,7 +737,7 @@ class ClientFallbackTest {
                         }
                     }) { p -> failingH3(okPaths = setOf("/warmup"), port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         // set up the HTTP/3 connection first (the first request may race to HTTP/1.1), so the POST goes over HTTP/3;
                         // the warm-up must succeed over HTTP/3: a fallback would mark the alternative broken and route the POST to HTTP/1.1
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
@@ -804,7 +804,7 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
                         val engine = c.engine as KuicksilverEngine
                         engine.awaitH3Connection(port)

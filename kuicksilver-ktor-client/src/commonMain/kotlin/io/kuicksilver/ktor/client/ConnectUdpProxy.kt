@@ -15,7 +15,7 @@ import kotlin.io.encoding.Base64
  *
  * @property template the proxy's URI Template (RFC 9298 section 2), checked when it was parsed; its authority is the proxy's
  *   host and port (443 when it has none), reached over HTTP/3 directly with the proxy's TLS settings
- *   (`KuicksilverEngineConfig.proxyTls`, by default the engine's trust without what names the origin and without the client
+ *   (`proxies { tls { } }`, by default the engine's trust without what names the origin and without the client
  *   certificate, as an `https://` proxy over TCP; ADR-0023); a failed handshake with it is a [ProxyTlsException].
  * @property credentials sent to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT, never to the origin;
  *   null for none. A user name with a colon, or control characters in either part, fail here with IllegalArgumentException

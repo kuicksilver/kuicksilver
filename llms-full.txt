@@ -2858,7 +2858,7 @@ import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
@@ -3846,12 +3846,41 @@ parameter, but encrypted keys are refused with `TlsException.Config` whatever it
 
 ### Client
 
+The most common case is to configure nothing:
+
+```kotlin
+// guide:ktor:first-screen-client
+val client = HttpClient(Kuicksilver) // explicit engine: HttpClient() may pick OkHttp/Android first (ServiceLoader)
+```
+
+The first request to a host goes over TCP (HTTP/2 or HTTP/1.1); HTTP/3 from the next one, once the server sent
+`Alt-Svc`. A mobile app talking to its own API sets a handful of options, all stable but `migration`:
+
+```kotlin
+@file:OptIn(ExperimentalKuicksilverApi::class)   // only for http3 { migration }
+
+// guide:ktor:first-screen-mobile
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectTimeout = 10.seconds
+        http3 {
+            hints = setOf(HostPort("api.example.com", 443))                         // HTTP/3 from the first request
+            altSvcStore = FileAltSvcStore(File(context.cacheDir, "alt-svc"))        // remember HTTP/3 across restarts
+            allowed = { remoteConfig.http3Enabled }                                  // remote kill switch
+            migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)  // Wi-Fi <-> LTE without a reset
+        }
+        tls { trust = TrustConfig.AnchoredCa(listOf(privateCa)) }                    // only for a private CA
+        observability { logger = KuicksilverLogger.platform(LogLevel.Info) }         // while you debug "why not HTTP/3"
+    }
+}
+```
+
 ```kotlin
 // guide:ktor:client
 val client = HttpClient(Kuicksilver) {
     engine {
-        trust = TrustConfig.Pinned(setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")), base = TrustConfig.Platform)
-        http3 { discovery = Http3DiscoveryMode.Auto }    // the default: HTTP/1.1 first, HTTP/3 after Alt-Svc
+        tls { trust = TrustConfig.Pinned(setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")), base = TrustConfig.Platform) }
+        http3 { discovery = Http3Discovery.Auto }    // the default: HTTP/1.1 first, HTTP/3 after Alt-Svc
     }
     install(HttpTimeout) { connectTimeoutMillis = 5_000; socketTimeoutMillis = 15_000 }
 }
@@ -3933,9 +3962,7 @@ val client = HttpClient(Kuicksilver) {
         http2 {
             enabled = true                                      // the default: offer h2 on every TLS connection over TCP
             pingInterval = 30.seconds                           // a keep-alive PING; Duration.INFINITE (the default): none
-            settings = http2Settings {
-                initialStreamWindow = 1 shl 20
-            }  // our windows and limits (threat model 3.23)
+            settings { initialStreamWindow = 1 shl 20 }  // our windows and limits (threat model 3.23)
         }
     }
 }
@@ -4067,11 +4094,11 @@ grpc-go's `insecure.NewCredentials()` is per channel.
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
-        maxConnectionsCount = 1000                 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
-        maxConnectionsPerRoute = 100               // ... to one route (scheme, host, port, proxy)
-        maxIdleConnectionsPerRoute = 4             // idle keep-alive connections kept per route
-        idleTimeout = 5.minutes                    // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
-        maxConnectionLifetime = Duration.INFINITE  // age after which a connection takes no new requests
+        pool { maxConnections = 1000 }                 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
+        pool { maxConnectionsPerRoute = 100 }               // ... to one route (scheme, host, port, proxy)
+        pool { maxIdleConnectionsPerRoute = 4 }             // idle keep-alive connections kept per route
+        pool { idleTimeout = 5.minutes }                    // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
+        pool { maxConnectionLifetime = null }  // age after which a connection takes no new requests
     }
 }
 ```
@@ -4125,7 +4152,7 @@ val client = HttpClient(Kuicksilver) {
     engine {
         // another origin's HTTP/2 or HTTP/3 connection may carry a request when its certificate passes every check
         // for the request's host and that host resolves to its address (off by default)
-        connectionCoalescing = true
+        pool { coalescing = true }
     }
 }
 ```
@@ -4485,8 +4512,8 @@ val client =
     HttpClient(Kuicksilver) {
         engine {
             // the records' `ech`, through your DNS-over-HTTPS exchange (see "HTTPS records")
-            http3 { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
-            ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) }
+            network { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
+            tls { ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) } }
         }
     }
 ```
@@ -4547,13 +4574,13 @@ answers, the engine connects to with Happy Eyeballs over TCP (HTTP/1.1, HTTP/2) 
 val fixed = mapOf("api.example.test" to listOf(IpAddress.parse("192.0.2.10"), IpAddress.parse("2001:db8::10")))
 val client = HttpClient(Kuicksilver) {
     engine {
-        dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) }
+        network { dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) } }
     }
 }
 // a blocking resolver (here the JDK's; an OkHttp Dns alike) runs on threads of its own
 val blocking = HttpClient(Kuicksilver) {
     engine {
-        dns = Dns.blocking { name -> java.net.InetAddress.getAllByName(name).map { IpAddress.of(it) } }
+        network { dns = Dns.blocking { name -> java.net.InetAddress.getAllByName(name).map { IpAddress.of(it) } } }
     }
 }
 ```
@@ -4696,7 +4723,7 @@ val remoteConfig = MutableStateFlow(true)
 val quicAllowed: StateFlow<Boolean> = remoteConfig // updated by your remote configuration
 val client =
     HttpClient(Kuicksilver) {
-        engine { http3 { http3Allowed = { quicAllowed.value } } }
+        engine { http3 { allowed = { quicAllowed.value } } }
     }
 // to take HTTP/3 off at once, not only for the next requests:
 client.closeHttp3Connections()
@@ -4757,7 +4784,7 @@ val connectivity = context.getSystemService(ConnectivityManager::class.java)
 // inside HttpClient(Kuicksilver) { engine { http3 { ... } } }:
 // guide:ktor:android-migration
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
+migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
 ```
 
 On iOS and macOS, `Http3ConnectionMigration.followDefaultNetwork()` does the same with the Network framework
@@ -4932,23 +4959,25 @@ val password = System.getenv("PROXY_PASSWORD") ?: ""
 val viaProxy = HttpClient(Kuicksilver) {
     engine {
         proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
-        proxyCredentials = ProxyCredentials("user", password) // for `proxy` only
+        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
     }
 }
 // a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
 val perHost = HttpClient(Kuicksilver) {
     engine {
-        proxyResolver = ProxyResolver { url ->
-            if (url.host.endsWith(".internal.test")) null // direct
-            else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+        proxies {
+            resolver = ProxyResolver { url ->
+                if (url.host.endsWith(".internal.test")) null // direct
+                else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+            }
         }
     }
 }
 // an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
 val overTls = HttpClient(Kuicksilver) {
     engine {
-        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
-        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+        proxies { resolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) } }
+        proxies { tls { trust = TrustConfig.Platform } } // the proxy's own trust (default: the origin's, without pins)
     }
 }
 ```
@@ -4997,10 +5026,10 @@ through the tunnel times out.
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
-        connectUdpProxy = ConnectUdpProxy(
+        proxies { connectUdp = ConnectUdpProxy(
             UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
             ProxyCredentials("user", password),
-        ) { url -> !url.host.endsWith(".internal.test") }   // these go the usual way
+        ) { url -> !url.host.endsWith(".internal.test") } }   // these go the usual way
     }
 }
 ```
@@ -5078,8 +5107,8 @@ The client presents its certificate with `identity`, for HTTP/3, HTTP/2 and HTTP
 val identity = TlsIdentity.fromPem(clientChainPem, clientKeyPem.toCharArray())   // every target; the key array is zeroed
 val client = HttpClient(Kuicksilver) {
     engine {
-        this.identity = identity                                            // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
-        trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))   // or keep Platform for a public server certificate
+        tls { this.identity = identity }                                            // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
+        tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem)) }   // or keep Platform for a public server certificate
     }
 }
 ```
@@ -5302,12 +5331,12 @@ handshake, with its address; [Why did this call fail?](#why-did-this-call-fail))
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 HttpClient(Kuicksilver) {
     engine {
-        eventListener = object : KuicksilverEventListener() {
+        observability { eventListener = object : KuicksilverEventListener() {
             override fun protocolSelected(request: HttpRequestData, protocol: HttpProtocolVersion, reason: ProtocolReason) {
                 println("${request.url}: $protocol ($reason)")
             }
-        }
-        http3 { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+        } }
+        observability { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
     }
 }
 ```
@@ -5407,14 +5436,14 @@ fun logLine(line: String) = println(line)   // your logging library
 val client = HttpClient(Kuicksilver) {
     engine {
         // the engine's own line per call that HTTP/3 could have served, into your logging
-        logger = object : KuicksilverLogger {
+        observability { logger = object : KuicksilverLogger {
             override fun isEnabled(level: LogLevel) = level >= LogLevel.Info
             override fun log(level: LogLevel, message: String, cause: Throwable?) = logLine("$level $message")
-        }
+        } }
         // the HTTP/3 failure itself, when it happens; why the call did not use HTTP/3 is on the response
-        eventListener = object : KuicksilverEventListener() {
+        observability { eventListener = object : KuicksilverEventListener() {
             override fun fallback(request: HttpRequestData, cause: Throwable) = logLine("HTTP/3 failed for ${request.url.host}: $cause")
-        }
+        } }
     }
     // one line per response: the protocol and why
     install(createClientPlugin("ProtocolLog") {
@@ -5642,7 +5671,7 @@ val server = embeddedServer(Kuicksilver, configure = {
 }, module = Application::module)
 // guide:ktor:zero-rtt-client
 val client = HttpClient(Kuicksilver) {
-    engine { http3 { earlyData = true } }
+    engine { http3 { earlyData { enabled = true } } }
 }
 ```
 

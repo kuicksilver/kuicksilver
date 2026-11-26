@@ -75,7 +75,7 @@ class H3WebSocketConnectRaceTest {
                 }
             try {
                 testClient(
-                    Http3DiscoveryMode.H3Only,
+                    Http3Discovery.H3Only,
                     // the deadline of the CONNECT (and of the QUIC handshake before it)
                     engine = { connectTimeout = timeout },
                     block = { install(WebSockets) },

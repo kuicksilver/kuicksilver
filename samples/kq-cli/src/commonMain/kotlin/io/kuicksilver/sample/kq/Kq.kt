@@ -11,7 +11,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.ktor.client.FileAltSvcStore
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.InMemoryAltSvcStore
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.closeHttp3Connections
@@ -131,20 +131,21 @@ private suspend fun run(
                 expectSuccess = false
                 followRedirects = false // as curl without -L: a redirect is the answer
                 engine {
-                    trust?.let { this.trust = it }
+                    trust?.let { tls { this.trust = it } }
                     o.connectTimeout?.let { connectTimeout = it }
                     offered = listOf(VersionProfile.V1) // the engine's QUIC versions: the default
                     http3 {
-                        discovery =
-                            when (o.mode) {
-                                Mode.Auto -> Http3DiscoveryMode.Auto
-                                Mode.Http3 -> Http3DiscoveryMode.Preferred
-                                Mode.Http3Only -> Http3DiscoveryMode.H3Only
-                                Mode.Http2, Mode.Http11 -> Http3DiscoveryMode.H1Only
-                            }
+                        when (o.mode) {
+                            Mode.Auto -> discovery = Http3Discovery.Auto
+                            Mode.Http3 -> discovery = Http3Discovery.Preferred
+                            Mode.Http3Only -> discovery = Http3Discovery.H3Only
+                            Mode.Http2, Mode.Http11 -> enabled = false
+                        }
                         altSvcStore = store
+                        earlyData { enabled = o.zeroRtt }
+                    }
+                    observability {
                         connectionListener = observer
-                        earlyData = o.zeroRtt
                         qlog?.let { this.qlog = it.second }
                     }
                     if (o.mode == Mode.Http11) http2 { enabled = false }

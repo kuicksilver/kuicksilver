@@ -10,8 +10,9 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.engine.EmbeddedServer
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
+import io.kuicksilver.ktor.client.RaceHeadStart
 import io.kuicksilver.ktor.server.EngineMain
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 import io.kuicksilver.tls.Certificate
@@ -72,17 +73,17 @@ class Http3ServerTest {
     }
 
     private fun client(
-        discovery: Http3DiscoveryMode,
+        discovery: Http3Discovery?,
         http2: Boolean = true,
     ) = HttpClient(Kuicksilver) {
         engine {
-            trust = TrustConfig.AnchoredCa(Certificate.parsePem(TestCerts.caPem))
+            tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(TestCerts.caPem)) }
             http2 { enabled = http2 }
             http3 {
-                this.discovery = discovery
+                discovery?.let { this.discovery = it } ?: run { enabled = false }
                 // the second request waits for QUIC instead of racing it against the open HTTP/2 connection, which on a
                 // network where QUIC was never seen gets a 10 ms head start only (docs/guide/ktor.md, "Racing and fallback")
-                hardDelay = Duration.INFINITE
+                expert { raceHeadStart = RaceHeadStart.NoRace }
             }
         }
     }
@@ -93,7 +94,7 @@ class Http3ServerTest {
     @Test fun altSvcLeadsTheClientToHttp3() =
         start().use { s ->
             runBlocking {
-                client(Http3DiscoveryMode.Auto).use { c ->
+                client(Http3Discovery.Auto).use { c ->
                     val first = c.get(s.url)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, first.version)
                     assertEquals("h3=\":${s.port}\"; ma=86400", first.headers["Alt-Svc"])
@@ -109,7 +110,7 @@ class Http3ServerTest {
     @Test fun http3OnlyClient() =
         start().use { s ->
             runBlocking {
-                client(Http3DiscoveryMode.H3Only).use { c ->
+                client(Http3Discovery.H3Only).use { c ->
                     val r = c.get(s.url)
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("Hello over HTTP/3 from 127.0.0.1", r.line())
@@ -121,7 +122,7 @@ class Http3ServerTest {
     @Test fun http11FallbackOnTheSamePort() =
         start().use { s ->
             runBlocking {
-                client(Http3DiscoveryMode.H1Only, http2 = false).use { c ->
+                client(null, http2 = false).use { c ->
                     val r = c.get(s.url)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("h3=\":${s.port}\"; ma=86400", r.headers["Alt-Svc"])
@@ -156,7 +157,7 @@ class Http3ServerTest {
     @Test fun negative_proxyProtocolRefusesAClientWithoutHeader() =
         start("kuicksilver.proxyProtocol.trustedSources=127.0.0.1/32", "kuicksilver.altSvc=false").use { s ->
             runBlocking {
-                client(Http3DiscoveryMode.H1Only).use { c ->
+                client(null).use { c ->
                     // reset at accept, before TLS: the client's read fails with "Connection reset" (closed, on some systems)
                     val e = assertFails { c.get(s.url) }
                     val chain = generateSequence(e) { it.cause }.toList()
@@ -167,7 +168,7 @@ class Http3ServerTest {
                     )
                 }
                 // HTTP/3 takes no header (UDP): it still works, and reports the UDP peer
-                client(Http3DiscoveryMode.H3Only).use { c -> assertEquals("Hello over HTTP/3 from 127.0.0.1", c.get(s.url).line()) }
+                client(Http3Discovery.H3Only).use { c -> assertEquals("Hello over HTTP/3 from 127.0.0.1", c.get(s.url).line()) }
             }
         }
 

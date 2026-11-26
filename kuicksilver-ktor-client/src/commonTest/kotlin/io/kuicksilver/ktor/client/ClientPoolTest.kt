@@ -95,7 +95,7 @@ class ClientPoolTest {
                     }
                 }
             try {
-                testClient(engine = { maxConnectionsPerRoute = 3 }).use { client ->
+                testClient(engine = { pool { maxConnectionsPerRoute = 3 } }).use { client ->
                     val bodies =
                         coroutineScope {
                             (0 until 24)
@@ -132,8 +132,8 @@ class ClientPoolTest {
             val (b, portB) = testServer(plain = true, module = module)
             try {
                 testClient(engine = {
-                    maxConnectionsCount = 2
-                    maxConnectionsPerRoute = 2
+                    pool { maxConnections = 2 }
+                    pool { maxConnectionsPerRoute = 2 }
                 }).use { client ->
                     val bodies =
                         coroutineScope {
@@ -169,7 +169,7 @@ class ClientPoolTest {
                     }
                 }
             try {
-                testClient(engine = { maxConnectionsPerRoute = 1 }) { install(HttpTimeout) }.use { client ->
+                testClient(engine = { pool { maxConnectionsPerRoute = 1 } }) { install(HttpTimeout) }.use { client ->
                     val pool = (client.engine as KuicksilverEngine).h1.pool
                     coroutineScope {
                         val slow = async { client.get("http://127.0.0.1:$port/slow").bodyAsText() }
@@ -193,7 +193,7 @@ class ClientPoolTest {
         clientTest {
             val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(engine = { idleTimeout = 200.milliseconds }).use { client ->
+                testClient(engine = { pool { idleTimeout = 200.milliseconds } }).use { client ->
                     val pool = (client.engine as KuicksilverEngine).h1.pool
                     assertEquals("ok", client.get("http://127.0.0.1:$port/").bodyAsText())
                     eventually { pool.liveCount == 0 }
@@ -219,7 +219,7 @@ class ClientPoolTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val responses =
                         coroutineScope {
                             (0 until 12).map { async(Dispatchers.Default) { client.get("https://127.0.0.1:$port/") } }.awaitAll()
@@ -250,7 +250,7 @@ class ClientPoolTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only) { install(HttpTimeout) }.use { client ->
+                testClient(Http3Discovery.H3Only) { install(HttpTimeout) }.use { client ->
                     assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText()) // connected, SETTINGS in
                     coroutineScope {
                         val slow = async { client.get("https://127.0.0.1:$port/slow").bodyAsText() }
@@ -274,7 +274,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val inSetup = CompletableDeferred<Unit>()
                     val setups = AtomicInt(0)
@@ -303,7 +303,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { idleTimeout = 200.milliseconds }).use { client ->
+                testClient(Http3Discovery.H3Only, engine = { pool { idleTimeout = 200.milliseconds } }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                     val conn = engine.h3.connectionsForTest().single()
@@ -320,7 +320,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { maxConnectionLifetime = 200.milliseconds }).use { client ->
+                testClient(Http3Discovery.H3Only, engine = { pool { maxConnectionLifetime = 200.milliseconds } }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                     val first = engine.h3.connectionsForTest().single()
@@ -345,7 +345,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     repeat(ROUNDS) { round ->
                         assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
@@ -373,7 +373,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     var probed = 0
                     repeat(HELD_ROUNDS) { round ->
@@ -417,7 +417,7 @@ class ClientPoolTest {
         clientTest {
             val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H1Only).use { client ->
+                testClient(null).use { client ->
                     val h1 = (client.engine as KuicksilverEngine).h1
                     val url = "https://127.0.0.1:$port/"
                     assertEquals(HttpProtocolVersion.HTTP_1_1, client.get(url).also { assertEquals("ok", it.bodyAsText()) }.version)
@@ -456,7 +456,7 @@ class ClientPoolTest {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val h3 = (client.engine as KuicksilverEngine).h3
                     val made = CompletableDeferred<io.kuicksilver.http3.Http3Connection>()
                     h3.attemptConnectedForTest = { c ->

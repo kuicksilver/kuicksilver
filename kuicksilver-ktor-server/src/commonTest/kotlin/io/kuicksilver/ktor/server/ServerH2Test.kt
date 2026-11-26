@@ -31,7 +31,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.http2Settings
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.neverIndex
 import io.kuicksilver.ktor.client.neverIndexedHeaders
 import io.kuicksilver.native.KslLoader
@@ -69,8 +69,8 @@ class ServerH2Test {
         HttpClient(KuicksilverClient) {
             expectSuccess = false
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only } // the TCP path: HTTP/2 when the server offers it
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false } // the TCP path: HTTP/2 when the server offers it
             }
         }
 

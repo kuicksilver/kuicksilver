@@ -45,13 +45,15 @@ class ClientHttpsEndpointsTest {
     private fun client(
         answers: Map<String, List<SvcbRecord>>,
         viaDns: Boolean = false,
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         if (viaDns) {
-            dns =
-                Dns { host ->
-                    namesLock.withLock { names += host }
-                    listOf(IpAddress.parse("127.0.0.1"))
-                }
+            network {
+                dns =
+                    Dns { host ->
+                        namesLock.withLock { names += host }
+                        listOf(IpAddress.parse("127.0.0.1"))
+                    }
+            }
         } else {
             resolverForTest = { host, p ->
                 namesLock.withLock { names += host }
@@ -59,7 +61,7 @@ class ClientHttpsEndpointsTest {
             }
         }
         connectTimeout = 30.seconds
-        http3 { httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() } }
+        network { httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() } }
     })
 
     private suspend fun h1(
@@ -162,14 +164,14 @@ class ClientHttpsEndpointsTest {
                 try {
                     val name = "_8443._https.server.test"
                     val records = listOf(rec(name, 1, "q.server.test", "h3", port = ep.localAddress.port, noDefaultAlpn = true))
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         // the origin's own addresses never come: the records alone say where to go
                         resolverForTest = { host, p ->
                             if (host == "server.test") kotlinx.coroutines.awaitCancellation()
                             listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
                         }
                         connectTimeout = 30.seconds
-                        http3 { httpsRecords = HttpsRecordsForTest { if (it == name) records else emptyList() } }
+                        network { httpsRecords = HttpsRecordsForTest { if (it == name) records else emptyList() } }
                     }).let { c ->
                         val r = kotlinx.coroutines.withTimeout(10.seconds) { c.get("https://server.test:8443/") }
                         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
@@ -234,15 +236,15 @@ class ClientHttpsAltSvcTest {
         answers: Map<String, List<SvcbRecord>>,
         store: AltSvcStore,
         used: Used,
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
         connectTimeout = 30.seconds
-        eventListener = used
+        observability { eventListener = used }
         http3 {
-            httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() }
             altSvcStore = store
-            hardDelay = kotlin.time.Duration.INFINITE // TCP only after QUIC failed: the race's outcome is QUIC's
+            expert { raceHeadStart = RaceHeadStart.NoRace } // TCP only after QUIC failed: the race's outcome is QUIC's
         }
+        network { httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() } }
     })
 
     private fun storeWith(

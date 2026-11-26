@@ -26,7 +26,7 @@ import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
@@ -70,44 +70,45 @@ suspend fun everyClientImport(
     val client =
         HttpClient(Kuicksilver) {
             engine {
-                this.identity = identity
-                trust =
-                    TrustConfig.Pinned(
-                        setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
-                        base = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)),
-                    )
+                tls { this.identity = identity }
+                tls {
+                    trust =
+                        TrustConfig.Pinned(
+                            setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
+                            base = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)),
+                        )
+                }
                 proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
-                proxyCredentials = ProxyCredentials("user", "password")
-                proxyResolver = ProxyResolver { ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", "password")) }
-                idleTimeout = 5.minutes
-                maxConnectionLifetime = Duration.INFINITE
-                logger = KuicksilverLogger.stderr(LogLevel.Info)
+                proxies { credentials = ProxyCredentials("user", "password") }
+                proxies { resolver = ProxyResolver { ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", "password")) } }
+                pool { idleTimeout = 5.minutes }
+                pool { maxConnectionLifetime = null }
+                observability { logger = KuicksilverLogger.stderr(LogLevel.Info) }
                 http2 {
-                    settings =
-                        http2Settings {
-                            initialStreamWindow = 1 shl 20
-                        }
+                    settings { initialStreamWindow = 1 shl 20 }
                 }
                 http3 {
-                    discovery = Http3DiscoveryMode.Auto
-                    http3Allowed = { allowed.value }
-                    qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
+                    discovery = Http3Discovery.Auto
+                    this.allowed = { allowed.value }
                 }
-                eventListener =
-                    object : KuicksilverEventListener() {
-                        override fun protocolSelected(
-                            request: HttpRequestData,
-                            protocol: HttpProtocolVersion,
-                            reason: ProtocolReason,
-                        ) {}
+                observability { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+                observability {
+                    eventListener =
+                        object : KuicksilverEventListener() {
+                            override fun protocolSelected(
+                                request: HttpRequestData,
+                                protocol: HttpProtocolVersion,
+                                reason: ProtocolReason,
+                            ) {}
 
-                        override fun connectFailed(
-                            request: HttpRequestData,
-                            failure: ConnectFailure,
-                        ) {
-                            println(failure.transport == Transport.Tcp)
+                            override fun connectFailed(
+                                request: HttpRequestData,
+                                failure: ConnectFailure,
+                            ) {
+                                println(failure.transport == Transport.Tcp)
+                            }
                         }
-                    }
+                }
             }
             install(HttpTimeout) { connectTimeoutMillis = 5.seconds.inWholeMilliseconds }
             install(WebSockets) { extensions { install(PerMessageDeflate) } }
@@ -131,5 +132,5 @@ suspend fun everyClientImport(
     stream.output.writeFully("ping".encodeToByteArray())
     println(stream.input.readBuffer().readString())
     client.closeHttp3Connections()
-    HttpClient(Kuicksilver) { engine { connectUdpProxy = ConnectUdpProxy(UdpProxyTemplate.wellKnown("masque.example")) } }.close()
+    HttpClient(Kuicksilver) { engine { proxies { connectUdp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("masque.example")) } } }.close()
 }

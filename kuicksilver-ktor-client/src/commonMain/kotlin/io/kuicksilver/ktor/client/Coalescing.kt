@@ -36,7 +36,7 @@ internal fun KuicksilverEngineConfig.mayCoalesce(
     data: HttpRequestData,
     viaProxy: Boolean,
 ): Boolean =
-    connectionCoalescing && coalescingTrust(trust) && !viaProxy && data.url.protocol.isSecure() &&
+    pool.coalescing && coalescingTrust(tls.trust) && !viaProxy && data.url.protocol.isSecure() &&
         !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) &&
         !data.attributes.contains(NoCoalescingKey)
 
@@ -201,13 +201,13 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
     onRetire: (own: VerifyReason, forHost: VerifyReason) -> Unit = { _, _ -> },
 ): Coalesce {
     val hosts = peer.hosts
-    if (peer.chain.isEmpty() || !coalescingTrust(trust) || hosts.verdict(host) == false) return Coalesce.No
+    if (peer.chain.isEmpty() || !coalescingTrust(tls.trust) || hosts.verdict(host) == false) return Coalesce.No
     try {
         if (dns.answeredDestinations(lookupHost, port).none { Destination.of(it).sameAs(peer.remote) }) return Coalesce.No
         if (hosts.verdict(host) == true) return Coalesce.Yes
         val hidden =
             peer.echAccepted || dns
-                .echRoute(host) { ech.listFor(it) }
+                .echRoute(host) { tls.ech.listFor(it) }
                 .offer.list
                 ?.isUsable == true
         return when (val v = tlsConfigFor(host, alpn).verifyForReuse(peer.chain, peer.stapleUntil, hidden)) {
@@ -224,7 +224,7 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
                 if (v.reason is VerifyReason.HostnameMismatch) return Coalesce.No
                 val ownHidden =
                     peer.echAccepted || dns
-                        .echRoute(peer.ownHost) { ech.listFor(it) }
+                        .echRoute(peer.ownHost) { tls.ech.listFor(it) }
                         .offer.list
                         ?.isUsable == true
                 when (val own = tlsConfigFor(peer.ownHost, alpn).verifyForReuse(peer.chain, peer.stapleUntil, ownHidden)) {

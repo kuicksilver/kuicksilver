@@ -27,7 +27,7 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.AlternativeSource
 import io.kuicksilver.ktor.client.FallbackReason
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.InMemoryAltSvcStore
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.ktor.network.tls
@@ -219,11 +219,13 @@ class ServerHttp3AdvertisingTest {
                 HttpClient(KuicksilverClient) {
                     expectSuccess = false
                     engine {
-                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
+                        tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
                         http3 {
-                            discovery = Http3DiscoveryMode.Auto
+                            discovery = Http3Discovery.Auto
                             altSvcStore = store
-                            hardDelay = Duration.INFINITE // HTTP/1.1 only once HTTP/3 failed: the outcome does not depend on timing
+                            expert {
+                                raceHeadStart = io.kuicksilver.ktor.client.RaceHeadStart.NoRace
+                            } // HTTP/1.1 only once HTTP/3 failed: the outcome does not depend on timing
                         }
                     }
                 }

@@ -59,9 +59,7 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
     ech: EchRoute.Offer? = null,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
-        trust = this@tlsConfigFor.trust
-        identity = this@tlsConfigFor.identity
-        tls()
+        this@tlsConfigFor.tls.applyTo(this)
         // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
         this.alpn = alpn
         serverName = host
@@ -70,7 +68,7 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
         val offered = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
         ech {
             configList = offered
-            grease = this@tlsConfigFor.ech.grease
+            grease = this@tlsConfigFor.tls.ech.grease
         }
     }
 
@@ -92,10 +90,10 @@ internal fun proxyTrustOf(trust: TrustConfig): TrustConfig =
 /**
  * The TLS configuration of a connection to the proxy at [host] (ADR-0023): an `https://` proxy over TCP, or a CONNECT-UDP
  * proxy over QUIC. With
- * [KuicksilverEngineConfig.proxyTls] null: the engine's [KuicksilverEngineConfig.tls] block (versions, groups and the
- * like) over its [KuicksilverEngineConfig.trust], then the resulting trust through [proxyTrustOf], and no client
- * certificate (the origin's identity is not shown to the proxy). With a `proxyTls` block: the trust through
- * [proxyTrustOf] and no identity, then that block, which may replace both. Either way SNI and the reference identifier are
+ * no `proxies { tls { } }` block: the engine's [KuicksilverEngineConfig.tls] (versions, groups and the like) with its
+ * trust through [proxyTrustOf] and no client certificate (the origin's identity is not shown to the proxy). With one: the
+ * trust through [proxyTrustOf] and no identity, then that block, which may replace both; its `ech { configLists }` entry
+ * for the proxy's host is offered to the proxy. Either way SNI and the reference identifier are
  * the proxy's host and ALPN is [alpn] alone (`http/1.1` over TCP, `h3` to a CONNECT-UDP proxy), set last.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -104,23 +102,30 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
     alpn: List<String> = listOf(PROXY_ALPN),
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
-        val own = this@proxyTlsConfigFor.proxyTls
-        // ECH (RFC 9849) on the proxy hop: GREASE as configured, never the origin's configuration; a proxyTls block may
-        // give the proxy's own
+        val own = this@proxyTlsConfigFor.proxies.tlsBlock
+        val origin = this@proxyTlsConfigFor.tls
+        // ECH (RFC 9849) on the proxy hop: GREASE as configured, never the origin's configuration; a proxies { tls { } } block
+        // may give the proxy's own
         if (own == null) {
-            trust = this@proxyTlsConfigFor.trust
-            tls()
-            trust = proxyTrustOf(trust)
-            identity = null
+            val proxy = origin.copy()
+            proxy.trust = proxyTrustOf(origin.trust)
+            proxy.identity = null
+            proxy.applyTo(this)
             ech {
                 configList = null
-                grease = this@proxyTlsConfigFor.ech.grease
+                grease = origin.ech.grease
             }
         } else {
-            trust = proxyTrustOf(this@proxyTlsConfigFor.trust)
-            identity = null
-            ech { grease = this@proxyTlsConfigFor.ech.grease }
-            own()
+            val proxy = ClientTlsConfig()
+            proxy.trust = proxyTrustOf(origin.trust)
+            proxy.ech.grease = origin.ech.grease
+            proxy.own()
+            proxy.applyTo(this)
+            val offered = proxy.ech.listFor(host)
+            ech {
+                configList = offered
+                grease = proxy.ech.grease
+            }
         }
         // HTTP/1.1 to an https:// proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023), h3 to a
         // CONNECT-UDP one

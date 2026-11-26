@@ -45,7 +45,7 @@ class GuideBothEnginesTest {
             }, module = Application::module)
         val client =
             HttpClient(KuicksilverClient) {
-                engine { trust = TrustConfig.AnchoredCa(listOf(Certificate(certs.testCa))) }
+                engine { tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(certs.testCa))) } }
             }
 
         server.start(wait = false)
