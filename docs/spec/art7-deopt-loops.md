@@ -77,7 +77,9 @@ reason and its fix).
 `compileSdk` (35) and the `dexdump` of the build tools AGP 9.3 uses by default (36.0.0; the hosted CI's setup installs
 both). The app is a stub compiled with javac (`tools/check/art7-app/App.java`) that installs event listeners, loggers and
 an `AsyncQlogSink` on the client and the server, two classes of each listener and logger: without one, R8 proves the
-listener null and removes every call of it; with one class only, R8 could bind the calls to it.
+listener null and removes every call of it; with one class only, R8 could bind the calls to it (each class has an
+interface of its own, so that R8 does not merge them, and the script checks that both classes of each base type R8
+keeps are in its dex; R8 9.3 removes the server's event listener altogether, whose calls it finds unreachable).
 
 | dex | as built by | gate |
 | --- | --- | --- |
@@ -91,7 +93,7 @@ the R8 dex; a block of that kind that is not listed fails. `EngineEvents` (`deli
 `closeLive`): R8 9.3 inlines a helper without the block, and the block alone must change R8's output (each is its own
 negative control). `H3PoolKt` (`h3FailureFacts`, `h3RequestMark`): R8 9.3 inlines neither without it; the block guards a
 later R8, so its presence is checked and its effect is not. The positive control is that the debug dex has sites;
-`tools/check/art7-loops-test.sh` has the negative controls on dexdump fixtures (52 cases). The hosted CI runs it in the
+`tools/check/art7-loops-test.sh` has the negative controls on dexdump fixtures (54 cases). The hosted CI runs it in the
 `android (35)` job after `r8-inlining.sh`, the local gate as the step `android: loops ART 7 can deoptimize (R8, D8)`.
 
 Each rule of the filter was taken out of a copy of `art7-loops.py` in turn, and the controls run against it (2026-11-27);
@@ -126,6 +128,7 @@ every one fails at least one control:
 | follow a guarded call's targets | 1 |
 | IC_SIZE bound | 1 |
 | one-class entry's class followed | 2 |
+| each method's entries in the callee cache (`where` in the memo key) | 1 |
 | lock counts | 1 |
 | only io/kuicksilver | 1 |
 | stale allow entries | 1 |

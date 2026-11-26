@@ -472,7 +472,7 @@ def reaches_dead_phi(m, site, copies, body):
             for y in succ.get(x, ()):
                 if y == c:
                     fwd = True; break
-                if y in seen or y not in body or r in inf[y][1]:
+                if y in seen or r in inf[y][1]:   # a path from the site to a copy of the loop stays in the loop
                     continue
                 seen.add(y); todo.append(y)
         if not fwd:

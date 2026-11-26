@@ -87,6 +87,19 @@ dex r8 java_ com.android.tools.r8.R8 --release --pg-conf "$tmp/app.pro" $(r8_rul
 dex d8 java_ com.android.tools.r8.D8 --release || exit 1
 dex d8debug java_ com.android.tools.r8.D8 --debug || exit 1
 
+# the app stub's two classes of each listener and logger survive R8 (merged into one, R8 could bind their calls), for each
+# base type R8 kept: one it removed (the server's listener, whose calls R8 found unreachable) has no calls to guard
+merged=0
+for pair in "io/kuicksilver/quic/KuicksilverLogger:Logger QuietLogger" "io/kuicksilver/ktor/client/KuicksilverEventListener:Listener CountingListener" \
+  "io/kuicksilver/ktor/server/KuicksilverServerEventListener:ServerListener OtherServerListener"; do
+  base="${pair%%:*}"
+  grep -q "Class descriptor  : 'L$base;'" "$tmp/r8.dump" || { echo "app stub: R8 removed ${base//\//.}, and with it the calls of its classes"; continue; }
+  for c in ${pair#*:}; do
+    grep -q "Class descriptor  : 'Lapp/App\$$c;'" "$tmp/r8.dump" || { echo "FAIL: R8 merged or removed the app stub's App\$$c"; merged=1; rc=1; }
+  done
+done
+[ "$merged" = 1 ] || echo "app stub: both classes of each listener and logger R8 kept are in its dex"
+
 # the helpers kept from R8's inlining: each block of the AARs' rules this check owns (the learner's is r8-inlining.sh's),
 # <class>|<helpers>|<control>. inlined: R8 9.3 inlines a helper without the block, and the block alone must change R8's
 # output; later: R8 9.3 inlines none without it, the block guards a later R8 (its presence is checked, not its effect)

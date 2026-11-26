@@ -23,26 +23,37 @@ import kotlinx.coroutines.Dispatchers;
 public final class App {
     static int events;
 
-    // two of each, so that R8 cannot devirtualize the calls to the one class it would otherwise see
-    static final class Logger implements KuicksilverLogger {
+    // two of each, with interfaces of their own: R8 merges classes that only differ in their methods into one (a class id
+    // chooses the code), and with one class left it could bind the calls; tools/check/art7-loops.sh checks that both
+    // classes of each base type R8 keeps are in its dex
+    static final class Logger implements KuicksilverLogger, Runnable {
         @Override public boolean isEnabled(LogLevel level) { return true; }
         @Override public void log(LogLevel level, String message, Throwable cause) { events++; }
+        @Override public void run() { events++; }
     }
 
-    static final class QuietLogger implements KuicksilverLogger {
+    static final class QuietLogger implements KuicksilverLogger, java.util.function.IntSupplier {
         @Override public boolean isEnabled(LogLevel level) { return level == LogLevel.Warn; }
         @Override public void log(LogLevel level, String message, Throwable cause) { events--; }
+        @Override public int getAsInt() { return events; }
     }
 
-    static final class Listener extends KuicksilverEventListener { }
+    static final class Listener extends KuicksilverEventListener implements Runnable {
+        @Override public void run() { events++; }
+    }
 
-    static final class CountingListener extends KuicksilverEventListener {
+    static final class CountingListener extends KuicksilverEventListener implements java.util.function.IntSupplier {
         @Override public void retry(io.ktor.client.request.HttpRequestData request, int attempt, Throwable cause) { events++; }
+        @Override public int getAsInt() { return events; }
     }
 
-    static final class ServerListener extends KuicksilverServerEventListener { }
+    static final class ServerListener extends KuicksilverServerEventListener implements Runnable {
+        @Override public void run() { events++; }
+    }
 
-    static final class OtherServerListener extends KuicksilverServerEventListener { }
+    static final class OtherServerListener extends KuicksilverServerEventListener implements java.util.function.IntSupplier {
+        @Override public int getAsInt() { return events; }
+    }
 
     static final class Sink implements QlogSink {
         @Override public QlogTrace open(String odcidHex, TlsRole role) {
@@ -51,6 +62,12 @@ public final class App {
                 @Override public void close() { events++; }
             };
         }
+    }
+
+    /** Calls each class's own interface, so that R8 keeps it. */
+    public static int touch(Object o) {
+        if (o instanceof Runnable) ((Runnable) o).run();
+        return o instanceof java.util.function.IntSupplier ? ((java.util.function.IntSupplier) o).getAsInt() : 0;
     }
 
     public static void client(KuicksilverEngineConfig config, boolean quiet) {

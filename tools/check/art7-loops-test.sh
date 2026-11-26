@@ -6,7 +6,8 @@
 # makes a guarded call and copies a register with move-object; tools/check/art7-loops.py --help says what a site is.
 #   site (exit 1): the shape (in a coroutine, a suspend fun, a plain method); a copy at the join it copies; a phi from a
 #     join before the loop; two ways to the copy's join with no write; a call brought in by a small static method, by a
-#     static chain of depth 3, by the small target of a guarded call, by the class a one-class entry names; a call on an
+#     static chain of depth 3, by the small target of a guarded call, by the class a one-class entry names (each caller of
+#     a shared callee its own); a call on an
 #     open class; a loop formed through a catch handler, by a switch; a public interface of the API (never automatic); an
 #     ArrayList the dex subclasses (no framework-leaf).
 #   no site (exit 0): the copy read later (liveness); the value read since its join; a move of the value to a register
@@ -84,6 +85,9 @@ def helpers():
              method("Lio/kuicksilver/x/Open;", "secret", "()I", ret0(), regs=2, ins=1, size=2, access="0x0002 (PRIVATE)")[0],
              method("Lio/kuicksilver/x/Open;", "fixedSize", "()I", ret0(), regs=2, ins=1, size=2, access="0x0011 (PUBLIC FINAL)")[0]]
     sub = [method("Lio/kuicksilver/x/Sub;", "size", "()I", ret0(), regs=2, ins=1, size=2, access="0x0001 (PUBLIC)")[0]]
+    widerun = [method("Lio/kuicksilver/x/Small;", "wideRun", "(Lio/kuicksilver/x/Wide;)Z",
+                      [(0, "invoke-interface {v0}, Lio/kuicksilver/x/Wide;.run:()Z // method@0009"), (3, "move-result v0"),
+                       (4, "return v0")], regs=1, ins=1, size=5, access="0x0019 (PUBLIC STATIC FINAL)")[0]]
     wide = "".join(klass(f"Lio/kuicksilver/x/WideImpl{n};", [method(f"Lio/kuicksilver/x/WideImpl{n};", "run", "()Z",
                    [(0, f"iget-object v0, v1, Lio/kuicksilver/x/WideImpl{n};.map:Ljava/util/Map; // field@000a"), (2, ISEMPTY),
                     (5, "move-result v0"), (6, "return v0")], regs=2, ins=1, size=7)[0]], ifaces=["Lio/kuicksilver/x/Wide;"])
@@ -92,7 +96,7 @@ def helpers():
     host = [method("Lio/kuicksilver/x/HostImpl;", "run", "()Z", [(0, "iget-object v0, v1, Lio/kuicksilver/x/HostImpl;.map:Ljava/util/Map; // field@000a"),
                                                                 (2, ISEMPTY), (5, "move-result v0"), (6, "return v0")], regs=2, ins=1, size=7)[0]]
     big = [method("Lio/kuicksilver/x/BigImpl;", "run", "()Z", ret0(), regs=2, ins=1, size=50)[0]]
-    return (klass("Lio/kuicksilver/x/Small;", sm) + klass("Lio/kuicksilver/x/Open;", open_, access="0x0001 (PUBLIC)")
+    return (klass("Lio/kuicksilver/x/Small;", sm + widerun) + klass("Lio/kuicksilver/x/Open;", open_, access="0x0001 (PUBLIC)")
             + klass("Lio/kuicksilver/x/Sub;", sub, sup="Lio/kuicksilver/x/Open;")
             + klass("Lio/kuicksilver/x/Iface;", [], access="0x0601 (PUBLIC INTERFACE ABSTRACT)")
             + klass("Lio/kuicksilver/x/IfaceImpl;", impl, ifaces=["Lio/kuicksilver/x/Iface;"])
@@ -172,6 +176,12 @@ write("backward", twopaths("before"))
 write("movelive", shape(after_call="move-object v4, v2", after_copy="invoke-static {v4}, Lio/kuicksilver/x/Small;.use:(Ljava/lang/Object;)V // method@0006"))
 # a final owner class with a method not marked final, the receiver's type unknown (an array element)
 write("finalowner", shape(call="invoke-virtual {v0}, Lio/kuicksilver/x/Sub;.size:()I // method@0006", recv="aget-object v0, v5, v3"))
+# two methods over one small static callee that makes a guarded call on Wide: each one's entry names another class
+WIDERUN = "invoke-static {v0}, Lio/kuicksilver/x/Small;.wideRun:(Lio/kuicksilver/x/Wide;)Z // method@000c"
+B = "Lio/kuicksilver/x/B;"
+second = method(B, "load", "(Ljava/lang/Object;)Ljava/lang/Object;",
+                [(a, t.replace(A, B)) for a, t in shape(call=WIDERUN, recv=RECV("Lio/kuicksilver/x/Wide"))])[0]
+write("twocallers", shape(call=WIDERUN, recv=RECV("Lio/kuicksilver/x/Wide")), extra=klass(B, [second]))
 # a final method of an open class, and Object.getClass (final in the framework), the receiver's type unknown
 write("finalmethod", shape(call="invoke-virtual {v0}, Lio/kuicksilver/x/Open;.fixedSize:()I // method@0006", recv="aget-object v0, v5, v3"))
 write("frameworkfinal", shape(call="invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@000b", recv="aget-object v0, v5, v3"))
@@ -256,6 +266,10 @@ printf '%s\n' "$A | java.util.Map.isEmpty | one-class java.util.HashMap | the ma
 expect 0 "a judged site" "1 judged (0 open)" debug
 printf '%s\n' "$A | io.kuicksilver.x.Wide.run | one-class io.kuicksilver.x.WideImpl3 | always the third class, made here" > "$tmp/allow"
 expect 1 "a one-class entry's class is followed, whatever the bound" "via io.kuicksilver.x.WideImpl3.run" wide
+printf '%s\n' "$A | io.kuicksilver.x.Wide.run | one-class io.kuicksilver.x.WideImpl3 | always the third class, made here" \
+  "io.kuicksilver.x.B.load | io.kuicksilver.x.Wide.run | one-class io.kuicksilver.x.WideImpl5 | always the fifth class, made there" > "$tmp/allow"
+expect 1 "two callers of one callee, each its own named class: the first's" "via io.kuicksilver.x.WideImpl3.run <- io.kuicksilver.x.Small.wideRun" twocallers
+expect 1 "two callers of one callee, each its own named class: the second's" "via io.kuicksilver.x.WideImpl5.run <- io.kuicksilver.x.Small.wideRun" twocallers
 printf '%s\n' "$A | io.kuicksilver.x.Wide.run | one-class io.kuicksilver.x.Nope | always a class the dex lacks" > "$tmp/allow"
 expect 1 "a one-class entry naming a class the dex does not define" "which wide.dump does not define" wide
 printf '%s\n' "$A | java.util.Map.isEmpty | one-class | the map is always a HashMap made here" > "$tmp/allow"
