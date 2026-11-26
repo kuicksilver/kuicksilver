@@ -215,6 +215,10 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
  * [context]'s job stops it.
  *
+ * With [pongs] (the same instance as the output guard's), each Ping is answered by the engine as soon as it is read,
+ * before it is handed on ([WebSocketPongs]: RFC 6455 section 5.5.2, "as soon as is practical", also between the fragments
+ * of a message); no Ping after the peer's Close is answered.
+ *
  * @throws IllegalArgumentException when [maxMessageSize] is less than 1.
  */
 @InternalKuicksilverApi
@@ -231,6 +235,7 @@ public fun guardWebSocketInput(
     checkText: Boolean = true,
     onEnd: () -> Unit = {},
     onClose: () -> Unit = {},
+    pongs: WebSocketPongs? = null,
 ): ByteReadChannel {
     require(maxMessageSize >= 1) { "maxMessageSize $maxMessageSize is less than 1" }
     val out = ByteChannel()
@@ -239,8 +244,9 @@ public fun guardWebSocketInput(
     val rules = InputRules(allowedRsv, untilClose, peerMasks, perMessageDeflate, maxMessageSize, checkText)
     // ATOMIC: a session that ended before the copy ran (its job cancelled at once) still runs its finally, so [onEnd]
     // comes in every case and nobody waits for it in vain
+    pongs?.start(CoroutineScope(context + job + CoroutineName("ws-pongs")))
     CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard"), start = CoroutineStart.ATOMIC) {
-        val guard = InputGuard(input, out, rules, inflate, onClose)
+        val guard = InputGuard(input, out, rules, inflate, onClose, pongs)
         try {
             guard.run()
         } catch (_: EOFException) {
@@ -252,6 +258,7 @@ public fun guardWebSocketInput(
             out.cancel(cause)
         } finally {
             guard.close()
+            pongs?.stop()
             onEnd()
         }
     }
@@ -288,7 +295,9 @@ private class InputGuard(
     private val rules: InputRules,
     inflate: WebSocketInflate?,
     private val onClose: () -> Unit,
+    private val pongs: WebSocketPongs?,
 ) {
+    private var peerClosed = false
     private val inflater =
         inflate?.let { MessageInflater(it.noContextTakeover, minOf(it.maxMessageSize, rules.maxMessageSize)) }
     private val header = ByteArray(MAX_HEADER)
@@ -381,7 +390,14 @@ private class InputGuard(
             control.copyInto(closeBody, 0, 0, size)
             if (mask != null) unmask(closeBody, size, mask, 0)
             checkCloseBody(closeBody, size)
+            peerClosed = true
             onClose()
+        }
+        // RFC 6455 section 5.5.2: a Pong "as soon as is practical", "unless it already received a Close frame"
+        if (opcode == OPCODE_PING && pongs != null && !peerClosed) {
+            val data = control.copyOf(size)
+            if (mask != null) unmask(data, size, mask, 0)
+            pongs.answer(data)
         }
         out.writeFully(header, 0, headerLength)
         out.writeFully(control, 0, size)
@@ -685,4 +701,5 @@ private fun violation(
 internal const val OPCODE_CONTINUATION = 0x0
 internal const val OPCODE_TEXT = 0x1
 internal const val OPCODE_CLOSE = 0x8
+private const val OPCODE_PING = 0x9
 private const val OPCODE_PONG = 0xA

@@ -53,6 +53,7 @@ import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.WebSocketPongs
 import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
@@ -611,6 +612,7 @@ internal suspend fun readResponse(
                         onHandOver(handOver)
                         onBodyDone(AfterResponse.HandOver)
                         val wsConfig = request.attributes[WEBSOCKETS_KEY]
+                        val pongs = WebSocketPongs() // the engine answers Pings itself (RFC 6455 section 5.5.2)
                         val guarded =
                             guardWebSocketInput(
                                 input,
@@ -623,9 +625,11 @@ internal suspend fun readResponse(
                                 maxMessageSize = webSocketMaxMessageSize,
                                 checkText = handshake.checkText,
                                 onEnd = { inputDone.complete(Unit) },
+                                pongs = pongs,
                             )
                         // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
-                        val guard = guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression)
+                        val guard =
+                            guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression, pongs = pongs)
                         handOver.guard = guard
                         val raw =
                             RawWebSocket(

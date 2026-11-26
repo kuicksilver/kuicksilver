@@ -35,6 +35,7 @@ import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.ktor.network.WebSocketPongs
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
@@ -234,6 +235,7 @@ internal suspend fun h2WebSocket(
                 releaseLogged(events, stream) { release() }
             }
         }
+        val pongs = WebSocketPongs() // the engine answers Pings itself (RFC 6455 section 5.5.2)
         val raw =
             RawWebSocket(
                 // the input ends at the server's Close (or with the stream): the session is closing, and its last frames, its
@@ -253,11 +255,18 @@ internal suspend fun h2WebSocket(
                         output.releaseLead()
                         serverClosing.complete(Unit)
                     },
+                    pongs = pongs,
                 ),
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                 // its own Close is also seen here, once written, whichever way it was sent (see WebSocketLifetime.watch)
-                guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression, onClose = ::onOwnClose)
-                    .also { guard = it },
+                guardWebSocketOutput(
+                    held,
+                    masking = true,
+                    handshake.checkText,
+                    handshake.sentCompression,
+                    onClose = ::onOwnClose,
+                    pongs = pongs,
+                ).also { guard = it },
                 masking = false,
                 coroutineContext = lifetime.context,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,

@@ -11,6 +11,7 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
+import io.ktor.server.websocket.webSocketRaw
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readByte
@@ -107,6 +108,88 @@ class ServerWebSocketGuardTest {
             } finally {
                 selector.close()
                 server.stop(100, 500)
+            }
+        }
+
+    /** A masked frame from the client: [b0], then [payload] masked with a fixed key. */
+    private fun masked(
+        b0: Int,
+        payload: ByteArray,
+    ): ByteArray {
+        val key = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+        val body = ByteArray(payload.size) { (payload[it].toInt() xor key[it % 4].toInt()).toByte() }
+        return byteArrayOf(b0.toByte(), (0x80 or payload.size).toByte()) + key + body
+    }
+
+    /** The next frame from the server (unmasked, at most 125 bytes): its first byte and payload. */
+    private suspend fun serverFrame(input: ByteReadChannel): Pair<Int, ByteArray> {
+        val b0 = input.readByte().toInt() and 0xff
+        val length = input.readByte().toInt() and 0x7f
+        return b0 to input.readByteArray(length)
+    }
+
+    /** An upgraded HTTP/1.1 connection to /ws of a server with [module], for [block]. */
+    private suspend fun h1WebSocket(
+        module: Application.() -> Unit,
+        block: suspend (io.ktor.utils.io.ByteWriteChannel, ByteReadChannel) -> Unit,
+    ) {
+        val (server, port) = tlsServer(module = module)
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            val socket = connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(ServerFixtures.clientTls())
+            try {
+                val w = socket.openWriteChannel(autoFlush = true)
+                val r = socket.openReadChannel()
+                w.writeStringUtf8(
+                    "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+                )
+                assertEquals("HTTP/1.1 101 Switching Protocols", r.readLine(LineEnding.Lenient))
+                while (r.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                block(w, r)
+            } finally {
+                socket.close()
+            }
+        } finally {
+            selector.close()
+            server.stop(100, 500)
+        }
+    }
+
+    /**
+     * RFC 6455 section 5.5.2: "Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response ... It SHOULD
+     * respond with Pong frame as soon as is practical"; section 5.4: control frames "MAY be injected in the middle of a
+     * fragmented message". The engine answers the Ping itself as soon as it reads it, with its data (section 5.5.3), while
+     * the message is still incomplete, even under a raw session, which never answers a Ping. Before, the Pong was Ktor's
+     * session's alone: none under a raw session, and under the default one it could follow the echo of the whole message
+     * (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20).
+     */
+    @Test fun negative_pingBetweenFragmentsIsAnsweredBeforeTheMessageEnds() =
+        serverTest {
+            h1WebSocket({
+                install(WebSockets)
+                routing { webSocketRaw("/ws") { for (frame in incoming) continue } }
+            }) { w, r ->
+                w.writeFully(masked(0x01, "frag".encodeToByteArray()) + masked(0x89, "ping 1".encodeToByteArray()))
+                val (b0, payload) = withTimeout(10.seconds) { serverFrame(r) }
+                assertEquals(0x8A, b0)
+                assertEquals("ping 1", payload.decodeToString())
+            }
+        }
+
+    /** Under the default session, which answers Pings too, the client still gets one Pong per Ping, then the echo. */
+    @Test fun negative_oneServerPongPerPing() =
+        serverTest {
+            h1WebSocket({ webSocketEcho() }) { w, r ->
+                w.writeFully(masked(0x89, "p".encodeToByteArray()) + masked(0x81, "a".encodeToByteArray()))
+                val got = ArrayList<Pair<Int, String>>()
+                withTimeout(10.seconds) {
+                    // the Pong and the echo, then the Close the client sends only now: a second Pong would come before it
+                    repeat(2) { serverFrame(r).let { (b0, payload) -> got += b0 to payload.decodeToString() } }
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    serverFrame(r).let { (b0, _) -> got += b0 to "" }
+                }
+                assertEquals(listOf(0x8A to "p", 0x81 to "a", 0x88 to ""), got)
             }
         }
 

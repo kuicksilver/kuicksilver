@@ -69,6 +69,7 @@ import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.TcpAddress
+import io.kuicksilver.ktor.network.WebSocketPongs
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
@@ -2645,6 +2646,7 @@ internal class H3Pool(
                 val handshake =
                     webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), lifetime.context)
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                val pongs = WebSocketPongs() // the engine answers Pings itself (RFC 6455 section 5.5.2)
                 val raw =
                     RawWebSocket(
                         guardWebSocketInput(
@@ -2658,8 +2660,10 @@ internal class H3Pool(
                             maxMessageSize = config.webSocketMaxMessageSize,
                             checkText = handshake.checkText,
                             onEnd = { inputDone.complete(Unit) },
+                            pongs = pongs,
                         ),
-                        guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression).also { guard = it },
+                        guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression, pongs = pongs)
+                            .also { guard = it },
                         masking = false,
                         coroutineContext = lifetime.context,
                         channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
