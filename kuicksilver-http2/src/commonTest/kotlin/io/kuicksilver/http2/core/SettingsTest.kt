@@ -7,6 +7,7 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -19,8 +20,14 @@ class SettingsTest {
     @Test
     fun negative_headerListSizeThatWouldOverflowIsRejected() {
         // twice the limit is buffered for a field block: a limit whose double overflows an Int is refused up front
-        kotlin.test.assertFailsWith<IllegalArgumentException> { Http2Settings(maxHeaderListSize = Int.MAX_VALUE) }
-        Http2Settings(maxHeaderListSize = Int.MAX_VALUE / 2)
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            http2Settings {
+                maxFieldSectionSize = Int.MAX_VALUE.toLong()
+            }
+        }
+        http2Settings {
+            maxFieldSectionSize = (Int.MAX_VALUE / 2).toLong()
+        }
     }
 
     @Test
@@ -119,7 +126,7 @@ class SettingsTest {
         assertEquals(1L, sent(Role.SERVER, enabled = true))
         assertEquals(null, sent(Role.SERVER, enabled = false))
         assertEquals(null, sent(Role.CLIENT, enabled = false))
-        assertFailsWith<IllegalArgumentException> { H2ConnectionCore(Role.CLIENT, Http2Settings(), 0, enableConnectProtocol = true) }
+        assertFailsWith<IllegalArgumentException> { H2ConnectionCore(Role.CLIENT, Http2Settings.Default, 0, enableConnectProtocol = true) }
     }
 
     /**
@@ -207,7 +214,13 @@ class SettingsTest {
     @Test
     fun ourSmallerSettingsTakeEffectWhenAcknowledged() {
         // a 1000-byte stream window: until our SETTINGS are acknowledged the peer may use the protocol's 65 535
-        val s = RawH2Peer(Role.SERVER, Http2Settings(initialStreamWindow = 1_000))
+        val s =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    initialStreamWindow = 1_000
+                },
+            )
         s.send(io.kuicksilver.http2.frame.H2.PREFACE, settings())
         s.send(s.headers(1, endStream = false), s.data(1, 5_000))
         assertEquals(false, s.core.isClosed)

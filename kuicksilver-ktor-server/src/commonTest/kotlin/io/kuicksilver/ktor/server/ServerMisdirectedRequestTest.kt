@@ -330,7 +330,7 @@ class ServerMisdirectedRequestTest {
                     H2ClientConnection.start(
                         t.openReadChannel(),
                         t.openWriteChannel(),
-                        Http2Settings(),
+                        Http2Settings.Default,
                         this,
                         Duration.INFINITE,
                         { t.close() },

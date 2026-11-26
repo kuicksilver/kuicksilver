@@ -282,7 +282,7 @@ public class KuicksilverApplicationEngine(
          * the two ends the connection.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var http2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings()
+        public var http2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings.Default
 
         /**
          * Off ([Duration.ZERO], the default): each HTTP/2 connection that breaks a flood limit of [http2Settings] is ended

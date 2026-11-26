@@ -25,27 +25,57 @@ public final class io/kuicksilver/http2/Http2ErrorCode$Companion {
 }
 
 public final class io/kuicksilver/http2/Http2Settings {
+	public static final field Companion Lio/kuicksilver/http2/Http2Settings$Companion;
+	public final fun toBuilder ()Lio/kuicksilver/http2/Http2Settings$Builder;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http2/Http2Settings$Builder {
 	public fun <init> ()V
-	public synthetic fun <init> (IIIIIIIIJIIIIIJIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (IIIIIIIIJIIIIIJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun getGlitchBurst ()I
-	public final fun getGlitchesPerSecond ()I
-	public final fun getHeaderTableSize ()I
-	public final fun getInitialConnectionWindow ()I
-	public final fun getInitialStreamWindow ()I
-	public final fun getMaxConcurrentStreams ()I
-	public final fun getMaxConnectionWindow ()I
+	public final fun build ()Lio/kuicksilver/http2/Http2Settings;
+	public final fun floodLimits (Lkotlin/jvm/functions/Function1;)V
+	public final fun getFloodLimits ()Lio/kuicksilver/http2/Http2Settings$Builder$FloodLimits;
+	public final fun getHeaderTableSize ()J
+	public final fun getInitialConnectionWindow ()J
+	public final fun getInitialStreamWindow ()J
+	public final fun getMaxConcurrentStreams ()J
+	public final fun getMaxConnectionWindow ()J
+	public final fun getMaxFieldSectionSize ()J
+	public final fun getMaxFrameSize ()J
+	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
+	public final fun getMaxStreamWindow ()J
+	public final fun getSettingsAckTimeout-UwyO8pc ()J
+	public final fun setHeaderTableSize (J)V
+	public final fun setInitialConnectionWindow (J)V
+	public final fun setInitialStreamWindow (J)V
+	public final fun setMaxConcurrentStreams (J)V
+	public final fun setMaxConnectionWindow (J)V
+	public final fun setMaxFieldSectionSize (J)V
+	public final fun setMaxFrameSize (J)V
+	public final fun setMaxHeaderBlockTime-LRDsOJo (J)V
+	public final fun setMaxStreamWindow (J)V
+	public final fun setSettingsAckTimeout-LRDsOJo (J)V
+}
+
+public final class io/kuicksilver/http2/Http2Settings$Builder$FloodLimits {
+	public final fun getGlitches ()Lio/kuicksilver/config/RateLimit;
 	public final fun getMaxContinuationFrames ()I
 	public final fun getMaxControlFramesQueued ()I
 	public final fun getMaxEmptyFrames ()I
-	public final fun getMaxFrameSize ()I
-	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
-	public final fun getMaxHeaderListSize ()I
-	public final fun getMaxStreamWindow ()I
-	public final fun getResetBurst ()I
-	public final fun getResetsPerSecond ()I
-	public final fun getSettingsAckTimeout-UwyO8pc ()J
-	public fun toString ()Ljava/lang/String;
+	public final fun getResets ()Lio/kuicksilver/config/RateLimit;
+	public final fun setGlitches (Lio/kuicksilver/config/RateLimit;)V
+	public final fun setMaxContinuationFrames (I)V
+	public final fun setMaxControlFramesQueued (I)V
+	public final fun setMaxEmptyFrames (I)V
+	public final fun setResets (Lio/kuicksilver/config/RateLimit;)V
+}
+
+public final class io/kuicksilver/http2/Http2Settings$Companion {
+	public final fun getDefault ()Lio/kuicksilver/http2/Http2Settings;
+}
+
+public final class io/kuicksilver/http2/Http2SettingsKt {
+	public static final fun http2Settings (Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/http2/Http2Settings;
 }
 
 public abstract class io/kuicksilver/http2/runtime/Http2Exception : java/io/IOException {

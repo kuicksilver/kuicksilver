@@ -22,6 +22,7 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
@@ -81,7 +82,12 @@ suspend fun everyClientImport(
                 idleTimeout = 5.minutes
                 maxConnectionLifetime = Duration.INFINITE
                 logger = KuicksilverLogger.stderr(LogLevel.Info)
-                http2 { settings = Http2Settings(initialStreamWindow = 1 shl 20) }
+                http2 {
+                    settings =
+                        http2Settings {
+                            initialStreamWindow = 1 shl 20
+                        }
+                }
                 http3 {
                     discovery = Http3DiscoveryMode.Auto
                     http3Allowed = { allowed.value }

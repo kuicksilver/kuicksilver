@@ -628,7 +628,7 @@ internal class H2ServerLog {
  */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal suspend fun tlsH2WithSilentUdp(
-    settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings(),
+    settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings.Default,
     alpn: List<String> = listOf("h2", "http/1.1"),
     silentUdp: Boolean = false,
     h1: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit = { _, _, _ -> },

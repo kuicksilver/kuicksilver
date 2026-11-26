@@ -9,6 +9,7 @@ import io.kuicksilver.http2.frame.FrameFlags
 import io.kuicksilver.http2.frame.FrameType
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -263,12 +264,24 @@ class StreamStateTest {
     @Test
     fun negative_decoderTableStartsAt4096UntilOurSettingsAreAcknowledged() {
         // section 4.3.1: both tables start at 4096; our larger SETTINGS_HEADER_TABLE_SIZE holds only once acknowledged
-        val s = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(headerTableSize = 65_536))
+        val s =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    headerTableSize = 65_536
+                },
+            )
         s.send(io.kuicksilver.http2.frame.H2.PREFACE, FrameEncoder.settings(IntArray(0), LongArray(0)))
         val update8192 = byteArrayOf(0x3f, 0xe1.toByte(), 0x3f, 0x82.toByte()) // a table size update to 8192, then :method GET
         s.send(FrameEncoder.headers(1, update8192, endStream = true, endHeaders = true))
         s.assertConnectionError(Http2ErrorCode.COMPRESSION_ERROR)
-        val ok = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(headerTableSize = 65_536))
+        val ok =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    headerTableSize = 65_536
+                },
+            )
         ok.handshake() // includes our ACK
         ok.send(FrameEncoder.headers(1, update8192, endStream = true, endHeaders = true))
         assertEquals(1, ok.events().filterIsInstance<H2Event.HeadersReceived>().size)
@@ -494,7 +507,7 @@ class StreamStateTest {
     @Test
     fun clientPrefaceAndSettings() {
         val peer = RawH2Peer(Role.SERVER)
-        val c = H2ConnectionCore(Role.CLIENT, io.kuicksilver.http2.Http2Settings(), 0)
+        val c = H2ConnectionCore(Role.CLIENT, io.kuicksilver.http2.Http2Settings.Default, 0)
         val out = ByteArray(1024)
         val n = c.poll(out, 0, 0)
         assertContentEquals(H2.PREFACE, out.copyOf(24)) // section 3.4

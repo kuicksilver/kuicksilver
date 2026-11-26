@@ -25,6 +25,7 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
@@ -276,7 +277,12 @@ class ServerH2ResponseTest {
             val release = CompletableDeferred<Unit>()
             val started = CompletableDeferred<Unit>()
             val (server, port) =
-                h2TlsServer(configure = { http2Settings = Http2Settings(maxConcurrentStreams = 1) }) {
+                h2TlsServer(configure = {
+                    http2Settings =
+                        http2Settings {
+                            maxConcurrentStreams = 1
+                        }
+                }) {
                     routing {
                         get("/") {
                             started.complete(Unit)

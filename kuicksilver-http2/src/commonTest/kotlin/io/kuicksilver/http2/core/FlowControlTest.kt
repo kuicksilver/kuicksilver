@@ -7,6 +7,7 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -17,7 +18,7 @@ class FlowControlTest {
         FrameEncoder.settings(kv.map { it.first }.toIntArray(), kv.map { it.second }.toLongArray())
 
     /** A client core whose server (the raw peer) answered stream 1 with headers. */
-    private fun clientWithResponse(s: Http2Settings = Http2Settings()): Pair<RawH2Peer, Int> {
+    private fun clientWithResponse(s: Http2Settings = Http2Settings.Default): Pair<RawH2Peer, Int> {
         val c = RawH2Peer(Role.CLIENT, s)
         c.handshake()
         val id = c.core.openStream(GET, endStream = true)
@@ -52,7 +53,14 @@ class FlowControlTest {
      */
     @Test
     fun endStreamNeedsNoWindow() {
-        val p = H2Pair(serverSettings = Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384))
+        val p =
+            H2Pair(
+                serverSettings =
+                    http2Settings {
+                        initialStreamWindow = 16_384
+                        maxStreamWindow = 16_384
+                    },
+            )
         p.pump()
         val id = p.client.openStream(GET.map { if (it.first == ":method") ":method" to "POST" else it }, endStream = false)
         p.pump()
@@ -123,14 +131,23 @@ class FlowControlTest {
     @Test
     fun negative_dataBeyondWindowIsFlowControlError() {
         // a stream window of 1000 bytes, in force once acknowledged
-        val (c, id) = clientWithResponse(Http2Settings(initialStreamWindow = 1_000))
+        val (c, id) =
+            clientWithResponse(
+                http2Settings {
+                    initialStreamWindow = 1_000
+                },
+            )
         c.send(c.data(id, 1_001))
         c.assertStreamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR)
         // the connection window: 65 535 + nothing more
         val s =
             RawH2Peer(
                 Role.SERVER,
-                Http2Settings(initialConnectionWindow = 65_535, initialStreamWindow = 1_000_000, maxStreamWindow = 1_000_000),
+                http2Settings {
+                    initialConnectionWindow = 65_535
+                    initialStreamWindow = 1_000_000
+                    maxStreamWindow = 1_000_000
+                },
             )
         s.handshake()
         s.send(s.headers(1, endStream = false), s.headers(3, endStream = false))
@@ -199,8 +216,16 @@ class FlowControlTest {
      */
     @Test
     fun dataTakenBeforeASmallerInitialWindowIsChargedAgainstIt() {
-        val server = H2ConnectionCore(Role.SERVER, Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384), 0)
-        val client = H2ConnectionCore(Role.CLIENT, Http2Settings(), 0)
+        val server =
+            H2ConnectionCore(
+                Role.SERVER,
+                http2Settings {
+                    initialStreamWindow = 16_384
+                    maxStreamWindow = 16_384
+                },
+                0,
+            )
+        val client = H2ConnectionCore(Role.CLIENT, Http2Settings.Default, 0)
         val buf = ByteArray(1 shl 20)
         val serverEvents = mutableListOf<H2Event>()
 
@@ -506,7 +531,13 @@ class FlowControlTest {
 
     @Test
     fun paddingIsCreditedBackAtOnce() {
-        val (c, id) = clientWithResponse(Http2Settings(initialStreamWindow = 65_535, maxStreamWindow = 65_535))
+        val (c, id) =
+            clientWithResponse(
+                http2Settings {
+                    initialStreamWindow = 65_535
+                    maxStreamWindow = 65_535
+                },
+            )
         // 100 frames of 1 byte content and 254 bytes of padding: 25 600 bytes of window, only 100 for the application
         repeat(100) { c.send(FrameEncoder.data(id, byteArrayOf(1), 0, 1, false, padLength = 254)) }
         val updates = c.read().filterIsInstance<Frame.WindowUpdate>()

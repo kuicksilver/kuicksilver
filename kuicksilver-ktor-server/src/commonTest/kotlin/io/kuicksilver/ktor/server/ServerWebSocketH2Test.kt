@@ -36,6 +36,7 @@ import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.http2.runtime.H2ClientStream
 import io.kuicksilver.http2.runtime.Http2Exception
@@ -93,7 +94,7 @@ class ServerWebSocketH2Test {
     private suspend fun <T> h2(
         port: Int,
         onChange: () -> Unit = {},
-        settings: Http2Settings = Http2Settings(),
+        settings: Http2Settings = Http2Settings.Default,
         block: suspend (H2ClientConnection) -> T,
     ): T {
         val selector = SelectorManager(Dispatchers.IO)
@@ -187,13 +188,12 @@ class ServerWebSocketH2Test {
                 }
             try {
                 val windows =
-                    Http2Settings(
-                        initialStreamWindow = 1 shl 26,
-                        maxStreamWindow = 1 shl 26,
-                        initialConnectionWindow = 1 shl 27,
-                        maxConnectionWindow =
-                            1 shl 27,
-                    )
+                    http2Settings {
+                        initialStreamWindow = 1 shl 26
+                        maxStreamWindow = 1 shl 26
+                        initialConnectionWindow = 1 shl 27
+                        maxConnectionWindow = 1 shl 27
+                    }
                 h2(port, settings = windows) { c ->
                     val ws = c.connect()
                     assertEquals(200, ws.response().status)
@@ -881,7 +881,11 @@ class ServerWebSocketH2Test {
         }
 
     /** A client whose stream receive window stays at 64 KiB (no auto-tuning): the server can be ahead of it by that much. */
-    private val smallWindow = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536)
+    private val smallWindow =
+        http2Settings {
+            initialStreamWindow = 65_536
+            maxStreamWindow = 65_536
+        }
 
     /**
      * A route that sends [total] bytes in 16 KiB binary frames, then a text "done", counting into [sent] what the

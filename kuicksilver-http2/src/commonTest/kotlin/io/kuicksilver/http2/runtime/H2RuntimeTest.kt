@@ -19,6 +19,7 @@ import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -69,8 +70,8 @@ class H2RuntimeTest {
     private fun TestScope.clock(): () -> Long = { testScheduler.currentTime * 1_000_000 }
 
     private suspend fun TestScope.pair(
-        clientSettings: Http2Settings = Http2Settings(),
-        serverSettings: Http2Settings = Http2Settings(),
+        clientSettings: Http2Settings = Http2Settings.Default,
+        serverSettings: Http2Settings = Http2Settings.Default,
         pingInterval: Duration = Duration.INFINITE,
     ): Triple<H2ClientConnection, H2ServerConnection, Wire> {
         val w = Wire()
@@ -228,7 +229,14 @@ class H2RuntimeTest {
     @Test fun postBodyGoesWithinWindowsAndEnds() =
         runTest {
             // a body that fills the server's stream window exactly still ends (an empty END_STREAM frame needs no window)
-            val (client, server, _) = pair(serverSettings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536))
+            val (client, server, _) =
+                pair(
+                    serverSettings =
+                        http2Settings {
+                            initialStreamWindow = 65_536
+                            maxStreamWindow = 65_536
+                        },
+                )
             val got =
                 async {
                     server.requests.receive().let { r ->
@@ -256,12 +264,11 @@ class H2RuntimeTest {
             val (client, server, _) =
                 pair(
                     clientSettings =
-                        Http2Settings(
-                            initialStreamWindow = window,
-                            maxStreamWindow = window,
-                            initialConnectionWindow =
-                                1 shl 20,
-                        ),
+                        http2Settings {
+                            initialStreamWindow = window.toLong()
+                            maxStreamWindow = window.toLong()
+                            initialConnectionWindow = 1 shl 20
+                        },
                 )
             val total = 8 shl 20 // above what the source channel buffers by itself (1 MiB)
             var sent = 0L
@@ -542,7 +549,7 @@ class H2RuntimeTest {
                     .start(
                         w.toClient,
                         w.toServer,
-                        Http2Settings(),
+                        Http2Settings.Default,
                         backgroundScope,
                         pingInterval,
                         {
@@ -578,7 +585,7 @@ class H2RuntimeTest {
                     H2ClientConnection.start(
                         w.toClient,
                         w.toServer,
-                        Http2Settings(),
+                        Http2Settings.Default,
                         backgroundScope,
                         Duration.INFINITE,
                         { w.close() },
@@ -616,7 +623,7 @@ class H2RuntimeTest {
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },
@@ -653,7 +660,7 @@ class H2RuntimeTest {
             val w = Wire()
             val srv = RawServer(w)
             val client =
-                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings(), backgroundScope, Duration.INFINITE, {
+                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, Duration.INFINITE, {
                     w.close()
                 }, clock = clock())
             assertFalse(client.serverSettingsReceived)
@@ -695,7 +702,7 @@ class H2RuntimeTest {
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },
@@ -720,7 +727,7 @@ class H2RuntimeTest {
                 H2ClientConnection.start(
                     w2.toClient,
                     w2.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w2.close() },
@@ -1017,7 +1024,13 @@ class H2RuntimeTest {
      */
     @Test fun negative_trailersOnAReleasedStreamStartNoRequest() =
         runTest {
-            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            val (_, server, _) =
+                pair(
+                    serverSettings =
+                        http2Settings {
+                            maxFieldSectionSize = 1_024
+                        },
+                )
             runCurrent()
             val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "example.com", ":path" to "/")
             val trailers =
@@ -1049,7 +1062,13 @@ class H2RuntimeTest {
      */
     @Test fun oversizedRequestResetBeforeItsDispatchIsReleasedWithoutAnAnswer() =
         runTest {
-            val (_, server, _) = pair(serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+            val (_, server, _) =
+                pair(
+                    serverSettings =
+                        http2Settings {
+                            maxFieldSectionSize = 1_024
+                        },
+                )
             runCurrent()
             server.rt.holdDispatchForTest()
             server.rt.receiveWithoutDispatchForTest(oversizedRequest(1) + FrameEncoder.rstStream(1, Http2ErrorCode.CANCEL.code))
@@ -1068,7 +1087,16 @@ class H2RuntimeTest {
     @Test fun oversizedRequestToAClientThatCannotTakeThe431IsReset() =
         runTest {
             val (_, server, _) =
-                pair(clientSettings = Http2Settings(maxHeaderListSize = 8), serverSettings = Http2Settings(maxHeaderListSize = 1_024))
+                pair(
+                    clientSettings =
+                        http2Settings {
+                            maxFieldSectionSize = 8
+                        },
+                    serverSettings =
+                        http2Settings {
+                            maxFieldSectionSize = 1_024
+                        },
+                )
             runCurrent()
             server.rt.holdDispatchForTest()
             server.rt.receiveWithoutDispatchForTest(oversizedRequest(1))
@@ -1238,7 +1266,7 @@ class H2RuntimeTest {
                     H2ClientConnection.start(
                         w.toClient,
                         w.toServer,
-                        Http2Settings(),
+                        Http2Settings.Default,
                         backgroundScope,
                         Duration.INFINITE,
                         { w.close() },
@@ -1278,7 +1306,7 @@ class H2RuntimeTest {
                 H2ServerConnection.start(
                     w.toServer,
                     w.toClient,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     { w.close() },
                     clock(),
@@ -1522,12 +1550,12 @@ class H2RuntimeTest {
         runTest {
             var armed = false
             val w = Wire()
-            val server = H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val server = H2ServerConnection.start(w.toServer, w.toClient, Http2Settings.Default, backgroundScope, { w.close() }, clock())
             val client =
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },
@@ -1574,12 +1602,12 @@ class H2RuntimeTest {
         runTest {
             var armed = false
             val w = Wire()
-            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings.Default, backgroundScope, { w.close() }, clock())
             val client =
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },
@@ -1617,12 +1645,12 @@ class H2RuntimeTest {
             var armed = false
             var thrown = 0
             val w = Wire()
-            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings.Default, backgroundScope, { w.close() }, clock())
             val client =
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },
@@ -1654,12 +1682,12 @@ class H2RuntimeTest {
             var armed = false
             var thrown = 0
             val w = Wire()
-            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings.Default, backgroundScope, { w.close() }, clock())
             val client =
                 H2ClientConnection.start(
                     w.toClient,
                     w.toServer,
-                    Http2Settings(),
+                    Http2Settings.Default,
                     backgroundScope,
                     Duration.INFINITE,
                     { w.close() },

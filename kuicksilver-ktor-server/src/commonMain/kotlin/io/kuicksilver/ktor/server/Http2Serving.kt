@@ -78,27 +78,7 @@ internal fun h2SettingsWithin(
     headerTimeout: Duration,
 ): Http2Settings {
     if (settings.maxHeaderBlockTime <= headerTimeout) return settings
-    return with(settings) {
-        Http2Settings(
-            headerTableSize,
-            maxConcurrentStreams,
-            initialStreamWindow,
-            maxStreamWindow,
-            initialConnectionWindow,
-            maxConnectionWindow,
-            maxFrameSize,
-            maxHeaderListSize,
-            settingsAckTimeout,
-            maxContinuationFrames,
-            maxControlFramesQueued,
-            maxEmptyFrames,
-            resetBurst,
-            resetsPerSecond,
-            headerTimeout,
-            glitchBurst,
-            glitchesPerSecond,
-        )
-    }
+    return settings.toBuilder().apply { maxHeaderBlockTime = headerTimeout }.build()
 }
 
 /**

@@ -32,6 +32,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.peerCertificates
@@ -476,7 +477,10 @@ class GuideSamplesTest {
                     http2 {
                         enabled = true // the default: offer h2 on every TLS connection over TCP
                         pingInterval = 30.seconds // a keep-alive PING; Duration.INFINITE (the default): none
-                        settings = Http2Settings(initialStreamWindow = 1 shl 20) // our windows and limits (threat model 3.23)
+                        settings =
+                            http2Settings {
+                                initialStreamWindow = 1 shl 20
+                            } // our windows and limits (threat model 3.23)
                     }
                 }
             }

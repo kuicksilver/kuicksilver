@@ -25,6 +25,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
@@ -341,11 +342,17 @@ class ClientH2Test {
         clientTest {
             val arrived = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             val gate = CompletableDeferred<Unit>()
-            tlsH2WithSilentUdp(settings = Http2Settings(maxConcurrentStreams = 2), onRequest = { _, r ->
-                arrived.send(Unit)
-                gate.await()
-                ok(r)
-            }) { port, log ->
+            tlsH2WithSilentUdp(
+                settings =
+                    http2Settings {
+                        maxConcurrentStreams = 2
+                    },
+                onRequest = { _, r ->
+                    arrived.send(Unit)
+                    gate.await()
+                    ok(r)
+                },
+            ) { port, log ->
                 testClient().use { c ->
                     coroutineScope {
                         val calls = (1..5).map { async { c.get("https://127.0.0.1:$port/").bodyAsText() } }
@@ -364,11 +371,17 @@ class ClientH2Test {
         clientTest {
             val arrived = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             val gate = CompletableDeferred<Unit>()
-            tlsH2WithSilentUdp(settings = Http2Settings(maxConcurrentStreams = 1), onRequest = { _, r ->
-                arrived.send(Unit)
-                gate.await()
-                ok(r)
-            }) { port, log ->
+            tlsH2WithSilentUdp(
+                settings =
+                    http2Settings {
+                        maxConcurrentStreams = 1
+                    },
+                onRequest = { _, r ->
+                    arrived.send(Unit)
+                    gate.await()
+                    ok(r)
+                },
+            ) { port, log ->
                 testClient(engine = { maxConnectionsPerRoute = 1 }).use { c ->
                     coroutineScope {
                         val first = async { c.get("https://127.0.0.1:$port/").bodyAsText() }
@@ -408,9 +421,15 @@ class ClientH2Test {
     @Test fun refusedStreamRepeatAtTheRouteLimit() =
         clientTest {
             val n = AtomicInt(0)
-            tlsH2WithSilentUdp(settings = Http2Settings(maxConcurrentStreams = 1), onRequest = { _, r ->
-                if (n.addAndFetch(1) == 1) r.reset(Http2ErrorCode.REFUSED_STREAM) else ok(r)
-            }) { port, log ->
+            tlsH2WithSilentUdp(
+                settings =
+                    http2Settings {
+                        maxConcurrentStreams = 1
+                    },
+                onRequest = { _, r ->
+                    if (n.addAndFetch(1) == 1) r.reset(Http2ErrorCode.REFUSED_STREAM) else ok(r)
+                },
+            ) { port, log ->
                 testClient(engine = {
                     maxConnectionsPerRoute = 1
                     connectTimeout = 3.seconds
@@ -945,7 +964,12 @@ class ClientH2Test {
         clientTest {
             val size = 1 shl 20
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384, initialConnectionWindow = 65_535),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 16_384
+                        maxStreamWindow = 16_384
+                        initialConnectionWindow = 65_535
+                    },
                 onRequest = { _, r ->
                     val got = r.body.readBuffer().readByteArray()
                     ok(r, got.size.toString())

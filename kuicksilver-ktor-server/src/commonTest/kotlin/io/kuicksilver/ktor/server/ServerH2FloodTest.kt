@@ -12,6 +12,7 @@ import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -482,7 +483,10 @@ class ServerH2FloodTest {
         serverTest {
             val (server, port) =
                 floodServer(Handlers()) {
-                    http2Settings = io.kuicksilver.http2.Http2Settings(maxHeaderBlockTime = 1.seconds)
+                    http2Settings =
+                        http2Settings {
+                            maxHeaderBlockTime = 1.seconds
+                        }
                     http2RepeatOffenderPenalty = 30.seconds
                 }
             try {

@@ -71,6 +71,9 @@ kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPai
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPairSuite.serverFragmentedMessage
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPairSuite.serverPingGetsPong
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.WebSocketPairSuite.textEcho
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.defaultsAreTheDocumentedOnes
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.everyOptionReachesTheSettings
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.Http2SettingsBuilderTest.negative_valuesBeyondTheWireRangeAreRefusedByName
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.AltSvcFrameTest.negative_clientIgnoresInvalidAltSvcFrames
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.AltSvcFrameTest.negative_serverAltSvcNeedsAnOpenStreamAndAFittingValue
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.AltSvcFrameTest.negative_serverIgnoresAltSvcFrames
@@ -114,7 +117,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_ra
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_resetStreamStillRunningCountsTowardConcurrency
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_settingsFloodBounded
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_settingsFloodWithQueuedDataBounded
-kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_zeroRefillRateNeverRefills
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_zeroRefillRateIsRefused
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.nothingIsReportedAfterClosed
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.pingAnswersKeepTheirOrder
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.pingsBetweenOurDataAreFree

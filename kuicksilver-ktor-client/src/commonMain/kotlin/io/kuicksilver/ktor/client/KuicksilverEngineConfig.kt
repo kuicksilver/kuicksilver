@@ -309,7 +309,7 @@ public class Http2ClientConfig {
      * Its `maxConcurrentStreams` is what we allow the server to open towards us, which a client never uses: a server's
      * limit for our requests comes from its own SETTINGS.
      */
-    public var settings: Http2Settings = Http2Settings()
+    public var settings: Http2Settings = Http2Settings.Default
 
     /**
      * Sends a PING this often on every HTTP/2 connection and closes the connection when one is still unanswered at the

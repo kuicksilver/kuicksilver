@@ -249,7 +249,7 @@ class ServerProxyProtocolTest {
                     coroutineScope {
                         val t = TlsConnection.client(r, w, ServerFixtures.clientTls(alpn = listOf("h2")), coroutineContext)
                         assertEquals("h2", t.negotiatedAlpn)
-                        val c = H2ClientConnection.start(t.input, t.output, Http2Settings(), this, Duration.INFINITE, { t.close() })
+                        val c = H2ClientConnection.start(t.input, t.output, Http2Settings.Default, this, Duration.INFINITE, { t.close() })
                         assertTrue(c.tryReserve())
                         val st = c.open("GET", "https", "server.test", "/", emptyList(), endStream = true)
                         val head = st.response()

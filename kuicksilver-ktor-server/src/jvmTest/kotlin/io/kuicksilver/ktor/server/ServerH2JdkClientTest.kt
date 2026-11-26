@@ -10,6 +10,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -155,7 +156,10 @@ class ServerH2JdkClientTest {
                 tlsServer(configure = {
                     http2 = true
                     http3 = false
-                    http2Settings = io.kuicksilver.http2.Http2Settings(maxHeaderListSize = 1024)
+                    http2Settings =
+                        http2Settings {
+                            maxFieldSectionSize = 1024
+                        }
                 }) { routing { get("/") { call.respondText("never") } } }
             try {
                 val r =

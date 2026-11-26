@@ -216,7 +216,7 @@ class ClientH2cTest {
                                         H2ServerConnection.start(
                                             s.openReadChannel(),
                                             output,
-                                            Http2Settings(),
+                                            Http2Settings.Default,
                                             this,
                                             closeTransport = { s.close() },
                                         )

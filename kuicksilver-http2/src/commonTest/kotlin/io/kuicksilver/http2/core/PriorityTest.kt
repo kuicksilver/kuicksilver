@@ -7,6 +7,7 @@ import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.FrameType
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -279,7 +280,13 @@ class PriorityUpdateTest {
      */
     @Test
     fun negative_tooManyPrioritizedIdleStreams() {
-        val s = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(maxConcurrentStreams = 2))
+        val s =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    maxConcurrentStreams = 2
+                },
+            )
         s.handshake()
         s.send(update(1, "u=1"), s.headers(3, endStream = false)) // 1 is closed now: only 3 counts
         s.send(update(5, "u=1"))
@@ -341,11 +348,23 @@ class PriorityEdgeTest {
      */
     @Test
     fun negative_priorityUpdateAboveTheValueCeiling() {
-        val s = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(maxFrameSize = 1 shl 20))
+        val s =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    maxFrameSize = 1 shl 20
+                },
+            )
         s.handshake()
         s.send(FrameEncoder.priorityUpdate(1, "u=1, x=\"" + "a".repeat(4096) + "\""))
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
-        val ok = RawH2Peer(Role.SERVER, io.kuicksilver.http2.Http2Settings(maxFrameSize = 1 shl 20))
+        val ok =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    maxFrameSize = 1 shl 20
+                },
+            )
         ok.handshake()
         ok.send(FrameEncoder.priorityUpdate(1, "u=1, x=\"" + "a".repeat(4000) + "\""))
         ok.read()

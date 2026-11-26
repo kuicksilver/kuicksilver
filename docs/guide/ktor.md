@@ -76,6 +76,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
@@ -126,6 +127,7 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.ConnectUdpProxy
@@ -425,7 +427,9 @@ section 9.2).
 val server = embeddedServer(Kuicksilver, configure = {
     tlsConnector(identity) { port = 443 }
     http2 = true                                              // offer h2 before http/1.1 in ALPN
-    http2Settings = Http2Settings(maxConcurrentStreams = 50)  // windows and flood limits are Http2Settings'
+    http2Settings = http2Settings {
+        maxConcurrentStreams = 50
+    }  // windows and flood limits are Http2Settings'
 }, module = Application::module)
 ```
 
@@ -1202,7 +1206,9 @@ val client = HttpClient(Kuicksilver) {
         http2 {
             enabled = true                                      // the default: offer h2 on every TLS connection over TCP
             pingInterval = 30.seconds                           // a keep-alive PING; Duration.INFINITE (the default): none
-            settings = Http2Settings(initialStreamWindow = 1 shl 20)  // our windows and limits (threat model 3.23)
+            settings = http2Settings {
+                initialStreamWindow = 1 shl 20
+            }  // our windows and limits (threat model 3.23)
         }
     }
 }

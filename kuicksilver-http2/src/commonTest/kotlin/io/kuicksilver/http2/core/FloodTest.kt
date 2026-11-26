@@ -2,17 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http2.core
 
+import io.kuicksilver.config.RateLimit
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /** The per-connection flood limits of threat model 3.23, each against the attack it names. */
 class FloodTest {
-    private fun server(s: Http2Settings = Http2Settings()) = RawH2Peer(Role.SERVER, s).also { it.handshake() }
+    private fun server(s: Http2Settings = Http2Settings.Default) = RawH2Peer(Role.SERVER, s).also { it.handshake() }
 
     @Test
     fun negative_continuationFloodClosesBeforeDecoding() {
@@ -34,7 +37,12 @@ class FloodTest {
     fun negative_continuationBytesAboveListSize() {
         // up to twice the list limit is buffered and decoded (HPACK stays in step), and fails only its stream; beyond it the
         // connection ends (Go's frame.go readMetaFrame does the same at twice the remaining budget)
-        val s = server(Http2Settings(maxHeaderListSize = 20_000))
+        val s =
+            server(
+                http2Settings {
+                    maxFieldSectionSize = 20_000
+                },
+            )
         val big = s.hpackOut.encode(GET + (1..5).map { "x-h$it" to "v".repeat(5_000) })
         assertTrue(big.size in 20_001..40_000)
         s.send(
@@ -100,7 +108,14 @@ class FloodTest {
         // CVE-2019-9515 while a SETTINGS shrinking the initial window has our DATA queued (RFC 9113 section 6.9.2): the peer
         // stops reading and floods SETTINGS. Every ACK is queued at once, and the queue keeps its bound (a small one here,
         // so the glitch budget does not end the connection first).
-        val s = server(Http2Settings(maxControlFramesQueued = 100))
+        val s =
+            server(
+                http2Settings {
+                    floodLimits {
+                        maxControlFramesQueued = 100
+                    }
+                },
+            )
         s.send(s.headers(1, endStream = true))
         s.core.sendHeaders(1, OK, endStream = false)
         assertEquals(16_384, s.core.sendData(1, ByteArray(16_384), 0, 16_384, endStream = false))
@@ -248,7 +263,12 @@ class FloodTest {
 
     @Test
     fun negative_resetStreamStillRunningCountsTowardConcurrency() {
-        val s = server(Http2Settings(maxConcurrentStreams = 2))
+        val s =
+            server(
+                http2Settings {
+                    maxConcurrentStreams = 2
+                },
+            )
         s.send(s.headers(1, endStream = false), s.headers(3, endStream = false))
         s.send(FrameEncoder.rstStream(1, 8), FrameEncoder.rstStream(3, 8)) // reset, but their handlers have not returned
         s.send(s.headers(5, endStream = true))
@@ -276,25 +296,26 @@ class FloodTest {
         assertEquals(null, s.goAway())
     }
 
-    /** `resetsPerSecond = 0` is a budget that never refills: the burst is all a connection gets, however slowly it is spent. */
+    /**
+     * A budget refills at one a second at least (ADR-0026: one `RateLimit`, both values at least 1): the "never refills"
+     * budget of `resetsPerSecond = 0` is gone, refused when the settings are made.
+     */
     @Test
-    fun negative_zeroRefillRateNeverRefills() {
-        val s = RawH2Peer(Role.SERVER, Http2Settings(resetBurst = 10, resetsPerSecond = 0))
-        s.handshake()
-        var id = 1
-        repeat(11) {
-            s.now += 100 * SECOND
-            s.send(s.headers(id, endStream = true), FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
-            for (e in s.events()) if (e is H2Event.StreamReset) s.core.release(e.streamId)
-            id += 2
-        }
-        s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+    fun negative_zeroRefillRateIsRefused() {
+        assertFailsWith<IllegalArgumentException> { http2Settings { floodLimits { resets = RateLimit(0, 10) } } }
+        assertFailsWith<IllegalArgumentException> { http2Settings { floodLimits { glitches = RateLimit(0, 10) } } }
     }
 
     @Test
     fun negative_interimResponseFloodBounded() {
         // a server that answers with 1xx responses forever: all of them together stay within the field section limit
-        val c = RawH2Peer(Role.CLIENT, Http2Settings(maxHeaderListSize = 4_096))
+        val c =
+            RawH2Peer(
+                Role.CLIENT,
+                http2Settings {
+                    maxFieldSectionSize = 4_096
+                },
+            )
         c.handshake()
         val id = c.core.openStream(GET, endStream = true)
         c.read()

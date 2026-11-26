@@ -22,6 +22,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
@@ -281,7 +282,10 @@ class GuideSamplesTest {
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
                 http2 = true // offer h2 before http/1.1 in ALPN
-                http2Settings = Http2Settings(maxConcurrentStreams = 50) // windows and flood limits are Http2Settings'
+                http2Settings =
+                    http2Settings {
+                        maxConcurrentStreams = 50
+                    } // windows and flood limits are Http2Settings'
             }, module = Application::module)
 
         val configuration = server.engine.configuration

@@ -390,7 +390,7 @@ def rewrite_h2_calls(text, report, where):
         text = text[:m.start()] + block + text[end:]
         if "RateLimit(" in block and "import io.kuicksilver.config.RateLimit" not in text and where.endswith(".kt"):
             text = re.sub(r"^(import )", "import io.kuicksilver.config.RateLimit\n\\1", text, count=1, flags=re.M)
-        if where.endswith(".kt") and "import io.kuicksilver.http2.http2Settings" not in text and re.search(r"^package io\.kuicksilver\.http2\b", text, re.M) is None:
+        if where.endswith(".kt") and "import io.kuicksilver.http2.http2Settings" not in text and re.search(r"^package io\.kuicksilver\.http2$", text, re.M) is None:
             text = re.sub(r"^(import )", "import io.kuicksilver.http2.http2Settings\n\\1", text, count=1, flags=re.M)
 
 

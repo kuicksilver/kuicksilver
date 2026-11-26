@@ -30,6 +30,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.neverIndex
 import io.kuicksilver.ktor.client.neverIndexedHeaders
@@ -218,12 +219,12 @@ class ServerH2Test {
             val (server, port) =
                 h2Server(configure = {
                     http2Settings =
-                        Http2Settings(
-                            initialStreamWindow = 65_536,
-                            maxStreamWindow = 65_536,
-                            initialConnectionWindow = 65_536,
-                            maxConnectionWindow = 65_536,
-                        )
+                        http2Settings {
+                            initialStreamWindow = 65_536
+                            maxStreamWindow = 65_536
+                            initialConnectionWindow = 65_536
+                            maxConnectionWindow = 65_536
+                        }
                 }) {
                     routing {
                         post("/") {
@@ -489,7 +490,12 @@ class ServerH2Test {
         serverTest {
             val handled = Channel<String>(Channel.UNLIMITED)
             val (server, port) =
-                h2Server(configure = { http2Settings = Http2Settings(maxHeaderListSize = 1024) }) {
+                h2Server(configure = {
+                    http2Settings =
+                        http2Settings {
+                            maxFieldSectionSize = 1024
+                        }
+                }) {
                     routing { get("/{...}") { handled.trySend(call.request.local.uri) } }
                 }
             try {
