@@ -153,13 +153,25 @@ internal class TouchedBody(
 ) : ByteReadChannel {
     /** The state of one attempt's body: untouched, then touched (a byte was taken) or kept (for a repeat), never both. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    class Mark {
+    class Mark(
+        /** Test hook: the sender waits for it before it takes a byte (null: never), so a test orders take and keep. */
+        private val beforeTakeForTest: (suspend () -> Unit)? = null,
+    ) {
         private val state = kotlin.concurrent.atomics.AtomicInt(UNTOUCHED)
 
         val touched: Boolean get() = state.load() == TOUCHED
 
+        /** Completed once a byte was taken (tests: the sender's side of the race has happened). */
+        internal val touchedForTest = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        /** Runs [beforeTakeForTest], the gate a test may hold the sender at. */
+        suspend fun beforeTake() {
+            beforeTakeForTest?.invoke()
+        }
+
         /** Before a byte is moved: false when the channel was kept for a repeat (nothing may be read here any more). */
-        fun take(): Boolean = state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED
+        fun take(): Boolean =
+            (state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED).also { if (it) touchedForTest.complete(Unit) }
 
         /** Keeps the channel for a repeat; false when a byte was taken already (the body is consumed). */
         fun keep(): Boolean = state.compareAndSet(UNTOUCHED, KEPT) || state.load() == KEPT
@@ -200,6 +212,7 @@ internal class TouchedBody(
             if (mark.kept) throw CancellationException("the request body is kept for a repeat")
             val from = delegate.readBuffer
             if (from.exhausted() && !delegate.awaitContent()) return buffer.size >= min
+            mark.beforeTake()
             if (!mark.take()) throw CancellationException("the request body is kept for a repeat")
             from.readAtMostTo(buffer, maxOf(STEP, (min - buffer.size)))
         }
@@ -2782,7 +2795,7 @@ internal class H3Pool(
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
         // a body that cannot be produced again: whether any of it was taken, which decides whether a 421 may send it again
-        val touch = if (misdirectedFails && !body.isReplayable()) TouchedBody.Mark() else null
+        val touch = if (misdirectedFails && !body.isReplayable()) TouchedBody.Mark(beforeTakeForTest) else null
         // the application's channel this attempt reads (a streamed body), for the repeat a 421 may hand it to
         var sent: SentBody? = null
         val response: Http3Response =
@@ -2799,7 +2812,7 @@ internal class H3Pool(
         if (misdirectedFails && response.status == 421) {
             // the server is not authoritative for the request on this connection (RFC 9110 section 7.4): the answer is
             // dropped (its stream abandoned) and the request goes once more on a connection of its own origin (execute)
-            misdirectedForTest?.invoke()
+            misdirectedForTest?.invoke(touch)
             // as over HTTP/2, only a body the stream took something of is consumed. The decision is one step: kept now, the
             // sender takes nothing more (it stops at its next read); then it is stopped and waited for, so it reads nothing
             // while the repeat does
@@ -2844,9 +2857,16 @@ internal class H3Pool(
         val channel: ByteReadChannel,
     )
 
-    /** Test hook: runs in [exchange] once a 421 on another origin's connection came, before its body is decided on. */
+    /**
+     * Test hook: runs in [exchange] once a 421 on another origin's connection came, before its body is decided on; it gets the
+     * attempt's body mark (null for a body that can be produced again).
+     */
     @kotlin.concurrent.Volatile
-    internal var misdirectedForTest: (suspend () -> Unit)? = null
+    internal var misdirectedForTest: (suspend (TouchedBody.Mark?) -> Unit)? = null
+
+    /** Test hook: the gate of the next attempts' streamed bodies ([TouchedBody.Mark]), taken when each attempt starts. */
+    @kotlin.concurrent.Volatile
+    internal var beforeTakeForTest: (suspend () -> Unit)? = null
 
     /** Test hook: gets, once the 421'd attempt's sender was stopped and waited for, how many readers its body still has. */
     @kotlin.concurrent.Volatile

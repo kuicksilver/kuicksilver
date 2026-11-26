@@ -47,6 +47,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -1066,39 +1067,48 @@ class ClientCoalescingTest {
     /**
      * The 421's decision races the old attempt's sender: the application writes its whole body exactly while the 421 is
      * handled. The sender either took a byte first (the body is consumed: H3BodyConsumed) or the channel was kept before it
-     * could (the repeat sends all of it): never a repeat that lost the start of the body. Twenty rounds.
+     * could (the repeat sends all of it): never a repeat that lost the start of the body. Each order is forced in turn,
+     * five rounds each, instead of hoping that free-running rounds reach both (under load the sender always won the race:
+     * the write resumes it, and it ran during the hook's yield before the decision): the sender's side by waiting, in the
+     * hook, until it took a byte; the decision's side by holding the sender at its gate before it takes one.
      */
     @Test fun negative_h3ABodyWrittenAsThe421IsHandledIsRepeatedWholeOrNotAtAll() =
         h3Test {
             val (server, port) = h3EchoServer()
             val payload = (0 until 48 * 1024).map { 'a' + it % 26 }.joinToString("")
-            var whole = 0
-            var consumed = 0
             try {
-                repeat(20) {
-                    client(discovery = Http3Discovery.H3Only).use { c ->
-                        c.h3("https://a.wild.test:$port/")
-                        val body =
-                            io.ktor.utils.io
-                                .ByteChannel()
-                        engine(c).h3.misdirectedForTest = {
-                            body.writeStringUtf8(payload)
-                            body.flushAndClose()
-                            kotlinx.coroutines.yield()
-                        }
-                        try {
-                            val r = c.post("https://b.wild.test:$port/echo") { setBody(body) }
-                            assertEquals(HttpStatusCode.OK, r.status)
-                            assertEquals("b.wild.test|$payload", r.bodyAsText(), "the repeat sent the whole body")
-                            whole++
-                        } catch (_: H3BodyConsumed) {
-                            consumed++
+                for (senderFirst in listOf(true, false)) {
+                    repeat(5) { round ->
+                        client(discovery = Http3Discovery.H3Only).use { c ->
+                            c.h3("https://a.wild.test:$port/")
+                            val body =
+                                io.ktor.utils.io
+                                    .ByteChannel()
+                            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            val pool = engine(c).h3
+                            // the decision first: the sender waits at its gate, which never opens before the decision
+                            if (!senderFirst) pool.beforeTakeForTest = { gate.await() }
+                            pool.misdirectedForTest = { mark ->
+                                // the repeat's attempt is not held
+                                pool.beforeTakeForTest = null
+                                body.writeStringUtf8(payload)
+                                body.flushAndClose()
+                                // the sender first: the decision waits until it took a byte
+                                if (senderFirst) withTimeout(10.seconds) { assertNotNull(mark).touchedForTest.await() }
+                            }
+                            try {
+                                val r = c.post("https://b.wild.test:$port/echo") { setBody(body) }
+                                assertFalse(senderFirst, "round $round: a body the sender took from was repeated")
+                                assertEquals(HttpStatusCode.OK, r.status)
+                                assertEquals("b.wild.test|$payload", r.bodyAsText(), "the repeat sent the whole body")
+                            } catch (e: H3BodyConsumed) {
+                                assertTrue(senderFirst, "round $round: a body kept before the sender took a byte failed: $e")
+                            } finally {
+                                gate.complete(Unit)
+                            }
                         }
                     }
                 }
-                assertEquals(20, whole + consumed)
-                // the window is reached both ways: a test that stopped reaching it would prove nothing
-                assertTrue(whole > 0 && consumed > 0, "whole=$whole consumed=$consumed")
             } finally {
                 server.stop(100, 500)
             }
