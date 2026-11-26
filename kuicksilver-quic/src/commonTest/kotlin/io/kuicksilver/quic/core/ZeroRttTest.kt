@@ -1416,6 +1416,46 @@ class ZeroRttTest {
             assertNull(p.client.keyPhaseForTest)
         }
     }
+
+    /**
+     * A writer refused at the remembered MAX_DATA (RFC 9000 section 7.4.1) learns of the server's larger one once 0-RTT is
+     * accepted: the new limit came through the transport parameters, not a MAX_DATA frame, and bypassed the wake-up
+     * (review of 2026-11-26). The server answers no DATA_BLOCKED here that the test could rely on: the StreamWritable comes
+     * from the parameters alone.
+     */
+    @Test fun negative_acceptedZeroRttRaisingMaxDataWakesAConnRefusedWriter() {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = 2000
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        var id = -1L
+        var took = -1
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(t))
+                    id = c.openStream(bidi = true)
+                    took = c.writeStream(id, ByteArray(5000), 0, 5000, fin = false)
+                    // the server's own transport parameters raise the limit (no MAX_DATA frame, no answer to DATA_BLOCKED):
+                    // applied as the handshake applies them, the refused writer must learn of it from them alone
+                    c.streams.events.clear()
+                    val raised = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+                    raised.initialMaxData = 100_000
+                    c.applyPeerLimits(raised)
+                    assertTrue(c.streams.events.any { it is ConnectionEvent.StreamWritable && it.id == id }, "woken by the parameters")
+                },
+            )
+        try {
+            assertTrue(p.handshake())
+            assertEquals(2000, took, "the remembered MAX_DATA, no more")
+            assertTrue(p.client.connSend.maxLimit > 2000)
+        } finally {
+            p.close()
+        }
+    }
 }
 
 /** A server whose NewSessionTickets announce [max] in their early_data extension instead of 0xffffffff. */

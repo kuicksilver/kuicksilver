@@ -416,10 +416,17 @@ class ConnectionEndTest {
                 // the bytes the client's endpoint took from its socket, counted as it takes them
                 val toClient = MutableStateFlow(0L)
                 q.net.taken = { _, to, bytes -> if (to == q.client.localAddress) toClient.update { it + bytes.size } }
-                // more than the body channel holds before its writer waits: the pump waits on a reader that never comes
+                // more than the body channel holds before its writer waits: the pump waits on a reader that never comes. In
+                // the background: a write takes no byte beyond the client's credit, so the flush waits for it (RFC 9000
+                // section 4.1), and the connection's end below ends it
                 val chunk = ByteArray(16 * 1024)
-                repeat(256) { st.output.writeFully(raw.data(chunk)) }
-                st.output.flush()
+                val writer =
+                    launch {
+                        runCatching {
+                            repeat(256) { st.output.writeFully(raw.data(chunk)) }
+                            st.output.flush()
+                        }
+                    }
                 // beyond the stream window: the server could send that much only after the client gave credit for what its
                 // pump read into the body channel, which now waits for room
                 withTimeout(5.seconds) { toClient.first { it >= 1_200_000 } }
@@ -427,6 +434,7 @@ class ConnectionEndTest {
                 withTimeout(5.seconds) { client.closed.await() }
                 withTimeout(H3Session.DRAIN_GRACE + 2.seconds) { r.pump.join() }
                 assertFailsWith<Http3Exception> { withTimeout(5.seconds) { r.body.readAllBytes() } }
+                writer.join()
             }
         }
 

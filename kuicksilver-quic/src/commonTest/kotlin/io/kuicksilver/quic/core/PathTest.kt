@@ -12,6 +12,7 @@ import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.NewReno
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathId
@@ -1132,7 +1133,8 @@ class PathTest {
 
     @Test fun probeThenMigrateValidatesServerPath() {
         // a path the server first saw through the client's probe (Unknown) is validated once the client moves there; otherwise the 3x budget would throttle it forever
-        val (p, c) = connected()
+        // (wide windows: the 1 MB the server sends is more than the client's default credit, and nobody reads it)
+        val (p, c) = connected(serverQuic = CoreFixtures.wideWindows, clientQuic = CoreFixtures.wideWindows)
         p.use { _ ->
             val s = p.server()
             c.testInjectPathChallenges = 1

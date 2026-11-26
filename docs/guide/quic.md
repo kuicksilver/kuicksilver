@@ -1133,7 +1133,8 @@ with limits of its own across streams can check bytes nobody has read yet.
 `QuicStream.sendReleased` is the sending counterpart: a `StateFlow<Long>` of the bytes of our half the connection's send
 buffer (`flowControl { maxSendBuffer }`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
 of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
-shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
+shared buffer: a write takes no byte beyond the peer's credit for the stream or the connection, so a stream the peer
+never reads keeps at most what its window let out until it is acknowledged, and a protocol multiplexing users
 that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
 up to date from its first read on, which catches up with what was released before.
 

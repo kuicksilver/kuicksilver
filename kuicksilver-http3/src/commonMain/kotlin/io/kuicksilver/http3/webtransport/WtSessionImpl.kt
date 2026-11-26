@@ -38,6 +38,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.awaitSendStopped
+import io.kuicksilver.quic.setSchedulingGroup
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -132,8 +133,9 @@ internal class WtSessionImpl(
     /**
      * The session's turns at the connection's send buffer and its share of it (section 8), with flow control (sessions
      * share the connection only then), at its CONNECT stream's current urgency: QUIC's `maxSendBuffer` less a reserve of
-     * one part in webTransportMaxSessions + 1, which a session that joins finds free, split between the open sessions.
-     * Session dispatcher only.
+     * one part in webTransportMaxSessions + 1, which a session that joins finds free, split between the open sessions. The
+     * share counts only what the transport took, within the peer's QUIC credit, so a stream the peer stopped reading holds
+     * nothing of it beyond that credit and does not starve the session's other streams. Session dispatcher only.
      */
     private val sendTurns: WtSendTurns? =
         if (flowEnabled) {
@@ -575,7 +577,11 @@ internal class WtSessionImpl(
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
             // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
-            if (writable) st.priority = stream.priority
+            if (writable) {
+                st.priority = stream.priority
+                // section 8's fairness on the wire: the sessions of one urgency take turns, each in RFC 9218's order within
+                st.setSchedulingGroup(sessionId)
+            }
             val bidi = readable && writable
             // the peer's half of a bidirectional stream we opened carries no header
             val inCount =

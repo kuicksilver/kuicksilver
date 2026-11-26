@@ -219,7 +219,7 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
         tp.initialMaxStreamsBidi,
         tp.initialMaxStreamsUni,
     )
-    connSend.onMaxUpdate(tp.initialMaxData)
+    streams.onMaxData(tp.initialMaxData)
     streams.peerResetStreamAt = tp.resetStreamAt && config.resetStreamAt // the remembered offer; the new one from 1-RTT on
     applyPeerMaxUdpPayloadSize() // the remembered max_udp_payload_size bounds the 0-RTT flight and the Initials with it
     return true

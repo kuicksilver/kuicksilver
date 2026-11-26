@@ -10,6 +10,18 @@ import io.kuicksilver.quic.StreamPriority
  * where non-incremental streams go by ascending id (section 10: "in ascending order of the stream ID") and incremental
  * streams round-robin (section 10: "sharing bandwidth among them").
  *
+ * Streams of a [scheduling group][SchedGroup] (a WebTransport session's) are taken as one participant of their level's
+ * incremental round robin: the group's turn sends a frame of its own next stream (non-incremental members by ascending
+ * id, incremental ones in turn, the two kinds taking turns), then the group goes to the back. Sessions of the same
+ * urgency thus share the bandwidth whatever their streams' ids, while RFC 9218's order holds within each session. Between
+ * sessions this is a chosen resolution of two SHOULDs: RFC 9218 section 10 orders non-incremental streams of one urgency
+ * by ascending id, while draft-ietf-webtrans-http3-16 section 8 (unchanged in -17 per the project's notes) asks for "a
+ * fairness scheme that ensures that each session that shares a transport connection gets a reasonable share", its section
+ * 3.4 that "Endpoints that prioritize WebTransport sessions need to consider how they interact with other sessions", and
+ * RFC 9218 section 10 itself that servers "avoid such starvation" (docs/spec/rfc/9218.md). A tunnel keeps its own turn
+ * and never joins a group; a WebTransport session's CONNECT stream (a tunnel, carrying its small control capsules) is
+ * therefore outside its session's group, so its flow-control capsules never wait for the session's data.
+ *
  * Two exceptions keep a stream from starving. Within one level the incremental and the non-incremental streams take turns,
  * frame by frame, as quic-go does: section 10 warns that "early non-incremental responses might prevent the serving of
  * incremental responses issued later" and recommends that servers "avoid such starvation". And a stream marked as a
@@ -48,6 +60,36 @@ internal class StreamScheduler {
     /** Calls of [add], for the complexity tests. */
     internal var addsForTest = 0L
 
+    /**
+     * The group's token for the (urgency, retransmission) pair of queue [q]: one participant of that level's incremental list
+     * whether its members there are incremental, non-incremental or both. Made once per pair and kept with the group.
+     */
+    private fun tokenOf(
+        g: SchedGroup,
+        q: Int,
+    ): SendStream {
+        val base = q and 1.inv()
+        return g.tokens.getOrPut(base) {
+            SendStream(-1, StreamPriority.Default).also {
+                it.tokenFor = g
+                it.tokenQ = base
+            }
+        }
+    }
+
+    /**
+     * The stream a list entry stands for: itself, or the group's next member for the token's pair: its non-incremental
+     * members by id and its incremental ones in turn, the two kinds taking turns as a level's do (RFC 9218 section 10).
+     */
+    private fun resolve(e: SendStream): SendStream {
+        val g = e.tokenFor ?: return e
+        val base = e.tokenQ
+        val plain = g.heaps[base]?.takeIf { it.isNotEmpty() }
+        val inc = g.heaps[base + 1]?.takeIf { it.isNotEmpty() }
+        if (inc != null && (plain == null || g.lastIncremental and (1 shl (base shr 1)) == 0)) return inc[0]
+        return plain!![0]
+    }
+
     /** Schedules [s]; a no-op when it already is. */
     fun add(s: SendStream) {
         addsForTest++
@@ -79,14 +121,14 @@ internal class StreamScheduler {
                 } else {
                     // a level's incremental queue takes every other frame while its non-incremental one has data
                     if (q and 1 == 0 && nonEmpty and (1L shl (q + 1)) != 0L && lastIncremental and (1 shl (q shr 1)) == 0) q++
-                    if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
+                    if (q and 1 == 0) heaps[q]!![0] else resolve(heads[q]!!)
                 }
             if (!s.hasPending) {
                 detach(s)
                 continue
             }
             val want = queueOf(s)
-            if (want != q) {
+            if (want != s.schedQueue) {
                 detach(s)
                 insert(s, want)
                 continue
@@ -106,13 +148,13 @@ internal class StreamScheduler {
             if (m == 0L) return null
             var q = m.countTrailingZeroBits()
             if (q and 1 == 0 && m and (1L shl (q + 1)) != 0L && lastIncremental and (1 shl (q shr 1)) == 0) q++
-            val s = if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
+            val s = if (q and 1 == 0) heaps[q]!![0] else resolve(heads[q]!!)
             if (!s.hasPending) {
                 detach(s)
                 continue
             }
             val want = queueOf(s)
-            if (want != q) {
+            if (want != s.schedQueue) {
                 detach(s)
                 insert(s, want)
                 continue
@@ -135,6 +177,29 @@ internal class StreamScheduler {
     fun onSent(s: SendStream) {
         val q = s.schedQueue
         if (q < 0) return
+        val g = s.group
+        if (g != null && q >= CRITICAL_QUEUES) {
+            // the group's turn in its level's incremental list: it goes to the back, its member by its own order, and its
+            // incremental and non-incremental members take turns within it
+            lastIncremental = lastIncremental or (1 shl (q shr 1))
+            g.lastIncremental =
+                if (q and 1 != 0) g.lastIncremental or (1 shl (q shr 1)) else g.lastIncremental and (1 shl (q shr 1)).inv()
+            if (!s.hasPending) {
+                detach(s)
+            } else if (q and 1 != 0) {
+                detach(s)
+                insert(s, q) // an incremental member goes behind the session's other ones
+            }
+            g.tokens[q and 1.inv()]?.let { t ->
+                if (t.schedQueue >= 0) {
+                    val list = t.schedQueue
+                    unlinkList(t)
+                    linkList(t, list)
+                }
+            }
+            if (tunnelHead != null) sinceTunnel++
+            return
+        }
         lastIncremental = if (q and 1 != 0) lastIncremental or (1 shl (q shr 1)) else lastIncremental and (1 shl (q shr 1)).inv()
         if (s.tunnel) {
             sinceTunnel = 0
@@ -173,9 +238,24 @@ internal class StreamScheduler {
         q: Int,
     ) {
         s.schedQueue = q
+        val g = s.group
+        // a tunnel keeps its own turn (RFC 9218 section 10.1): StreamManager never puts one into a group
+        check(!(s.tunnel && g != null)) { "stream ${s.id} is a tunnel and in a scheduling group" }
+        if (g != null && q >= CRITICAL_QUEUES) {
+            // a member: into its group's heap for the queue (by id, or by turn for incremental members); the group's token
+            // joins the level's incremental list when the group has its first member there
+            val h = g.heaps.getOrPut(q) { ArrayList() }
+            s.schedSeq = if (q and 1 != 0) ++g.seq else s.id
+            h += s
+            siftUp(h, h.size - 1)
+            val t = tokenOf(g, q)
+            if (t.schedQueue < 0) linkList(t, q or 1)
+            return
+        }
         if (s.tunnel) linkTunnel(s)
         if (q and 1 == 0) {
             val h = heaps[q] ?: ArrayList<SendStream>().also { heaps[q] = it }
+            s.schedSeq = s.id
             h += s
             siftUp(h, h.size - 1)
         } else {
@@ -190,6 +270,25 @@ internal class StreamScheduler {
 
     private fun detach(s: SendStream) {
         val q = s.schedQueue
+        val g = s.group
+        if (g != null && q >= CRITICAL_QUEUES && s.tokenFor == null) {
+            s.schedQueue = -1
+            val h = g.heaps[q]!!
+            val i = s.schedIndex
+            val last = h.removeAt(h.size - 1)
+            if (i < h.size) {
+                h[i] = last
+                last.schedIndex = i
+                siftDown(h, i)
+                siftUp(h, last.schedIndex)
+            }
+            // the token leaves the list when the pair has no member left; it stays with the group for the next one
+            val base = q and 1.inv()
+            if (g.heaps[base].isNullOrEmpty() && g.heaps[base + 1].isNullOrEmpty()) {
+                g.tokens[base]?.let { t -> if (t.schedQueue >= 0) unlinkList(t) }
+            }
+            return
+        }
         s.schedQueue = -1
         if (s.tunnel) unlinkTunnel(s)
         if (q and 1 == 0) {
@@ -212,6 +311,33 @@ internal class StreamScheduler {
             s.schedNext = null
             if (heads[q] == null) nonEmpty = nonEmpty and (1L shl q).inv()
         }
+    }
+
+    /** Appends [s] (a group's token) to the incremental list [q]. */
+    private fun linkList(
+        s: SendStream,
+        q: Int,
+    ) {
+        s.schedQueue = q
+        s.schedPrev = tails[q]
+        s.schedNext = null
+        tails[q]?.schedNext = s
+        tails[q] = s
+        if (heads[q] == null) heads[q] = s
+        nonEmpty = nonEmpty or (1L shl q)
+    }
+
+    /** Takes [s] (a group's token) off its incremental list. */
+    private fun unlinkList(s: SendStream) {
+        val q = s.schedQueue
+        s.schedQueue = -1
+        val p = s.schedPrev
+        val n = s.schedNext
+        if (p == null) heads[q] = n else p.schedNext = n
+        if (n == null) tails[q] = p else n.schedPrev = p
+        s.schedPrev = null
+        s.schedNext = null
+        if (heads[q] == null) nonEmpty = nonEmpty and (1L shl q).inv()
     }
 
     private fun linkTunnel(s: SendStream) {
@@ -241,7 +367,7 @@ internal class StreamScheduler {
         while (i > 0) {
             val parent = (i - 1) / 2
             comparisonsForTest++
-            if (h[parent].id <= s.id) break
+            if (h[parent].schedSeq <= s.schedSeq) break
             h[i] = h[parent]
             h[i].schedIndex = i
             i = parent
@@ -260,9 +386,9 @@ internal class StreamScheduler {
             var c = 2 * i + 1
             if (c >= h.size) break
             comparisonsForTest++
-            if (c + 1 < h.size && h[c + 1].id < h[c].id) c++
+            if (c + 1 < h.size && h[c + 1].schedSeq < h[c].schedSeq) c++
             comparisonsForTest++
-            if (s.id <= h[c].id) break
+            if (s.schedSeq <= h[c].schedSeq) break
             h[i] = h[c]
             h[i].schedIndex = i
             i = c
@@ -287,4 +413,28 @@ internal class StreamScheduler {
         /** The queues of streams with a retransmission queued: 0 (critical) and, per urgency, the first two of its four. */
         private const val RETRANSMIT_QUEUES = 0x333333333L
     }
+}
+
+/**
+ * A scheduling group: the streams of one WebTransport session ([StreamManager.setGroup]). In each of its queues the group is
+ * one token in the level's incremental list, and its members wait in a heap of their own (by id, or by turn for incremental
+ * members), so the sessions of one urgency take turns and each keeps RFC 9218's order within ([StreamScheduler]).
+ */
+internal class SchedGroup(
+    val id: Long,
+) {
+    /** The streams that belong to the group (the manager drops the group with its last one). */
+    internal var members = 0
+
+    /** Per queue: the members scheduled there. */
+    internal val heaps = HashMap<Int, ArrayList<SendStream>>()
+
+    /** Per (urgency, retransmission) pair, by its even queue: the token that stands for the group in the level's list. */
+    internal val tokens = HashMap<Int, SendStream>()
+
+    /** Bit `p` is set when the group's last frame in the queue pair `2p`, `2p + 1` came from an incremental member. */
+    internal var lastIncremental = 0
+
+    /** The turn counter of incremental members. */
+    internal var seq = 0L
 }

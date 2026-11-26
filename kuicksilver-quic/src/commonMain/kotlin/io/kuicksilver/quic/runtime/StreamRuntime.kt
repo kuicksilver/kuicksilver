@@ -13,6 +13,8 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
@@ -225,7 +227,13 @@ internal class StreamRuntime(
         synced()
     }
 
-    internal val ticker = conn.newTicker()
+    /**
+     * Wakes this stream's writer ([StreamOutput]) when it may go on: StreamWritable (room in the buffer, or credit for the
+     * stream or the connection: the core wakes exactly the writers it refused for that), the output's close (a stop, a
+     * reset, the connection's end) and the stream's retirement. Not on the connection's broadcast tick after every flush:
+     * hundreds of writers waiting for credit the peer does not give would all wake at every packet.
+     */
+    internal val ticker = Channel<Unit>(Channel.CONFLATED)
 
     // the loop applies the value the property holds when its turn comes, not the one this setter wrote: setters on several
     // threads may have their hand-overs run in another order than their writes, and the last one to run must leave the
@@ -236,6 +244,11 @@ internal class StreamRuntime(
             field = v
             loop.scope.launch { if (live()) conn.core.setPriority(id, priority) }
         }
+
+    /** See [io.kuicksilver.quic.setSchedulingGroup]. */
+    internal fun setSchedulingGroup(group: Long) {
+        loop.scope.launch { if (live()) conn.core.setStreamGroup(id, group) }
+    }
 
     /** See [io.kuicksilver.quic.markTunnel]. */
     internal fun markTunnel() {
@@ -275,6 +288,46 @@ internal class StreamRuntime(
         kotlinx.coroutines.withContext(loop.dispatcher) {
             if (live()) conn.core.streamSendCredit(id) else 0L
         }
+
+    /** Moves on at every StreamWritable of this stream and at its end, for [awaitSendCredit]. */
+    private val creditTicks = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** Room may have come for this stream's writes (StreamWritable), or the stream's output ended (on any thread). */
+    internal fun creditTick() {
+        creditTicks.update { it + 1 }
+    }
+
+    /**
+     * Waits until a write to this stream would take at least one byte ([sendCredit] above 0), and returns that room; 0 once
+     * the stream takes no writes any more (reset, stopped, gone, or its connection ended), so the caller's write fails with
+     * the reason. The core counts the waiter as a refused writer: it reports the stream blocked and wakes it with
+     * StreamWritable when credit or buffer room comes. A waiter cancelled before room came gives the writer up: unless the
+     * stream's output still holds bytes, the stream no longer counts as blocked (no STREAM_DATA_BLOCKED or DATA_BLOCKED is
+     * repeated for it).
+     */
+    internal suspend fun awaitSendCredit(): Long {
+        var answered = false
+        try {
+            while (true) {
+                val seen = creditTicks.value
+                val room =
+                    kotlinx.coroutines.withContext(loop.dispatcher) {
+                        if (live() && outChannel?.isClosedForWrite != true) conn.core.streamWriteRoom(id, register = true) else -1L
+                    }
+                if (room != 0L) {
+                    answered = true
+                    return maxOf(room, 0L)
+                }
+                creditTicks.first { it != seen }
+            }
+        } finally {
+            if (!answered) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + loop.dispatcher) {
+                    if (live() && outChannel?.holdsUnsent != true) conn.core.streamWriterGone(id)
+                }
+            }
+        }
+    }
 
     /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -324,8 +377,9 @@ internal class StreamRuntime(
      */
     internal fun retired() {
         noteSendReleased(sentToCore) // retired: nothing of it is buffered any more
+        creditTick()
         readable.trySend(Unit)
-        conn.removeTicker(ticker)
+        ticker.close()
         settleStop(ENDED) // both halves are done: no STOP_SENDING stops this stream any more
     }
 
@@ -475,6 +529,7 @@ internal class StreamRuntime(
         outChannel?.closeWith(reason)
         settleStop(reason)
         noteSendReleased(sentToCore) // the buffer went with the connection
+        creditTick()
         done.complete(Unit)
     }
 

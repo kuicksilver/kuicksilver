@@ -199,6 +199,60 @@ public suspend fun QuicStream.awaitFinished() {
 }
 
 /**
+ * Puts [this] stream into scheduling group [group] (a WebTransport session: its CONNECT stream's id). The groups of one
+ * urgency take turns frame by frame, so one session's streams cannot hold another's data back on the wire, while RFC 9218's
+ * order (by id, or in turn for incremental streams) holds within each group (draft-ietf-webtrans-http3-16 sections 3.4 and
+ * 8, unchanged in -17 per the project's notes). Between groups this deviates on purpose from RFC 9218 section 10's
+ * stream-id order for non-incremental streams (docs/spec/rfc/9218.md). A tunnel never joins a group. Takes effect asynchronously, like [QuicStream.priority]; ignored for streams of other implementations.
+ */
+@InternalKuicksilverApi
+public fun QuicStream.setSchedulingGroup(group: Long) {
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.setSchedulingGroup(group)
+}
+
+/**
+ * [QuicConnection.trySendDatagram] of a datagram of flow [group] (an HTTP request stream's id, so a WebTransport session):
+ * the flows of one urgency take turns in the send queue, one datagram each, and when the queue is full a datagram evicts
+ * its own flow's oldest first, so one flow's burst does not push another's datagrams out (draft-ietf-webtrans-http3-16
+ * sections 3.4 and 8, unchanged in -17 per the project's notes). For connections of other implementations: the plain call.
+ */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public fun QuicConnection.trySendDatagram(
+    data: ByteArray,
+    policy: DatagramPolicy,
+    priority: StreamPriority,
+    group: Long,
+): DatagramSendResult =
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.trySendGrouped(data, policy, priority, group)
+        ?: trySendDatagram(data, policy, priority)
+
+/** Flow [group] starts (its HTTP request stream opened): its datagrams get an admission of their own in the send queue. */
+@InternalKuicksilverApi
+public fun QuicConnection.startDatagramGroup(group: Long) {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.startDatagramGroup(group)
+}
+
+/** Flow [group] ended (its HTTP request stream closed): the send queue lets go of its state once its last datagram left. */
+@InternalKuicksilverApi
+public fun QuicConnection.endDatagramGroup(group: Long) {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.endDatagramGroup(group)
+}
+
+/** [QuicConnection.sendDatagram] of a datagram of flow [group]; see the [trySendDatagram] with a group. */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public suspend fun QuicConnection.sendDatagram(
+    data: ByteArray,
+    policy: DatagramPolicy,
+    priority: StreamPriority,
+    group: Long,
+) {
+    val rt = this as? io.kuicksilver.quic.runtime.ConnectionRuntime
+    if (rt != null) rt.sendGrouped(data, policy, priority, group) else sendDatagram(data, policy, priority)
+}
+
+/**
  * Marks [this] stream as carrying a tunnel (an HTTP CONNECT): the transport sends at least a small share of its data even
  * while more urgent streams have data (RFC 9218 section 10.1: "servers SHOULD allocate some amount of bandwidths to
  * streams acting as tunnels"). Takes effect asynchronously, like [QuicStream.priority]; ignored for streams of other
@@ -317,6 +371,17 @@ public val QuicStream.inputTakenForTest: Long
  */
 @InternalKuicksilverApi
 public suspend fun QuicStream.sendCredit(): Long = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendCredit() ?: Long.MAX_VALUE
+
+/**
+ * Waits until a write to [this] stream takes at least one byte without waiting ([sendCredit] above 0) and returns that
+ * room: the peer's credit for the stream and the connection (RFC 9000 section 4.1) and the send buffer's room. 0 once the
+ * stream takes no more writes (reset, stopped, or its connection ended): the next write fails with the reason. While it
+ * waits the stream counts as blocked by flow control (STREAM_DATA_BLOCKED / DATA_BLOCKED go out). [Long.MAX_VALUE] for
+ * streams of other implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.awaitSendCredit(): Long =
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.awaitSendCredit() ?: Long.MAX_VALUE
 
 /**
  * True once the peer's FIN and every byte before it have arrived on [this] stream (RFC 9000 section 3.2, the receiving

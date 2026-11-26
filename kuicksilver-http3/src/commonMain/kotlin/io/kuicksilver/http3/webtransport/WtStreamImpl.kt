@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.http3.webtransport
 
@@ -17,6 +21,8 @@ import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.awaitSendCredit
+import io.kuicksilver.quic.sendCredit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -198,16 +204,28 @@ internal class WtStreamImpl(
                         // the sending half is over (reset, or stopped by the peer): its own failure tells why
                         if (k == 0) throw st.output.closedCause ?: IOException("WebTransport stream $streamId: sending ended")
                         outCounted += k
-                        val from = off
                         // a chunk at a time, in turn with the connection's other sessions (section 8); flushed before the
-                        // next wait for credit, as the peer's WT_MAX_DATA follows what it received
-                        val write: suspend () -> Unit = {
-                            st.output.writeFully(buf, from, from + k) // start and end index
-                            st.output.flush()
+                        // next wait for credit, as the peer's WT_MAX_DATA follows what it received. In the turn the transport
+                        // gets only what it takes at once (the peer's QUIC credit for the stream and the connection): a
+                        // stream the peer stopped reading waits outside the turn, never holding it ([WtSendTurns.run])
+                        var sent = 0
+                        while (sent < k) {
+                            val from = off + sent
+                            val wrote =
+                                if (turns != null && account != null) {
+                                    turns.run(account, (k - sent).toLong(), { st.sendCredit() }, { st.awaitSendCredit() }) { m ->
+                                        st.output.writeFully(buf, from, from + m) // start and end index
+                                        st.output.flush()
+                                    }
+                                } else {
+                                    st.output.writeFully(buf, from, off + k)
+                                    st.output.flush()
+                                    k - sent
+                                }
+                            sent += wrote
+                            pumped += wrote
                         }
-                        if (turns != null && account != null) turns.run(account, k.toLong(), write) else write()
                         off += k
-                        pumped += k
                         if (room() <= 0) break
                     }
                 }

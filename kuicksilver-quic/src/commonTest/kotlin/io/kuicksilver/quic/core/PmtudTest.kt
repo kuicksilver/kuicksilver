@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Cubic
 import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.PathId
@@ -31,8 +32,9 @@ class PmtudTest {
 
     private fun pair(
         linkMtu: Int = 1500,
-        clientQuic: QuicConfig = QuicConfig.Default,
-        serverQuic: QuicConfig = QuicConfig.Default,
+        // the transfers are larger than the default windows, and nobody reads them
+        clientQuic: QuicConfig = CoreFixtures.wideWindows,
+        serverQuic: QuicConfig = CoreFixtures.wideWindows,
         caps: IoCapabilities = df,
     ): Pair<EndpointPair, ConnectionCore> {
         val p = EndpointPair(serverQuic = serverQuic)
@@ -76,7 +78,7 @@ class PmtudTest {
 
     private fun probesTo(p: EndpointPair): List<Int> = p.clientDatagramSizes.filter { it > 1200 }
 
-    private val noIdle = quicConfig { maxIdleTimeout = null } // the long scenarios outlive the 30 s idle timer
+    private val noIdle = CoreFixtures.wide { maxIdleTimeout = null } // the long scenarios outlive the 30 s idle timer
 
     @Test fun searchConvergesTo1452OnCleanPath() {
         val (p, c) = pair()

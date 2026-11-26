@@ -1134,7 +1134,8 @@ with limits of its own across streams can check bytes nobody has read yet.
 `QuicStream.sendReleased` is the sending counterpart: a `StateFlow<Long>` of the bytes of our half the connection's send
 buffer (`flowControl { maxSendBuffer }`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
 of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
-shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
+shared buffer: a write takes no byte beyond the peer's credit for the stream or the connection, so a stream the peer
+never reads keeps at most what its window let out until it is acknowledged, and a protocol multiplexing users
 that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
 up to date from its first read on, which catches up with what was released before.
 
@@ -2658,9 +2659,16 @@ sharing a connection take turns for its stream credit and its send buffer (secti
 a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
 but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
 of the connection's send buffer (`flowControl { maxSendBuffer }`): a reserve stays free for a session that joins, and the rest is split
-between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
-stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
-connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
+between the open sessions, so a session alone gets nearly all of it while one that writes faster than the path carries
+cannot stall the others. A stream whose peer stops reading it holds nothing past the peer's QUIC credit and waits
+outside the turns, so it stalls neither its session's other streams nor any other session. On the wire the sessions of
+one urgency take turns frame by frame (each session is one scheduling group), and RFC 9218's order holds within a
+session, so a session that keeps sending does not hold a newer one back (between sessions this deviates on purpose from
+RFC 9218's stream-ID order, for the draft's section 8 fairness). A session's CONNECT stream stays outside its group: it
+is a tunnel with its own turn and carries only small control capsules, so its flow-control capsules go out in time
+whatever the session's data does. Each session's datagrams are a flow of their own in the connection's datagram queue:
+the flows take turns by bytes, and a session that floods (even faster than the endpoint's loop takes datagrams in)
+evicts its own datagrams, not another's. The connection's receive window is
 kept at what the open sessions may have in flight together. `Http3Endpoint` refuses settings whose sessions do not fit
 the QUIC limits (`maxBidiStreams`, `expert { maxUniStreams }`, `flowControl { maxConnectionWindow }`). All three initial limits at 0 turn flow
 control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.
@@ -7422,7 +7430,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 0.3.0 | stable | | receive window of the connection at its start (`initial_max_data`), 1..`maxConnectionWindow`; kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | 0.3.0 | stable | | ceiling of a stream's receive window, at least `initialStreamWindow`, at most 2^60 (`QuicConfig.MAX_WINDOW`): the most unread data one stream holds |
 | `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow`, at most 2^60 (`QuicConfig.MAX_WINDOW`); the Ktor engines raise the default to fit their WebTransport sessions, and refuse sessions whose need exceeds 2^60 |
-| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 0.3.0 | stable | | unacknowledged send data the connection buffers over all streams, 1..2^62; writers wait beyond it |
+| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 0.3.0 | stable | | unacknowledged send data the connection buffers over all streams, 1..2^62; writers wait beyond it; a write takes no byte beyond the peer's credit for the stream or the connection, so a stalled stream never fills it |
 
 #### `quicConfig { pathMtu { } }`
 
@@ -8350,7 +8358,10 @@ row while a large packet is unanswered, bring the connection back to 1200 and pa
 - **Receive windows**: a slow reader keeps the initial windows (512 KiB per stream, 768 KiB per connection); they grow
   to `maxStreamWindow` (6 MiB) and `maxConnectionWindow` (15 MiB) only while the application reads a whole window in
   under four RTTs. On a long fat path, raise `initialStreamWindow` / `initialConnectionWindow` and the maxima.
-- **Send buffer**: `maxSendBuffer` (4 MiB) bounds unacknowledged data per connection; writers wait beyond it.
+- **Send buffer**: `maxSendBuffer` (4 MiB) bounds unacknowledged data per connection; writers wait beyond it. A write
+  takes no byte beyond the peer's flow-control credit (its MAX_STREAM_DATA for the stream, its MAX_DATA for the
+  connection), so a peer that stops reading one stream (without STOP_SENDING) holds that stream's writer only, and a
+  `flush()` of more than the peer's credit waits for the peer to read.
 - **The socket refuses datagrams**: a rising `ConnectionStats.datagramsDroppedSocket` (or `EndpointStats.datagramsDroppedSocket`)
   means the send buffer, not the network, is the bottleneck.
 - **ECN**: `ConnectionStats.ecnState` is `Failed` when a path bleached or mangled marks; that is harmless, ECN is just off.

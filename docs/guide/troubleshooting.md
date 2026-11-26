@@ -395,7 +395,10 @@ row while a large packet is unanswered, bring the connection back to 1200 and pa
 - **Receive windows**: a slow reader keeps the initial windows (512 KiB per stream, 768 KiB per connection); they grow
   to `maxStreamWindow` (6 MiB) and `maxConnectionWindow` (15 MiB) only while the application reads a whole window in
   under four RTTs. On a long fat path, raise `initialStreamWindow` / `initialConnectionWindow` and the maxima.
-- **Send buffer**: `maxSendBuffer` (4 MiB) bounds unacknowledged data per connection; writers wait beyond it.
+- **Send buffer**: `maxSendBuffer` (4 MiB) bounds unacknowledged data per connection; writers wait beyond it. A write
+  takes no byte beyond the peer's flow-control credit (its MAX_STREAM_DATA for the stream, its MAX_DATA for the
+  connection), so a peer that stops reading one stream (without STOP_SENDING) holds that stream's writer only, and a
+  `flush()` of more than the peer's credit waits for the peer to read.
 - **The socket refuses datagrams**: a rising `ConnectionStats.datagramsDroppedSocket` (or `EndpointStats.datagramsDroppedSocket`)
   means the send buffer, not the network, is the bottleneck.
 - **ECN**: `ConnectionStats.ecnState` is `Failed` when a path bleached or mangled marks; that is harmless, ECN is just off.

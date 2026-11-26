@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.http3.webtransport
 
@@ -27,10 +27,13 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.sendCredit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,6 +41,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -63,9 +67,11 @@ class WebTransportServerSessionsTest {
         clientSettings: List<Pair<Long, Long>> = wtClientFlowSettings(),
         serverQuic: QuicConfig = H3Fixtures.quic,
         clientQuic: QuicConfig = H3Fixtures.quic,
+        netDelay: kotlin.time.Duration = kotlin.time.Duration.ZERO,
         block: suspend CoroutineScope.(Raw) -> Unit,
     ) = h3Test {
         QuicPair.open(serverQuic).useScoped { q ->
+            q.net.delay = netDelay
             val (c, s) = q.connect(clientQuic)
             val server = Http3Connection.server(s, serverSettings)
             val raw = RawPeer(c)
@@ -174,18 +180,20 @@ class WebTransportServerSessionsTest {
         }
 
     /**
-     * Section 8: a session whose peer never reads one of its streams holds only its share of the connection's send buffer
-     * (QUIC's `maxSendBuffer`), so another session's data still goes through. Without the share the first session's
-     * writer filled the buffer while holding the turn, and every session stalled.
+     * Section 8: a session whose peer never reads one of its streams (and gives it no more credit) holds only bytes within
+     * that credit, never its share of the connection's send buffer (QUIC's `maxSendBuffer`), so another session's data still
+     * goes through. Without the share the first session's writer filled the buffer while holding the turn, and every
+     * session stalled.
      */
     @Test fun negative_aSessionWhosePeerNeverReadsDoesNotStallTheOthers() =
-        smallBufferTest { r ->
+        smallBufferTest(clientWindow = 16_384, netDelay = kotlin.time.Duration.ZERO) { r ->
             val (_, sa) = rawSession(r.c, r.server, r.raw)
             val (_, sb) = rawSession(r.c, r.server, r.raw)
             val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
             // two sessions split the buffer less the reserve (one part in webTransportMaxSessions + 1)
             assertEquals((BUFFER - BUFFER / 5) / 2, share.cap)
-            val flooding = r.flood(sa, share)
+            val flooding = r.stall(sa)
+            assertTrue(share.held.value <= 16_384L + WtFairness.SEND_QUANTUM, "only bytes within the client's credit: ${share.held.value}")
             assertTrue(r.sendAndReceive(sb, 500_000), "the other session's data arrived whole")
             assertTrue(share.held.value <= share.cap, "the stuck session stays within its share")
             flooding.cancel()
@@ -207,7 +215,8 @@ class WebTransportServerSessionsTest {
 
     /**
      * A session that joins while another holds its whole (alone) part finds the reserve free and writes at once; the first
-     * one, over its smaller part now, waits until the transport released enough.
+     * one, over its smaller part now, waits until the transport released enough. The first session holds its part with
+     * bytes within the client's credit that the delayed path has not carried yet ([flood]).
      */
     @Test fun negative_aSessionJoiningAFullBufferWritesAtOnce() =
         smallBufferTest { r ->
@@ -217,33 +226,75 @@ class WebTransportServerSessionsTest {
             assertTrue(share.held.value > (BUFFER - BUFFER / 5) / 2, "the first session holds more than its later part")
             val (_, sb) = rawSession(r.c, r.server, r.raw)
             assertEquals((BUFFER - BUFFER / 5) / 2, share.cap)
+            // the newcomer's first chunk goes into the reserve at once, though the first session holds more than its part, and
+            // its data arrives whole while the first session keeps writing: the sessions of one urgency take turns on the
+            // wire too (section 8), however much earlier the first session's stream was opened
+            val bShare = assertNotNull((sb as WtSessionImpl).sendShareForTest)
+            val atOnce = async { withTimeoutOrNull(5.seconds) { bShare.held.first { it > 0L } } }
             assertTrue(r.sendAndReceive(sb, 200_000), "the newcomer's data arrived whole")
+            assertNotNull(atOnce.await(), "the newcomer wrote at once")
             assertTrue(share.held.value <= BUFFER - BUFFER / 5)
             flooding.cancel()
         }
 
-    /** A server send buffer of [BUFFER] bytes; the client takes at most 16 KiB of a stream it does not read. */
-    private fun smallBufferTest(block: suspend CoroutineScope.(Raw) -> Unit) =
-        serverTest(
-            clientSettings = wtClientFlowSettings(data = 64_000_000),
-            serverQuic =
-                H3Fixtures.quic
-                    .toBuilder()
-                    .apply { flowControl { maxSendBuffer = BUFFER } }
-                    .build(),
-            clientQuic =
-                H3Fixtures.quic
-                    .toBuilder()
-                    .apply {
-                        flowControl { initialStreamWindow = 16_384 }
-                        flowControl { maxStreamWindow = 16_384 }
-                    }.build(),
-            block = block,
-        )
+    /**
+     * A server send buffer of [BUFFER] bytes. By default the client grants 4 MiB of a stream it does not read, over a path
+     * with [netDelay] each way: the server's transport takes a writer's bytes within that credit faster than the path carries
+     * them, so a session that keeps writing fills its share ([flood]). With [clientWindow] 16 KiB the client stops crediting
+     * a stream it does not read at once: its writer stalls, as after Firefox's `reader.cancel`.
+     */
+    private fun smallBufferTest(
+        clientWindow: Long = 4L shl 20,
+        netDelay: kotlin.time.Duration = 20.milliseconds,
+        block: suspend CoroutineScope.(Raw) -> Unit,
+    ) = serverTest(
+        clientSettings = wtClientFlowSettings(data = 64_000_000),
+        serverQuic =
+            H3Fixtures.quic
+                .toBuilder()
+                .apply { flowControl { maxSendBuffer = BUFFER } }
+                .build(),
+        clientQuic =
+            H3Fixtures.quic
+                .toBuilder()
+                .apply {
+                    flowControl { initialStreamWindow = clientWindow }
+                    flowControl { maxStreamWindow = clientWindow }
+                    flowControl { initialConnectionWindow = 64_000_000 }
+                    flowControl { maxConnectionWindow = 64_000_000 }
+                }.build(),
+        netDelay = netDelay,
+        block = block,
+    )
 
     /**
-     * [session] writes to a stream the client never reads (16 KiB go out, the rest stays in the server's buffer) until its
-     * share is full; the writer is returned for the caller to cancel.
+     * Section 8 with a stream whose peer stopped reading it (Firefox 161 after `reader.cancel`, no STOP_SENDING): two
+     * sessions' writers stall at the client's 16 KiB credit for their streams, and a third session's 50 KB still arrive.
+     * Before, the stalled writer flushed inside the connection's send turn, the flush waited for credit that never came, and
+     * the turn, with every session of the connection, waited with it (review of 2026-11-26).
+     */
+    @Test fun negative_twoStalledSessionsDoNotWedgeAThird() =
+        smallBufferTest(clientWindow = 16_384, netDelay = kotlin.time.Duration.ZERO) { r ->
+            val jobs = ArrayList<kotlinx.coroutines.Job>()
+            for (i in 0 until 2) {
+                val (_, session) = rawSession(r.c, r.server, r.raw)
+                val stuck = session.openUni()
+                jobs +=
+                    r.server.session.scope
+                        .launch { runCatching { stuck.output.writeFully(ByteArray(4_000_000)) } }
+                // its writer took the whole credit of the stream and waits for more
+                val quic = (stuck as WtStreamImpl).st
+                withTimeout(10.seconds) { while (quic.sendCredit() > 0L) kotlinx.coroutines.yield() }
+            }
+            val (_, third) = rawSession(r.c, r.server, r.raw)
+            assertTrue(r.sendAndReceive(third, 50_000), "the third session's data arrived whole")
+            jobs.forEach { it.cancel() }
+        }
+
+    /**
+     * [session] writes to a stream the client never reads until its share is full: the server's transport takes the bytes
+     * within the client's 4 MiB credit faster than the delayed path carries them; the writer is returned for the caller to
+     * cancel.
      */
     private suspend fun Raw.flood(
         session: WebTransportSession,
@@ -252,6 +303,61 @@ class WebTransportServerSessionsTest {
         val stuck = session.openUni()
         val job = server.session.scope.launch { runCatching { stuck.output.writeFully(ByteArray(4_000_000)) } }
         withTimeout(5.seconds) { share.held.first { it + WtFairness.SEND_QUANTUM > share.cap } }
+        return job
+    }
+
+    /**
+     * Firefox 161 stops a stream only when its session ends (H3_REQUEST_CANCELLED): a writer that waits for credit outside
+     * the send turn ([WtSendTurns.run], QUIC's `awaitSendCredit`) must learn of the STOP_SENDING. It waited on a tick the
+     * output's close never moved (review of 2026-11-26).
+     */
+    private suspend fun CoroutineScope.stopWhileWaiting(
+        r: Raw,
+        bidi: Boolean,
+    ) {
+        val (_, sa) = rawSession(r.c, r.server, r.raw)
+        val out = if (bidi) sa.openBidi() else sa.openUni()
+        val res = kotlinx.coroutines.CompletableDeferred<Throwable?>()
+        r.server.session.scope.launch {
+            res.complete(
+                runCatching {
+                    out.output.writeFully(ByteArray(4_000_000))
+                    out.output.flush()
+                }.exceptionOrNull(),
+            )
+        }
+        val quic = (out as WtStreamImpl).st
+        withTimeout(10.seconds) { while (quic.sendCredit() > 0L) kotlinx.coroutines.yield() }
+        repeat(100) { kotlinx.coroutines.yield() } // the pump goes on to wait for credit outside the turn
+        val peer =
+            withTimeout(5.seconds) {
+                while (true) {
+                    val st = r.c.acceptStream()
+                    if (st.id == quic.id) return@withTimeout st
+                }
+                @Suppress("UNREACHABLE_CODE")
+                error("unreachable")
+            }
+        peer.stopSending(0x10c)
+        kotlinx.coroutines.withTimeoutOrNull(5.seconds) { res.await() }
+        assertTrue(res.isCompleted, "the writer learns of the STOP_SENDING")
+    }
+
+    @Test fun negative_stopSendingWakesAUniWriterWaitingForCredit() =
+        smallBufferTest(clientWindow = 16_384, netDelay = kotlin.time.Duration.ZERO) { r -> stopWhileWaiting(r, false) }
+
+    @Test fun negative_stopSendingWakesABidiWriterWaitingForCredit() =
+        smallBufferTest(clientWindow = 16_384, netDelay = kotlin.time.Duration.ZERO) { r -> stopWhileWaiting(r, true) }
+
+    /**
+     * [session] writes to a stream the client never reads and, with a 16 KiB [smallBufferTest] window, never credits again:
+     * returns once the writer took the whole credit and waits, for the caller to cancel.
+     */
+    private suspend fun Raw.stall(session: WebTransportSession): kotlinx.coroutines.Job {
+        val stuck = session.openUni()
+        val job = server.session.scope.launch { runCatching { stuck.output.writeFully(ByteArray(4_000_000)) } }
+        val quic = (stuck as WtStreamImpl).st
+        withTimeout(10.seconds) { while (quic.sendCredit() > 0L) kotlinx.coroutines.yield() }
         return job
     }
 

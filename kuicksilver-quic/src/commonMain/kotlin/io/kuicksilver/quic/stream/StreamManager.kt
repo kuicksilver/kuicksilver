@@ -195,8 +195,8 @@ internal class StreamManager(
     fun sendCredit(id: Long): Long {
         val s = streams[id]?.send ?: return 0
         if (!s.takesWrites) return 0
-        val limit = sendLimit[id] ?: return 0
-        return (minOf(limit.available, connSend.available) - (s.written - s.sentEnd)).coerceAtLeast(0)
+        if (sendLimit[id] == null) return 0
+        return writeRoom(id, s)
     }
 
     /** The highest offset received on [id]'s receiving half (RFC 9000 section 4.5), or -1 when it has none (or is gone). */
@@ -241,7 +241,10 @@ internal class StreamManager(
                     if (StreamIds.isBidi(id)) bidiRemote else uni,
                 )
             ) {
-                streams[id]?.send?.let { if (it.hasPending) scheduler.reschedule(it) }
+                streams[id]?.send?.let {
+                    if (it.hasPending) scheduler.reschedule(it)
+                    wakeCreditRefused(it) // a writer the old credit held back
+                }
             }
         }
     }
@@ -271,8 +274,9 @@ internal class StreamManager(
             val e = it.next()
             if (!StreamIds.isLocal(e.id, role)) continue
             e.send?.let { s ->
-                sendBufferedBytes -= s.reset()
+                sendBufferedBytes -= dropUnsent(s) { s.reset() }
                 scheduler.remove(s)
+                leaveGroup(s)
                 s.connBlocked = false
             }
             e.recv?.discardBuffered()
@@ -288,7 +292,9 @@ internal class StreamManager(
         finishedAwaitingResetAck?.removeAll { StreamIds.isLocal(it, role) }
         retiredAwaitingAck?.removeAll { StreamIds.isLocal(it, role) }
         dropEmptyResetSets()
-        writeRefused.removeAll { !streams.containsKey(it.id) }
+        bufferRefused.removeAll { (!streams.containsKey(it.id)).also { gone -> if (gone) it.bufferRefused = false } }
+        connRefused.removeAll { (!streams.containsKey(it.id)).also { gone -> if (gone) it.connRefused = false } }
+        connUnsent = streams.values.sumOf { e -> e.send?.let { unsentOf(it) } ?: 0L }
         for (i in control.indices.reversed()) {
             val c = control[i]
             // stream frames of the dropped streams, and blocked reports whose limits no longer hold
@@ -382,6 +388,16 @@ internal class StreamManager(
         if (allocated != budget.bytes) return "reassembly buffers hold $allocated bytes, counted ${budget.bytes}"
         if (allocated > allowed) return "reassembly buffers hold $allocated bytes, above $allowed"
         if (sendBufferedBytes < 0) return "negative send buffer $sendBufferedBytes"
+        val unsent = streams.values.sumOf { e -> e.send?.let { unsentOf(it) } ?: 0L }
+        if (unsent != connUnsent) return "streams hold $unsent bytes unsent, counted $connUnsent"
+        if (connSend.used + connUnsent > connSend.maxLimit) {
+            return "${connSend.used} bytes sent and $connUnsent unsent beyond the peer's MAX_DATA ${connSend.maxLimit}"
+        }
+        for ((id, e) in streams) {
+            val w = e.send?.written ?: continue
+            val l = sendLimit[id]?.maxLimit ?: continue
+            if (w > l) return "stream $id holds $w bytes beyond the peer's MAX_STREAM_DATA $l"
+        }
         for ((id, e) in streams) {
             e.recv?.let { r ->
                 if (r.highest > r.flow.limit) return "stream $id received ${r.highest} beyond the advertised ${r.flow.limit}"
@@ -557,7 +573,9 @@ internal class StreamManager(
         }
         if (connSend.used != 0L) return "${connSend.used} bytes of connection credit still charged to the dropped streams"
         if (sendBufferedBytes != 0L) return "$sendBufferedBytes bytes of the dropped streams still buffered"
-        if (connBlocked.isNotEmpty() || writeRefused.isNotEmpty()) return "a dropped stream is still on a blocked list"
+        if (connBlocked.isNotEmpty() || bufferRefused.isNotEmpty() || connRefused.isNotEmpty()) {
+            return "a dropped stream is still on a blocked list"
+        }
         scheduler.next()?.let { return "the scheduler still holds dropped stream ${it.id}" }
         val awaitingAck = resetsUnacked.orEmpty() + finishedAwaitingResetAck.orEmpty() + retiredAwaitingAck.orEmpty()
         awaitingAck.firstOrNull { StreamIds.isLocal(it, role) }?.let {
@@ -871,6 +889,7 @@ internal class StreamManager(
         if (!grew) return false // like MAX_DATA: a frame that raises nothing costs no work (it spends no glitch token either)
         if (s.hasPending) scheduler.add(s)
         if (s.sentEnd < s.written) events += e.writable // data was waiting for this credit
+        wakeCreditRefused(s) // a writer was refused for it
         return true
     }
 
@@ -889,6 +908,8 @@ internal class StreamManager(
     fun onMaxData(max: Long): Boolean {
         val grew = connSend.onMaxUpdate(max)
         if (!grew) return false // RFC 9000 section 21.6: a frame that raises nothing must not cost a pass over the streams
+        // writers refused for the connection's credit may take the new credit
+        wakeAll(connRefused)
         for (i in connBlocked.indices) {
             val s = connBlocked[i]
             s.connBlocked = false
@@ -1005,16 +1026,162 @@ internal class StreamManager(
     ): Int {
         val s = streams[id]?.send ?: throw IllegalStateException("stream $id is not writable")
         check(s.state != SendState.ResetSent && s.state != SendState.ResetAt) { "stream $id was reset" }
-        val accepted = minOf(len.toLong(), config.maxSendBuffer - sendBufferedBytes).toInt()
-        if (accepted <= 0 && !fin) return 0
+        val accepted = minOf(len.toLong(), writeRoom(id, s)).toInt()
+        if (accepted <= 0 && !fin) {
+            if (len > 0) refuse(id, s)
+            return 0
+        }
         s.enqueue(data, off, accepted, fin && accepted == len)
         sendBufferedBytes += accepted
+        connUnsent += accepted
         if (s.hasPending) scheduler.add(s)
-        if (accepted < len && !s.writeRefused) { // the send buffer is full: StreamWritable follows once acknowledgements free room
-            s.writeRefused = true
-            writeRefused += s
-        }
+        if (accepted < len) refuse(id, s)
         return accepted
+    }
+
+    /**
+     * Bytes written to streams and not yet sent once; with what was sent ([connSend]'s use) they never exceed the peer's
+     * MAX_DATA ([writeRoom]). Kept as bytes come and go: [write], a first send in [writeStreamFrame], and what a reset drops
+     * ([dropUnsent]).
+     */
+    private var connUnsent = 0L
+
+    /** [s]'s bytes written and never sent. */
+    private fun unsentOf(s: SendStream): Long = (s.written - s.sentEnd).coerceAtLeast(0)
+
+    /** Runs [change] on [s] (a reset of it) and takes the unsent bytes it dropped off [connUnsent]. */
+    private inline fun <T> dropUnsent(
+        s: SendStream,
+        change: () -> T,
+    ): T {
+        val before = unsentOf(s)
+        val r = change()
+        connUnsent -= before - unsentOf(s)
+        return r
+    }
+
+    /**
+     * What [s] may take now: no byte beyond the peer's credit for the stream (MAX_STREAM_DATA) or the connection (MAX_DATA,
+     * counting what other streams hold unsent; RFC 9000 section 4.1), and no more than the shared send buffer has room for,
+     * as quinn's `write_limit` and stream `write`. A stream whose peer stops reading it (without STOP_SENDING) thus holds
+     * only bytes the peer took or may take, which are sent and acknowledged; it never fills the buffer the other streams
+     * share, and the HTTP/3 control and QPACK streams need no room set aside. Its writer waits ([refuse]) instead.
+     */
+    private fun writeRoom(
+        id: Long,
+        s: SendStream,
+    ): Long {
+        val buffer = config.maxSendBuffer - sendBufferedBytes
+        val stream = sendLimit[id]?.let { it.maxLimit - s.written } ?: Long.MAX_VALUE
+        val conn = connSend.maxLimit - connSend.used - connUnsent
+        return minOf(buffer, stream, conn).coerceAtLeast(0)
+    }
+
+    /**
+     * A write to [s] took fewer bytes than offered: StreamWritable follows once room comes (acknowledgements free the buffer,
+     * MAX_STREAM_DATA or MAX_DATA raise the credit, a reset drops unsent bytes). A sender blocked by the peer's limit says so
+     * (RFC 9000 section 4.1: it "SHOULD send a STREAM_DATA_BLOCKED or DATA_BLOCKED frame to indicate to the receiver that it
+     * has data to write but is blocked by flow control limits"), once all its credit is sent; until then [writeStreamFrame]
+     * does it as the last credited byte goes out. The writer waits for what held it back, and only that wakes it: the
+     * stream's credit (MAX_STREAM_DATA, no set), the connection's ([connRefused]: MAX_DATA, or a reset dropping unsent
+     * bytes), or the buffer's room ([bufferRefused]: acknowledgements and resets). A writer held at its own credit is not
+     * woken by every acknowledgement, so hundreds of stalled streams cost nothing per ACK. Constant time.
+     */
+    private fun refuse(
+        id: Long,
+        s: SendStream,
+    ) {
+        val limit = sendLimit[id]
+        val stream = limit?.let { it.maxLimit - s.written } ?: Long.MAX_VALUE
+        val conn = connSend.maxLimit - connSend.used - connUnsent
+        val buffer = config.maxSendBuffer - sendBufferedBytes
+        if (limit != null && stream <= 0) {
+            s.creditRefused = true
+            reportStreamBlocked(s, limit)
+        }
+        if (conn <= 0 && !s.connRefused) {
+            s.connRefused = true
+            connRefused += s
+            reportConnBlocked()
+        }
+        // the buffer only when it is what held the write back: a stream at its credit waits for the credit
+        if (buffer <= minOf(stream, conn) && !s.bufferRefused) {
+            s.bufferRefused = true
+            bufferRefused += s
+        }
+    }
+
+    /** STREAM_DATA_BLOCKED for [s] at its limit, once per limit, when all of its credit was sent ([SendFlowController.takeBlocked]). */
+    private fun reportStreamBlocked(
+        s: SendStream,
+        limit: SendFlowController,
+    ) {
+        limit.takeBlocked().let {
+            if (it >= 0) {
+                queueControl(ControlKind.StreamDataBlocked, s.id, it)
+                blockedEpoch++
+                if (!s.streamBlockedListed) {
+                    s.streamBlockedListed = true
+                    streamBlocked += s
+                }
+            }
+        }
+    }
+
+    /** DATA_BLOCKED at the connection's limit, once per limit, when all of its credit was sent. */
+    private fun reportConnBlocked() {
+        connSend.takeBlocked().let {
+            if (it >= 0) {
+                queueControl(ControlKind.DataBlocked, 0, it)
+                blockedEpoch++
+            }
+        }
+    }
+
+    /** Writers refused for the connection's credit (MAX_DATA); woken by MAX_DATA or by a reset that drops unsent bytes. */
+    private val connRefused = LinkedHashSet<SendStream>()
+
+    /** Writers refused for room in the shared send buffer; woken when acknowledgements or resets release some. */
+    private val bufferRefused = LinkedHashSet<SendStream>()
+
+    /**
+     * The writer refused on [id] gave up without bytes left to write (a cancelled wait for credit): the stream no longer
+     * counts as blocked, so no STREAM_DATA_BLOCKED or DATA_BLOCKED is repeated for it, and it leaves the refused sets. A
+     * writer whose flush was cancelled with bytes still in its output does not call this: those bytes still wait for credit.
+     */
+    fun writerGone(id: Long) {
+        val s = streams[id]?.send ?: return
+        s.creditRefused = false
+        if (s.connRefused) {
+            s.connRefused = false
+            connRefused.remove(s)
+        }
+        if (s.bufferRefused) {
+            s.bufferRefused = false
+            bufferRefused.remove(s)
+        }
+    }
+
+    /** Some live writer waits for the connection's credit (the refused set loses streams that ended). */
+    private fun connWriteRefused(): Boolean {
+        if (connRefused.isEmpty()) return false
+        connRefused.removeAll { o -> (streams[o.id]?.send !== o || !o.takesWrites).also { gone -> if (gone) o.connRefused = false } }
+        return connRefused.isNotEmpty()
+    }
+
+    /**
+     * The room [write] gives [id] now ([writeRoom]); 0 for a stream that cannot take writes. With [register], a stream without
+     * room is refused as a write would be: StreamWritable follows when room comes, and the blocked reports go out.
+     */
+    fun writeRoom(
+        id: Long,
+        register: Boolean,
+    ): Long {
+        val s = streams[id]?.send ?: return 0
+        if (!s.takesWrites) return 0
+        val room = writeRoom(id, s)
+        if (room == 0L && register) refuse(id, s)
+        return room
     }
 
     fun read(
@@ -1113,7 +1280,10 @@ internal class StreamManager(
             e.recv?.discardBuffered() // nothing is left to read: its kept buffer leaves the idle budget
             streams.remove(id)
             sendLimit.remove(id)
-            e.send?.let { scheduler.remove(it) }
+            e.send?.let {
+                scheduler.remove(it)
+                leaveGroup(it)
+            }
             if ((e.send?.reportedFinalSize ?: 0L) < 0 || (e.recv?.finalSize ?: 0L) < 0) finishedBeforeFinalSize++
             reportFinished(id)
         }
@@ -1148,10 +1318,10 @@ internal class StreamManager(
         id: Long,
         s: SendStream,
     ) {
-        sendBufferedBytes -= s.reset()
+        sendBufferedBytes -= dropUnsent(s) { s.reset() }
         noteSendReleased(id)
         scheduler.remove(s)
-        wakeRefusedWriters()
+        wakeAfterReset()
     }
 
     /**
@@ -1178,9 +1348,10 @@ internal class StreamManager(
         if (s.state == SendState.ResetSent || s.state == SendState.ResetAt || s.state == SendState.DataRecvd) return
         if (!peerResetStreamAt && !forceResetStreamAtForTest) return reset(id, code)
         val r = reliable.coerceIn(0, s.written)
-        sendBufferedBytes -= s.resetAt(r, code)
+        // the reliable bytes not sent yet stay counted: they are within the stream's credit and still take the connection's
+        sendBufferedBytes -= dropUnsent(s) { s.resetAt(r, code) }
         noteSendReleased(id)
-        wakeRefusedWriters()
+        wakeAfterReset()
         if (s.hasPending) scheduler.add(s) else scheduler.remove(s)
         announceResetAtIfDue(s)
     }
@@ -1227,9 +1398,52 @@ internal class StreamManager(
     /** The priority the scheduler sends stream [id] with (a test hook); null without a sending half. */
     internal fun priorityForTest(id: Long): StreamPriority? = streams[id]?.send?.priority
 
+    /** The scheduling groups by id, each while it has a stream ([setGroup]). */
+    private val groups = HashMap<Long, SchedGroup>()
+
+    /**
+     * Puts stream [id] into scheduling group [groupId] (a WebTransport session: its CONNECT stream's id): the groups of one
+     * urgency take turns frame by frame, and RFC 9218's order holds within each ([StreamScheduler]).
+     */
+    fun setGroup(
+        id: Long,
+        groupId: Long,
+    ) {
+        val s = streams[id]?.send ?: return
+        if (s.group?.id == groupId) return
+        if (s.tunnel) return // a tunnel keeps its own turn (RFC 9218 section 10.1), outside any group
+        val scheduled = s.schedQueue >= 0
+        if (scheduled) scheduler.remove(s)
+        leaveGroup(s)
+        val g = groups.getOrPut(groupId) { SchedGroup(groupId) }
+        g.members++
+        s.group = g
+        if (scheduled || s.hasPending) scheduler.add(s)
+    }
+
+    /** [s] leaves its scheduling group; the group goes with its last stream. */
+    private fun leaveGroup(s: SendStream) {
+        val g = s.group ?: return
+        s.group = null
+        if (--g.members == 0) groups.remove(g.id)
+    }
+
+    /** The scheduling groups with a stream (a test hook). */
+    internal val groupCountForTest: Int get() = groups.size
+
     /** Marks stream [id] as carrying a tunnel: it gets a share of the frames whatever its urgency (RFC 9218 section 10.1). */
     fun markTunnel(id: Long) {
-        streams[id]?.send?.let { scheduler.markTunnel(it) }
+        val s = streams[id]?.send ?: return
+        if (s.group != null) {
+            // a tunnel takes its own turn, not its group's
+            val scheduled = s.schedQueue >= 0
+            if (scheduled) scheduler.remove(s)
+            leaveGroup(s)
+            scheduler.markTunnel(s)
+            if (scheduled) scheduler.add(s)
+            return
+        }
+        scheduler.markTunnel(s)
     }
 
     /** RFC 9218 urgency of [s] for comparing with a datagram's: the critical streams (control, QPACK) come before urgency 0. */
@@ -1291,6 +1505,10 @@ internal class StreamManager(
             if (newBytes > 0) {
                 limit.consume(newBytes)
                 connSend.consume(newBytes)
+                connUnsent -= newBytes
+                // the last credited byte goes out while a writer waits for more: blocked (RFC 9000 section 4.1)
+                if (s.creditRefused && limit.available <= 0) reportStreamBlocked(s, limit)
+                if (connRefused.isNotEmpty() && connSend.available <= 0) reportConnBlocked()
             }
             FrameEncoder.streamHeader(w, s.id, range.offset, range.length, range.fin, withLength = true)
             val buf = if (range.length <= scratch.size) scratch else ByteArray(range.length)
@@ -1313,9 +1531,12 @@ internal class StreamManager(
     /** Streams that reported STREAM_DATA_BLOCKED; pruned by [flowBlocked] once they are no longer blocked. */
     private val streamBlocked = ArrayList<SendStream>()
 
+    /** [s] has data that waits for the peer's MAX_STREAM_DATA: written and unsent, or a writer refused at its credit. */
+    private fun waitsForStreamCredit(s: SendStream): Boolean = s.sentEnd < s.written || (s.creditRefused && s.takesWrites)
+
     private fun stillStreamBlocked(s: SendStream): Boolean {
         val e = streams[s.id] ?: return false
-        if (e.send !== s || s.sentEnd >= s.written) return false
+        if (e.send !== s || !waitsForStreamCredit(s)) return false
         val limit = sendLimit[s.id] ?: return false
         return limit.stillBlockedAt(limit.maxLimit)
     }
@@ -1326,7 +1547,7 @@ internal class StreamManager(
      */
     private fun stillConnBlocked(): Boolean {
         connBlocked.removeAll { s -> (streams[s.id]?.send !== s || !s.hasUnsent).also { gone -> if (gone) s.connBlocked = false } }
-        return connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)
+        return (connBlocked.isNotEmpty() || connWriteRefused()) && connSend.stillBlockedAt(connSend.maxLimit)
     }
 
     /** True while some data waits for credit the peer has not given: a reported DATA_BLOCKED or STREAM_DATA_BLOCKED still holds. */
@@ -1360,7 +1581,6 @@ internal class StreamManager(
     }
 
     /** Streams whose [write] took fewer bytes than offered; each gets StreamWritable once acknowledgements free buffer room. */
-    private val writeRefused = ArrayList<SendStream>()
 
     /**
      * Streams whose RESET_STREAM or RESET_STREAM_AT we sent and the peer has not acknowledged yet. This and the two below
@@ -1462,19 +1682,40 @@ internal class StreamManager(
             if (released > 0) noteSendReleased(s.id)
             if (s.state == SendState.DataRecvd || s.state == SendState.ResetSent) maybeClose(s.id)
         }
-        if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()
+        if (sendBufferedBytes < bufferedBefore) wakeAll(bufferRefused)
     }
 
-    /** The send buffer has room again: every stream whose write was cut short learns it (and live ones only). */
-    private fun wakeRefusedWriters() {
-        if (writeRefused.isEmpty()) return
-        for (i in writeRefused.indices) {
-            val s = writeRefused[i]
-            s.writeRefused = false
-            val e = streams[s.id] ?: continue
-            if (e.send === s && s.state != SendState.ResetSent) events += e.writable
+    /**
+     * Room came for the writers of [set] (the buffer's, or the connection's credit): each learns it once, the most urgent
+     * first (RFC 9218), so they run in that order and take the room in it. One still without room is refused again.
+     */
+    private fun wakeAll(set: LinkedHashSet<SendStream>) {
+        if (set.isEmpty()) return
+        val woken = if (set.size == 1) set.toList() else set.sortedBy { urgencyOf(it) }
+        set.clear()
+        for (s in woken) {
+            if (set === bufferRefused) s.bufferRefused = false else s.connRefused = false
+            wake(s)
         }
-        writeRefused.clear()
+    }
+
+    /** The peer raised [s]'s own credit: its writer, if one was refused for it, learns it. */
+    private fun wakeCreditRefused(s: SendStream) {
+        if (!s.creditRefused) return
+        s.creditRefused = false
+        wake(s)
+    }
+
+    /** One StreamWritable for a live stream. */
+    private fun wake(s: SendStream) {
+        val e = streams[s.id] ?: return
+        if (e.send === s && s.state != SendState.ResetSent) events += e.writable
+    }
+
+    /** A reset released buffer room and dropped unsent bytes (connection credit): both kinds of refused writers may go on. */
+    private fun wakeAfterReset() {
+        wakeAll(bufferRefused)
+        wakeAll(connRefused)
     }
 
     fun onFramesLost(f: SentFrames) {
@@ -1516,7 +1757,7 @@ internal class StreamManager(
                 // dropped, but a lost one leaves a sender with nothing in flight waiting on the receiver's PTO backoff)
                 SentFrames.ID_STREAM_DATA_BLOCKED -> {
                     val s = streams[f.idValue[i]]?.send
-                    if (s != null && s.sentEnd < s.written && sendLimit[f.idValue[i]]?.stillBlockedAt(f.idExtra[i]) == true) {
+                    if (s != null && waitsForStreamCredit(s) && sendLimit[f.idValue[i]]?.stillBlockedAt(f.idExtra[i]) == true) {
                         queueOnce(ControlKind.StreamDataBlocked, f.idValue[i], f.idExtra[i])
                     }
                 }

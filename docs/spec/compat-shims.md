@@ -66,7 +66,7 @@ no browser can open a session: a page's `new WebTransport()` rejects, with no fa
 `offeredIn` at :66, `WtSettings.ours` at :201, `WtTokens.LEGACY` at :231),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:30` and :33 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:427` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:878` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:884` (the client's draft-02
 request field).
 
 **On by default.** No: only with `http3Settings { webTransport { enabled } }` (false by default) or the Ktor server's `http3 { webTransport { enabled } }`
@@ -298,8 +298,9 @@ the data.
   above 255 reached the server — `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`) fails loudly
   should one ever arrive. Firefox 161 (2026-11-26, `tools/interop/wt-firefox-manual.sh`) keeps the value in the
   `WebTransportError` but `writer.abort` sends only its low 8 bits (256 → 0, 1000 → 232, 2^32-1 → 255), and
-  `reader.cancel` sends no WebTransport code at all (STOP_SENDING with H3_REQUEST_CANCELLED, 0x10c, which the API reports
-  as `StreamStopped.code` null); nothing above 255 reached the server. A receive shim would have nothing to map: no
+  `reader.cancel` sends nothing at all: no STOP_SENDING until the session ends, when Firefox stops every open stream
+  with H3_REQUEST_CANCELLED (0x10c), which the API reports as `StreamStopped.code` null; nothing above 255 reached the
+  server. A receive shim would have nothing to map: no
   browser sends a code above 255. It is reconsidered if one is seen doing so.
 - **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
   among them): the RFC 9000 §7.2 MUST itself.

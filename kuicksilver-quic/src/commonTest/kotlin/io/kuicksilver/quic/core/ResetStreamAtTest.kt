@@ -220,7 +220,9 @@ class ResetStreamAtTest {
 
     /**
      * Section 4: RESET_STREAM_AT must not announce a final size beyond the peer's flow-control limits; it waits until the
-     * reliable bytes went out within them, here past a 16 KiB stream window.
+     * reliable bytes went out within them, here past a 16 KiB stream window the server's reads move on. A write takes no
+     * byte beyond the credit (RFC 9000 section 4.1), so the client writes as the credit comes, then resets with 60 000 of
+     * its 70 000 bytes reliable.
      */
     @Test fun resetAtWaitsForFlowControlCredit() {
         val p =
@@ -235,15 +237,31 @@ class ResetStreamAtTest {
         p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
-            val data = ByteArray(100_000) { (it * 3).toByte() }
-            p.client.writeStream(id, data, 0, data.size, fin = false)
+            val data = ByteArray(70_000) { (it * 3).toByte() }
+            val early = kotlinx.io.Buffer()
+            val buf = ByteArray(16384)
+            var w = 0
+            assertTrue(
+                p.runUntil(limit = 30.seconds) {
+                    if (w < data.size) w += p.client.writeStream(id, data, w, minOf(16384, data.size - w), fin = false)
+                    // the server reads, so its MAX_STREAM_DATA moves the window on
+                    while (true) {
+                        val n = p.server!!.readStream(id, buf, 0, buf.size)
+                        if (n <= 0) break
+                        early.write(buf, 0, n)
+                    }
+                    w == data.size
+                },
+                "written $w",
+            )
             p.client.resetStreamAt(id, 5, 60_000)
-            val got = p.readAll(id)
+            val rest = p.readAll(id)
+            val got = early.readByteArray() + rest.bytes
             assertNull(p.closedReason(p.serverEvents))
             assertNull(p.closedReason(p.clientEvents))
-            assertTrue(got.bytes.size >= 60_000, "${got.bytes.size} bytes")
-            assertContentEquals(data.copyOf(got.bytes.size), got.bytes)
-            assertEquals(5L, got.resetCode)
+            assertTrue(got.size >= 60_000, "${got.size} bytes")
+            assertContentEquals(data.copyOf(got.size), got)
+            assertEquals(5L, rest.resetCode)
         }
     }
 
