@@ -240,8 +240,16 @@ internal class Verification(
         p.store.put(p.name, p.pin)
     }
 
-    /** The reference identifier the pins are checked for, as `tofu` names it: the normalized server name, null for a server. */
-    private fun pinnedHost(): String? = config.serverName?.let { runCatching { HostName.normalize(it).value }.getOrDefault(it) }
+    /**
+     * The reference identifier the pins are checked for, as [verify] names it: an `ExpectedName`'s name when the pins sit
+     * on one (the certificate is checked against it, not against the SNI), else the server name; normalized; null for a
+     * server checking a client certificate.
+     */
+    internal fun pinnedHost(): String? {
+        if (config.role != TlsRole.Client) return null
+        val name = runCatching { referenceOf(config) }.getOrNull() ?: return null
+        return runCatching { HostName.normalize(name).value }.getOrDefault(name)
+    }
 
     /** Pin check against a chain the verifier (or `ksl`) built; also used after an AnchoredCa handshake. */
     fun pinCheck(validated: List<Certificate>): VerifyResult {

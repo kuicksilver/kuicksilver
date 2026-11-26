@@ -71,8 +71,19 @@ class HostPinsTest {
         assertTrue(matches("*.xn--bcher-kva.example", "www.xn--bcher-kva.example"))
         assertTrue(Punycode.roundTrips("bcher-kva"))
         assertTrue(Punycode.roundTrips("e1afmkfd"))
-        assertTrue(Punycode.roundTrips("egbpdaj6bu4bxfgehfvwxn"))
-        assertTrue(Punycode.roundTrips("ls8h"), "a character outside the BMP")
+        assertTrue(Punycode.roundTrips("mgbcah9ar9a4efegftvvn"), "RFC 3492's Arabic sample without its question mark")
+        assertFalse(Punycode.roundTrips("egbpdaj6bu4bxfgehfvwxn"), "with it: punctuation (U+061F) is DISALLOWED")
+        assertTrue(Punycode.roundTrips("a-t17s"), "a CJK ideograph outside the BMP (U+20000)")
+        // RFC 5891 section 4.2.3 / RFC 5892, minimal: what decodes to anything but lower-case letters, digits and marks
+        assertFalse(Punycode.roundTrips("ls8h"), "a symbol (U+1F4A9) is DISALLOWED")
+        assertFalse(Punycode.roundTrips("x-qc4g"), "a lone surrogate (U+D800)")
+        assertFalse(Punycode.roundTrips("bcher-2pa"), "an upper-case letter (U+00DC) is not PVALID")
+        assertFalse(Punycode.roundTrips("abc-jdc"), "a combining mark first (U+0301)")
+        assertFalse(Punycode.roundTrips("b-yq0i"), "a full-width letter (U+FF41) is DISALLOWED")
+        for (label in listOf("xn--ls8h", "xn--x-qc4g", "xn--bcher-2pa", "xn--abc-jdc", "xn--b-yq0i")) {
+            val e = assertFailsWith<IllegalArgumentException>(label) { pins { add("$label.example", p1) } }
+            assertContains(e.message!!, "is not a valid A-label", message = label)
+        }
         assertFalse(Punycode.roundTrips("abc-"), "all ASCII: no A-label")
         assertFalse(Punycode.roundTrips("99999999999a"), "overflow")
         val e = assertFailsWith<IllegalArgumentException> { pins { add("bücher.example", p1) } }

@@ -6735,6 +6735,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PacketProtectorTest.closeRejec
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PacketProtectorTest.negative_lengthsBeyondBuffersAreRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PacketProtectorTest.nextKeepsHeaderKeyAndChangesCiphertext
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PacketProtectorTest.sealOpenRoundTripAndWrongTag
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PinMismatchHostTest.theSniOverrideIsNotTheHostUnderExpectedName
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PinMismatchHostTest.withoutExpectedNameItIsTheNormalizedServerName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PostHandshakeRefusalTest.negative_otherFailuresAreNot
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.PostHandshakeRefusalTest.tls13UnexpectedMessageWeSentIsARefusedPostHandshakeMessage
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.clientHelloScanFindsTicketIdentity

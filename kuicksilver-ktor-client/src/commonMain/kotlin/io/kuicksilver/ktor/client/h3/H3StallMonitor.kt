@@ -396,10 +396,17 @@ internal class H3StallMonitor(
 
     private suspend fun abandon(s: Stall) {
         abandoned = s
+        // the connection is closed below: no timer waits on it any more ([Watch.stall] keeps naming the stall)
+        stalledState.value = false
         for (l in bodies.load()) runCatching { l(s.exception(null)) }
         withContext(NonCancellable) {
             runCatching { conn.close(Http3ErrorCode.NO_ERROR, "stalled: no packet for ${s.silence.inWholeMilliseconds} ms") }
         }
+    }
+
+    /** Lets every socket timeout that stood still for a stall run again (the monitor ended). */
+    internal fun releaseHold() {
+        stalledState.value = false
     }
 
     companion object {
@@ -415,6 +422,8 @@ internal class H3StallMonitor(
                     try {
                         monitor.run()
                     } finally {
+                        // the watch is over: a hold that outlived it would freeze a socket timeout for good
+                        monitor.releaseHold()
                         finally(monitor.ended())
                     }
                 }

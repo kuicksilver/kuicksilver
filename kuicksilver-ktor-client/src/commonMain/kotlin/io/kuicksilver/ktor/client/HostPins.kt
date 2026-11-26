@@ -256,7 +256,44 @@ internal object Punycode {
 
     fun roundTrips(encoded: String): Boolean {
         val decoded = decode(encoded) ?: return false
-        return decoded.any { it >= 0x80 } && encode(decoded) == encoded
+        return decoded.any { it >= 0x80 } && allowed(decoded) && encode(decoded) == encoded
+    }
+
+    /**
+     * A minimal form of IDNA's code point rules (RFC 5891 section 4.2.3, RFC 5892): only lower-case letters, digits, marks
+     * and hyphens, no mark first (section 4.2.3.2), no surrogate, none of the half-width and full-width forms (DISALLOWED:
+     * they are compatibility variants of other characters), and outside the Basic Multilingual Plane only the CJK
+     * ideographs (extensions B to H), whose category common Kotlin cannot read. Stricter than RFC 5892, never looser.
+     */
+    private fun allowed(cps: IntArray): Boolean {
+        for ((i, cp) in cps.withIndex()) {
+            val ok =
+                when {
+                    cp < 0x80 -> {
+                        cp.toChar().let { it in 'a'..'z' || it in '0'..'9' || it == '-' }
+                    }
+
+                    cp in 0xD800..0xDFFF || cp in 0xFF00..0xFFEF -> {
+                        false
+                    }
+
+                    cp > 0xFFFF -> {
+                        cp in 0x20000..0x323AF
+                    }
+
+                    else -> {
+                        val c = cp.toChar()
+                        val mark =
+                            c.category == CharCategory.NON_SPACING_MARK || c.category == CharCategory.COMBINING_SPACING_MARK ||
+                                c.category == CharCategory.ENCLOSING_MARK
+                        (c.isLetter() && !c.isUpperCase() && !c.isTitleCase()) ||
+                            c.category == CharCategory.DECIMAL_DIGIT_NUMBER ||
+                            (mark && i > 0)
+                    }
+                }
+            if (!ok) return false
+        }
+        return true
     }
 
     /** The code points of [input], or null when it is no Punycode. */
