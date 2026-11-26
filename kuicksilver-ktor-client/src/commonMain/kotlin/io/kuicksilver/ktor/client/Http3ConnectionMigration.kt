@@ -49,10 +49,10 @@ public fun interface Http3ConnectionMigration {
     ): NetworkMigrator<*>
 
     /**
-     * The networks this hook follows, as the engine's network when [Http3ClientConfig.networkId] is not set: the engine
+     * The networks this hook follows, as the engine's network when [ClientNetworkConfig.networkId] is not set: the engine
      * collects it while the client is open; every value flushes the HTTPS record cache (RFC 9460 section 12), and each value
      * different from the last (by `toString()`) is a network change, which also resets broken marks and QUIC confirmation
-     * and drops the `Alt-Svc` alternatives without `persist=1` (RFC 7838 section 2.2, [Http3ClientConfig.clearOnNetworkChange]);
+     * and drops the `Alt-Svc` alternatives without `persist=1` (RFC 7838 section 2.2, [Http3ClientExpert.clearAltSvcOnNetworkChange]);
      * null is "no network". The factories
      * (`followDefaultNetwork`) return their system source; null (the default, for a hook of your own) leaves the engine
      * without network information unless `networkId` is set. A source that fails or ends is logged at `Info` and no longer

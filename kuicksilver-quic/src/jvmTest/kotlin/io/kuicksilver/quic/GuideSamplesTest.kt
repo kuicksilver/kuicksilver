@@ -240,7 +240,8 @@ class GuideSamplesTest {
         val endpointWithQlog = quicEndpointConfig { observability { qlog = DirectoryQlogSink(qlogDir) } }
         assertTrue(endpointWithQlog.qlog is DirectoryQlogSink)
         // guide:quic:qlog-async
-        val endpointWithAsyncQlog = quicEndpointConfig { observability { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) } }
+        val endpointWithAsyncQlog =
+            quicEndpointConfig { observability { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) } }
         val async = assertIs<AsyncQlogSink>(endpointWithAsyncQlog.qlog)
         assertEquals(10, async.sampleEvery)
         async.close()

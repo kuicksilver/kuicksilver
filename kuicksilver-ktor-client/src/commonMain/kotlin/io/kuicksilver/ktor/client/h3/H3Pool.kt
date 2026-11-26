@@ -758,7 +758,7 @@ internal class H3Pool(
     /** Test hook: whether an endpoint (a shared one or a loopback one, of origins or of proxies) is bound. */
     internal val endpointBoundForTest: Boolean get() = direct.bound || proxyHop.bound
 
-    /** WebTransport sessions of this client, open or being set up (the `maxWebTransportSessions` cap, a test hook and the resource probe). */
+    /** WebTransport sessions of this client, open or being set up (the `http3 { webTransport { maxSessions } }` cap, a test hook and the resource probe). */
     internal val webTransportSessions = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -767,7 +767,7 @@ internal class H3Pool(
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         require(config.http3.webTransport.maxSessions >= 1) {
-            "http3.maxWebTransportSessions must be at least 1, not ${config.http3.webTransport.maxSessions}"
+            "http3 { webTransport { maxSessions } } must be at least 1, not ${config.http3.webTransport.maxSessions}"
         }
     }
 
@@ -805,7 +805,7 @@ internal class H3Pool(
      * HTTP/3 layer refuses a second session without flow control or beyond `webTransportMaxSessions`
      * ([io.kuicksilver.http3.WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
      * request was processed, RFC 9114 section 4.1.1) marks the connection full at its current count. At most two refusals,
-     * then the server's answer is the caller's. At most `maxWebTransportSessions` sessions are open at once; one more fails
+     * then the server's answer is the caller's. At most `http3 { webTransport { maxSessions } }` sessions are open at once; one more fails
      * at once (IllegalStateException), nothing queues.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -818,7 +818,7 @@ internal class H3Pool(
         check(!refusingWebTransport && !closed) { "the client is closed" }
         while (true) {
             val n = webTransportSessions.value
-            check(n < maxSessions) { "maxWebTransportSessions ($maxSessions) WebTransport sessions are open on this client" }
+            check(n < maxSessions) { "http3 { webTransport { maxSessions } } ($maxSessions) WebTransport sessions are open on this client" }
             if (webTransportSessions.compareAndSet(n, n + 1)) break
         }
         var handedOut = false
@@ -1358,7 +1358,7 @@ internal class H3Pool(
      * same origin still in its handshake is waited for first, for one Connection Attempt Delay at most. Nothing is resolved
      * when the origin has no other connection.
      *
-     * With [coalesce] (`connectionCoalescing`, ADR-0018) a connection of another origin qualifies too, once its handshake is
+     * With [coalesce] (`pool { coalescing }`, ADR-0018) a connection of another origin qualifies too, once its handshake is
      * complete (never a 0-RTT one: its server is not authenticated yet), when its certificate passes every check for [t]'s
      * origin and [t]'s name resolves to its address ([checkCoalescing]: RFC 9114 section 3.3, "To use an existing
      * connection for a new origin, clients MUST validate the certificate presented by the server for the new origin server

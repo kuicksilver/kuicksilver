@@ -507,7 +507,7 @@ class ClientWebTransportTest {
             }
         }
 
-    /** At most maxWebTransportSessions at once; one more fails at once instead of waiting. */
+    /** At most `http3 { webTransport { maxSessions } }` at once; one more fails at once instead of waiting. */
     @Test fun negative_sessionCapExceeded() =
         h3Test {
             val (server, port) =
@@ -518,7 +518,7 @@ class ClientWebTransportTest {
                 testClient(Http3Discovery.Auto, engine = { http3 { webTransport { maxSessions = 1 } } }).use { client ->
                     val first = client.webTransport("https://127.0.0.1:$port/wt")
                     val e = assertFailsWith<IllegalStateException> { client.webTransport("https://127.0.0.1:$port/wt") }
-                    assertTrue("maxWebTransportSessions" in e.message.orEmpty(), e.message)
+                    assertTrue("http3 { webTransport { maxSessions } }" in e.message.orEmpty(), e.message)
                     assertEquals(1, (client.engine as KuicksilverEngine).sessions().value)
                     first.close()
                 }

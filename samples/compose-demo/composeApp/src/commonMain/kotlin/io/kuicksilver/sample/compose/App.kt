@@ -205,7 +205,7 @@ private fun DiagnosticsScreen(app: DemoApp) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(
             "Any URL with Kuicksilver in Auto discovery: HTTP/1.1 first, HTTP/3 once the origin has announced it with Alt-Svc " +
-                "(run it twice). The switch is the engine's http3Allowed kill switch, read on every request.",
+                "(run it twice). The switch is the engine's http3 { allowed } kill switch, read on every request.",
             style = MaterialTheme.typography.bodySmall,
         )
         OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())

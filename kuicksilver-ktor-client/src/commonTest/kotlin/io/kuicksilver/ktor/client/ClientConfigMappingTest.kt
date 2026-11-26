@@ -118,7 +118,9 @@ class ClientConfigMappingTest {
         assertEquals(true, KuicksilverEngineConfig().tls.ech.fromHttpsRecords)
         assertEquals(true, KuicksilverEngineConfig().tls.ech.grease)
         val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
-        val unusable = io.kuicksilver.tls.EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val unusable =
+            io.kuicksilver.tls.EchConfigList
+                .parse(byteArrayOf(0, other.size.toByte()) + other)
         val e =
             assertFailsWith<IllegalArgumentException> {
                 io.ktor.client

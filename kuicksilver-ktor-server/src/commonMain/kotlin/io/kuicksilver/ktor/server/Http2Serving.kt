@@ -301,7 +301,7 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
 ) {
     // counted after the strike is recorded: a test that waits for the count then sees the strike's effect at accept
     try {
-        val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
+        val offenders = h2Offenders ?: return // http2 { repeatOffenderPenalty } off (the default)
         // inside the try: whatever the address conversion throws, the flood end is still counted
         val client = offenderToStrike(remote?.let { peerAddressBytes(it) }, proxy)
         val struck = withContext(NonCancellable) { offenders.strike(client) }

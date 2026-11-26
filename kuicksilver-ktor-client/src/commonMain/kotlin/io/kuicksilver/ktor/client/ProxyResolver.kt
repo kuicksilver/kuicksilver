@@ -24,7 +24,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.atomics.AtomicInt
 
 /**
- * Chooses the proxy for each request the engine's explicit `proxy` does not cover: `engine { proxyResolver = ... }`.
+ * Chooses the proxy for each request the engine's explicit `proxy` does not cover: `engine { proxies { resolver = ... } }`.
  * [proxyFor] returns null for a direct connection. It may throw (UnsupportedOperationException for a proxy the engine
  * cannot use): the request then fails rather than going around the proxy. A request through a proxy uses HTTP/1.1 only
  * (HTTP/3 is UDP, which no supported proxy carries). The engine keeps an answer for 30 seconds per scheme, host and port.
@@ -647,7 +647,7 @@ private val resolverDispatcher = Dispatchers.IO.limitedParallelism(ProxyRouting.
 
 internal const val PAC_FAILED: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script that could not be fetched or run in " +
-        "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxyResolver to choose"
+        "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxies { resolver } to choose"
 
 /**
  * How long a lookup waits for a PAC script (WPAD's discovery, the script's download and its run): half the default
@@ -784,7 +784,7 @@ internal const val WPAD_NOT_FOUND: String =
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +
         "run: requests it does not cover with a fixed proxy connect directly; set engine { proxy = ... } or " +
-        "proxyResolver to choose"
+        "proxies { resolver } to choose"
 
 /** The engine's [ProxyResolver] answers, kept [TTL_MILLIS] per scheme, host and port (at most [MAX_ROUTES]). */
 internal class ProxyRouting(

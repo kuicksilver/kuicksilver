@@ -250,7 +250,7 @@ internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedP
 internal const val JVM_PROXY_ON_443: String =
     "an HTTP java.net.Proxy on port 443: a java.net.Proxy has no scheme (ProxyBuilder.http(Url(\"https://...\")) makes one), " +
         "and plain HTTP to an https:// proxy would send the CONNECT and the credentials in clear; for TLS to the proxy use " +
-        "proxyResolver = ProxyResolver { ResolvedProxy.https(host, 443, credentials) }, for a plain proxy on 443 use " +
+        "proxies { resolver = ProxyResolver { ResolvedProxy.https(host, 443, credentials) } }, for a plain proxy on 443 use " +
         "ResolvedProxy.http(host, 443, credentials)"
 
 /** The credentials in the proxy URL's user info, percent-decoded; null on the JVM and without user info. */
@@ -268,7 +268,7 @@ internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean?
 
 /**
  * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), else what its
- * `proxyResolver` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
+ * `proxies { resolver }` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
  * proxy the engine cannot use, so a request never bypasses it.
  */
 @OptIn(ExperimentalKuicksilverApi::class)

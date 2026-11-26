@@ -231,7 +231,7 @@ internal class KuicksilverEngine(
                 },
         )
 
-    /** `proxyResolver`'s answers per route ([proxyFor]). */
+    /** `proxies { resolver }`'s answers per route ([proxyFor]). */
     internal val proxies = ProxyRouting(config, events.logger)
     internal val h1 = H1Pool(config, selector, events, altSvcFrame = ::onAltSvcFrame) // internal for tests (the engine's session cache)
 
@@ -461,7 +461,7 @@ internal class KuicksilverEngine(
     }
 
     /**
-     * One line per answered call: at `diagnosticsLogLevel` when HTTP/3 was an option, or the mode would have used it, and
+     * One line per answered call: at `observability { protocolChoiceLogLevel }` when HTTP/3 was an option, or the mode would have used it, and
      * the call went over another protocol; at Debug otherwise (HTTP/3 served it, or it was never a candidate). Built only
      * when the logger wants that level.
      */
@@ -680,7 +680,7 @@ internal class KuicksilverEngine(
         }
     }
 
-    /** Warns about a throwing `http3Allowed` at most once per 5 minutes; internal for tests (its clock). */
+    /** Warns about a throwing `http3 { allowed }` at most once per 5 minutes; internal for tests (its clock). */
     internal val http3SwitchWarning =
         RateLimitedWarning(
             5.minutes,
@@ -689,7 +689,7 @@ internal class KuicksilverEngine(
         )
 
     /**
-     * `http3Allowed`, failing open: a switch that throws an Exception allows HTTP/3 (a broken remote configuration must not
+     * `http3 { allowed }`, failing open: a switch that throws an Exception allows HTTP/3 (a broken remote configuration must not
      * break traffic). A CancellationException and an Error go to the caller: the call is being cancelled, or the VM is in
      * trouble, neither of which is the switch's answer. Also used by `webTransport`.
      */

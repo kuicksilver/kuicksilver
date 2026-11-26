@@ -14,7 +14,7 @@ It is not published. The guide behind it is [docs/guide/ktor.md, "Connection mig
 |---|---|
 | Migration | Downloads 20 or 50 MiB at once over Kuicksilver HTTP/3 (`connectionMigration = followDefaultNetwork(...)`) and over a TCP engine: OkHttp on Android; CIO and Darwin (URLSession) in two columns on iOS. Progress per engine, the current network, the response's `kuicksilverDiagnostics`, and a log of network changes and `connectionMigrated` events. "Resume TCP" makes a broken TCP download go on with `Range`, to show what that workaround costs. |
 | Lossy network | Lab mode: 20 downloads of 1 or 10 MiB per engine from the demo server running behind `tc netem`; median and p90 of the time to the last byte and to the response head. Links to [Why QUIC](../../docs/why-quic.md) for measured numbers. |
-| Diagnostics | Any URL with Kuicksilver in `Auto` discovery: the protocol, the reason, the `FallbackReason` with what to check, and a switch for the `http3Allowed` kill switch. |
+| Diagnostics | Any URL with Kuicksilver in `Auto` discovery: the protocol, the reason, the `FallbackReason` with what to check, and a switch for the `http3 { allowed }` kill switch. |
 
 | Path | What |
 |---|---|
@@ -92,7 +92,7 @@ the download time and of the time to the response head. The Kuicksilver lane ask
 download that cannot use HTTP/3 fails and is counted as failed, never as an HTTP/3 time.
 
 **Diagnostics.** With the default URL (the demo server's `/`) the first request goes over HTTP/1.1 with
-`NoAlternative` and learns `Alt-Svc`; the second goes over HTTP/3. Turn `http3Allowed` off: the next one says
+`NoAlternative` and learns `Alt-Svc`; the second goes over HTTP/3. Turn `http3 { allowed }` off: the next one says
 `Http3Disabled`. Point it at a public site with the system trust to see how that origin is served.
 
 ## How the comparison is kept fair, and where it is not

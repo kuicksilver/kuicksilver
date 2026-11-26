@@ -249,7 +249,14 @@ class ConfigGroupsTest {
     /** The options only a server endpoint takes (loops, admission, QUIC-LB) land in the built configuration and survive toBuilder. */
     @Test fun everyServerEndpointOptionReachesTheConfig() {
         val admission = ConnectionAdmission.AlwaysRetry
-        val lb = QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, io.kuicksilver.quic.endpoint.QuicLbFixtures.key())
+        val lb =
+            QuicLbConfig(
+                2,
+                byteArrayOf(1, 2, 3, 4),
+                4,
+                io.kuicksilver.quic.endpoint.QuicLbFixtures
+                    .key(),
+            )
         val e =
             quicEndpointConfig {
                 server = quicServerConfig(CoreFixtures.server()) {}
@@ -275,7 +282,12 @@ class ConfigGroupsTest {
             }
         assertEquals(io.kuicksilver.tls.EarlyDataState.Allowed, c.earlyData)
         assertSame(store, c.tokenStore)
-        val preferred = PreferredAddress(io.ktor.network.sockets.InetSocketAddress("10.0.0.3", 4433), null)
+        val preferred =
+            PreferredAddress(
+                io.ktor.network.sockets
+                    .InetSocketAddress("10.0.0.3", 4433),
+                null,
+            )
         val s =
             quicServerConfig(CoreFixtures.server()) {
                 newTokenLifetime = 1.minutes

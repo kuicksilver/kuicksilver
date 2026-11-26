@@ -555,7 +555,8 @@ class GuideSamplesTest {
                         engine {
                             tls {
                                 this.identity = identity // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
-                                trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem)) // or keep Platform for a public server certificate
+                                // or keep Platform for a public server certificate
+                                trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))
                             }
                         }
                     }

@@ -264,7 +264,10 @@ class GuideSamplesTest {
         // later: new TCP and QUIC handshakes verify client certificates against the new bundle
         clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
         assertTrue(server.engine.configuration.tls.clientTrust === clientCa) // ServerClientCaReloadTest serves it
-        assertTrue(server.engine.configuration.connectors.single() is KuicksilverTlsConnector)
+        assertTrue(
+            server.engine.configuration.connectors
+                .single() is KuicksilverTlsConnector,
+        )
         assertEquals(Certificate(TestCerts.otherCa), clientCa.current.roots.single())
         identity.close()
     }
@@ -942,7 +945,7 @@ class GuideSamplesTest {
                         this.identity = identity
                         echKeys = keys
                     }
-                    tlsConnector { port = 443 }
+                    tlsConnector { port = 443 } // built, never started
                 }) { routing { get("/") { call.respondText("hidden") } } }
             // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
             keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))

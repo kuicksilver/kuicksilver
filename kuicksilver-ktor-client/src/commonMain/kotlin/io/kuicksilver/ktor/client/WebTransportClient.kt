@@ -38,7 +38,7 @@ import io.kuicksilver.http3.http3Request
  * Kuicksilver engine (IllegalStateException otherwise) and an open client (IllegalStateException after `close()`).
  *
  * Refused with UnsupportedOperationException: under `http3 { enabled = false }`, while
- * `http3 { http3Allowed }` returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
+ * `http3 { allowed }` returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
  * `http3 { webTransport { proxyPolicy } }` asks to connect directly. At most `http3 { webTransport { maxSessions } }`
  * (64) sessions are open at once on the client; one more fails at once with IllegalStateException.
  *

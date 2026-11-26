@@ -350,9 +350,9 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | Value | Meaning | What to check |
  * |---|---|---|
  * | [NotSecure] | an `http://` or `ws://` URL | HTTP/3 needs `https` (RFC 9114 section 3.1) |
- * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxyResolver`; `ProxyResolvers.None` connects directly |
+ * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxies { resolver }`; `ProxyResolvers.None` connects directly |
  * | [Configuration] | `http3 { enabled = false }` | the configuration |
- * | [Http3Disabled] | `http3 { http3Allowed }` said false | your remote configuration |
+ * | [Http3Disabled] | `http3 { allowed }` said false | your remote configuration |
  * | [NoAlternative] | `Auto` and the origin announced no `Alt-Svc` (yet) | the server's `Alt-Svc` header |
  * | [MisdirectedRequest] | the alternative answered 421 and was dropped; the origin served the request over HTTP/1.1 | the alternative's certificate and virtual hosts |
  * | [BrokenAlternative] | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` |
@@ -385,7 +385,7 @@ public enum class FallbackReason {
     /** `http3 { enabled = false }`. */
     Configuration,
 
-    /** `Http3ClientConfig.http3Allowed` returned false for this request. */
+    /** `http3 { allowed }` returned false for this request. */
     Http3Disabled,
 
     /** `Auto` mode without a known HTTP/3 alternative for the origin (no `Alt-Svc` yet, or it was dropped). */

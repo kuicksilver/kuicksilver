@@ -26,7 +26,7 @@ import kotlinx.coroutines.CancellationException
 internal val NoCoalescingKey: AttributeKey<Unit> = AttributeKey("io.kuicksilver.ktor.client.NoCoalescing")
 
 /**
- * Whether [data] may go on a connection of another origin at all (`connectionCoalescing`, ADR-0018): turned on, a trust
+ * Whether [data] may go on a connection of another origin at all (`pool { coalescing }`, ADR-0018): turned on, a trust
  * that names the origin's host ([coalescingTrust]), an `https` request, no WebSocket (its handshake takes a connection of
  * its own origin, over any protocol), no proxy (a connection through one is never shared, and one to a proxy carries every
  * origin anyway, RFC 9113 section 9.1.1), and not the repeat of a coalesced attempt that got 421 ([NoCoalescingKey]).

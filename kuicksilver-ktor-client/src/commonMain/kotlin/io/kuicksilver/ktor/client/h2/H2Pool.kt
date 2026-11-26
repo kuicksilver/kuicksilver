@@ -42,7 +42,7 @@ internal class H2Conn(
     /** Whether the TLS session was resumed (its [peerChain] is the full handshake's, kept with the ticket). */
     val resumed: Boolean = false,
     /**
-     * Whether requests of other origins may come on it (`connectionCoalescing` and a direct TLS connection): then no request
+     * Whether requests of other origins may come on it (`pool { coalescing }` and a direct TLS connection): then no request
      * on it lets HPACK index `cookie` (RFC 7541 section 7.1), so one origin's requests cannot probe another's cookies
      * through the shared dynamic table.
      */
@@ -87,7 +87,7 @@ internal class H2Conn(
  * within `maxConnectionsPerRoute` (the TCP pool's slots). Requests that wait for a stream or a slot watch their route's
  * `signal`, which every change bumps: a released stream, new SETTINGS, a GOAWAY, a connection that came or went. Routes
  * without connections and watchers are dropped at once, so the map is bounded by the live connections and the waiters.
- * With `connectionCoalescing` a request may also take a stream on a connection of another route ([coalescingCandidates],
+ * With `pool { coalescing }` a request may also take a stream on a connection of another route ([coalescingCandidates],
  * RFC 9113 section 9.1.1; ADR-0018); the connection stays filed under its own route.
  */
 internal class H2Pool(
