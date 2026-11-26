@@ -49,7 +49,7 @@ only for a peer that breaks it are listed with their removal condition in [compa
 | QUIC Interop Runner, Kotlin/Native `linuxArm64` image | the same six, both roles, 9 cases | 96 of 99 | same | same |
 | h2spec 2.6.0, the HTTP/2 server | JVM, `macosArm64` and `linuxX64` servers | 146 of 146 cases on each | 2026-11-06 (`linuxX64`: 2026-11-14) | [interop.md, h2spec](spec/interop.md#h2spec-the-http2-server-h2spec-260-2026-11-06) |
 | h3spec v0.1.15, the HTTP/3 server | JVM, `macosArm64` and `linuxX64` servers | 85 of 86 cases on each; the 86th is h3spec's error (RFC 9114 §7.1 asks for the H3_FRAME_ERROR the server sends) | 2026-11-26 | [interop.md, h3spec](spec/interop.md#h3spec-the-http3-server-h3spec-v0115-2026-11-26) |
-| Autobahn\|Testsuite 25.10.1, WebSockets (RFC 6455, RFC 7692) | the server and the client engine: `linuxX64` both, JVM both | 517 cases each way; every one OK or INFORMATIONAL but those the script records with the RFC text that allows their verdict (a scheduling-dependent order of Ktor's session, the optional `*_max_window_bits` parameters); 1 bug of ours found and fixed | 2026-11-26 | [interop.md, Autobahn](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26) |
+| Autobahn\|Testsuite 25.10.1, WebSockets (RFC 6455, RFC 7692) | the server and the client engine: `linuxX64` both and the JVM client in the release gate, all four in hosted CI (the JVM server only there: Docker Desktop drops an occasional connect to the host) | 517 cases each way; every one OK or INFORMATIONAL but those the script records with the RFC text that allows their verdict (Ktor's session answering a Close before the application's echo, the optional `*_max_window_bits` parameters); 2 bugs of ours found and fixed | 2026-11-26 | [interop.md, Autobahn](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26) |
 | Engine interop | Ktor's Netty (HTTP/1.1, HTTP/2, HTTP/3) and CIO engines, plain Netty, OkHttp, the JDK's HttpClient, Netty's HTTP/3 client; 19 HTTP scenarios per pair and a WebSocket suite | every pair passes (where a peer behaves differently, the test asserts our side and the page describes the peer's); 3 bugs of ours found and fixed | 2026-11-13 | [interop.md, Engine interop](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13) |
 | WebSockets over HTTP/2 (RFC 8441) | Node.js 24 (nghttp2) both ways, Chrome 157 | pass | 2026-11-12 | [interop.md](spec/interop.md#websockets-over-http2-rfc-8441-2026-11-12) |
 | WebTransport | Chrome 155 (headless, automated), Firefox 158 (by hand) | pass; Safari not run yet | 2026-10-22 and 2026-10-23 | [interop.md](spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23) |
@@ -62,7 +62,7 @@ red without a cause. The release gate runs both images against all six peers (`-
 runner weekly. The engine interop bench, `kuicksilver-engine-interop`, runs in every gate and in CI. The server engine
 also runs Ktor's own engine contract suites (adapted from Ktor 3.6.0) in its common tests, so on every target.
 h3spec (`tools/interop/h3spec.sh`) and the Autobahn|Testsuite (`tools/interop/autobahn.sh`) run in every gate and in
-hosted CI, as h2spec does: each fails on a case that does not pass, except the cases it lists with the RFC text that
+hosted CI, as h2spec does (the JVM WebSocket server only in hosted CI, on Linux): each fails on a case that does not pass, except the cases it lists with the RFC text that
 allows them, and on a change in the number of cases.
 
 - TODO(measure): the runner matrix on the 0.3.0 code: `tools/ci/local-matrix.sh --with-interop` (or
@@ -136,7 +136,8 @@ The list of what each step does is in [process.md, stage 5](process.md#5-integra
 
 [`build.yml`](../.github/workflows/build.yml) runs the counterpart of the gate on GitHub's runners on every push and
 pull request to `main` and `release/**`, weekly, and by hand: lint; Linux x64 and arm64 (C tests, JVM suites, system
-OpenSSL); the Kotlin/Native Linux executables; Windows (the `mingwX64` test executables, the C tests, the JVM suites);
+OpenSSL; on x64 the Autobahn|Testsuite against the JVM WebSocket server and client); the Kotlin/Native Linux executables
+(with h2spec, h3spec and the Autobahn|Testsuite against the linuxX64 ones); Windows (the `mingwX64` test executables, the C tests, the JVM suites);
 Apple (ABI dumps, ASan C tests, JVM suites, the double build, `macosArm64` and `iosSimulatorArm64` suites); Android on
 API 24 and 35 emulators; JDK 17 and 25; the jar with all five JNI libraries; a sample built from a local publication;
 and, weekly, the QUIC Interop Runner. The other workflows: [`codeql.yml`](../.github/workflows/codeql.yml) (CodeQL over

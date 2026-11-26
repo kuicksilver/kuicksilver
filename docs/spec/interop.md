@@ -251,16 +251,24 @@ and Binary frame as it came; Ping, Pong and Close are Ktor's `DefaultWebSocketSe
 (`crossbario/autobahn-testsuite`, linux/amd64 only) is pinned by its digest. A case passes when the suite's verdict is OK
 or INFORMATIONAL for the case and for its closing handshake; any other verdict fails the run, except where the script
 records the verdicts a case may get with the RFC text that allows them, and the number of cases (517) is recorded too.
-The linuxX64 executable runs inside the suite's container; the JVM and macOS ones on the host. The release gate runs
-the linuxX64 server and client and the JVM client; hosted CI (`build.yml`, job `linux-native`) the linuxX64 server and
-client.
+The linuxX64 executable runs inside the suite's container; the JVM and macOS ones on the host. Where each runs:
+
+| | linuxX64 server | linuxX64 client | JVM server | JVM client |
+|---|---|---|---|---|
+| release gate (`tools/ci/local-matrix.sh`, a Mac with Docker Desktop) | ✓ | ✓ | — (see below) | ✓ |
+| hosted CI (`build.yml`) | ✓ (job `linux-native`) | ✓ (job `linux-native`) | ✓ (job `linux`, x64) | ✓ (job `linux`, x64) |
+
+In hosted CI Docker runs on the Linux host itself: the suite reaches the JVM server on the host network as 127.0.0.1,
+with none of Docker Desktop's forwarding in between.
+
+The first three rows are runs of the final `tools/interop/autobahn.sh`, after both fixes below (2026-11-26):
 
 | run | OK | INFORMATIONAL | recorded (verdict) | other | total |
 |---|---|---|---|---|---|
 | linuxX64 server (in the suite's container, amd64 under emulation on the Mac; 14 min) | 514 | 3 | 0 | 0 | 517 |
 | linuxX64 client (same container) | 433 | 3 | 9 (NON-STRICT), 72 (UNIMPLEMENTED) | 0 | 517 |
-| JVM client (macOS arm64 host, the fuzzing server's port published on the host's loopback) | 433 | 3 | 9 (NON-STRICT), 72 (UNIMPLEMENTED) | 0 | 517 |
-| JVM server (macOS arm64 host, the fuzzing client reaching it as `host.docker.internal`; two runs, see below) | 470 | 3 | 7 (NON-STRICT), 1 (FAILED, 5.6), 36 (UNIMPLEMENTED, 13.3 and 13.5) | 0 | 517 |
+| JVM client (macOS arm64 host, the fuzzing server's port published on the host's loopback) | 434 | 3 | 8 (NON-STRICT), 72 (UNIMPLEMENTED) | 0 | 517 |
+| JVM server (macOS arm64 host, the fuzzing client reaching it as `host.docker.internal`; two runs before the Pong fix, see below) | 470 | 3 | 7 (NON-STRICT), 36 (UNIMPLEMENTED, 13.3 and 13.5) | 1 (FAILED, 5.6, fixed since: 5.1 to 5.20 OK in 5 of 5 runs after it, 5.15 recorded) | 517 |
 
 **Found and fixed.** 6.4.3 and 6.4.4 (NON-STRICT on the JVM and linuxX64 servers at the first runs): a text frame whose
 second chop is not UTF-8 was failed only when its third chop came, a second later, because the frame guard checked the
@@ -275,18 +283,19 @@ the suite's "allowed, not the strictest" verdict, that only the Close came. The 
 in place of the bad frame and Ktor's `DefaultWebSocketSession` answers it at once from its reading coroutine, while the
 application's echo goes through its writing coroutine. On the server the order depends on thread scheduling (OK in the
 runs of the table, NON-STRICT for some of these cases in other runs, JVM and linuxX64 alike); on the client the session
-also cancels the application's block once both Close frames have passed, before it read the message, so these cases are
-NON-STRICT there in every run. RFC 6455 section 7.1.7 asks the endpoint that fails the connection to send "a Close frame
+also cancels the application's block once both Close frames have passed, often before it read the message, so most of
+these cases are NON-STRICT there in most runs. RFC 6455 section 7.1.7 asks the endpoint that fails the connection to send "a Close frame
 with an appropriate status code" (1002 in every run); nothing asks for an answer to data that came before the violation.
 
-**Recorded: a Pong after the echo (5.6 to 5.8, 5.19, 5.20).** A Ping comes between the fragments of a message; the suite
-wants its Pong before the echo of the message when the message's last fragment came after the Ping. Section 5.5.2:
-"Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in response ... It SHOULD respond with Pong frame as soon
-as is practical"; section 5.4 lets control frames "be injected in the middle of a fragmented message". Nothing orders a
-Pong against the data the application sends. Ktor's session queues the Pong as soon as it reads the Ping, from its own
-coroutine, and the application echoes as soon as it has the message: in 2 of 4 runs of 5.6 on the JVM server and 1 of 2
-of 5.19 on the linuxX64 server the Pong was written right after the echo (FAILED), never late or missing; all other
-runs of these cases OK.
+**Found and fixed: the Pong after the echo (5.6 to 5.8, 5.19, 5.20).** A Ping comes between the fragments of a message;
+the suite wants its Pong before the echo of the message. In some runs (2 of 4 of 5.6 on the JVM server, 1 of 2 of 5.19 on
+the linuxX64 server) the Pong came right after the echo (FAILED): it was Ktor's `DefaultWebSocketSession`'s, written by a
+coroutine of its own that ran after the application had echoed the message. RFC 6455 section 5.5.2: "It SHOULD respond
+with Pong frame as soon as is practical", and section 5.4 lets control frames "be injected in the middle of a fragmented
+message". The engines now answer a Ping themselves as soon as they read it (`WebSocketPongs`), at the output's next frame
+boundary, with the Ping's data (section 5.5.3), and drop the session's own Pong for it
+(`WebSocketPongsTest.negative_pingBetweenFragmentsIsAnsweredBeforeTheMessageCompletes`,
+`ServerWebSocketGuardTest.negative_oneServerPongPerPing`). These cases are not recorded: they must be OK.
 
 **Recorded: client_max_window_bits (13.3 to 13.6, client).** In these cases the fuzzing server accepts permessage-deflate
 only by answering `client_max_window_bits` (9 or 15), which RFC 7692 section 7.1.2.2 forbids when the offer does not
@@ -305,8 +314,8 @@ so the JVM server declines and the suite marks the case UNIMPLEMENTED; the linux
 `host.docker.internal`, where an occasional TCP connect times out whatever the server: 3 of 1,500 connects to a plain
 Python TCP server timed out (2026-11-26), and a run of 517 cases opens 517 connections, so most full runs stop part-way
 with the suite's "User timeout caused connection failure". That is why the gate runs the linuxX64 server, inside the
-suite's own container, and not the JVM one. The JVM server's row is two runs: all cases up to 13.7.6 (the next connect
-timed out), then 13.7.
+suite's own container, and not the JVM one; hosted CI runs the JVM server on its Linux runner. The JVM server's row is
+two runs on the Mac: all cases up to 13.7.6 (the next connect timed out), then 13.7.
 
 ## WebSockets over HTTP/2 (RFC 8441, 2026-11-12)
 

@@ -14,13 +14,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
-- Conformance suites in the release gate and in hosted CI (`build.yml`, job `linux-native`), beside h2spec: h3spec
-  v0.1.15 against the HTTP/3 server (`tools/interop/h3spec.sh`; 85 of 86 cases pass, the 86th is h3spec's error, recorded
-  with RFC 9114 section 7.1) and the Autobahn|Testsuite 25.10.1 against the WebSocket server and client of both Ktor
-  engines (`tools/interop/autobahn.sh`; 517 cases each way; it found that bad UTF-8 in a text frame was failed only at the end of the frame, fixed below). Each script pins its tool (h3spec's release binaries by
-  sha256, the Autobahn image by digest, both checked by `tools/check/pins.sh`), records the number of cases, and fails on
-  any case that does not pass except the ones it lists with the RFC text that allows them; the verification pages show
-  their counts. Their server and client are one executable of `kuicksilver-soak` (`conformanceMain`). Results in
+- Conformance suites in the release gate and in hosted CI (`build.yml`, jobs `linux-native` and `linux`), beside
+  h2spec: h3spec v0.1.15 against the HTTP/3 server (`tools/interop/h3spec.sh`; 85 of 86 cases pass, the 86th is
+  h3spec's error, recorded with RFC 9114 section 7.1) and the Autobahn|Testsuite 25.10.1 against the WebSocket server
+  and client of both Ktor engines (`tools/interop/autobahn.sh`; 517 cases each way, the JVM server in hosted CI only;
+  it found that bad UTF-8 in a text frame was failed only at the end of the frame and that a Pong could follow the
+  echo of a message, both fixed below). Each script pins its tool (h3spec's release binaries by sha256, the Autobahn
+  image by digest, both checked by `tools/check/pins.sh`), records the number of cases, and fails on any case that
+  does not pass except the ones it lists with the RFC text that allows them; the verification pages show their counts.
+  Their server and client are one executable of `kuicksilver-soak` (`conformanceMain`). Results in
   `docs/spec/interop.md`. The local gate has two more steps (79 by default, 84 for a release).
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
