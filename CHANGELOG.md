@@ -720,7 +720,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   content within the client's flow-control windows and never past or short of its
   `Content-Length` (the stream is reset instead). One stream's failure (a client's reset, a handler's exception) ends
   that stream only, and the server never answers a client's RST_STREAM with one. The client's preface and field blocks are
-  bounded by `requestHeaderTimeout`, request content and idle connections by `http1 { idleTimeout }`; a
+  bounded by `requestHeaderTimeout`, request content and idle connections by `tcp { idleTimeout }`; a
   client's RST_STREAM cancels its handler, and a stop sends the two-step GOAWAY (RFC 9113 section 6.8). TLS 1.3 only, no
   h2c, no server push; WebSockets over HTTP/2 (RFC 8441), below. The event listener reports `HTTP_2_0`, and the soak probe
   counts `server.h2Connections` and `server.h2Streams`. Flood defences in the engine on top of the per-connection limits

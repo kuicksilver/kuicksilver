@@ -1801,7 +1801,7 @@ internal class H3Pool(
         val reached = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, InetSocketAddress>>())
         val raced = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
-        // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
+        // (proxies { tls }, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
         val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
             raceQuic(p.host, p.port, dns, failures, { c, a ->
