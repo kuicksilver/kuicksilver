@@ -901,12 +901,15 @@ class ZeroRttTest {
     private fun rejectedWithHalfRttFrames(frames: (ConnectionCore) -> ByteArray): CorePair {
         val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
         p.onServerCreated = { s -> s.testInjectFrames += 3 to frames(p.client) }
-        p.runUntil(limit = 3.seconds) { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } || p.client.state.isClosedForTest() }
+        p.runUntil(
+            limit = 3.seconds,
+        ) { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } || p.client.state.isClosedForTest() }
         assertEquals(false, p.client.earlyDataAccepted)
         return p
     }
 
-    private fun ConnectionState.isClosedForTest() = this == ConnectionState.Closing || this == ConnectionState.Draining || this == ConnectionState.Closed
+    private fun ConnectionState.isClosedForTest() =
+        this == ConnectionState.Closing || this == ConnectionState.Draining || this == ConnectionState.Closed
 
     /**
      * RFC 9001 section 4.6.2, "The client therefore MUST reset the state of all streams": the client in 0-RTT holds the server's
@@ -940,7 +943,8 @@ class ZeroRttTest {
         val bidi = QuicConfig.Default.maxBidiStreams
         val p =
             rejectedWithHalfRttFrames {
-                byteArrayOf(0x10) + vi(window * 4) + byteArrayOf(0x12) + vi(bidi + 50) + byteArrayOf(0x13) + vi(QuicConfig.Default.maxUniStreams + 7)
+                byteArrayOf(0x10) + vi(window * 4) + byteArrayOf(0x12) + vi(bidi + 50) + byteArrayOf(0x13) +
+                    vi(QuicConfig.Default.maxUniStreams + 7)
             }
         p.use {
             assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
@@ -984,7 +988,8 @@ class ZeroRttTest {
         val window = QuicConfig.Default.initialConnectionWindow
         val (p, _) = resumed(ticket())
         p.onServerCreated = { s ->
-            s.testInjectFrames += 3 to (byteArrayOf(0x0b, 0x03, 0x02, 'h'.code.toByte(), 'i'.code.toByte()) + byteArrayOf(0x10) + vi(window * 4))
+            s.testInjectFrames +=
+                3 to (byteArrayOf(0x0b, 0x03, 0x02, 'h'.code.toByte(), 'i'.code.toByte()) + byteArrayOf(0x10) + vi(window * 4))
         }
         p.use {
             assertTrue(p.runUntil(limit = 3.seconds) { p.clientEvents.any { it is ConnectionEvent.StreamOpened && it.id == 3L } })

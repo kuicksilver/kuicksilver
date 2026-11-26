@@ -644,7 +644,13 @@ class EarlyDataTest {
                         }
                         s.session.criticalStreamsSeen.first { it == 3 }
                         withContext(s.session.dispatcher) {
-                            assertEquals(4096L, s.session.qpack.decoderTableForTest().second, "the client's Set Dynamic Table Capacity")
+                            assertEquals(
+                                4096L,
+                                s.session.qpack
+                                    .decoderTableForTest()
+                                    .second,
+                                "the client's Set Dynamic Table Capacity",
+                            )
                         }
                         assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
                     }
@@ -736,7 +742,13 @@ class EarlyDataTest {
                         }
                         s.session.criticalStreamsSeen.first { it == 3 }
                         withContext(s.session.dispatcher) {
-                            assertEquals(4096L, s.session.qpack.decoderTableForTest().second, "the client's Set Dynamic Table Capacity")
+                            assertEquals(
+                                4096L,
+                                s.session.qpack
+                                    .decoderTableForTest()
+                                    .second,
+                                "the client's Set Dynamic Table Capacity",
+                            )
                         }
                         assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
                     }
@@ -859,7 +871,13 @@ class EarlyDataTest {
                         assertEquals(1, gen, "the rejection dropped the first critical streams")
                         withContext(session.dispatcher) {
                             assertFailsWith<IllegalStateException> {
-                                session.writeCritical(session.encoderLock, { it.encoder }, byteArrayOf(0x3f, 0x61), madeFor = 0, mustArrive = true)
+                                session.writeCritical(
+                                    session.encoderLock,
+                                    { it.encoder },
+                                    byteArrayOf(0x3f, 0x61),
+                                    madeFor = 0,
+                                    mustArrive = true,
+                                )
                             }
                         }
                         val e = withTimeout(10.seconds) { session.closed.await() }
