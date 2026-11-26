@@ -14,6 +14,7 @@ every rule and every known blind spot of the checks, is in [process.md](process.
 |---|---|---|---|
 | [RFC conformance tables](#rfc-conformance-tables) | one row per requirement, with the tests that pin it | [rfc-compliance.md](spec/rfc-compliance.md), [spec/rfc/](spec/rfc/) | every change; format and test names checked by scripts |
 | [Interop](#interop) | six QUIC stacks, h2spec, other HTTP engines, browsers | [interop.md](spec/interop.md), `tools/interop/` | release gate (QUIC Interop Runner); weekly in CI |
+| [Public HTTP/3 servers](#public-http3-servers) | the client against six public deployments, each a different QUIC implementation | [`public-h3.yml`](../.github/workflows/public-h3.yml), `PublicH3Main` | weekly in CI, by hand |
 | [Fuzzing](#fuzzing) | 34 targets: every parser and the QUIC, HTTP/3 and HTTP/2 connection state machines | `tools/fuzz/` | weekly in CI; the corpus in every gate |
 | [Planted bugs](#planted-bugs-instead-of-mutation-testing) | the fuzz reproducers and HTTP/1.1 and HTTP/3 targets still catch the bugs they found | `tools/fuzz/plants/`, `tools/fuzz/reproducers.txt` | weekly in CI, by hand |
 | [The release gate](#the-release-gate) | every module on every target, sanitizers, emulator, Windows VM, Docker Linux | `tools/ci/local-matrix.sh` | every integration, every release |
@@ -65,6 +66,118 @@ also runs Ktor's own engine contract suites (adapted from Ktor 3.6.0) in its com
   [reliability.md](reliability.md) (`tools/report/reliability.sh`).
 - TODO(measure): h3spec and the Autobahn WebSocket suite, planned for 0.3.0 ([roadmap](roadmap.md#feature-parity-decided-2026-11-16));
   no script in the repository runs them yet.
+
+## Public HTTP/3 servers
+
+[`public-h3.yml`](../.github/workflows/public-h3.yml) runs the Ktor client against public HTTP/3 deployments weekly
+(Wednesday) and by hand: `./gradlew --max-workers=2 :kuicksilver-ktor-client:publicH3Check` runs `PublicH3Main` (in the
+module's `jvmTest` sources, never part of `check` or `jvmTest`) and writes a summary table, `results.json` and the qlog
+traces of every attempt that did not pass. It needs real UDP and DNS and a network that may be used to contact these
+servers, so it runs on GitHub's runners, or by hand where UDP to port 443 is open; never in the release gate. The
+workflow compiles first (a build that failed on a dependency is retried) and then runs the check once, offline for
+Gradle, so a retry never contacts the servers a second time. Every request names the check in its `User-Agent`
+(`kuicksilver-public-h3/<version>` and a link to this section). The run stops starting checks after 40 minutes and
+writes what it has; after every target it writes its results so far, so a job cut short still leaves them.
+
+| Target | Host | QUIC implementation | Why this one |
+|---|---|---|---|
+| Cloudflare | `cloudflare-quic.com` | Cloudflare quiche | Cloudflare's own HTTP/3 page; `/cdn-cgi/trace` reports what the server saw (`http=http/3`, `sni=encrypted`); its HTTPS record carries `alpn=h3` and an `ech` configuration (checked 2026-11-25) |
+| Google | `www.google.com` | Google QUICHE | the largest HTTP/3 deployment, the stack Chrome talks to |
+| Meta | `www.facebook.com` | mvfst | a third large independent stack; also announces `h3` in its HTTPS record (checked 2026-11-25) |
+| Fastly | `www.fastly.com` | quicly (H2O) | the CDN's own site on its QUIC stack |
+| LiteSpeed | `www.litespeedtech.com` | LSQUIC | the stack behind many shared hosts |
+| nginx | `quic.nginx.org` | nginx QUIC | nginx's own HTTP/3 page, the server many origins run |
+
+Every target announced `h3` in `Alt-Svc` (checked 2026-11-25). Akamai is left out: `www.akamai.com` answered scripted
+clients with a bot wall (checked 2026-11-25), and its QUIC stack derives from Google's. Test servers run by one person
+are left out too: they come and go. Any status counts as an answer (no redirect is followed), so a consent page or a bot
+wall served over HTTP/3 still checks the protocol.
+
+| Check | How | Pass when (from the client's own diagnostics) |
+|---|---|---|
+| HTTP/3 | `Http3DiscoveryMode.H3Only` GET | the response is `HTTP_3_0`, its `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot`, the connection listener heard a completed handshake with ALPN `h3` on a QUIC version we offered (the summary names it, v1 or v2); on Cloudflare the trace also says `http=http/3` (`http/1.1`, `http/2` or `h2` there fail; a missing or unknown value warns) |
+| Alt-Svc | `Auto`, a new client | the first answer came over TCP (HTTP/2 expected; HTTP/1.1 is a warning) with `h3` in `Alt-Svc`, and a later request went over HTTP/3 with `alternativeSource = AltSvc` |
+| 0-RTT | `earlyData = true`, the connection dropped after two requests | the new connection's `onZeroRtt` reports `Accepted`; `Rejected` or no early-data ticket is "n/a" (the server's choice, RFC 9001 section 4.6.2) |
+| Migration | `QuicConnection.migrate` to a new socket on a new local port | the next request goes on the same connection (`reused`) and `pathChanges` is at least 1; a server that sent `disable_active_migration` or uses zero-length connection IDs is "n/a"; a GOAWAY after the move, a path that did not validate, or no unused connection ID of the server's for the new path warns; any other failure of `migrate` fails |
+| ECH | Cloudflare only: the `ech` of the HTTPS record (DNS over HTTPS), `ech { configLists }`, `H3Only` | `/cdn-cgi/trace` says both `sni=encrypted` and `http=http/3`; `sni=plaintext` or a known other `http=` fails; a missing `http=` or `sni=` line, or a value the check does not know, warns |
+
+**Failure policy.** Each check is judged `pass`, `n/a`, `warn` or `FAIL`. A server that changed or could not be reached
+is a warning annotation and never a red job:
+
+- a failed name lookup or TCP connect, no QUIC packet back, a stateless reset, `Alt-Svc` without `h3` any more;
+- a QUIC close by the server with NO_ERROR, INTERNAL_ERROR, CONNECTION_REFUSED, INVALID_TOKEN (a token the server no
+  longer accepts after a key rotation, RFC 9000 section 8.1.3), APPLICATION_ERROR, AEAD_LIMIT_REACHED or NO_VIABLE_PATH;
+- an HTTP/3 close by the server with H3_NO_ERROR, H3_INTERNAL_ERROR, H3_REQUEST_REJECTED, H3_REQUEST_CANCELLED,
+  H3_CONNECT_ERROR, H3_VERSION_FALLBACK or a code outside RFC 9114 (read as H3_NO_ERROR);
+- these TLS alerts from the server, about itself or its policy: `close_notify` (0), `access_denied` (49),
+  `internal_error` (80), `user_canceled` (90), `unrecognized_name` (112), `unknown_psk_identity` (115: a ticket the
+  server no longer accepts), `certificate_required` (116), `no_application_protocol` (120);
+- an HTTP/2 reset or GOAWAY from the server with NO_ERROR, INTERNAL_ERROR, REFUSED_STREAM, CANCEL, CONNECT_ERROR or
+  HTTP_1_1_REQUIRED; an HTTP/2 connection that ended without GOAWAY (RFC 9113 section 6.8 makes GOAWAY a SHOULD) when
+  its cause chain is a transport failure, judged link by link: every cause is a network exception, a plain `IOException`
+  with one of the library's peer and path messages (the peer closed the connection, no PING acknowledgement, a health
+  PING not answered, the socket timeout expired; listed with their source lines in `PublicH3Verdicts.kt`, and a test
+  fails when one of them changes), a TLS transport closure, or Ktor's `ClosedByteChannelException`, which passes the walk
+  on without deciding it; and at least one link is one of the first three;
+- a TLS transport closure: a TLS failure without an OpenSSL error code that either has no cause and says the transport
+  closed (during the handshake, or without close_notify: a real FIN), or whose cause chain is a transport failure as
+  above;
+- an expired, not yet valid, revoked or misnamed certificate; an unknown issuer too, with a note: the runner's trust store
+  can lag behind a CA a server just moved to, a known source of false alarms, so its qlog is kept for a look;
+- the exceptions a network causes: `java.net.SocketException`, `java.net.SocketTimeoutException`, `java.io.EOFException`,
+  `java.nio.channels.ClosedChannelException` and Ktor's `HttpRequestTimeoutException`.
+
+The job fails when the client is wrong:
+
+- a server closed with a code that blames the client: any other QUIC transport error (PROTOCOL_VIOLATION,
+  FRAME_ENCODING_ERROR, TRANSPORT_PARAMETER_ERROR, ...), any other TLS alert (`decode_error`, `illegal_parameter`, ...),
+  any other HTTP/3 code (H3_FRAME_UNEXPECTED, H3_SETTINGS_ERROR, H3_EXCESSIVE_LOAD, which a server sends about its peer's
+  behaviour, ...), any other HTTP/2 code (PROTOCOL_ERROR, COMPRESSION_ERROR, FRAME_SIZE_ERROR, FLOW_CONTROL_ERROR,
+  STREAM_CLOSED, ENHANCE_YOUR_CALM, which says the peer "is exhibiting a behavior that might be generating excessive
+  load", ...); a stream reset or stop is read through its HTTP/3 meaning;
+- a QPACK error (0x200 to 0x202) from either side; the client closed or reset with an error of its own (it judged a
+  widely deployed server's packets invalid); an HTTP/2 connection that ended without GOAWAY over any other cause chain
+  (a runtime exception on the way, even over a socket failure; another exception of this library; a plain `IOException`
+  of our own close: "the connection is closing", "the HTTP/2 connection was closed by the client", "the TLS socket is
+  closed") or none; a malformed response; every other TLS failure: one with an OpenSSL error code, and one without that
+  is no transport closure (an unexpected ksl state, a resumed session without a cached chain, refused ciphertext, a
+  renegotiation, a failure of the ksl shim, a "transport closed" over our own close, the "transport failure" wrapper over
+  anything but a transport failure);
+- a server that answered our Initial but whose handshake never completed; a stall on a connection whose own handshake
+  had completed (the attempt's deadline, or the engine's stall detection). The stalled connection is the one the
+  stalled call's diagnostics name (the engine's event listener notes it at the call's end or failure); a call that
+  stalled before any connection was its is judged by the attempt's connections still open, the limit of what the
+  listeners can tell;
+- a certificate rejected for another reason; ECH rejected with a configuration fresh from DNS;
+- a contradiction in our diagnostics (an `H3Only` call over TCP, a version we never offered, an `Alt-Svc` the client did
+  not learn, a server trace that names another protocol);
+- any other exception: every other exception of this library (`QuicException.ConnectionLost.Internal`,
+  `TlsException.Config`, `Http3Exception.Settings`, a field section too large, ...) and every other type.
+
+A check that does not pass runs once more on a new client: `FAIL` stands only when both attempts blame the client; a pass
+on the second attempt, or a failure followed by "n/a", is a warning that names the first failure. Two rules work across
+targets. A check of HTTP/3, Alt-Svc and 0-RTT that ran on three or more reachable targets and passed on none of them
+fails on all of them (the reason states on how many it ran), since every deployment changing in the same week is less likely than a regression of ours (Initials no server
+answers, an `Alt-Svc` parser that learns nothing, resumption that never offers 0-RTT). Migration fails the same way when
+three or more reachable targets did not refuse it and it passed on none. A control decides whether these rules apply:
+before the checks, a datagram built by hand from the version-independent invariants (RFC 8999) with a version reserved
+to force Version Negotiation (RFC 9000 section 15) goes to port 443 of every target, without our QUIC stack. When no
+target answers it, the runner's network blocks QUIC and the rules are not applied; the summary lists the versions each
+target's Version Negotiation named. A runner that reaches no target at all (no name lookup, no TCP) stays a warning, and
+a check the 40-minute deadline skipped is a warning the rules leave alone. The rules are `classify`, `combine` and
+`escalate` in `PublicH3Verdicts.kt`, with the trace and migration judgements in `PublicH3Probe.kt`, each tested on built
+outcomes in `PublicH3VerdictsTest` (part of the ordinary `jvmTest`). The annotations come one per target and level,
+its checks' reasons joined (GitHub shows at most ten of each type per step).
+
+A known blind spot: INVALID_TOKEN from a server is a warning, since a token from NEW_TOKEN may stop being accepted
+after a key rotation (RFC 9000 section 8.1.3). But a client that sends a Retry token back wrongly gets the same code, and
+neither the diagnostics nor the qlog trace (no event for a Retry received) show whether the Initial carried a Retry
+token, so that mistake of ours would show here as a warning only. The QUIC Interop Runner's `retry` case covers it.
+
+What the runners cannot show: a migration between two networks (a runner has one interface; the check moves to a new
+local port, which the server sees as a new address through the runner's NAT) and a server's behaviour as seen from other
+networks and regions. The qlog traces name the runner's address and the connection IDs, both of a throwaway machine;
+the artifacts keep them 14 days.
 
 ## Fuzzing
 
@@ -140,6 +253,7 @@ and, weekly, the QUIC Interop Runner. The other workflows: [`codeql.yml`](../.gi
 the C shim and the Kotlin JVM code), [`scorecard.yml`](../.github/workflows/scorecard.yml) (OpenSSF Scorecard),
 [`fuzz.yml`](../.github/workflows/fuzz.yml) (above), [`gradle-wrapper.yml`](../.github/workflows/gradle-wrapper.yml),
 [`perf.yml`](../.github/workflows/perf.yml) (throughput floors, by hand),
+[`public-h3.yml`](../.github/workflows/public-h3.yml) (the client against public HTTP/3 servers, weekly),
 [`interop-image.yml`](../.github/workflows/interop-image.yml) (publishes a release's interop images, by hand),
 [`pages.yml`](../.github/workflows/pages.yml) (the documentation site) and
 [`release.yml`](../.github/workflows/release.yml) (a hosted release, not used). Hosted CI is read, not enforced: no
@@ -231,6 +345,8 @@ Central (2026-10-22). [verifying.md](verifying.md) shows how to check a release 
 - **Kotlin/Native on Windows.** The `mingwX64` test executables are only linked by the gate; they run in hosted CI,
   which a release does not require.
 - **A physical Android phone.** Device tests run on emulators only.
+- **Connection migration between real networks against public servers.** The weekly public HTTP/3 check moves a
+  connection to a new local port only; a move between networks is tested on the Android emulator against our own server.
 - **Safari.** WebTransport with Safari has not been run.
 - **The 0.3.0 code** has not yet been through the QUIC Interop Runner, a 24–72 h soak, the benchmarks or a measured
   fuzz campaign: the figures above are from 0.2.0 and 0.2.1 or from early-November gates (see the TODOs).
