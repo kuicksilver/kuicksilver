@@ -662,7 +662,7 @@ internal class ResponseImpl(
                 bodyChannel,
                 trailersDeferred,
                 bodyLimit,
-                tunnel = { tunnel },
+                tunnel = tunnel,
             ) { f -> session.run { abortClient(f.code) } }
         }
 

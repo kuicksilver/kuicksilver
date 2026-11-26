@@ -115,8 +115,14 @@ internal suspend fun H3Session.abort(
 
 /**
  * Reads the rest of a message after its first HEADERS: DATA into [out], optional trailers into [trailers], nothing after
- * them (RFC 9114 section 4.1). `content-length` must match the DATA total (section 4.1.2). While [tunnel] is true (a
- * CONNECT answered with 2xx) only DATA may come: a HEADERS frame is a connection error H3_FRAME_UNEXPECTED (section 4.4).
+ * them (RFC 9114 section 4.1). `content-length` must match the DATA total (section 4.1.2). While the stream is a tunnel (a
+ * CONNECT answered with 2xx: [tunnel] on the client, [ServerRequestImpl.tunnel] of [abandoned] on the server) only DATA may
+ * come: a HEADERS frame is a connection error H3_FRAME_UNEXPECTED (section 4.4).
+ *
+ * The loop reads the tunnel state as a field of a final class, not through a lambda: the client and the server passed
+ * lambdas of two classes here, and ART 7.x (API 24/25) compiles such a call for the one class it saw and deoptimizes the
+ * loop when the other comes, which in a debug build's dex leaves 0xEBADDE09 in the frame for the GC to abort on
+ * (KuicksilverEngine.learnAltSvcFrames in kuicksilver-ktor-client says how).
  */
 internal suspend fun H3Session.pumpBody(
     st: QuicStream,
@@ -124,10 +130,14 @@ internal suspend fun H3Session.pumpBody(
     out: ByteChannel,
     trailers: CompletableDeferred<Http3Headers?>,
     contentLength: Long?,
-    tunnel: () -> Boolean = { false },
+    /** Client: the request is a CONNECT answered with 2xx (fixed for the stream). */
+    tunnel: Boolean = false,
     /** Whether our response on [st] was already complete: an H3_NO_ERROR reset then costs nothing ([H3Session.countClientReset]). */
     responseComplete: () -> Boolean = { false },
-    /** Server: the request handed to the application, abandoned (and counted) at most once ([H3Session.countClientStop]). */
+    /**
+     * Server: the request handed to the application, abandoned (and counted) at most once ([H3Session.countClientStop]); its
+     * [ServerRequestImpl.tunnel] says when the stream became a tunnel.
+     */
     abandoned: ServerRequestImpl? = null,
     onStreamFailure: suspend (StreamFailure) -> Unit,
 ) {
@@ -154,7 +164,7 @@ internal suspend fun H3Session.pumpBody(
                 }
 
                 is RequestFrame.Headers -> {
-                    if (tunnel()) {
+                    if (tunnel || abandoned?.tunnel == true) {
                         throw H3ProtocolError(
                             Http3ErrorCode.FRAME_UNEXPECTED,
                             "HEADERS on the established CONNECT stream ${st.id}",
@@ -172,7 +182,7 @@ internal suspend fun H3Session.pumpBody(
                 }
 
                 is RequestFrame.HeadersTooLarge -> {
-                    if (tunnel()) {
+                    if (tunnel || abandoned?.tunnel == true) {
                         throw H3ProtocolError(
                             Http3ErrorCode.FRAME_UNEXPECTED,
                             "HEADERS on the established CONNECT stream ${st.id}",
