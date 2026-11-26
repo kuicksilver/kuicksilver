@@ -1161,7 +1161,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   |---|---|
   | client `trust`, `identity` | `tls { trust; identity }` |
   | client `tls { }` (a `TlsConfig.Builder` lambda) | `tls { }` (`ClientTlsConfig`; ALPN, server name and handshake deadline derived) |
+  | client `tls { handshakeTimeout }` | `connectTimeout` (the TLS handshake's deadline is derived from it) |
+  | client `tls { sessionTickets }`, `tls { genericAlerts }` | no replacement: ticket keys are a server's, and the client sends the specific alert (`tlsConfig(role) { expert { genericAlerts } }` stays for the low-level API) |
+  | client `tls { echConfigList }` | `tls { ech { configLists = mapOf(host to list) } }` |
   | client `quic = …` | `http3 { quic { … } }` |
+  | client `quic = quicConfig { handshakeTimeout }` | `connectTimeout`: `http3 { quic { handshakeTimeout } }` is derived and refused |
+  | client `http3 { settings = http3Settings { webTransportMaxSessions } }` | `http3 { webTransport { maxSessionsPerConnection } }` |
   | client `maxConnectionsCount`, `maxConnectionsPerRoute`, `maxIdleConnectionsPerRoute`, `idleTimeout` | `pool { maxConnections; maxConnectionsPerRoute; maxIdleConnectionsPerRoute; idleTimeout }` |
   | client `maxConnectionLifetime = Duration.INFINITE` | `pool { maxConnectionLifetime = null }` (the default) |
   | client `logger: KuicksilverLogger?`, `eventListener` | `observability { logger; eventListener }` (`logger` not nullable, `KuicksilverLogger.Default`) |
@@ -1185,6 +1190,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   | server `udpSocketCount` | `http3 { endpoint { loops } }` |
   | server `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` (not nullable) |
   | server `http3Settings = …` | `http3 { settings { … } }` |
+  | server `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` |
   | server `quicEarlyData`, `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` |
   | server `webSocketsOverHttp3` | `webSockets { overHttp3 }` |
   | server `logger`, `qlog`, `connectionListener`, `eventListener` | `observability { logger; qlog; connectionListener; eventListener }` |

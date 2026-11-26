@@ -724,7 +724,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   all of a connection's within the connection window (15 MiB at most) for what the server has not read, and what it
   sends waits for the client's window, bounded by the send-stall deadline. No separate cap on WebSocket sessions per
   connection: SETTINGS_MAX_CONCURRENT_STREAMS is that cap (sessions and requests share it, as a handler per stream
-  does), and a deployment that expects many idle sessions per client lowers `http2Settings.maxConcurrentStreams` or
+  does), and a deployment that expects many idle sessions per client lowers `http2 { settings { maxConcurrentStreams } }` or
   turns `webSockets { overHttp2 }` off (decided 2026-11-12). What remains: the frame and message size limits of a session are Ktor's
   (§3.20.1), as over HTTP/1.1 and HTTP/3, and a WebSocket that never closes holds its stream, and so its connection,
   until the application or the peer ends it, as over HTTP/1.1. Verification: `core.SettingsTest.negative_serverWithdrawingExtendedConnectIsAProtocolError`,

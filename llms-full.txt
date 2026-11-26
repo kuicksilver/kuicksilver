@@ -7780,7 +7780,11 @@ above under the new name only. Behaviour that changed with the defaults is in th
 |---|---|---|
 | `trust = …`, `identity = …` | `tls { trust = …; identity = … }` | |
 | `tls { … }` (a `TlsConfig.Builder` lambda) | `tls { … }` (`ClientTlsConfig`: `versions`, `cipherSuites`, `keyExchangeGroups`, `revocation`, `certificateCompression`, `keylog`, `ech { }`) | ALPN, the server name and the handshake deadline are derived |
+| `tls { handshakeTimeout }` | `connectTimeout` | the TLS handshake's deadline is derived from it |
+| `tls { sessionTickets }`, `tls { genericAlerts }` | no replacement | ticket keys are a server's; the client sends the specific alert (`tlsConfig(role) { expert { genericAlerts } }` stays for the low-level API) |
+| `tls { echConfigList }` | `tls { ech { configLists = mapOf(host to list) } }` | per host; else the HTTPS record's |
 | `quic = quicConfig { … }` | `http3 { quic { … } }` | `handshakeTimeout` (= `connectTimeout`), `expert { maxUniStreams; resetStreamAt; cancelErrorCode }` are derived |
+| `quic = quicConfig { handshakeTimeout }` | `connectTimeout` | `http3 { quic { handshakeTimeout } }` is refused |
 | `maxConnectionsCount` | `pool { maxConnections }` | |
 | `maxConnectionsPerRoute`, `maxIdleConnectionsPerRoute`, `idleTimeout` | `pool { maxConnectionsPerRoute; maxIdleConnectionsPerRoute; idleTimeout }` | |
 | `maxConnectionLifetime = Duration.INFINITE` | `pool { maxConnectionLifetime = null }` | `null` is the default |
@@ -7795,6 +7799,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `http3 { hardDelay = null / d / Duration.INFINITE }` | `http3 { expert { raceHeadStart = RaceHeadStart.Adaptive / Fixed(d) / NoRace } }` | |
 | `http3 { networkId = { … } }` | `network { networkId = { … } }` | `null` (not set) is the default |
 | `http3 { settings = http3Settings { … } }` | `http3 { settings { … } }` | `enableConnectProtocol`, `h3Datagram`, `webTransport { enabled; maxSessions }`, `earlyData` are derived |
+| `http3 { settings = http3Settings { webTransportMaxSessions } }` | `http3 { webTransport { maxSessionsPerConnection } }` | |
 | `http3 { endpoint = quicEndpointConfig { … } }` | `http3 { expert { connectionIdLength; dispatcher } }`, `observability { logger; connectionListener }` | the other endpoint options are a server's or tests' |
 | `http3 { earlyData = true }` | `http3 { earlyData { enabled = true } }` | |
 | `http3 { qlog }` | `observability { qlog }` | |
@@ -7818,6 +7823,7 @@ above under the new name only. Behaviour that changed with the defaults is in th
 | `udpSocketCount` | `http3 { endpoint { loops } }` | |
 | `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` | not nullable; default `ConnectionAdmission.default()` |
 | `http3Settings = http3Settings { … }` | `http3 { settings { … } }` | `enableConnectProtocol`, `h3Datagram`, `webTransport`, `earlyData` are derived |
+| `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` | |
 | `webSocketsOverHttp3` | `webSockets { overHttp3 }` | |
 | `quicEarlyData` and `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` | |
 | `logger` (null: standard error) | `observability { logger }` | null is the application's log (`environment.log`) now |
