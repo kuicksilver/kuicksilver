@@ -372,6 +372,8 @@ internal class KuicksilverEngine(
         val diagnostics = ProtocolDiagnostics()
         data.attributes.put(KuicksilverDiagnosticsKey, diagnostics)
         data.attributes.remove(NeverIndexedReceivedKey) // a redirect or a retry copies the previous response's
+        data.attributes.remove(NoCoalescingKey) // a 421 of the previous call's coalesced attempt is not this call's
+        data.attributes.remove(io.kuicksilver.ktor.client.h3.KeptRequestBodyKey) // nor the channel it kept (released at its end)
         val r =
             try {
                 AbandonableBody.guard(route(data, callContext, diagnostics), callContext)

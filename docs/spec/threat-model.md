@@ -865,6 +865,70 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
 `.negative_httpsNeverUsesPriorKnowledge`, `.negative_h2cToAnHttp11OnlyServerFails`, `.negative_h2cToATlsPortFails`,
 `.negative_altSvcFrameOverH2cIsNotLearned`, `.negative_proxyAuthorizationNeverReachesTheOriginOverH2`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default), `.negative_aStopDoesNotWaitForAPrefaceInProgress` (TLS h2); `H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c`, `.negative_aRequestTakenAsTheStopWinsIsServedOverTls`.
 
+#### <a id="3-23-2-coalescing"></a>3.23.2 Connection coalescing on the client (RFC 9113 §9.1.1, RFC 9114 §3.3; CWE-295, CWE-346)
+
+Coalescing (0.3.0, opt-in, `connectionCoalescing`, [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)) lets one
+HTTP/2 or HTTP/3 connection carry the requests of several origins, so its server's authority for each of them rests on
+the client's checks rather than on a handshake with that name.
+
+- **Authority without a handshake** (CWE-295). A request goes on another origin's connection only when the chain its
+  server presented passes every check a new connection to the request's host would make (`verifyForReuse`: the trust, the
+  pins, the name by the shared matcher, validity at that moment, the security level, a staple that is still fresh where
+  one is required), and the host resolves to the connection's address and port at that request (RFC 9110 §4.3.3). A
+  certificate that does not name the host, a pin that does not match, another address or port: a connection of its own,
+  whose handshake decides as always. `Tofu` never coalesces (a first contact would be taken from another origin's
+  handshake), nor does `ExpectedName` (the certificate need not name the host at all).
+- **One verdict for several origins.** A failure for the new host is checked against the connection's own origin too:
+  when that fails as well (expired, revoked, a stale staple, an anchor no longer trusted) the connection is retired (RFC
+  9114 §3.3), one Warn line per connection says why (RFC 9110 §4.3.4, the audit log; it names both hosts, so an
+  application that keeps host names out of its logs filters it in its logger), and its origins' next requests verify on a
+  new one.
+  A failure for the new host alone (its verifier's policy) only refuses that host: one origin's trust decisions cannot
+  close another origin's connection.
+- **The wrong back end behind one certificate** (CWE-346). A TLS terminator that picks the back end by SNI and serves
+  the other names of its certificate sends a coalesced request to the wrong back end (RFC 9113 §9.1.1); a server that
+  knows answers 421, and the request goes once more on a connection of its own origin, never twice, and the connection
+  takes no further request of that host, ever (a connection that has refused 4096 hosts refuses every new one). This is
+  why the setting is off by default.
+- **Races in the pool.** Over HTTP/3 another origin's connection that a concurrent request files under the same
+  destination between this request's check and its use is checked again by this request, at most three rounds; past
+  them it is not there for this request, which connects on its own. A request only ever takes a connection of another
+  origin that it checked itself.
+- **Cross-origin compression** (RFC 7541 §7.1, CWE-203). One HPACK table serves every origin of an HTTP/2 connection, so
+  requests one origin's content makes the client send could probe another origin's field values by their encoded size.
+  `authorization`, `proxy-authorization` and short cookies are never indexed anyway; on a connection that may carry other
+  origins every `cookie` is sent as a literal never indexed. Over HTTP/3 QPACK never indexes `cookie`, `authorization`,
+  `proxy-authorization` and `set-cookie` at all (RFC 9204 §7.1), coalesced or not.
+- **Routes and privacy.** A request routed through a proxy never takes a direct connection, and a connection through a
+  proxy carries no other origin: coalescing never changes the route the application chose. WebSockets and WebTransport
+  sessions, h2c and 0-RTT connections (the server not yet authenticated) are never coalesced. A host the path would not
+  see (ECH accepted on the connection, or offered for the host) is verified without network requests about it (RFC 9849
+  §10.7).
+- **Misattributed Alt-Svc.** An ALTSVC frame on a request stream names no origin; on a connection that carried another
+  origin it is ignored, so one origin's alternative is never recorded for another.
+
+Tests: `ClientCoalescingTest.negative_h2ACertificateThatDoesNotCoverTheHostIsNotReused`, `.negative_h2AnotherAddressIsNotReused`,
+`.negative_h2AnAddressThatChangedEndsTheReuse`, `.negative_h2AnotherPortIsNotReused`, `.negative_h2MisdirectedIsRepeatedOnlyOnce`,
+`.negative_h2MisdirectedStreamedBodyIsNotReplayed`, `.negative_h2ARequestThroughAProxyNeverTakesADirectConnection`,
+`.negative_h2AConnectionThroughAProxyCarriesNoOtherOrigin`, `.negative_h2TofuNeverCoalesces`, `.negative_h2ExpectedNameNeverCoalesces`,
+`.negative_h2OffByDefaultNeverCoalesces`, `.negative_h2ARevokedCertificateRetiresTheConnection`,
+`.negative_h2ARefusalOfTheNewHostAloneKeepsTheConnection`, `.negative_h2AfterA421TheHostNeverReturnsToTheConnection`,
+`.negative_cookiesAreNeverIndexedOnAConnectionOthersMayShare`,
+`.negative_anAltSvcFrameOnACoalescedStreamIsNotTakenForTheConnectionsOrigin`, `.negative_h3ACertificateThatDoesNotCoverTheHostIsNotReused`,
+`.negative_h3OffByDefaultNeverCoalesces`, `.negative_h3TofuNeverCoalesces`, `.negative_h3AnotherAddressIsNotReused`,
+`.negative_h3AnAddressThatChangedEndsTheReuse`, `.negative_h3AfterA421TheHostNeverReturnsToTheConnection`,
+`.negative_h3MisdirectedIsRepeatedOnlyOnce`, `.negative_h3MisdirectedStreamedBodyIsNotReplayed`,
+`.negative_h3ARevokedCertificateRetiresTheConnection`, `.negative_h3ARefusalOfTheNewHostAloneKeepsTheConnection`,
+`.negative_h3AZeroRttConnectionCarriesNoOtherOrigin`, `.negative_webTransportNeverCoalesces`,
+`.negative_h3AFilingMadeMeanwhileIsCheckedAgain`, `.negative_h3AFilingMadeBeforeTheChosenOneIsFiledIsCheckedAgain`,
+`.negative_h3AFilingMadeMeanwhileThatFailsTheCheckIsNotUsed`, `.negative_h3AFilingThatKeepsComingBackEndsAfterThreeRounds`,
+`.negative_tooManyRefusalsRefuseEveryNewHost`, `.negative_h3ABodyWrittenAsThe421IsHandledIsRepeatedWholeOrNotAtAll`,
+`.negative_aKeptChannelIsCancelledWhenTheCallEndsBeforeTheRepeat`, `.negative_onlyDirectHttpsRequestsMayCoalesce`, `.negative_aRefusalIsNeverUndone`,
+`.negative_theChecksInOrder`;
+`ConnectionReuseTest.negative_aNameTheCertificateDoesNotCoverIsRefused`, `.negative_anExpiredCertificateIsRefused`,
+`.negative_aChainTheTrustDoesNotAnchorIsRefused`, `.pinsHoldOnTheValidatedChain`, `.negative_tofuNeverAcceptsAnotherOriginsConnection`,
+`.negative_aMissingOrStaleStapleIsRefused`, `.negative_aMustStapleLeafWithoutItsStapleIsRefused`, `.aHiddenNameIsVerifiedOffline`.
+
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 
 - **Threats:** on a network the client takes for IPv6-only (a global IPv6 source address, no IPv4 one), the Ktor client engine synthesizes IPv6 addresses for IPv4 literals and A-only names from the Pref64::/n that the AAAA answer for `ipv4only.arpa` gives (RFC 7050 section 3). Whoever forges that answer (the network's resolver, or an on-path attacker on an unencrypted DNS path) chooses where those connections go: "This may result in denial-of-service, redirection, man-in-the-middle, or other attacks" (section 3.1). The same attacker can already forge the AAAA records of any name on that path.
@@ -1389,6 +1453,7 @@ weakness appears in different protocols.
 | 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
 | 3.23.1 | h2c: cleartext HTTP/2, request smuggling from an HTTP/1.1 front | CWE-319, CWE-444 |
+| 3.23.2 | connection coalescing: authority without a handshake, the wrong back end behind one certificate, cross-origin compression, routes | CWE-295, CWE-346, CWE-203 |
 | 3.24 | forged NAT64 prefix | CWE-345 |
 | 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |

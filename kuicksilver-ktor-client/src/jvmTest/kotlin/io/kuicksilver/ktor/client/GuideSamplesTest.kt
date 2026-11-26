@@ -83,6 +83,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
         assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
         assertTrue("guide:ktor:h2c-client" in guide, "marker h2c-client")
+        assertTrue("guide:ktor:coalescing" in guide, "marker coalescing")
         assertTrue("guide:ktor:mtls-client" in guide, "marker mtls-client")
         assertTrue("guide:ktor:protocol-log" in guide, "marker protocol-log")
         assertTrue("guide:ktor:client-connection" in guide, "marker client-connection")
@@ -446,6 +447,23 @@ class GuideSamplesTest {
             val config = it.engine.config as KuicksilverEngineConfig
             assertEquals(1000, config.maxConnectionsCount)
             assertEquals(5.minutes, config.idleTimeout)
+        }
+    }
+
+    @Test
+    fun coalescingSample() {
+        // guide:ktor:coalescing
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    // another origin's HTTP/2 or HTTP/3 connection may carry a request when its certificate passes every check
+                    // for the request's host and that host resolves to its address (off by default)
+                    connectionCoalescing = true
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertTrue(config.connectionCoalescing)
         }
     }
 

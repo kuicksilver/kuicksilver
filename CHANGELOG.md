@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: connection coalescing across origins, opt-in and off by default (experimental;
+  `connectionCoalescing = true`, ADR-0018, `docs/guide/ktor.md`, "Connection coalescing"). An `https` request may go on
+  another origin's HTTP/2 or HTTP/3 connection when both conditions of RFC 9110 section 4.3.3 hold. Before, every
+  origin had connections of its own.
+  - The address: the request's host resolves, at each request, to the address and port the connection is connected to
+    (over HTTP/3 the name of the request's own HTTP/3 endpoint).
+  - The certificate: the chain the server presented passes every check a new connection to the host would make (RFC
+    9113 section 9.1.1, RFC 9114 section 3.3): trust, pins, name, validity and a fresh staple where one is required, once
+    per connection and host. A failure that holds for the connection's own origin too (expired, revoked) retires the
+    connection and is logged at Warn.
+  - A 421 to a coalesced request sends it once more on a connection of its own origin (RFC 9110 section 15.5.20); a
+    streamed body already consumed fails the call with `H3BodyConsumed`.
+  - Never through a proxy, for a WebSocket or WebTransport session, over h2c, under `TrustConfig.Tofu` or
+    `TrustConfig.ExpectedName`, or on a 0-RTT connection. An ALTSVC frame on a request stream of a connection that carried
+    another origin is ignored, and on an HTTP/2 connection other origins may share `cookie` is never indexed by HPACK.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.

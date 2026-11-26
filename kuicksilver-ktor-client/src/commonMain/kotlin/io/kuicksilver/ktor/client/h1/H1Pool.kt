@@ -31,21 +31,26 @@ import io.kuicksilver.ktor.client.ActivityOutput
 import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
+import io.kuicksilver.ktor.client.NoCoalescingKey
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.checkCoalescing
 import io.kuicksilver.ktor.client.cleartextNotPermitted
 import io.kuicksilver.ktor.client.cleartextPolicyHost
+import io.kuicksilver.ktor.client.coalescingRetired
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h2.H2Conn
 import io.kuicksilver.ktor.client.h2.H2Http11Required
+import io.kuicksilver.ktor.client.h2.H2Misdirected
 import io.kuicksilver.ktor.client.h2.H2NotProcessed
 import io.kuicksilver.ktor.client.h2.H2Pool
 import io.kuicksilver.ktor.client.h2.H2RefusedRoutes
 import io.kuicksilver.ktor.client.h2.h2Exchange
 import io.kuicksilver.ktor.client.h2.h2WebSocket
 import io.kuicksilver.ktor.client.isIdempotent
+import io.kuicksilver.ktor.client.mayCoalesce
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.newWebSocketKey
 import io.kuicksilver.ktor.client.platformCleartextPermitted
@@ -86,6 +91,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.update
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -280,6 +286,9 @@ private suspend fun drainToEnd(input: ByteReadChannel) {
         // the input failed: it has ended all the same
     }
 }
+
+/** The ALPN of the TLS configuration another origin's certificate check uses for an HTTP/2 connection (as a new one offers). */
+private val H2_ALPN = listOf("h2", "http/1.1")
 
 /** A completed job: a TLS shutdown that does not wait for the peer's close_notify, already in hand. */
 private val DONE: Job = Job().also { it.complete() }
@@ -554,16 +563,20 @@ internal class H1Pool(
     suspend fun open(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
-    ): Opened = obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let { Opened(it.connection, it.reused, it.h2) }
+    ): Opened =
+        obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let {
+            Opened(it.connection, it.reused, it.h2, it.coalesced)
+        }
 
     /**
      * A connection [open] handed out and whether it came from the idle pool (or, for HTTP/2, was open already): an HTTP/1.1
-     * [connection], or a stream reserved on the HTTP/2 connection [h2].
+     * [connection], or a stream reserved on the HTTP/2 connection [h2], another origin's when [coalesced] (ADR-0018).
      */
     class Opened(
         val connection: H1Connection?,
         val reused: Boolean,
         val h2: H2Conn? = null,
+        val coalesced: Boolean = false,
     )
 
     /** A connection from [obtain] (as [Opened]) and the WebSocket keys it holds. */
@@ -572,6 +585,7 @@ internal class H1Pool(
         val reused: Boolean,
         val held: WebSocketConnecting.Held?,
         val h2: H2Conn? = null,
+        val coalesced: Boolean = false,
     )
 
     /**
@@ -753,9 +767,12 @@ internal class H1Pool(
         val held = webSocketKeys?.let { webSocketConnecting.acquire(it) }
         val h2Ok = webSocketKeys == null && h2Allowed(data, key)
         val webSocketOverH2 = webSocketKeys != null && h2Usable(data, h2RouteOf(key))
+        // a stream on another origin's connection when this route has none free (RFC 9113 section 9.1.1, ADR-0018)
+        val coalesce = h2Ok && config.mayCoalesce(data, proxy != null)
         var conn: H1Connection? = null
         var stream: H2Conn? = null
         var reused = false
+        var coalesced = false
 
         // what the request waits for (no allocation: a reused connection needs none of it), and, once a new connection is
         // set up, what its setup is doing: for the report of a connect timeout
@@ -819,6 +836,14 @@ internal class H1Pool(
                                     stream = found
                                     reused = true
                                     return@attempt
+                                }
+                                if (coalesce) {
+                                    coalescedStream(data, key, dns)?.let {
+                                        stream = it
+                                        reused = true
+                                        coalesced = true
+                                        return@attempt
+                                    }
                                 }
                             }
                             waitingFor = io.kuicksilver.ktor.client.ConnectStage.PoolWait
@@ -926,7 +951,11 @@ internal class H1Pool(
         } catch (e: Throwable) {
             // a connection or stream obtained as the connect timeout fires is the request's: the block set it as it
             // returned, and withTimeout threw for work that was done
-            if (e is TimeoutCancellationException && (conn != null || stream != null)) return Obtained(conn, reused, held, stream)
+            if (e is TimeoutCancellationException &&
+                (conn != null || stream != null)
+            ) {
+                return Obtained(conn, reused, held, stream, coalesced)
+            }
             held?.release()
             if (e is CancellationException) {
                 // a cancellation as the block returned: the connection is not handed out, so its slot comes back here
@@ -955,7 +984,47 @@ internal class H1Pool(
             }
             throw e
         }
-        return Obtained(conn, reused, held, stream)
+        return Obtained(conn, reused, held, stream, coalesced)
+    }
+
+    /**
+     * A stream reserved on a connection of another route that may carry [data] (RFC 9113 section 9.1.1, ADR-0018): its
+     * certificate passes every check for [data]'s host and that host resolves to the address and port it is connected to
+     * ([io.kuicksilver.ktor.client.checkCoalescing]), and it answers the health PING a quiet connection gets first. A
+     * connection whose certificate fails for a reason that may apply to its own origins too (expired, revoked, no longer
+     * trusted) is retired as it is found (RFC 9114 section 3.3). Null when none may: the request takes a connection of its
+     * own route.
+     */
+    private suspend fun coalescedStream(
+        data: HttpRequestData,
+        key: String,
+        dns: RequestDns,
+    ): H2Conn? {
+        for (c in h2.coalescingCandidates(key)) {
+            val peer = c.peer ?: continue
+            val verdict =
+                config.checkCoalescing(peer, data.url.host, data.url.port, dns, H2_ALPN) { own, forHost ->
+                    events.coalescingRetired(peer.ownHost, data.url.host, own, forHost)
+                }
+            if (verdict == io.kuicksilver.ktor.client.Coalesce.Retire) {
+                // GOAWAY: its streams finish, no new ones; the next request of its own route connects anew and verifies
+                h2.remove(c)
+                c.client.shutdown()
+                continue
+            }
+            if (verdict != io.kuicksilver.ktor.client.Coalesce.Yes || !c.client.tryReserve()) continue
+            if (!answersHealthCheck(c, data)) {
+                c.client.unreserve()
+                if (c.client.reservedStreams > 0) {
+                    c.client.shutdown()
+                } else {
+                    c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                }
+                continue
+            }
+            return c
+        }
+        return null
     }
 
     /**
@@ -1135,7 +1204,7 @@ internal class H1Pool(
             }
             val obtained =
                 if (pre != null && (webSocketKeys == null || preHeld != null)) {
-                    Obtained(pre.connection, pre.reused, preHeld, pre.h2)
+                    Obtained(pre.connection, pre.reused, preHeld, pre.h2, pre.coalesced)
                 } else {
                     // the resolution counts once, against the first connection (a repeat gets a connect timeout of its own)
                     obtain(data, key, dns, proxy, webSocketKeys, if (attempt == 1) resolvedMillis else 0)
@@ -1191,7 +1260,7 @@ internal class H1Pool(
                     val released = { kept: Boolean ->
                         events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_2_0, kept) }
                     }
-                    if (webSocketKeys == null) return h2Exchange(h2c, data, callContext, events, released)
+                    if (webSocketKeys == null) return h2Exchange(h2c, data, callContext, events, obtained.coalesced, released)
                     // RFC 8441: the WebSocket's Extended CONNECT; it holds its keys (RFC 6455 section 4.1) until the server
                     // answered, and that answer comes within the connect timeout, as over HTTP/1.1
                     try {
@@ -1230,6 +1299,25 @@ internal class H1Pool(
                     diagnostics?.let { it.attempts++ }
                     attempt++
                     events.emit("retry") { retry(data, attempt, e.cause) }
+                    continue
+                } catch (e: H2Misdirected) {
+                    // RFC 9110 section 15.5.20: "A client that receives a 421 (Misdirected Request) response MAY retry the
+                    // request, whether or not the request method is idempotent, over a different connection, such as a
+                    // fresh connection specific to the target resource's origin". A coalesced request goes once more, on a
+                    // connection of its own route; the connection carries no request of this host any more
+                    h2c.hosts.record(url.host, accepted = false)
+                    data.attributes.put(NoCoalescingKey, Unit)
+                    if (e.bodyConsumed) {
+                        throw io.kuicksilver.ktor.client.H3BodyConsumed(
+                            "421 Misdirected Request on a connection of another origin (connection coalescing), and the " +
+                                "request's streamed body was already consumed",
+                            e,
+                        )
+                    }
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    diagnostics?.let { it.attempts++ }
+                    attempt++
+                    events.emit("retry") { retry(data, attempt, e) }
                     continue
                 } catch (e: H2Http11Required) {
                     // RFC 9113 section 7: the server wants this request over HTTP/1.1; the route offers only http/1.1 for a while
@@ -1722,6 +1810,14 @@ internal class H1Pool(
             // disclosure)
             val viaProxy = proxy != null
 
+            // the literal each connected socket went to: the winner's is a direct HTTP/2 connection's destination, which
+            // coalescing compares another origin's addresses with (ADR-0018); kept only when coalescing is on
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            val coalescingOn = config.connectionCoalescing && proxy == null
+
+            @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+            val connected = if (coalescingOn) kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Socket, TcpAddress>>()) else null
+
             // each address that fails is reported (connectFailed) as it fails, whatever the race then does
             @OptIn(
                 io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
@@ -1739,6 +1835,10 @@ internal class H1Pool(
                         try {
                             io.kuicksilver.ktor.network
                                 .connectTcpAddress(selector, a)
+                                .also { s ->
+                                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                                    connected?.update { it + (s to a) }
+                                }
                         } catch (e: Throwable) {
                             connectFailed(data, io.kuicksilver.ktor.client.ConnectStage.TcpConnect, inet, viaProxy, e)
                             throw e
@@ -1858,6 +1958,11 @@ internal class H1Pool(
                         // itself (below)
                         val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
 
+                        // the connection once made: an ALTSVC frame on a request stream names that stream's origin, which
+                        // is not the connection's once it carries other origins (coalescing); read on the connection's reader
+                        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                        val made = if (coalescingOn) kotlin.concurrent.atomics.AtomicReference<H2Conn?>(null) else null
+
                         // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
                         // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
                         // the connection ends with SETTINGS_TIMEOUT (h2Exchange maps that to the call's failure)
@@ -1898,13 +2003,19 @@ internal class H1Pool(
                                             .coerceAtLeast(1.milliseconds)
                                             .also { prefaceTimeoutForTest?.invoke(it) },
                                     // RFC 7838 section 4: one on a request stream is for this connection's origin; one on
-                                    // stream 0 only when its Origin is that origin. Never through a proxy
+                                    // stream 0 only when its Origin is that origin. Never through a proxy. One on a request
+                                    // stream of a connection that carries other origins too (coalescing) may be for one of
+                                    // them, which the frame does not say: it is ignored (the field on the response is not)
                                     onAltSvc =
                                         if (proxy == null) {
                                             { origin, value ->
-                                                if (origin == null ||
-                                                    io.kuicksilver.ktor.client
-                                                        .isAltSvcFrameOrigin(origin, url)
+                                                @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                                                if ((origin == null && made?.load()?.hosts?.anyAccepted() != true) ||
+                                                    (
+                                                        origin != null &&
+                                                            io.kuicksilver.ktor.client
+                                                                .isAltSvcFrameOrigin(origin, url)
+                                                    )
                                                 ) {
                                                     altSvcFrame(url, value)
                                                 }
@@ -1920,6 +2031,14 @@ internal class H1Pool(
                         h2Owned = true
                         try {
                             afterH2StartForTest?.invoke(client, tcp)
+                            // a direct connection may carry other origins (coalescing): where it goes and what its server
+                            // presented, kept from now on; through a proxy it never does
+                            @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                            val destination =
+                                connected?.load()?.firstOrNull { it.first === raw }?.second?.let {
+                                    io.kuicksilver.ktor.client.h3.Destination
+                                        .of(it)
+                                }
                             return H2Conn(
                                 client,
                                 key,
@@ -1928,7 +2047,17 @@ internal class H1Pool(
                                 tcp.localAddress as? io.ktor.network.sockets.InetSocketAddress,
                                 tcp.remoteAddress as? io.ktor.network.sockets.InetSocketAddress,
                                 viaProxy,
-                            )
+                                destination,
+                                if (destination != null) tls.peerCertificates else emptyList(),
+                                url.host,
+                                if (destination != null) tls.stapleUntil else 0L,
+                                tls.echStatus == io.kuicksilver.tls.EchStatus.Accepted,
+                                tls.sessionReused,
+                                destination != null,
+                            ).also {
+                                @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                                made?.store(it)
+                            }
                         } catch (e: Throwable) {
                             // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
                             // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the

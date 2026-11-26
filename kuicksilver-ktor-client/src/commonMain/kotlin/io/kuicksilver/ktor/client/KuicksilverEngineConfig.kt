@@ -416,6 +416,25 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var maxConnectionLifetime: Duration = Duration.INFINITE
 
     /**
+     * Connection coalescing (RFC 9113 section 9.1.1, RFC 9114 section 3.3; ADR-0018): a request for one `https` origin may go
+     * on an open HTTP/2 or HTTP/3 connection of another origin when that connection's certificate passes, now, every check
+     * a new connection to the request's host would make (the [trust], pins and name, validity) and the host resolves to the
+     * address and port the connection is connected to (RFC 9110 section 4.3.3), checked per request. A 421 (Misdirected
+     * Request) to such a request is answered by sending it once more on a connection of its own origin (RFC 9110 section
+     * 15.5.20), whatever its method; a streamed body already consumed fails the call with [H3BodyConsumed] instead. Never
+     * through a proxy, never for a WebSocket or WebTransport, never over h2c, never under `TrustConfig.Tofu` or
+     * `TrustConfig.ExpectedName` (the certificate must name the host, RFC 9110 section 4.3.3), and over HTTP/3
+     * only where the request has an HTTP/3 endpoint of its own (an `Alt-Svc` alternative, an HTTPS record, `Preferred`, a
+     * hint) at the connection's address. False (the default): every origin gets connections of its own, as before 0.3.0; the
+     * one certificate then speaks for the origins it covers, so turn it on only where the servers behind such a certificate
+     * answer 421 to the hosts they do not serve (docs/guide/ktor.md, "Connection coalescing"). Turned on, every HTTP/2
+     * connection that may carry other origins sends `cookie` as a literal HPACK never indexes (RFC 7541 section 7.1), which
+     * costs the compression of cookies of 20 bytes or more on those connections.
+     */
+    @ExperimentalKuicksilverApi
+    public var connectionCoalescing: Boolean = false
+
+    /**
      * Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake; the name resolution and the wait for
      * a pool slot share it). A WebSocket over HTTP/1.1 is connecting until the server answers its opening handshake (RFC
      * 6455 section 4.1): that answer must arrive within the same timeout, counted from the moment the WebSocket has its

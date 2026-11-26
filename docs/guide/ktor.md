@@ -1206,7 +1206,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
 
 - **Not HTTP/2.** `http://`, unless its origin is listed for h2c ([h2c on the client](#h2c-on-the-client)). A WebSocket opens no HTTP/2 connection of its own: see
   WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
-  ends the connection), and no connection coalescing across origins. `priority(...)` goes as the end-to-end `priority`
+  ends the connection), and no connection coalescing across origins unless turned on ([Connection
+  coalescing](#connection-coalescing-experimental)). `priority(...)` goes as the end-to-end `priority`
   field, with an RFC 7540 weight in the HEADERS until the server says it ignores those (RFC 9218 section 2.1.1).
 - **Repeats.** A request the server did not process, a stream above a GOAWAY's last stream or refused with
   REFUSED_STREAM (RFC 9113 section 8.7), goes again on another stream or connection, at most twice, whatever its
@@ -1361,7 +1362,8 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   done; a server's GOAWAY moves new requests to a new connection.
 - **HTTP/3.** One QUIC connection per origin carries all requests, also when the origin is reached under several
   names (its host, an `Alt-Svc` alternative, an HTTPS-record target) that resolve to the same address and port: as RFC
-  9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins never share one. When the server's MAX_STREAMS
+  9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins share one only with
+  `connectionCoalescing` ([Connection coalescing](#connection-coalescing-experimental)). When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
@@ -1370,6 +1372,74 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 - **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most
   `idleTimeout` and at most a minute, and stops when the client closes. Per-origin bookkeeping lives only while an
   origin has connections or waiting requests, so a client that talks to many origins does not grow without bound.
+
+### Connection coalescing (experimental)
+
+```kotlin
+// guide:ktor:coalescing
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        // another origin's HTTP/2 or HTTP/3 connection may carry a request when its certificate passes every check
+        // for the request's host and that host resolves to its address (off by default)
+        connectionCoalescing = true
+    }
+}
+```
+
+With `connectionCoalescing = true` (off by default; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)) a request for
+one `https` origin may go on an open HTTP/2 or HTTP/3 connection of another origin, as RFC 9113 section 9.1.1 and RFC 9114
+section 3.3 allow: two names behind one wildcard certificate or one CDN certificate then share a connection, a handshake
+and a congestion window. A request goes there only when both conditions of RFC 9110 section 4.3.3 hold:
+
+- **The address.** The request's host resolves now (through `dns`, NAT64 synthesis included) to the address and port the
+  connection is connected to; over HTTP/3 the name is that of the request's own HTTP/3 endpoint (the origin, an
+  `Alt-Svc` alternative or an HTTPS-record target). It is checked for every request, so a DNS answer that changed takes
+  the next request elsewhere. Another port is another destination.
+- **The certificate.** The chain the server presented passes every check a new connection to the request's host would
+  make ("The certificate presented by the server MUST satisfy any checks that the client would perform when forming a
+  new TLS connection for the host in the URI", RFC 9113 section 9.1.1): the `trust` (anchors, CRLs, validity now; the
+  platform's verifier or a `Custom` verifier is asked about the new host), the pins, the name (a `*.example.com` covers
+  one label, `example.com` and `a.b.example.com` not; an address literal needs an iPAddress entry), the security level
+  and the staple (under `RequireStapled`, or for a must-staple certificate, the connection's server must have stapled an
+  OCSP response that is still fresh). Checked once per connection and host; when the connection's ECH was accepted, or
+  the host has an ECH configuration, the platform's verifier makes no network request about the host (RFC 9849 section
+  10.7). A certificate that fails for the new host alone (it does not name it, a custom verifier refuses it) leaves the
+  connection to its own origin; one that fails for the connection's own origin as well (expired, revoked, a stale staple)
+  retires it: its requests finish, every origin's next request opens a new connection (RFC 9114 section 3.3), and one
+  Warn line of the engine's `logger` per connection says why (the reason for the connection's own origin, and what the new
+  host met). That line names both hosts, as an audit log needs (RFC 9110 section 4.3.4); filter it in your `logger` if
+  host names must stay out of your logs.
+
+A server that does not serve the host on that connection answers 421 (Misdirected Request; our server does for a host
+its certificate does not name, and for any name but the SNI on a connection an `sniSelector` set up). The request then
+goes once more, whatever its method, on a connection of its own origin (RFC 9110 section 15.5.20), and the connection
+takes no further request of that host; a streamed body that the first attempt consumed fails the call with
+`H3BodyConsumed` instead. A 421 on the origin's own connection is the call's answer. `ProtocolDiagnostics.attempts` counts
+both attempts and the listener gets `retry`.
+
+Never coalesced: requests through a proxy and connections through one (`proxy`, `proxyResolver`, `connectUdpProxy`), so
+a request the application routes through a proxy never takes a direct connection and the other way round; h2c; WebSockets
+and WebTransport sessions; `TrustConfig.Tofu` (a key is remembered for a name only from a handshake with that name) and
+`TrustConfig.ExpectedName`, also under `Pinned` (the certificate does not have to name the host; RFC 9110 section 4.3.3
+attributes authority only to a certificate that does); an
+HTTP/3 connection still in its handshake (0-RTT); an HTTP/2 connection without a free stream (the request opens its own
+instead of waiting). Coalescing never brings HTTP/3 to a request that would not use it: over HTTP/3 it only spares the
+handshake of a request that has an HTTP/3 endpoint of its own. Session tickets stay per origin (a coalesced request
+resumes nothing and stores nothing), and the client certificate is the engine's `identity` for every origin. An ALTSVC
+frame on a request stream of a connection that carried another origin is ignored (it does not say whose it is); each
+response's `Alt-Svc` field is learned for its own origin. On an HTTP/2 connection other origins may share, `cookie` is
+always sent as a literal HPACK never indexes (RFC 7541 section 7.1: a shared compression table lets one origin's
+requests probe another's values), which costs the compression of longer cookies there. No ORIGIN frame (RFC 8336) is
+used. `ProtocolDiagnostics.reason` says how HTTP/3 was chosen, not whether the connection is shared: a coalesced HTTP/3
+request reports the path that led to HTTP/3 (`Race`, `HttpsRecord`, `Configuration`, ...), never `ExistingConnection`
+(that one means a connection of the request's own origin), and its `connection` is the snapshot of the shared
+connection.
+
+Turn it on where the servers behind a shared certificate are one service, or answer 421 for the names they do not
+serve: a TLS-terminating middlebox that picks the back end by SNI and does neither sends the request to the wrong back
+end (RFC 9113 section 9.1.1), and a trust mistake then reaches every origin the connection carries. OkHttp and browsers
+coalesce by default; Go's `net/http` and curl do not.
 
 ### HTTP/3 on the client
 
