@@ -161,7 +161,9 @@ over TCP and QUIC alike, TLS 1.3 only.
 must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` and
 `expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
 `webTransport { maxSessionsPerConnection }` sessions at the limits of `settings { webTransport { } }`
-(`max(100, sessions x (initialMaxStreamsBidi + 1))`, `max(100, 3 + sessions x initialMaxStreamsUni)`). Its
+(`max(100, sessions x (initialMaxStreamsBidi + 1))`, `max(100, 3 + sessions x initialMaxStreamsUni)`), as does
+`flowControl { maxConnectionWindow }` (`max(15 MiB, sessions x initialMaxData)`); a WebTransport session on explicit
+limits its sessions do not fit fails, naming these options. Its
 `settings { }` block is an [`http3Settings { }`](#low-level): the engine derives and refuses `enableConnectProtocol`,
 `h3Datagram`, `webTransport { enabled; maxSessions }` and `earlyData` (a server's policy); the per-session WebTransport
 limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData }` are the client's to set there.
@@ -414,7 +416,8 @@ connector's port. Its `quic { }` block is a [`quicConfig { }`](#low-level): the 
 must be at least 1024 (RFC 9114 section 6.2); `maxBidiStreams` (at least 100, RFC 9114 section 6.1) and
 `expert { maxUniStreams }` (at least 3, RFC 9114 section 6.2) stay settable, and left alone default to 100 raised to fit
 the `webTransport { }` sessions (`max(100, maxSessionsPerConnection x (initialMaxStreamsBidi + 1))`,
-`max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`); an explicit value they do not fit in fails the start. Its
+`max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`), as does `flowControl { maxConnectionWindow }`
+(`max(15 MiB, maxSessionsPerConnection x initialMaxData)`); an explicit value they do not fit in fails the start. Its
 `settings { }` block is an [`http3Settings { }`](#low-level), `maxHeaderBlockTime` bounded by `requestHeaderTimeout`: the
 engine derives and refuses `enableConnectProtocol` (from `webSockets { overHttp3 }`, `webTransport { enabled }` and
 `connectUdp`), `h3Datagram`, `webTransport { }` and `earlyData`. The start logs at Info that an advertised HTTP/3 needs its
@@ -621,7 +624,7 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 | `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 0.3.0 | stable | | receive window of each stream at its start (`initial_max_stream_data_*`), 1..`maxStreamWindow`; doubles while the application reads a whole window in under four RTTs. HTTP/3 (`Http3Endpoint`, both Ktor engines) refuses less than 1024 (RFC 9114 section 6.2) |
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 0.3.0 | stable | | receive window of the connection at its start (`initial_max_data`), 1..`maxConnectionWindow`; kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | 0.3.0 | stable | | ceiling of a stream's receive window, at least `initialStreamWindow`: the most unread data one stream holds |
-| `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow` |
+| `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow`; the Ktor engines raise the default to fit their WebTransport sessions |
 | `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 0.3.0 | stable | | unacknowledged send data the connection buffers over all streams, 1..2^62; writers wait beyond it |
 
 ### `quicConfig { pathMtu { } }`

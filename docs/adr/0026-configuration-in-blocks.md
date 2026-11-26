@@ -267,3 +267,14 @@ The design left these cases open or met them only in the code; each was decided 
   either. Tests that need a server with fewer streams set `Http3Endpoint.allowFewerBidiStreamsForTest`, an
   `@InternalKuicksilverApi` seam that the Ktor server engine reads too, public because the Ktor client's tests start
   such a server.
+- **WebTransport options are named as written, and the connection window fits the sessions.** The HTTP/3 SETTINGS
+  builder recorded the three per-session limits under one made-up key, so the server's refusal named
+  `http3 { settings { webTransport { limits } } }`, which does not exist. Each option is recorded under its own name, and
+  the refusal says which `http3 { webTransport { } }` option it comes from (`maxSessions` from
+  `maxSessionsPerConnection`); the client still sets the three limits there. The connection window followed the stream
+  limits only halfway: a server with 8 sessions a connection at the default `initialMaxData` failed to bind, with a
+  message naming `QuicConfig`. `flowControl { maxConnectionWindow }`, left alone, is now raised to
+  `maxSessionsPerConnection x initialMaxData` in both engines (the builder records its assignment, as it does the other
+  options an engine derives or raises); set explicitly, it is kept, and a misfit is refused in the engine's terms: at the
+  start by the server, at the first `webTransport()` call by the client (which has no WebTransport switch, as for the
+  stream limits). A product above 2^62-1 fails the server's start; the client caps it there.

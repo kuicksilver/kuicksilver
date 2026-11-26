@@ -249,8 +249,9 @@ public class KuicksilverApplicationEngine(
         /**
          * The QUIC settings of the HTTP/3 listeners: the `http3 { quic { } }` block, its derived options refused, with
          * `resetStreamAt` on for WebTransport (its streams keep their header when reset, draft-ietf-webtrans-http3-17
-         * section 4.4) and the stream limits a default that fits the WebTransport sessions ([quicStreamLimits]). Throws
-         * IllegalArgumentException naming a derived option that was assigned, or a stream limit that is too small.
+         * section 4.4), and the stream limits ([quicStreamLimits]) and the connection window ([quicConnectionWindow]) a
+         * default that fits the WebTransport sessions. Throws IllegalArgumentException naming a derived option that was
+         * assigned, or a limit that is too small.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun resolveQuic(): QuicConfig {
@@ -261,21 +262,19 @@ public class KuicksilverApplicationEngine(
             val sessions = if (wt.enabled) wt.maxSessionsPerConnection.toLong() else 0L
             val built = q.build()
             requireUniStreamCredit(built)
+            val flowControl = wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L
             val (bidi, uni) =
-                quicStreamLimits(
-                    built,
-                    assigned,
-                    sessions,
-                    wt.initialMaxStreamsBidi,
-                    wt.initialMaxStreamsUni,
-                    wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L,
-                )
+                quicStreamLimits(built, assigned, sessions, wt.initialMaxStreamsBidi, wt.initialMaxStreamsUni, flowControl)
+            val window = quicConnectionWindow(built, assigned, sessions, wt.initialMaxData, flowControl)
             val resetStreamAt = wt.enabled && !built.resetStreamAt
-            if (bidi == built.maxBidiStreams && uni == built.maxUniStreams && !resetStreamAt) return built
+            if (bidi == built.maxBidiStreams && uni == built.maxUniStreams && window == built.maxConnectionWindow && !resetStreamAt) {
+                return built
+            }
             return built
                 .toBuilder()
                 .apply {
                     maxBidiStreams = bidi
+                    flowControl { maxConnectionWindow = window }
                     expert {
                         maxUniStreams = uni
                         if (resetStreamAt) this.resetStreamAt = true
@@ -371,9 +370,11 @@ public class KuicksilverApplicationEngine(
                 mapOf(
                     "enableConnectProtocol" to "on for WebSockets, WebTransport and CONNECT-UDP (RFC 9220)",
                     "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
-                    "webTransport" to "enabled and maxSessions are http3 { webTransport { enabled; maxSessionsPerConnection } }",
-                    "webTransport.limits" to
-                        "initialMaxStreamsBidi, initialMaxStreamsUni and initialMaxData are http3 { webTransport { } }",
+                    "webTransport.enabled" to "from http3 { webTransport { enabled } }: set it there",
+                    "webTransport.maxSessions" to "from http3 { webTransport { maxSessionsPerConnection } }: set it there",
+                    "webTransport.initialMaxStreamsBidi" to "from http3 { webTransport { initialMaxStreamsBidi } }: set it there",
+                    "webTransport.initialMaxStreamsUni" to "from http3 { webTransport { initialMaxStreamsUni } }: set it there",
+                    "webTransport.initialMaxData" to "from http3 { webTransport { initialMaxData } }: set it there",
                     "earlyData" to "set with http3 { earlyData { policy } }",
                 )
 
@@ -430,6 +431,39 @@ public class KuicksilverApplicationEngine(
                         maxOf(built.maxBidiStreams, needBidi)
                     }
                 return bidi to uni
+            }
+
+            /**
+             * The connection window of the HTTP/3 connections: an explicit `http3 { quic { flowControl { maxConnectionWindow } } }`
+             * is kept, and refused when [sessions] WebTransport sessions at [dataPerSession] (`http3 { webTransport {
+             * initialMaxData } }`) do not fit in it (draft-ietf-webtrans-http3-17 section 5.1: one session could otherwise
+             * hold the whole window); one left alone is the default raised to `sessions x initialMaxData`. Without
+             * WebTransport flow control ([flowControl]) nothing is raised or refused. A product above 2^62-1, the largest
+             * window QUIC can advertise (RFC 9000 section 16), is refused.
+             */
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            fun quicConnectionWindow(
+                built: QuicConfig,
+                assigned: Set<String>,
+                sessions: Long,
+                dataPerSession: Long,
+                flowControl: Boolean,
+            ): Long {
+                if (!flowControl || sessions == 0L) return built.maxConnectionWindow
+                val sessionsOption = "http3 { webTransport { maxSessionsPerConnection } } ($sessions)"
+                require(dataPerSession <= ((1L shl 62) - 1) / sessions) {
+                    "$sessionsOption x initialMaxData ($dataPerSession) exceeds 2^62-1, the largest QUIC connection window: lower one of them"
+                }
+                val need = sessions * dataPerSession
+                if ("flowControl.maxConnectionWindow" in assigned) {
+                    val n = built.maxConnectionWindow
+                    require(n >= need) {
+                        "http3 { quic { flowControl { maxConnectionWindow } } } ($n) is below $sessionsOption x initialMaxData " +
+                            "($dataPerSession): raise it, or leave it to the engine"
+                    }
+                    return n
+                }
+                return maxOf(built.maxConnectionWindow, need)
             }
 
             /** `extra + sessions x perSession`, at most 2^60 (the most streams QUIC can grant, RFC 9000 section 4.6). */

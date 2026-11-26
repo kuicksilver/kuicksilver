@@ -134,7 +134,10 @@ class ConfigGroupsTest {
         assertNull(off.toBuilder().datagrams.maxFrameSize)
     }
 
-    /** The options a Ktor engine derives are recorded when assigned, so the engine can refuse them; a copy records nothing. */
+    /**
+     * The options a Ktor engine derives, or raises when left alone, are recorded when assigned, so the engine can refuse or
+     * keep them; a copy records nothing.
+     */
     @Test fun derivedOptionsAreRecordedWhenAssigned() {
         val b = QuicConfig.Builder()
         assertEquals(emptySet(), b.assignedOptions())
@@ -147,8 +150,15 @@ class ConfigGroupsTest {
             resetStreamAt = true
             cancelErrorCode = 1
         }
+        b.flowControl { maxConnectionWindow = 20_000_000 } // kept or raised by an engine, so it must know which
         assertEquals(
-            setOf("handshakeTimeout", "expert.maxUniStreams", "expert.resetStreamAt", "expert.cancelErrorCode"),
+            setOf(
+                "handshakeTimeout",
+                "expert.maxUniStreams",
+                "expert.resetStreamAt",
+                "expert.cancelErrorCode",
+                "flowControl.maxConnectionWindow",
+            ),
             b.assignedOptions(),
         )
         assertEquals(emptySet(), b.build().toBuilder().assignedOptions())

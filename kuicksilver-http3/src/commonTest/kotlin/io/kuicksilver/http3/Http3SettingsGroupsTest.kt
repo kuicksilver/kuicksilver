@@ -68,9 +68,27 @@ class Http3SettingsGroupsTest {
         b.h3Datagram = true
         b.earlyData = Http3EarlyDataPolicy.WaitForHandshake()
         b.webTransport { maxSessions = 2 }
-        assertEquals(setOf("enableConnectProtocol", "h3Datagram", "earlyData", "webTransport"), b.assignedOptions())
-        b.webTransport { initialMaxData = 1 }
-        assertEquals(setOf("enableConnectProtocol", "h3Datagram", "earlyData", "webTransport", "webTransport.limits"), b.assignedOptions())
+        assertEquals(setOf("enableConnectProtocol", "h3Datagram", "earlyData", "webTransport.maxSessions"), b.assignedOptions())
+        // each option under its own name, so an engine's refusal names one that exists
+        b.webTransport {
+            enabled = true
+            initialMaxStreamsBidi = 1
+            initialMaxStreamsUni = 1
+            initialMaxData = 1
+        }
+        assertEquals(
+            setOf(
+                "enableConnectProtocol",
+                "h3Datagram",
+                "earlyData",
+                "webTransport.maxSessions",
+                "webTransport.enabled",
+                "webTransport.initialMaxStreamsBidi",
+                "webTransport.initialMaxStreamsUni",
+                "webTransport.initialMaxData",
+            ),
+            b.assignedOptions(),
+        )
         assertEquals(emptySet(), b.build().toBuilder().assignedOptions())
     }
 

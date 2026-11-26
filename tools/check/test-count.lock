@@ -1626,6 +1626,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMa
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_derivedOptionsAreRefusedByName
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_explicitUniStreamsBelowThreeAreRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_streamCreditBelow1024IsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.negative_webTransportMisfitIsNamedInTheEnginesTerms
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.nullIsOff
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.poolBlockReachesThePool
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConfigMappingTest.proxyTlsBlock
@@ -3355,6 +3356,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMa
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_clientAuthWithoutTrustIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_connectionIdLengthNextToALoadBalancerFailsTheStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_connectionIdLengthOutOfRangeOrNextToALoadBalancerIsRefused
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_connectionWindowFitsTheWebTransportSessions
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_derivedOptionsAreRefusedByName
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_explicitStreamLimitsTooSmallAreRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConfigMappingTest.negative_h2cOnAPortTheIdentityTurnsIntoTlsFailsTheStart

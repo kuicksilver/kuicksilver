@@ -203,7 +203,14 @@ class ClientConfigMappingTest {
                 case("http3 { quic { expert { cancelErrorCode } } } is derived") { http3 { quic { expert { cancelErrorCode = 1 } } } },
                 case("http3 { settings { enableConnectProtocol } } is derived") { http3 { settings { enableConnectProtocol = true } } },
                 case("http3 { settings { h3Datagram } } is derived") { http3 { settings { h3Datagram = false } } },
-                case("http3 { settings { webTransport } } is derived") { http3 { settings { webTransport { maxSessions = 2 } } } },
+                case(
+                    "http3 { settings { webTransport { maxSessions } } } is derived by the engine (from http3 { webTransport { maxSessionsPerConnection } }",
+                ) {
+                    http3 { settings { webTransport { maxSessions = 2 } } }
+                },
+                case("http3 { settings { webTransport { enabled } } } is derived by the engine (on for each webTransport() call)") {
+                    http3 { settings { webTransport { enabled = true } } }
+                },
                 case("http3 { settings { earlyData } } is derived") {
                     http3 {
                         settings {
@@ -226,11 +233,86 @@ class ClientConfigMappingTest {
         }
         // assigning the default value explicitly is refused too: the option is not the application's to set
         // the per-session WebTransport limits are the client's own
-        val limits = KuicksilverEngineConfig().apply { http3 { settings { webTransport { initialMaxData = 65_536 } } } }
+        val limits =
+            KuicksilverEngineConfig().apply {
+                http3 {
+                    settings {
+                        webTransport {
+                            initialMaxStreamsBidi = 5
+                            initialMaxStreamsUni = 6
+                            initialMaxData = 65_536
+                        }
+                    }
+                }
+            }
         assertEquals(65_536L, limits.resolveHttp3Settings().webTransportInitialMaxData)
+        assertEquals(5L, limits.resolveHttp3Settings().webTransportInitialMaxStreamsBidi)
         val same = KuicksilverEngineConfig().apply { http3 { quic { expert { cancelErrorCode = 0 } } } }
         assertFailsWith<IllegalArgumentException> { same.resolveQuic() }
     }
+
+    /**
+     * The connection window is raised like the stream limits: left alone, to `maxSessionsPerConnection x initialMaxData` when
+     * that is above the 15 MiB default (8 sessions at the default 3.75 MiB, 30 MiB); set, it is kept. A WebTransport session
+     * on limits its sessions do not fit fails before it takes a connection, naming the engine's options rather than
+     * QuicConfig's; the defaults and the raised values always fit.
+     */
+    @Test fun negative_webTransportMisfitIsNamedInTheEnginesTerms() =
+        clientTest {
+            fun config(configure: KuicksilverEngineConfig.() -> Unit) = KuicksilverEngineConfig().apply(configure)
+            assertEquals(15_728_640L, config { }.resolveQuic().maxConnectionWindow, "4 x 3.75 MiB: the default exactly")
+            val eight = config { http3 { webTransport { maxSessionsPerConnection = 8 } } }
+            assertEquals(8L * 3_932_160, eight.resolveQuic().maxConnectionWindow)
+            eight.requireWebTransportFits(eight.resolveQuic())
+            config { }.let { it.requireWebTransportFits(it.resolveQuic()) }
+            // a huge per-session limit saturates at 2^62-1 instead of overflowing
+            val huge = config { http3 { settings { webTransport { initialMaxData = (1L shl 62) - 1 } } } }
+            assertEquals((1L shl 62) - 1, huge.resolveQuic().maxConnectionWindow)
+            // without WebTransport flow control nothing is raised
+            val noFlowControl =
+                config {
+                    http3 {
+                        webTransport { maxSessionsPerConnection = 8 }
+                        settings {
+                            webTransport {
+                                initialMaxStreamsBidi = 0
+                                initialMaxStreamsUni = 0
+                                initialMaxData = 0
+                            }
+                        }
+                    }
+                }
+            assertEquals(15_728_640L, noFlowControl.resolveQuic().maxConnectionWindow)
+            noFlowControl.requireWebTransportFits(noFlowControl.resolveQuic())
+
+            fun misfit(
+                expected: String,
+                configure: KuicksilverEngineConfig.() -> Unit,
+            ) {
+                val c = config(configure)
+                val e = assertFailsWith<IllegalArgumentException>(expected) { c.requireWebTransportFits(c.resolveQuic()) }
+                assertEquals(expected, e.message)
+            }
+            misfit(
+                "http3 { quic { flowControl { maxConnectionWindow } } } (10000000) is below http3 { webTransport { " +
+                    "maxSessionsPerConnection } } (4) x http3 { settings { webTransport { initialMaxData } } } (3932160): raise it, " +
+                    "or leave it to the engine",
+            ) { http3 { quic { flowControl { maxConnectionWindow = 10_000_000 } } } }
+            misfit(
+                "http3 { quic { maxBidiStreams } } (99) is below http3 { webTransport { maxSessionsPerConnection } } (4) x (http3 { " +
+                    "settings { webTransport { initialMaxStreamsBidi } } } (24) + its CONNECT stream): raise it, or leave it to the engine",
+            ) { http3 { quic { maxBidiStreams = 99 } } }
+            misfit(
+                "http3 { quic { expert { maxUniStreams } } } (98) is below 3 + http3 { webTransport { maxSessionsPerConnection } } " +
+                    "(4) x http3 { settings { webTransport { initialMaxStreamsUni } } } (24): raise it, or leave it to the engine",
+            ) { http3 { quic { expert { maxUniStreams = 98 } } } }
+            // through HttpClient.webTransport: refused before any connection is made (nothing listens on port 9)
+            testClient(Http3Discovery.H3Only, engine = { http3 { quic { flowControl { maxConnectionWindow = 10_000_000 } } } }).use { c ->
+                val e = assertFailsWith<IllegalArgumentException> { c.webTransport("https://127.0.0.1:9/wt") }
+                assertTrue(e.message.orEmpty().startsWith("http3 { quic { flowControl { maxConnectionWindow } } } (10000000)"), e.message)
+                assertEquals(0, (c.engine as KuicksilverEngine).h3.webTransportSessions.value, "the refused session left no count")
+            }
+        }
 
     /**
      * The stream limits are the application's again (a review of the 0.3.0 layout: with them derived, 8 WebTransport

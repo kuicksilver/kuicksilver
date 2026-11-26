@@ -400,7 +400,7 @@ public class QuicConfig private constructor(
         public var congestionController: () -> CongestionController = { Cubic() }
 
         /** Receive windows and the send buffer: how much data a connection holds unread or unacknowledged. */
-        public val flowControl: FlowControl = FlowControl()
+        public val flowControl: FlowControl = FlowControl(assigned)
 
         /** Sets the [flowControl] options. */
         public fun flowControl(block: FlowControl.() -> Unit) {
@@ -448,7 +448,9 @@ public class QuicConfig private constructor(
 
         /** The receive windows and the send buffer of a [Builder]. */
         @KuicksilverDsl
-        public class FlowControl internal constructor() {
+        public class FlowControl internal constructor(
+            private val assigned: MutableSet<String>,
+        ) {
             /**
              * Default 512 KiB: the receive window of each stream at its start, in bytes (`initial_max_stream_data_*`, RFC 9000
              * section 4.1); it doubles up to [maxStreamWindow] while the application reads faster than the window allows.
@@ -464,8 +466,15 @@ public class QuicConfig private constructor(
             /** Default 6 MiB, at least [initialStreamWindow]: the most data one stream can hold unread. */
             public var maxStreamWindow: Long = 6_291_456
 
-            /** Default 15 MiB, at least [initialConnectionWindow]: the most unread stream data the whole connection can hold. */
+            /**
+             * Default 15 MiB, at least [initialConnectionWindow]: the most unread stream data the whole connection can hold.
+             * A Ktor engine raises the default to fit its WebTransport sessions.
+             */
             public var maxConnectionWindow: Long = 15_728_640
+                set(value) {
+                    field = value
+                    assigned += "flowControl.maxConnectionWindow"
+                }
 
             /**
              * Default 4 MiB, 1..2^62: bytes the connection buffers for sending over all its streams until they are

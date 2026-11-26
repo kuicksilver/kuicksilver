@@ -434,9 +434,11 @@ public class Http3ClientConfig {
      * WebTransport) and `expert { cancelErrorCode }` (HTTP/3's H3_REQUEST_CANCELLED) with IllegalArgumentException when it
      * is created. `maxBidiStreams` and `expert { maxUniStreams }` stay settable: left alone, they default to 100, raised to
      * fit [webTransport]'s sessions on one connection (`max(100, maxSessionsPerConnection x (initialMaxStreamsBidi + 1))` and
-     * `max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`, the limits of `settings { webTransport { } }`); set,
-     * `expert { maxUniStreams }` must be at least 3 (RFC 9114 section 6.2), and a WebTransport connection fails when the
-     * sessions do not fit.
+     * `max(100, 3 + maxSessionsPerConnection x initialMaxStreamsUni)`, the limits of `settings { webTransport { } }`), as
+     * is `flowControl { maxConnectionWindow }` (15 MiB, raised to `maxSessionsPerConnection x initialMaxData`); set,
+     * `expert { maxUniStreams }` must be at least 3 (RFC 9114 section 6.2), and a WebTransport session fails to open when
+     * the sessions do not fit, naming these options. `flowControl { initialStreamWindow }` must be at least 1024 (RFC 9114
+     * section 6.2).
      */
     public fun quic(block: QuicConfig.Builder.() -> Unit) {
         quicBuilder.block()
@@ -865,23 +867,57 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
         requireUniStreamCredit(built)
         // a WebTransport-capable connection carries up to maxSessionsPerConnection sessions at the limits of settings { }
         val wt = http3.settingsBuilder.webTransport
-        val (bidi, uni) =
-            quicStreamLimits(
-                built,
-                assigned,
-                http3.webTransport.maxSessionsPerConnection.toLong(),
-                wt.initialMaxStreamsBidi,
-                wt.initialMaxStreamsUni,
-                wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L,
-            )
-        if (built.handshakeTimeout == handshake && bidi == built.maxBidiStreams && uni == built.maxUniStreams) return built
+        val sessions = http3.webTransport.maxSessionsPerConnection.toLong()
+        val flowControl = wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L
+        val (bidi, uni) = quicStreamLimits(built, assigned, sessions, wt.initialMaxStreamsBidi, wt.initialMaxStreamsUni, flowControl)
+        val window =
+            if ("flowControl.maxConnectionWindow" in assigned || !flowControl) {
+                built.maxConnectionWindow
+            } else {
+                maxOf(built.maxConnectionWindow, product(sessions, wt.initialMaxData, (1L shl 62) - 1))
+            }
+        if (built.handshakeTimeout == handshake &&
+            bidi == built.maxBidiStreams &&
+            uni == built.maxUniStreams &&
+            window == built.maxConnectionWindow
+        ) {
+            return built
+        }
         return built
             .toBuilder()
             .apply {
                 handshakeTimeout = handshake
                 maxBidiStreams = bidi
+                flowControl { maxConnectionWindow = window }
                 expert { maxUniStreams = uni }
             }.build()
+    }
+
+    /**
+     * Throws IllegalArgumentException, naming the engine's options, when `http3 { webTransport { maxSessionsPerConnection } }`
+     * sessions at the limits of `http3 { settings { webTransport { } } }` do not fit [quic] (the engine's [resolveQuic]),
+     * which only an explicit QUIC limit can cause: the same rule as the HTTP/3 layer's (draft-ietf-webtrans-http3-17
+     * section 5.1), checked before a WebTransport session takes a connection so the message speaks of this block.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal fun requireWebTransportFits(quic: QuicConfig) {
+        val wt = http3.settingsBuilder.webTransport
+        if (wt.initialMaxStreamsBidi == 0L && wt.initialMaxStreamsUni == 0L && wt.initialMaxData == 0L) return
+        val n = http3.webTransport.maxSessionsPerConnection.toLong()
+        val sessions = "http3 { webTransport { maxSessionsPerConnection } } ($n)"
+        val limits = "http3 { settings { webTransport { "
+        require(wt.initialMaxStreamsBidi <= quic.maxBidiStreams / n - 1) {
+            "http3 { quic { maxBidiStreams } } (${quic.maxBidiStreams}) is below $sessions x (${limits}initialMaxStreamsBidi } } } " +
+                "(${wt.initialMaxStreamsBidi}) + its CONNECT stream): raise it, or leave it to the engine"
+        }
+        require(wt.initialMaxStreamsUni <= (quic.maxUniStreams - 3) / n) {
+            "http3 { quic { expert { maxUniStreams } } } (${quic.maxUniStreams}) is below 3 + $sessions x " +
+                "${limits}initialMaxStreamsUni } } } (${wt.initialMaxStreamsUni}): raise it, or leave it to the engine"
+        }
+        require(wt.initialMaxData <= quic.maxConnectionWindow / n) {
+            "http3 { quic { flowControl { maxConnectionWindow } } } (${quic.maxConnectionWindow}) is below $sessions x " +
+                "${limits}initialMaxData } } } (${wt.initialMaxData}): raise it, or leave it to the engine"
+        }
     }
 
     /** The HTTP/3 SETTINGS of the engine's connections: the `http3 { settings { } }` block, its derived options refused. */
@@ -920,8 +956,8 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
             mapOf(
                 "enableConnectProtocol" to "on for WebSockets and WebTransport (RFC 9220)",
                 "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
-                "webTransport" to
-                    "enabled is on for each webTransport() call; maxSessions is http3 { webTransport { maxSessionsPerConnection } }",
+                "webTransport.enabled" to "on for each webTransport() call",
+                "webTransport.maxSessions" to "from http3 { webTransport { maxSessionsPerConnection } }: set it there",
                 "earlyData" to "a server's policy; the client's 0-RTT is http3 { earlyData { enabled } }",
             )
 
@@ -962,6 +998,13 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
                 }
             return bidi to uni
         }
+
+        /** `a x b`, at most [max]; both non-negative. */
+        fun product(
+            a: Long,
+            b: Long,
+            max: Long,
+        ): Long = if (a != 0L && b > max / a) max else a * b
 
         /** `extra + sessions x perSession`, at most 2^60 (the most streams QUIC can grant, RFC 9000 section 4.6). */
         private fun atLeast(

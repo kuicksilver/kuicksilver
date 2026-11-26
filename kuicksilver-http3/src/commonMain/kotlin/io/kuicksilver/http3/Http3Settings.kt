@@ -211,7 +211,7 @@ public class Http3Settings private constructor(
             public var enabled: Boolean = false
                 set(value) {
                     field = value
-                    assigned += "webTransport"
+                    assigned += "webTransport.enabled"
                 }
 
             /**
@@ -226,7 +226,7 @@ public class Http3Settings private constructor(
             public var maxSessions: Int = 4
                 set(value) {
                     field = value
-                    assigned += "webTransport"
+                    assigned += "webTransport.maxSessions"
                 }
 
             /**
@@ -238,7 +238,7 @@ public class Http3Settings private constructor(
             public var initialMaxStreamsBidi: Long = 24
                 set(value) {
                     field = value
-                    assigned += "webTransport.limits"
+                    assigned += "webTransport.initialMaxStreamsBidi"
                 }
 
             /**
@@ -248,7 +248,7 @@ public class Http3Settings private constructor(
             public var initialMaxStreamsUni: Long = 24
                 set(value) {
                     field = value
-                    assigned += "webTransport.limits"
+                    assigned += "webTransport.initialMaxStreamsUni"
                 }
 
             /**
@@ -272,7 +272,7 @@ public class Http3Settings private constructor(
             public var initialMaxData: Long = 3_932_160
                 set(value) {
                     field = value
-                    assigned += "webTransport.limits"
+                    assigned += "webTransport.initialMaxData"
                 }
         }
 

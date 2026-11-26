@@ -1276,6 +1276,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`Http3Endpoint.bind`, `connect`, `connectEarly`, both engines' `http3 { quic { flowControl { initialStreamWindow } } }`)
   need an initial stream window of at least 1024 bytes (section 6.2). The defaults (100, 512 KiB) are unchanged; a
   smaller value now fails with IllegalArgumentException naming the option and the RFC.
+- WebTransport: both engines raise `http3 { quic { flowControl { maxConnectionWindow } } }`, when left alone, to
+  `maxSessionsPerConnection x initialMaxData` (as they raise the stream limits), so a server with 8 sessions a connection
+  starts with the default `initialMaxData`; an explicit window the sessions do not fit fails the server's start, or the
+  client's `webTransport()` call, naming the engine's options. A refused `http3 { settings { webTransport { … } } }`
+  names the option that was set and the `http3 { webTransport { } }` option it comes from.
 - HTTP/2: the flood budgets have a ceiling (breaking strictness): `http2Settings { floodLimits { resets } }` takes at most
   `RateLimit(3300, 100000)` and `glitches` at most `RateLimit(33000, 1000000)`, 100 times their defaults
   (`FloodLimits.MAX_RESETS`, `MAX_GLITCHES`), so the Rapid Reset defence (CVE-2023-44487) cannot be configured away;

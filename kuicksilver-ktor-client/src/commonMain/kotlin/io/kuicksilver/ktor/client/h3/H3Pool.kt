@@ -811,7 +811,8 @@ internal class H3Pool(
      * ([io.kuicksilver.http3.WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
      * request was processed, RFC 9114 section 4.1.1) marks the connection full at its current count. At most two refusals,
      * then the server's answer is the caller's. At most `http3 { webTransport { maxSessions } }` sessions are open at once; one more fails
-     * at once (IllegalStateException), nothing queues.
+     * at once (IllegalStateException), nothing queues. An explicit QUIC limit the sessions of a connection do not fit fails it
+     * with IllegalArgumentException ([KuicksilverEngineConfig.requireWebTransportFits]).
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     suspend fun webTransport(
@@ -821,6 +822,8 @@ internal class H3Pool(
         connectTimeoutMillis: Long,
     ): io.kuicksilver.http3.WebTransportSession {
         check(!refusingWebTransport && !closed) { "the client is closed" }
+        // an explicit QUIC limit the sessions do not fit, named as the application set it (the HTTP/3 layer would name QuicConfig's)
+        config.requireWebTransportFits(quic)
         while (true) {
             val n = webTransportSessions.value
             check(n < maxSessions) { "http3 { webTransport { maxSessions } } ($maxSessions) WebTransport sessions are open on this client" }

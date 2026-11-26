@@ -524,8 +524,38 @@ class ServerConfigMappingTest {
             resolveHttp3Settings()
         }
         refused("http3 { settings { h3Datagram } } is derived", { http3 { settings { h3Datagram = false } } }) { resolveHttp3Settings() }
-        refused("http3 { settings { webTransport } } is derived", { http3 { settings { webTransport { maxSessions = 2 } } } }) {
-            resolveHttp3Settings()
+        // each WebTransport option is named as written and sent to the option the engine takes it from (a review of
+        // 0.3.0: the per-session limits were named "webTransport { limits }", which does not exist)
+        for ((option, from) in listOf(
+            "enabled" to "enabled",
+            "maxSessions" to "maxSessionsPerConnection",
+            "initialMaxStreamsBidi" to "initialMaxStreamsBidi",
+            "initialMaxStreamsUni" to "initialMaxStreamsUni",
+            "initialMaxData" to "initialMaxData",
+        )) {
+            val e =
+                assertFailsWith<IllegalArgumentException>(option) {
+                    config {
+                        http3 {
+                            settings {
+                                webTransport {
+                                    when (option) {
+                                        "enabled" -> enabled = true
+                                        "maxSessions" -> maxSessions = 2
+                                        "initialMaxStreamsBidi" -> initialMaxStreamsBidi = 1
+                                        "initialMaxStreamsUni" -> initialMaxStreamsUni = 1
+                                        else -> initialMaxData = 1
+                                    }
+                                }
+                            }
+                        }
+                    }.resolveHttp3Settings()
+                }
+            assertEquals(
+                "http3 { settings { webTransport { $option } } } is derived by the engine (from http3 { webTransport { $from } }: " +
+                    "set it there); remove it",
+                e.message,
+            )
         }
         refused("http3 { settings { earlyData } } is derived", { http3 { settings { earlyData = Http3EarlyDataPolicy.Reject425() } } }) {
             resolveHttp3Settings()
@@ -698,7 +728,88 @@ class ServerConfigMappingTest {
         assertEquals(1024L, config { http3 { quic { flowControl { initialStreamWindow = 1024 } } } }.resolveQuic().initialStreamWindow)
     }
 
-    /** Self-attack: a WebTransport server with 8 sessions a connection now starts (its HTTP/3 endpoint binds). */
+    /**
+     * The connection window fits the WebTransport sessions as the stream limits do: left alone, the 15 MiB default is
+     * raised to `maxSessionsPerConnection x initialMaxData`; set, it is kept, and refused at the start, in the engine's
+     * terms, when the sessions do not fit it (the HTTP/3 layer would name QuicConfig's options). WebTransport off or without
+     * flow control asks for nothing, and a product beyond 2^62-1 (QUIC's largest window) is refused, not wrapped.
+     */
+    @Test fun negative_connectionWindowFitsTheWebTransportSessions() {
+        fun window(configure: KuicksilverApplicationEngine.Configuration.() -> Unit) = config(configure).resolveQuic().maxConnectionWindow
+        assertEquals(15_728_640L, window { http3 { webTransport { enabled = true } } }, "4 x 3.75 MiB: the default exactly")
+        val eight =
+            window {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        maxSessionsPerConnection = 8
+                    }
+                }
+            }
+        assertEquals(8L * 3_932_160, eight)
+        assertEquals(15_728_640L, window { http3 { webTransport { maxSessionsPerConnection = 8 } } }, "WebTransport off")
+        val explicit =
+            window {
+                http3 {
+                    webTransport { enabled = true }
+                    quic { flowControl { maxConnectionWindow = 40_000_000 } }
+                }
+            }
+        assertEquals(40_000_000L, explicit)
+        assertEquals(
+            10_000_000L,
+            window { http3 { quic { flowControl { maxConnectionWindow = 10_000_000 } } } },
+            "kept without WebTransport",
+        )
+        val small =
+            assertFailsWith<IllegalArgumentException> {
+                config {
+                    http3 {
+                        webTransport { enabled = true }
+                        quic { flowControl { maxConnectionWindow = 10_000_000 } }
+                    }
+                }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { quic { flowControl { maxConnectionWindow } } } (10000000) is below http3 { webTransport { " +
+                "maxSessionsPerConnection } } (4) x initialMaxData (3932160): raise it, or leave it to the engine",
+            small.message,
+        )
+        val huge =
+            assertFailsWith<IllegalArgumentException> {
+                config {
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            initialMaxData = (1L shl 62) - 1
+                        }
+                    }
+                }.resolveQuic()
+            }
+        assertEquals(
+            "http3 { webTransport { maxSessionsPerConnection } } (4) x initialMaxData (4611686018427387903) exceeds 2^62-1, the " +
+                "largest QUIC connection window: lower one of them",
+            huge.message,
+        )
+        val noFlowControl =
+            window {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        maxSessionsPerConnection = 8
+                        initialMaxStreamsBidi = 0
+                        initialMaxStreamsUni = 0
+                        initialMaxData = 0
+                    }
+                }
+            }
+        assertEquals(15_728_640L, noFlowControl)
+    }
+
+    /**
+     * Self-attack: a WebTransport server with 8 sessions a connection now starts (its HTTP/3 endpoint binds), with the
+     * default initialMaxData: the connection window is raised to hold 8 sessions of it.
+     */
     @Test fun webTransportWithEightSessionsStarts() =
         serverTest {
             val server =
@@ -713,14 +824,13 @@ class ServerConfigMappingTest {
                             enabled = true
                             maxSessionsPerConnection = 8
                             initialMaxStreamsUni = 30
-                            // 8 sessions x the default 3.75 MiB exceed the 15 MiB connection window, a limit of its own
-                            initialMaxData = 1_048_576
                         }
                     }
                 }) {}
             try {
                 server.startSuspend(false)
                 assertEquals(3L + 8 * 30, server.engine.h3Quic.maxUniStreams)
+                assertEquals(8L * 3_932_160, server.engine.h3Quic.maxConnectionWindow)
                 val status = server.engine.http3Status.single()
                 assertTrue(status.served && status.reason == null, status.toString())
             } finally {
