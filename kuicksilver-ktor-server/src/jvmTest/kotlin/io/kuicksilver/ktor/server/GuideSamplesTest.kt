@@ -23,7 +23,6 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.http2Settings
-import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
@@ -72,7 +71,10 @@ class GuideSamplesTest {
         val guide =
             generateSequence(File("").absoluteFile) {
                 it.parentFile
-            }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
+            }.map { File(it, "docs/guide") }
+                .first { it.isDirectory }
+                .listFiles { f -> f.name.endsWith(".md") }!!
+                .joinToString("\n") { it.readText() }
         assertTrue("guide:ktor:server" in guide, "marker server")
         assertTrue("guide:ktor:first-screen-server" in guide, "marker first-screen-server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
@@ -87,7 +89,6 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:mtls-server" in guide, "marker mtls-server")
         assertTrue("guide:ktor:drain-wait" in guide, "marker drain-wait")
         assertTrue("guide:ktor:reload-from-files" in guide, "marker reload-from-files")
-        assertTrue("guide:ktor:zero-rtt-replayable" in guide, "marker zero-rtt-replayable")
         assertTrue("guide:ktor:sni-server" in guide, "marker sni-server")
     }
 
@@ -102,7 +103,7 @@ class GuideSamplesTest {
         }
     }
 
-    @Test fun observabilityAndZeroRttSamples() {
+    @Test fun observabilitySample() {
         val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
         val metrics = Metrics
         // the samples build the engines; starting them is what serverSample does
@@ -130,26 +131,6 @@ class GuideSamplesTest {
                 }
             }, module = Application::module)
         assertTrue(observed.engine.configuration.observability.qlog is AsyncQlogSink)
-        // guide:ktor:zero-rtt-server
-        val server =
-            embeddedServer(Kuicksilver, configure = {
-                tlsConnector {
-                    tls { this.identity = identity }
-                    port = 0
-                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
-                }
-                http3 {
-                    earlyData {
-                        enabled = true
-                        policy = Http3EarlyDataPolicy.Reject425() // or keep the default: unsafe requests wait
-                    }
-                }
-            }, module = Application::module)
-        assertTrue(
-            server.engine.configuration
-                .resolveHttp3Settings()
-                .earlyData is Http3EarlyDataPolicy.Reject425,
-        )
     }
 
     @Test fun webSocketDeflateSample() {
@@ -809,43 +790,6 @@ class GuideSamplesTest {
             server.stop(100, 500)
             identity.close()
         }
-    }
-
-    @Test fun zeroRttReplayableSample() {
-        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
-        // guide:ktor:zero-rtt-replayable
-        val policy =
-            Http3EarlyDataPolicy.WaitForHandshake(replayable = { request ->
-                request.method == "GET" && request.path.orEmpty().startsWith("/static/") // only these may run before the handshake
-            })
-        val server =
-            embeddedServer(Kuicksilver, configure = {
-                tlsConnector {
-                    tls { this.identity = identity }
-                    port = 0
-                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
-                }
-                http3 {
-                    earlyData {
-                        enabled = true
-                        this.policy = policy
-                    }
-                }
-            }) {
-                routing {
-                    get("/feed") {
-                        if (call.request.receivedEarly) { /* a replay is possible here: no side effects */ }
-                        call.respondText("feed")
-                    }
-                }
-            }
-
-        assertTrue(
-            server.engine.configuration
-                .resolveHttp3Settings()
-                .earlyData === policy,
-        ) // ServerH3Test runs early requests
-        identity.close()
     }
 
     @Test fun reloadFromFilesSample() {

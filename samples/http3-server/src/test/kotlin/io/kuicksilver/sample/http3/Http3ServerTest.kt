@@ -82,7 +82,7 @@ class Http3ServerTest {
             http3 {
                 discovery?.let { this.discovery = it } ?: run { enabled = false }
                 // the second request waits for QUIC instead of racing it against the open HTTP/2 connection, which on a
-                // network where QUIC was never seen gets a 10 ms head start only (docs/guide/ktor.md, "Racing and fallback")
+                // network where QUIC was never seen gets a 10 ms head start only (docs/guide/client-http3.md, "Racing and fallback")
                 expert { raceHeadStart = RaceHeadStart.NoRace }
             }
         }

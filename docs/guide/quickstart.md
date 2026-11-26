@@ -153,7 +153,7 @@ clients quietly stay on HTTP/2 ([Deploying the HTTP/3 server](deployment.md)). T
 ## Next steps
 
 - The options most applications set, one table per engine: [configuration: first screen](configuration.md#first-screen).
-- The client in an app: trust and pins, timeouts, Android and iOS: [Ktor: Client](ktor.md#client).
+- The client in an app: trust and pins, timeouts, Android and iOS: [Ktor: Client](client.md).
 - A request that should use HTTP/3 and does not:
   [troubleshooting](troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it).
 - Putting the server on the internet (ports, Docker, Kubernetes, load balancers): [Deploying the HTTP/3

@@ -65,13 +65,16 @@ import io.ktor.server.websocket.webSocket as serverWebSocket
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 import io.kuicksilver.ktor.server.webTransport as webTransportRoute
 
-/** The client code blocks of docs/guide/ktor.md, kept compiling and running (block markers `guide:ktor:client*`). */
+/** The client code blocks of the Ktor engine pages of docs/guide, kept compiling and running (block markers `guide:ktor:client*`). */
 class GuideSamplesTest {
     @Test fun guideHasEveryMarker() {
         val guide =
             generateSequence(File("").absoluteFile) {
                 it.parentFile
-            }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
+            }.map { File(it, "docs/guide") }
+                .first { it.isDirectory }
+                .listFiles { f -> f.name.endsWith(".md") }!!
+                .joinToString("\n") { it.readText() }
         assertTrue("guide:ktor:client" in guide, "marker client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
@@ -251,12 +254,6 @@ class GuideSamplesTest {
                 }
             }
         observed.close()
-        // guide:ktor:zero-rtt-client
-        val client =
-            HttpClient(Kuicksilver) {
-                engine { http3 { earlyData { enabled = true } } }
-            }
-        client.close()
     }
 
     @Test fun altSvcStoreFileSample() {

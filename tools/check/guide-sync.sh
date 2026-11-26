@@ -16,8 +16,9 @@
 #   ports (`InetSocketAddress("0.0.0.0", 443)`, `connect("server.test", 443)`, `port = 0`, `127.0.0.1:8080`), and
 #   `wait = true` (a test cannot block in `start(wait = true)`).
 # - Every guide line must appear in the test block, in order; the test may have extra lines (assertions, timeouts).
-# - A guide line `@file:OptIn(...)` (a sample that uses experimental API says so) names markers the test file that holds
-#   the block opts in to with its own `@file:OptIn`; keep the test file's opt-ins to what its samples show.
+# - A guide line `@file:OptIn(...)` (a sample that uses experimental API says so; best the first line of its fenced block,
+#   where a reader expects it, and then it belongs to the block of the first marker) names markers the test file that
+#   holds the block opts in to with its own `@file:OptIn`; keep the test file's opt-ins to what its samples show.
 # - A marker whose name ends in `imports` (`// guide:quic:imports`, `// guide:ktor:server-imports`) marks the import list
 #   of a test file of its own: there the guide block must equal the test block exactly, line for line. (A block that
 #   shows a few imports only, such as `guide:ktor:both-engines-aliases`, is named otherwise and compared as a subset.)
@@ -79,6 +80,7 @@ for name in sorted(os.listdir(gdir)):
         if line.lstrip().startswith('```'):
             if not in_code:
                 fence_lang, fence_at, fence_marked = line.strip()[3:].strip(), no, False
+                pending_optins = []   # an `@file:OptIn` above the first marker (the first line of a block) belongs to its block
                 fence_exempt = prev.strip().startswith('<!-- guide-sync: not compiled')
             elif fence_lang == 'kotlin' and not fence_marked and not fence_exempt:
                 unmarked.append(f'docs/guide/{name}:{fence_at}')
@@ -91,7 +93,11 @@ for name in sorted(os.listdir(gdir)):
             key = f'{m.group(2)}:{m.group(3)}' + (f' ({m.group(4)})' if m.group(4) else '')
             if key in guides: print(f'DUPLICATE guide marker {key} at docs/guide/{name}:{no}')
             guides[key] = []; guide_where[key] = f'docs/guide/{name}:{no}'
+            if pending_optins: file_optins.setdefault(key, []).extend(pending_optins); pending_optins = []
             continue
+        if key is None:
+            n = normalize(line)
+            if n and n.startswith('@file:OptIn('): pending_optins.append(n)
         if key is not None:
             n = normalize(line)
             if n and n.startswith('@file:OptIn('):

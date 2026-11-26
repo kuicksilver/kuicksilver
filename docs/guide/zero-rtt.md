@@ -150,7 +150,7 @@ A replay can only repeat requests the policy runs early, and the server also lim
    refused and the handshake goes on in 1-RTT: it fails closed.
 3. **The configuration that issued the ticket.** A ticket allows 0-RTT only for the same ALPN, transport parameters and
    HTTP/3 SETTINGS, and only under the certificate it was issued with, so after a [certificate
-   reload](ktor.md#certificate-rotation) old tickets resume nothing.
+   reload](engine-tls.md#certificate-rotation) old tickets resume nothing.
 4. **The handshake.** A replayed flight never completes the handshake, so what waits for it, or got a 425, never runs
    from a replay.
 

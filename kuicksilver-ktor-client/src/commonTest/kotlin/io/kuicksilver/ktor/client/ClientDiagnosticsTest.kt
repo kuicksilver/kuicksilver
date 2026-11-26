@@ -61,7 +61,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Per-call protocol diagnostics through the engine (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): the
+ * Per-call protocol diagnostics through the engine (docs/guide/observability.md, "Why did this request not use HTTP/3?"): the
  * response attribute, the log line, and their agreement with the event listener. Races whose order matters use
  * `raceHeadStart = RaceHeadStart.NoRace` (TCP only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
  * which loopback connection is faster.

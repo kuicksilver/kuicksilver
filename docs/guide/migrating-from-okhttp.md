@@ -113,16 +113,16 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 | `certificatePinner` | `tls { trust = TrustConfig.Pinned(pins, base = TrustConfig.Platform) }` | same `sha256/<base64>` text; see [Certificate pinning](#certificate-pinning) for two differences |
 | `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) }` | a private CA; [TLS: Trust](tls.md#trust) has every variant |
 | `hostnameVerifier` | none | the host name is always checked (RFC 9525); `TrustConfig.ExpectedName` checks another name |
-| `connectionPool` | `engine { pool { } }` | [Ktor: Connection pool](ktor.md#connection-pool) compares the defaults |
+| `connectionPool` | `engine { pool { } }` | [Ktor: Connection pool](client.md#connection-pool) compares the defaults |
 | `dispatcher.maxRequests`, `maxRequestsPerHost` | `pool { maxConnections; maxConnectionsPerRoute }` | these limit connections, not requests; HTTP/2 and HTTP/3 carry many requests on one |
 | `protocols(listOf(Protocol.HTTP_1_1))` | `engine { http2 { enabled = false } }` | HTTP/2 is on by default, as in OkHttp |
 | `retryOnConnectionFailure` | built in | the engine repeats an idempotent request once when a pooled connection turns out closed, and a request HTTP/3 failed goes over TCP; anything else: `HttpRequestRetry` |
 | `followRedirects`, `followSslRedirects` | `followRedirects` in `HttpClient { }` | on by default |
 | `addInterceptor` | a client plugin: `createClientPlugin` (`onRequest`, `onResponse`), or `plugin(HttpSend).intercept` to send again | Ktor's custom client plugins |
 | `addNetworkInterceptor` | none | there is no hook between the engine and the wire; to observe, use the event listener (next row) |
-| `eventListener` | `engine { observability { eventListener } }` (experimental) | `KuicksilverEventListener`: `callStart`, `callEnd`, `callFailed`, `dnsStart`, `dnsEnd`, `connectionAcquired` and more ([Ktor: Observability](ktor.md#observability)) |
+| `eventListener` | `engine { observability { eventListener } }` (experimental) | `KuicksilverEventListener`: `callStart`, `callEnd`, `callFailed`, `dnsStart`, `dnsEnd`, `connectionAcquired` and more ([Ktor: Observability](observability.md)) |
 | `authenticator` (answers 401) | Ktor's `Auth` plugin (`ktor-client-auth`) | |
-| `proxy`, `proxySelector`, `proxyAuthenticator` | Ktor's `proxy`; `engine { proxies { resolver; credentials } }` (experimental) | the system proxy settings are used by default; HTTP/3 never goes through an HTTP proxy ([Ktor: Proxies](ktor.md#proxies)) |
+| `proxy`, `proxySelector`, `proxyAuthenticator` | Ktor's `proxy`; `engine { proxies { resolver; credentials } }` (experimental) | the system proxy settings are used by default; HTTP/3 never goes through an HTTP proxy ([Ktor: Proxies](client-proxies.md#proxies)) |
 | `dns` | `engine { network { dns } }` (experimental) | |
 | `cookieJar` | `install(HttpCookies)` | in memory by default; your own `CookiesStorage` to keep them |
 | `cache` | `install(HttpCache)` | in memory by default |
@@ -148,7 +148,7 @@ Two differences from `CertificatePinner`:
   server's own certificate unless `scope = PinScope.AnyInValidatedChain` (an intermediate CA's key, say).
 
 The chain is still verified against `base`, the pins come on top, and they hold over HTTP/3 and the TCP fallback alike
-([Ktor: Certificate pinning](ktor.md#certificate-pinning)). Pin a backup key you hold offline, or a key change locks
+([Ktor: Certificate pinning](engine-tls.md#certificate-pinning)). Pin a backup key you hold offline, or a key change locks
 the app out until it is updated.
 
 ## What is different

@@ -57,7 +57,7 @@ import kotlin.time.Duration.Companion.seconds
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 
 /**
- * HTTP/2 in the server engine (RFC 9113; docs/guide/ktor.md, "HTTP/2 on the server"): ALPN `h2` on TLS connectors when
+ * HTTP/2 in the server engine (RFC 9113; docs/guide/server.md, "HTTP/2 on the server"): ALPN `h2` on TLS connectors when
  * `http2` is set, Ktor calls per stream, the two-step GOAWAY at a stop, the deadlines, and requests no real client sends,
  * written by hand ([RawH2Client]): each malformed one is a stream error of type PROTOCOL_ERROR (section 8.1.1) and the
  * connection goes on.

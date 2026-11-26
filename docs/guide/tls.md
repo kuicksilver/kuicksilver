@@ -157,7 +157,7 @@ lifetime of resumption keying material and taking the certificate's lifetime int
 ticket, but a chain of renewals ends 7 days after the full handshake that authenticated it (BoringSSL's
 `SSL_DEFAULT_SESSION_AUTH_TIMEOUT`) and at the leaf's notAfter; then the client runs a full handshake.
 
-The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](ktor.md#certificate-rotation).
+The Ktor server engine can also watch the PEM files itself; see [Certificate rotation](engine-tls.md#certificate-rotation).
 
 ### Rotating the client CA
 
@@ -208,7 +208,7 @@ clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 ```
 
 The Ktor server engine can watch the CA file too: `tls { clientCaFile(path); reloadInterval = ... }` in code, or
-`EngineMain`'s `kuicksilver.tls.clientCa` with `kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
+`EngineMain`'s `kuicksilver.tls.clientCa` with `kuicksilver.tls.reloadInterval` ([Certificate rotation](engine-tls.md#certificate-rotation)).
 
 ### Certificate per name (SNI)
 
@@ -576,8 +576,8 @@ Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a 
 the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
 needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
 Through `TlsConfig` it works over QUIC and TCP; the Ktor engines use it too, the client from the HTTPS records or
-per host ([Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)) and the server with its keys
-([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)).
+per host ([Encrypted Client Hello](engine-tls.md#encrypted-client-hello-experimental)) and the server with its keys
+([Encrypted Client Hello on the server](engine-tls.md#encrypted-client-hello-on-the-server)).
 
 A client offers a list with `ech { configList }` (experimental, like the whole `ech { }` block; `EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory

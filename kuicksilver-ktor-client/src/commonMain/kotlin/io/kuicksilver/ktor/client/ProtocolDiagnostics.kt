@@ -22,7 +22,7 @@ import kotlin.time.Duration.Companion.nanoseconds
  * HTTP/3?"); which connection served it ([connection]); and for a call that failed, which transport the failure came from
  * ([transport]) and which connection setups failed ([connectFailures]). The engine attaches one to every response it
  * returns: read it with [HttpResponse.kuicksilverDiagnostics]. A call that fails has no response: its exception carries
- * the diagnostics instead ([Throwable.kuicksilverDiagnostics], docs/guide/ktor.md, "Why did this call fail?"); when the
+ * the diagnostics instead ([Throwable.kuicksilverDiagnostics], docs/guide/observability.md, "Why did this call fail?"); when the
  * HTTP/3 and HTTP/1.1 setups both failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`, and
  * [h3Failure] is that HTTP/3 one.
  *

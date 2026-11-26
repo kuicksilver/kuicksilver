@@ -1226,7 +1226,7 @@ A quiet connection shows nothing of a path that stopped carrying packets: with n
 section 10.1.2): a live peer acknowledges it, and on a dead path it leads to probe timeouts that `stats.ptoCount` counts.
 It answers false before the handshake completed (the handshake's own probes test the path then) and once the connection
 is closing. `stats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides' once the peer's
-transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](ktor.md#stalled-http3-connections));
+transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](client-http3.md#stalled-http3-connections));
 `QuicConfig.keepAlive` sends PINGs on a timer instead.
 
 ## Observability
@@ -1366,7 +1366,7 @@ dropped and counted in `dropped`, so a stalled disk loses trace lines, never thr
 connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
 connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
 `client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
-client](ktor.md#closing-the-client)).
+client](observability.md#closing-the-client)).
 
 ```kotlin
 // guide:quic:qlog-async

@@ -49,7 +49,7 @@ val client = HttpClient(Kuicksilver) {
 | CIO `endpoint { connectTimeout }`, `https { trustManager }` | `connectTimeout`; `tls { trust }` |
 | OkHttp `config { }`, `preconfigured` | the settings themselves: [Migrating from OkHttp](migrating-from-okhttp.md#setting-by-setting) |
 | Android `sslManager` | `tls { trust }`; the platform's trust, including the Network Security Config, is the default |
-| Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Ktor: Certificate pinning](ktor.md#certificate-pinning)) |
+| Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Ktor: Certificate pinning](engine-tls.md#certificate-pinning)) |
 | Darwin `configureSession` | none: Kuicksilver does not use `URLSession` ([iOS](ios.md)) |
 | `proxy` | the same Ktor `proxy`; HTTP/3 never goes through an HTTP proxy |
 | `pipelining`, `threadsCount` | not used |
@@ -81,10 +81,10 @@ embeddedServer(Kuicksilver, configure = {
 - **TLS.** `tls { pemFiles(...) }` reads the chain and the key (unencrypted PKCS#8, `-----BEGIN PRIVATE KEY-----`;
   [Quickstart](quickstart.md#3-a-server) converts another key format), and `tls { reloadInterval }` picks up renewed
   files. On the JVM, Ktor's `sslConnector(keyStore, ...)` and the `ktor.security.ssl.*` keys still work, as in the Netty
-  and Jetty engines ([Ktor: Server](ktor.md#server)).
+  and Jetty engines ([Ktor: Server](server.md)).
 - **`EngineMain`.** Set `mainClass` to `io.kuicksilver.ktor.server.EngineMain`. The `ktor.deployment.*` keys keep their
   meaning; the engine's own keys are under `kuicksilver.` and follow the DSL, and an unknown key under `kuicksilver.`
-  fails the start ([Ktor: EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)).
+  fails the start ([Ktor: EngineMain and configuration keys](server-config-file.md#enginemain-and-configuration-keys)).
 - **Open UDP.** HTTP/3 needs the port open for UDP next to TCP, in the firewall, the security group and the container's
   port mappings ([Deploying the HTTP/3 server](deployment.md)).
 - **What does not change:** the application, its routes and plugins (`StatusPages`, `CallLogging`, `WebSockets`,

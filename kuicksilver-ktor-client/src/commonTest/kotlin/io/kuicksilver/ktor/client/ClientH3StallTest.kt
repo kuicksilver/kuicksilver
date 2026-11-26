@@ -59,7 +59,7 @@ import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocket as serverWebSocket
 
 /**
- * Stall detection (`http3 { stall { enabled } }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
+ * Stall detection (`http3 { stall { enabled } }`; docs/guide/client-http3.md, "Stalled HTTP/3 connections"): a network that cuts UDP
  * flows. The engine's endpoint socket is a [FaultyIo] that drops everything, in both directions, after a number of
  * datagrams once armed. The QUIC idle timeout is 15 s here: without the detection every stalled call takes that long.
  */

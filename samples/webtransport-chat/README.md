@@ -96,6 +96,6 @@ certificate from a CA of your own and give the clients that CA: `client <host> <
 - **Browsers**: the server speaks the drafts Chrome, Firefox and Safari speak, but this sample ships no web page, and
   a browser needs a certificate it trusts: for a development certificate, one valid for at most 14 days pinned with
   `serverCertificateHashes`, as `ChromeWebTransportTest` and `tools/interop/wt-firefox-manual.sh` do
-  ([Ktor guide, WebTransport over HTTP/3](../../docs/guide/ktor.md#webtransport-over-http3-experimental)). A browser
+  ([Ktor guide, WebTransport over HTTP/3](../../docs/guide/realtime.md#webtransport-over-http3-experimental)). A browser
   always sends `origin`: serve the page from the chat server's own origin, or pass a `checkOrigin` that admits the page's.
 - The certificates in `SampleCa.kt` and `SampleServerPem.kt` are public test material; never ship them.

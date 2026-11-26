@@ -42,24 +42,24 @@ Experimental ones (`@ExperimentalKuicksilverApi`) are marked *exp.*
 - **Alt-Svc discovery, protocol race and adaptive fallback**: HTTP/3 raced against TCP with a head start from the host's
   RTT (TCP almost at once on a network where QUIC was never seen working); a broken alternative or a stalled QUIC
   connection falls back to TCP
-  ([discovery](docs/guide/ktor.md#discovery-and-alt-svc), [racing and fallback](docs/guide/ktor.md#racing-and-fallback),
-  [stalled connections](docs/guide/ktor.md#stalled-http3-connections)).
+  ([discovery](docs/guide/client-http3.md#discovery-and-alt-svc), [racing and fallback](docs/guide/client-http3.md#racing-and-fallback),
+  [stalled connections](docs/guide/client-http3.md#stalled-http3-connections)).
 - **WebTransport** over HTTP/3, draft-ietf-webtrans-http3-17; servers also take drafts 16, 14 and 02 (browsers),
   clients also offer 16 and 02 (*exp.*, [HTTP/3 guide](docs/guide/http3.md#webtransport-experimental)).
 - **QUIC datagrams** (RFC 9221) and HTTP datagrams (RFC 9297) ([QUIC guide](docs/guide/quic.md#datagrams-rfc-9221)).
 - **Encrypted Client Hello** (RFC 9849), client and server, over TCP and HTTP/3 (*exp.*,
-  [client](docs/guide/ktor.md#encrypted-client-hello-experimental), [server](docs/guide/ktor.md#encrypted-client-hello-on-the-server)).
+  [client](docs/guide/engine-tls.md#encrypted-client-hello-experimental), [server](docs/guide/engine-tls.md#encrypted-client-hello-on-the-server)).
 - **CONNECT-UDP** (RFC 9298, MASQUE): HTTP/3 through a CONNECT-UDP proxy, and the proxy side (*exp.*,
-  [client](docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental), [proxy](docs/guide/http3.md#connect-udp-experimental)).
-- **0-RTT**, opt-in on both sides, replay-guarded (*exp.*, [0-RTT](docs/guide/ktor.md#0-rtt-opt-in-experimental)).
+  [client](docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental), [proxy](docs/guide/http3.md#connect-udp-experimental)).
+- **0-RTT**, opt-in on both sides, replay-guarded (*exp.*, [0-RTT](docs/guide/zero-rtt.md)).
 - **Connection migration** across networks (RFC 9000 section 9) (*exp.* in the client,
-  [Ktor](docs/guide/ktor.md#connection-migration), [QUIC](docs/guide/quic.md#migration-and-paths)).
+  [Ktor](docs/guide/client-http3.md#connection-migration), [QUIC](docs/guide/quic.md#migration-and-paths)).
 - **RFC-strict**: one row per requirement with the tests behind it ([RFC compliance](docs/spec/rfc-compliance.md)); every
   departure for a specific peer is listed ([compatibility shims](docs/spec/compat-shims.md)).
 - **Interop** against 6 QUIC stacks: msquic, ngtcp2, picoquic, quic-go, quiche, quinn
   ([interop results](docs/spec/interop.md)).
 - **qlog** per connection and per-call diagnostics (which protocol, why, which connection) (*exp.* in the Ktor engines,
-  [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/ktor.md#observability-experimental)).
+  [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/observability.md)).
 
 Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the client engine (macOS, Linux, Windows);
 [http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);

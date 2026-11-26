@@ -201,7 +201,7 @@ public class H3BodyConsumed(
 ) : IllegalStateException(message, cause)
 
 /**
- * An HTTP/3 request's connection stalled (docs/guide/ktor.md, "Stalled HTTP/3 connections"; `http3 { stall { enabled
+ * An HTTP/3 request's connection stalled (docs/guide/client-http3.md, "Stalled HTTP/3 connections"; `http3 { stall { enabled
  * } }`): the path stopped carrying packets — [probeTimeouts] probe timeouts in a row went unanswered (RFC 9002 section
  * 6.2) and nothing came back from the server for [silence], or, while the request waited on a 0-RTT connection, nothing
  * came back at all — as on a network that cuts UDP flows. The engine drained the connection and marked the HTTP/3

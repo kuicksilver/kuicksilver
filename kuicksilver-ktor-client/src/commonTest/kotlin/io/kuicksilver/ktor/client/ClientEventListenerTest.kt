@@ -39,7 +39,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-/** The client engine's [KuicksilverEventListener], logger and qlog wiring (docs/guide/ktor.md, "Observability"). */
+/** The client engine's [KuicksilverEventListener], logger and qlog wiring (docs/guide/observability.md, "Observability"). */
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
 class ClientEventListenerTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()

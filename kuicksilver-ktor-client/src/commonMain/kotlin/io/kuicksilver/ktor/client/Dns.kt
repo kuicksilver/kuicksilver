@@ -152,7 +152,7 @@ public fun interface Dns {
     public companion object {
         /**
          * The system's resolver, the engine's default (as before 0.3.0): `getaddrinfo` once per address family on a bounded
-         * pool of threads, its answers kept for the platform's cache lifetimes (docs/guide/ktor.md, "Happy Eyeballs"). A
+         * pool of threads, its answers kept for the platform's cache lifetimes (docs/guide/client.md, "Happy Eyeballs"). A
          * resolver of your own may delegate to it for the names it does not handle. As a [FamilyDns] it answers each
          * family on its own; an address literal it answers without a lookup.
          */

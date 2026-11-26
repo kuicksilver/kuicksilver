@@ -4061,7 +4061,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.http3AdvertisingSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.minimalServerSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.mtlsServerSample
-kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.observabilityAndZeroRttSamples
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.observabilitySample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.prioritySample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.proxyProtocolSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.publicAltSvcSample
@@ -4072,7 +4072,6 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.trustedGatewaySample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.webSocketDeflateSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.webTransportSample
-kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.zeroRttReplayableSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.IdentityWatcherStopJvmTest.stopCompletesWhileAWatcherReadIsBlocked
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KeyFileSecretsJvmTest.negative_heapDumpNoKeyFromPemKeyFile
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.buildKtorPasses

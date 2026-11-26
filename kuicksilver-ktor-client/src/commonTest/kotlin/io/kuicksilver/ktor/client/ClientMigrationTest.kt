@@ -288,7 +288,7 @@ class ClientMigrationTest {
         }
 
     /**
-     * A download that a migration moves to another network (docs/guide/ktor.md, "Which connection served this call?"): the
+     * A download that a migration moves to another network (docs/guide/observability.md, "Which connection served this call?"): the
      * snapshot at the response head shows the first path and no change; the one at the response's end the new path, with
      * its own connection IDs, and one change; a later call on the connection counts from its own start.
      */

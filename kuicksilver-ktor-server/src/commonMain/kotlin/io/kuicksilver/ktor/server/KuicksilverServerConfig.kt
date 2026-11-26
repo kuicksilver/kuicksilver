@@ -58,7 +58,7 @@ public class ServerTlsConfig internal constructor() {
 
     /**
      * The certificate chain and key, shared by TCP and QUIC; null by default. A `TlsIdentity.Reloadable` lets the
-     * certificate be replaced while the server runs (docs/guide/ktor.md, "Certificate rotation"); [pemFiles] reads one from
+     * certificate be replaced while the server runs (docs/guide/engine-tls.md, "Certificate rotation"); [pemFiles] reads one from
      * files. Setting it in a block that called [pemFiles] fails with IllegalArgumentException: one identity, one source
      * (null sets none, so [pemFiles] may follow it).
      */
@@ -116,7 +116,7 @@ public class ServerTlsConfig internal constructor() {
      * [ocspStaplingFile] for a new bundle or response); null (the default) reads them once. A new chain is applied once two
      * reads a second apart agree and the key matches it; a failure keeps what is in use, is logged, and is retried after 1 s,
      * then twice as long each time up to this interval. New handshakes get the new certificate, running connections keep
-     * theirs (docs/guide/ktor.md, "Certificate rotation"). It needs [pemFiles]: the start fails without them (call
+     * theirs (docs/guide/engine-tls.md, "Certificate rotation"). It needs [pemFiles]: the start fails without them (call
      * `TlsIdentity.Reloadable.reload` yourself for an identity of your own). With it a chain file that also holds the
      * private key is refused, as the watcher would refuse it. At least 1 second.
      *
@@ -463,7 +463,7 @@ public class Http1ServerConfig internal constructor() {
 
 /**
  * HTTP/2 (RFC 9113) on the TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets HTTP/2
- * (docs/guide/ktor.md, "HTTP/2 on the server"). Plain connectors serve HTTP/2 only with their own opt-in, h2c
+ * (docs/guide/server.md, "HTTP/2 on the server"). Plain connectors serve HTTP/2 only with their own opt-in, h2c
  * ([KuicksilverPlainConnector.Builder.h2c]), whose connections take [settings] and [repeatOffenderPenalty] too.
  */
 @KuicksilverDsl
@@ -482,7 +482,7 @@ public class Http2ServerConfig internal constructor() {
      * Null (the default): each HTTP/2 connection that breaks a flood limit of [settings] is ended with GOAWAY
      * ENHANCE_YOUR_CALM, and that is all. A duration: a client address whose HTTP/2 connections end that way three times
      * within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake, for this long
-     * (docs/guide/ktor.md, "HTTP/2 on the server"; threat model 3.23). An IPv6 client counts by its /56, an IPv4-mapped one
+     * (docs/guide/server.md, "HTTP/2 on the server"; threat model 3.23). An IPv6 client counts by its /56, an IPv4-mapped one
      * by its IPv4 address; a slow field block is not a strike. Enable it only where the server sees the real address of each
      * client: behind a NAT, a load balancer that rewrites source addresses (SNAT, Kubernetes `externalTrafficPolicy:
      * Cluster`) or a TCP proxy, every client shares the proxy's address and one flooder locks them all out.
@@ -811,7 +811,7 @@ public class ServerWebSocketsConfig internal constructor() {
     /**
      * Accept WebSockets over HTTP/2 (RFC 8441): the HTTP/2 SETTINGS carry `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, and an
      * Extended CONNECT with `:protocol = websocket` reaches Ktor's `webSocket {}` routes as an upgrade request
-     * (docs/guide/ktor.md, "WebSockets over HTTP/2"). On by default; no effect while HTTP/2 is off. When false the parameter
+     * (docs/guide/realtime.md, "WebSockets over HTTP/2"). On by default; no effect while HTTP/2 is off. When false the parameter
      * is not sent, and a client keeps opening its WebSockets over HTTP/1.1.
      */
     public var overHttp2: Boolean = true
@@ -871,7 +871,7 @@ public class TcpLimitsConfig internal constructor() {
      * them. When the backlog is full too (511 on the JVM, 50 on Kotlin/Native) the OS drops further connection attempts
      * (Linux by default; the client's TCP retries them) or resets them. The default does not protect a process whose
      * descriptor limit is lower (`ulimit -n`: 256 in a macOS shell, often 1024 on Linux): raise that limit or set this below
-     * it (docs/guide/ktor.md, "Connection limits"). At least 1; default 10,000.
+     * it (docs/guide/server.md, "Connection limits"). At least 1; default 10,000.
      *
      * @throws IllegalArgumentException when set below 1.
      */
@@ -925,7 +925,7 @@ public class ServerObservability internal constructor() {
     @ExperimentalKuicksilverApi
     public var connectionListener: ConnectionListener? = null
 
-    /** Hears connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/ktor.md, "Observability"); null for none. */
+    /** Hears connections and requests over HTTP/1.1, HTTP/2 and HTTP/3 (docs/guide/observability.md, "Observability"); null for none. */
     @ExperimentalKuicksilverApi
     public var eventListener: KuicksilverServerEventListener? = null
 

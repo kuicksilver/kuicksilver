@@ -80,7 +80,7 @@ internal class StallAbort(
 ) : CancellationException("HTTP/3 connection stalled")
 
 /**
- * Stall detection for one HTTP/3 connection (docs/guide/ktor.md, "Stalled HTTP/3 connections"): a path that stopped
+ * Stall detection for one HTTP/3 connection (docs/guide/client-http3.md, "Stalled HTTP/3 connections"): a path that stopped
  * carrying packets in both directions (a middlebox that cuts UDP flows) is found within seconds, not at the idle
  * timeout (RFC 9000 section 10.1, 30 s by default). It runs only while requests [watch] the connection; with none, it
  * waits without timers, and while the watched connection is quiet it sleeps until its next PING is due.

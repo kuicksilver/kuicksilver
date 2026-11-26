@@ -84,7 +84,7 @@ class EngineMainTest {
         }
 
     /**
-     * The `application.conf` of docs/guide/ktor.md ("EngineMain and configuration keys"), loaded as it stands with `-config`:
+     * The `application.conf` of docs/guide/server-config-file.md ("EngineMain and configuration keys"), loaded as it stands with `-config`:
      * only the port, the module and the two file paths are replaced, so a key the guide shows and the engine no longer reads
      * (or reads otherwise) fails here.
      */
@@ -92,11 +92,11 @@ class EngineMainTest {
         serverTest {
             val guide =
                 generateSequence(File("").absoluteFile) { it.parentFile }
-                    .map { File(it, "docs/guide/ktor.md") }
+                    .map { File(it, "docs/guide/server-config-file.md") }
                     .first { it.exists() }
                     .readText()
             val block =
-                guide.substringAfter("### EngineMain and configuration keys").substringAfter("```hocon\n").substringBefore("```")
+                guide.substringAfter("## EngineMain and configuration keys").substringAfter("```hocon\n").substringBefore("```")
             val chain = File(dir, "fullchain.pem").apply { writeText(TestCerts.toPem("CERTIFICATE", TestCerts.server)) }
             val key = File(dir, "privkey.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
             val conf =

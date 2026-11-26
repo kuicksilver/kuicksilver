@@ -40,6 +40,8 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `"Idle timeout after 30s"`, `StatelessReset`, `ApplicationClosed` | [connections that end](#connections-that-end) |
 | `ConnectionLost.ZeroRttRejected`, `StreamError.EarlyDataRejected`, `fallback = ZeroRttRejected` | [0-RTT is rejected](#0-rtt-is-rejected) |
 | `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
+| responses come over HTTP/2 or HTTP/1.1, never HTTP/3 | [another engine](#httpclient-uses-another-engine), then [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
+| `response.kuicksilverDiagnostics` is `null` | [another engine](#httpclient-uses-another-engine) |
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
@@ -52,6 +54,8 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `QuicException.DontFragmentUnavailable`, "QUIC not used: the UDP socket cannot set Don't Fragment", `fallback = QuicUnavailable` | [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | the server does not start: "<key> is not a Kuicksilver key", "<key> was replaced in 0.3.0 by <key>", "use off instead of 0" | [configuration keys refused](#the-server-refuses-to-start-with-a-key-of-applicationconf) |
 | `IllegalArgumentException` "… is derived by the engine (…); remove it" | [derived options](#the-engine-refuses-an-option-is-derived-by-the-engine) |
+| the engine does not start: "… must be …", "… are two sources of one identity: set one", "proxyProtocol { } needs at least one trusted source: trust(...)" | [configuration refused](#the-engine-refuses-its-configuration) |
+| `TlsException.Config` "expected exactly one PKCS#8 PRIVATE KEY block" | [the private key is refused](#the-servers-private-key-is-refused) |
 | clients get HTTP/2 where they got HTTP/1.1, WebSockets arrive over HTTP/2 | [HTTP/2 after upgrading](#http2-instead-of-http11-after-upgrading) |
 | the warning "QUIC per-IP limit (<n>) reached for <address>; …" | [the per-IP limit](#quic-per-ip-limit-reached) |
 | the client's warning "HTTP/3 to <origin> failed (<reason>); using TCP for <duration>. See response.kuicksilverDiagnostics" | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
@@ -73,7 +77,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 The logger, the listeners and the newer `EndpointStats` counters are experimental API (`@ExperimentalKuicksilverApi`, see
 [stability](../stability.md)); `QuicConnection.stats` and the first `EndpointStats` counters are stable. None of it costs
 anything per packet. Details: [QUIC: Observability](quic.md#observability),
-[QUIC: qlog](quic.md#qlog), [Ktor: Observability](ktor.md#observability-experimental).
+[QUIC: qlog](quic.md#qlog), [Ktor: Observability](observability.md).
 
 A failed connection's cause is always a `QuicException`: `QuicConnection.closed` completes with it, and every waiting
 call (`openBidi`, `acceptStream`, the stream channels, `sendDatagram`) fails with the same instance. Look at its type and
@@ -176,7 +180,7 @@ queue is closed with the reason "accept queue full". The server counts them in `
 Fix on the server: accept faster (one coroutine per connection, `incomingConnections()`), or raise `acceptQueue` for
 bursty arrivals. On the client, retry after a delay; during a shutdown, connect to another instance. The Kuicksilver Ktor
 client does this by itself: the call falls back to TCP (`fallback = Refused`), the alternative is not marked
-broken, and the next call tries HTTP/3 again ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
+broken, and the next call tries HTTP/3 again ([Ktor: Racing and fallback](client-http3.md#racing-and-fallback)).
 
 ### The handshake fails with a certificate error
 
@@ -630,11 +634,38 @@ or the server starts: the block sets an option whose value follows from another 
 The client also refuses `http3 { enabled = false }` together with `discovery = Http3Discovery.H3Only` ("http3 {
 discovery = H3Only } needs http3 { enabled }: with HTTP/3 off no request could be sent").
 
+### The engine refuses its configuration
+
+Every option is checked when the client engine is created or the server starts, and the first value out of range fails
+it with an `IllegalArgumentException` that names the option by its block path and says what it takes:
+"tcp { maxConnectionsPerIp } must be at least 1, or null (off)", "tls { reloadInterval } must be at least 1 second, or
+null". The ranges are in the [configuration reference](configuration.md). Two refusals are about combinations:
+
+- "tls { identity } and tls { pemFiles(...) } are two sources of one identity: set one", and the same for
+  `tls { clientTrust }` and `tls { clientCaFile(...) }` ("are two sources of one trust: set one"): keep the one you
+  mean. `pemFiles` with `reloadInterval` is the one that picks up renewed files.
+- "proxyProtocol { } needs at least one trusted source: trust(...)": a connector that reads the PROXY protocol must
+  name the load balancers allowed to send it ([Behind a proxy or load balancer](server-proxies.md#proxy-protocol)).
+
+### The server's private key is refused
+
+`TlsException.Config` "expected exactly one PKCS#8 PRIVATE KEY block" when the server starts, from `tls { pemFiles(…) }`,
+`TlsIdentity.fromPem` or the `kuicksilver.tls.privateKey` key: the key file is not an unencrypted PKCS#8 key. Its first
+line must be `-----BEGIN PRIVATE KEY-----`. A key in the older formats (`BEGIN EC PRIVATE KEY`, `BEGIN RSA PRIVATE KEY`)
+converts once, without a passphrase on the result:
+
+```sh
+openssl pkcs8 -topk8 -nocrypt -in key.pem -out privkey.pem
+```
+
+An encrypted key (`BEGIN ENCRYPTED PRIVATE KEY`) is not supported: decrypt it the same way, and protect the file with
+its permissions instead. The same message comes when the file holds two keys.
+
 ### HTTP/2 instead of HTTP/1.1 after upgrading
 
 Since 0.3.0 the server engine serves HTTP/2 on its TLS connectors by default: their ALPN offers `h2`, then `http/1.1`,
 so every client that offers both (browsers, curl, OkHttp, the JDK's client, Kuicksilver's) gets HTTP/2 where 0.2 gave
-it HTTP/1.1 ([Ktor: HTTP/2 on the server](ktor.md#http2-on-the-server)). Plain connectors and h2c are unchanged. Signs
+it HTTP/1.1 ([Ktor: HTTP/2 on the server](server.md#http2-on-the-server)). Plain connectors and h2c are unchanged. Signs
 of it: `call.request.httpVersion` is `HTTP/2.0`, access logs and metrics show `h2`
 (`HTTP_2_0` in `connectionOpened` of the server's event listener).
 
@@ -643,7 +674,7 @@ of it: `call.request.httpVersion` is `HTTP/2.0`, access logs and metrics show `h
 - WebSockets come over HTTP/2 with it (RFC 8441, Extended CONNECT): a browser's `wss://` opens on its HTTP/2 connection
   to the origin. A proxy in front that does not know RFC 8441 breaks those WebSockets; turn them off with
   `webSockets { overHttp2 = false }` (`kuicksilver.webSockets.overHttp2 = false`), and they go over HTTP/1.1 again
-  ([Ktor: WebSockets over HTTP/2](ktor.md#websockets-over-http2)).
+  ([Ktor: WebSockets over HTTP/2](realtime.md#websockets-over-http2)).
 - A client without the certificate a server with `tls { clientAuth = ClientAuth.Required }` asks for sees the refusal
   differently over HTTP/2: the Ktor client's call fails with `Http2Exception.ConnectionClosed` carrying the TLS alert, where over HTTP/1.1 it failed with
   the `TlsException` itself.
@@ -660,11 +691,40 @@ server sees real client addresses, keep it, since it stops one address from taki
 ([Deploying: QUIC connection limits](deployment.md#quic-connection-limits)). `EndpointStats.connectionsRefusedLimits`
 (Ktor server: `engine.http3Stats`) counts these refusals.
 
+### `HttpClient()` uses another engine
+
+Responses come over HTTP/2 or HTTP/1.1 and never HTTP/3, the engine logs nothing, and `response.kuicksilverDiagnostics`
+is `null`: the request did not go through Kuicksilver. `HttpClient()` without an engine argument takes the engine Ktor
+finds first, through `ServiceLoader` on the JVM and Android: OkHttp's and the Android engine (priority 1.0) come before
+Kuicksilver (0.5), which comes before CIO (0.0); on Kotlin/Native Ktor's engine list decides. An app that has
+`ktor-client-okhttp` or `ktor-client-android` among its dependencies, even only through another library, gets that
+engine.
+
+Pass the engine: `HttpClient(Kuicksilver)` (`io.kuicksilver.ktor.client.Kuicksilver`), everywhere a client is created,
+including the clients of libraries that accept an `HttpClient`. To see which engine a client has, print
+`client.engine`. A shrunk JVM application that lost Kuicksilver's `ServiceLoader` entry has the same symptom
+([the keep rules](#android)).
+
 ### The Ktor client never uses HTTP/3, or stops using it
+
+Go through these in order:
+
+1. **Is it Kuicksilver?** `response.kuicksilverDiagnostics` is `null` for another engine: [`HttpClient()` uses another
+   engine](#httpclient-uses-another-engine).
+2. **Is it the first request to the host?** In the default `Auto` mode the first request goes over TCP and learns the
+   server's `Alt-Svc`; the next one races HTTP/3 against the TCP connection already open, and HTTP/3 serves the requests
+   once its connection is up. `fallback` is `NoAlternative`, then `H3NotReady`: both are normal.
+3. **Does the server announce HTTP/3?** `curl -sI https://<host>/ | grep -i alt-svc` must show `h3=":<port>"`. A proxy or
+   CDN in front may strip it; an alternative on an unprivileged port (1024 and up) is ignored for an origin on a
+   privileged one ([Discovery and Alt-Svc](client-http3.md#discovery-and-alt-svc)).
+4. **Does a proxy apply?** `fallback = Proxy`: HTTP/3 never goes through an HTTP or SOCKS proxy (an emulator's or a
+   debugging proxy's settings count) ([proxies](#requests-go-through-a-proxy-or-not-unexpectedly)).
+5. **Does UDP get through?** `fallback = HandshakeTimeout`, later `BrokenAlternative`: a firewall, VPN or security group
+   blocks UDP to the port. `curl --http3-only https://<host>/` from the same network tells.
 
 Every response says why: `response.kuicksilverDiagnostics?.fallback` is a `FallbackReason` (`HandshakeTimeout` when UDP
 is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`, ...), with what to check for each in
-[Ktor: Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3); with
+the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per such call
 (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the default logger at `Warn` leaves out). The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
@@ -695,11 +755,11 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `Proxy` | a proxy applies; exempt the host for HTTP/3 |
 | `Configuration` | `http3 { enabled = false }` |
 | `Http3Disabled` | `http3 { allowed }` returned false |
-| `NoAlternative` | `Auto` mode without `Alt-Svc` for the origin yet; see `http3 { hints }`, `Preferred` |
+| `NoAlternative` | `Auto` mode without `Alt-Svc` for the origin yet: the first call to an origin always goes over TCP; or the server sends none, a proxy strips it, or it names an unprivileged port for a privileged origin. See `http3 { hints }`, `Preferred`, `FileAltSvcStore` |
 | `MisdirectedRequest` | the HTTP/3 alternative answered 421; it was dropped from the origin's alternatives (RFC 7838 section 6) and the call went over TCP. The server's virtual host does not cover this authority on that port |
 | `BrokenAlternative` | HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling |
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
-| `HandshakeTimeout` | QUIC got no answer within the connect timeout: UDP blocked, see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
+| `HandshakeTimeout` | QUIC got no answer within the handshake or connect timeout: UDP to the port is blocked (a firewall, a VPN, a cloud security group open for TCP only), see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
 | `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
 | `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment, so QUIC is not used: [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | `H3NotReady` | TCP won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
@@ -715,14 +775,14 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake (an msquic server given a ClientHello of 3 or more datagrams): this call went over TCP at once; after a resumed handshake the next ones use HTTP/3 without resumption (no 0-RTT) for a while, after a full one the alternative is marked broken: [msquic servers](#msquic-servers-and-a-large-clienthello) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
-alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
+alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](client-http3.md#discovery-and-alt-svc)).
 
 ### QUIC misbehaves in production
 
 When HTTP/3 causes trouble on some networks or after a release and you need it off before a fix ships, flip
 `http3 { allowed }` from your remote configuration and, to drop the open connections at once, call
 `client.closeHttp3Connections()`: requests go over TCP (HTTP/2 or HTTP/1.1) from the next one on, calls in flight finish, and switching
-back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)). Clients in
+back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)). Clients in
 `H3Only` mode fail instead of using TCP. Before that, `response.kuicksilverDiagnostics` and a qlog trace
 ([Getting more information](#getting-more-information)) usually tell what goes wrong.
 
@@ -730,7 +790,7 @@ back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3
 
 The HTTP/3 connection under the call stopped carrying packets in both directions: its probe timeouts went unanswered and
 nothing came back from the server for `http3 { stall { minSilence } }` (2 s), or a 0-RTT request got no answer at all ([Ktor: Stalled
-HTTP/3 connections](ktor.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
+HTTP/3 connections](client-http3.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
 drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine drained the
 connection and marked the alternative broken (5 minutes, doubling at each new stall on this network). An idempotent
 request without a response yet went over TCP at once (`fallback = QuicStalled`); a POST, a streamed body, or a response
@@ -778,7 +838,7 @@ proxy at all: QUIC is TLS 1.3. A failure of the origin's TLS behind the proxy is
 
 ### A Ktor client call failed: over which transport?
 
-`e.kuicksilverDiagnostics` on the exception says it ([Ktor: Why did this call fail?](ktor.md#why-did-this-call-fail)):
+`e.kuicksilverDiagnostics` on the exception says it ([Ktor: Why did this call fail?](observability.md#why-did-this-call-fail)):
 `transport` is `Quic` or `Tcp`, `h3Failure` is HTTP/3's failure when TCP came after it, and `connectFailures` names each
 setup that failed with its stage and address (a QUIC one also with `quicProgress`: `NoPacketReceived` is UDP blocked or
 a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
@@ -805,7 +865,7 @@ the connect timeout. Over HTTP/2 a request waits only when every connection of i
 SETTINGS_MAX_CONCURRENT_STREAMS and the route has no room for another connection. A pile-up usually means response bodies that are never read or closed, which keep their
 connections. Read or cancel every body; raise the limits only for real concurrency. HTTP/3 requests instead wait for
 the server's stream credit (MAX_STREAMS) until the request or socket timeout
-([Ktor: Connection pool](ktor.md#connection-pool)).
+([Ktor: Connection pool](client.md#connection-pool)).
 
 A WebSocket over HTTP/1.1 fails with `ConnectTimeoutException` ("The WebSocket was not connected within the connect
 timeout") when the server accepted the connection but did not answer the opening handshake within the connect timeout.
@@ -819,7 +879,7 @@ or its cancellation.
 A client without TLS 1.3 (an older Android or JDK, an embedded HTTP stack, some scanners) gets a `protocol_version`
 alert: a TLS connector speaks TLS 1.3 only unless it allows TLS 1.2 with `tls { versions = TlsVersions.Tls12And13 }`, the
 `EngineMain` key `kuicksilver.tls.versions = tls12And13`, or Ktor's `enabledProtocols = listOf("TLSv1.2", "TLSv1.3")`
-([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)). A TLS 1.2 client that still gets `handshake_failure` offers
+([TLS 1.2 on the server](engine-tls.md#tls-12-on-the-server)). A TLS 1.2 client that still gets `handshake_failure` offers
 none of the profile's suites (only CBC, SHA-1 or static RSA ones), offers only RSA suites to a server with an ECDSA
 certificate, or leaves out Extended Master Secret: these are refused on purpose (RFC 9325 sections 3.5, 4.1 and 4.2).
 At startup, "tls { versions } (kuicksilver.tls.versions) does not apply to <connector>: use ktor.security.ssl.enabledProtocols there"
@@ -844,7 +904,7 @@ engine can replay (bytes, a `WriteChannelContent` writer) when such retries matt
 ### Calls over HTTP/2 fail, or a server misbehaves with HTTP/2
 
 The client offers HTTP/2 to every `https://` server over TCP since 0.3.0 ([Ktor: HTTP/2 on the
-client](ktor.md#http2-on-the-client)). A server or middlebox whose HTTP/2 is broken shows as `Http2Exception` failures
+client](client.md#http2-on-the-client)). A server or middlebox whose HTTP/2 is broken shows as `Http2Exception` failures
 (`StreamReset`, `ConnectionClosed`, `MalformedMessage`) where HTTP/1.1 worked before. `engine { http2 { enabled = false } }`
 offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the `Http2Exception` and its code).
 
@@ -874,7 +934,7 @@ Without HTTP/3 the server sends no `Alt-Svc`. Also check `http3 { enabled }` (on
 that `http3 { altSvc }` is on so clients learn about HTTP/3 ([Deploying the HTTP/3 server](deployment.md) has a checklist for
 the network in front of the server). `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
 CONNECTION_REFUSED (0x2) while TCP answers, mean `engine.http3Advertising` is `Clear` or `Drain`
-([Ktor: Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)).
+([Ktor: Turning HTTP/3 off on the server](server.md#turning-http3-off-on-the-server)).
 
 ### The server answers `421 Misdirected Request`
 
@@ -902,12 +962,12 @@ Only when every client of a connector is a trusted gateway, such as a TLS-termin
 internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
 `tlsConnector { allowMisdirectedHosts = true }` or `plainConnector { allowMisdirectedHosts = true }` (both
 `@DelicateKuicksilverApi`; `kuicksilver.connector.allowMisdirectedHosts` for the deployment port)
-([Ktor: Misdirected requests](ktor.md#misdirected-requests)). Never set it on a connector that clients reach directly.
+([Ktor: Misdirected requests](server-proxies.md#misdirected-requests)). Never set it on a connector that clients reach directly.
 
 ### A PROXY protocol connector resets connections
 
 A connector with `proxyProtocol { }` serves only connections that start with a PROXY protocol header from one of the
-sources its `trust(...)` names ([PROXY protocol](ktor.md#proxy-protocol)).
+sources its `trust(...)` names ([PROXY protocol](server-proxies.md#proxy-protocol)).
 
 | Cause | How to tell | Fix |
 |---|---|---|

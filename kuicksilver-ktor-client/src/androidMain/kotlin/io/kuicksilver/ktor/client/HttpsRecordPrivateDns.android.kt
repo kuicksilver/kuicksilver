@@ -13,7 +13,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * Then a failed HTTPS record lookup abandons the request (RFC 9460 section 3.1). The opportunistic mode ("Automatic")
  * may fall back to plain DNS when DNS over TLS is blocked, so it counts as unprotected, as does any network below API 28.
  * The engine also takes the network's NAT64 prefix from [connectivity] (`LinkProperties.getNat64Prefix`, API 30), for
- * Happy Eyeballs on an IPv6-only network without 464XLAT (docs/guide/ktor.md, "Happy Eyeballs").
+ * Happy Eyeballs on an IPv6-only network without 464XLAT (docs/guide/client.md, "Happy Eyeballs").
  * Get the manager from the application's context
  * (`context.applicationContext.getSystemService(ConnectivityManager::class.java)`), not an Activity's, which the engine
  * would keep alive.

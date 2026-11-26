@@ -11,7 +11,7 @@ import io.kuicksilver.quic.MigrationEvent
 import kotlin.time.Duration
 
 /**
- * Hears what the client engine does with each call (docs/guide/ktor.md, "Observability"), in the manner of OkHttp's
+ * Hears what the client engine does with each call (docs/guide/observability.md, "Observability"), in the manner of OkHttp's
  * `EventListener`: set it with `engine { eventListener = ... }`. Every method has an empty default; override the ones you
  * need. The order for one call is [callStart], then for each attempt the protocol decision ([protocolSelected], with
  * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply), the name lookups it makes ([dnsStart] and [dnsEnd],
@@ -82,7 +82,7 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
-     * HTTP/3 and TCP connection setups raced (docs/guide/ktor.md, "Racing and fallback"): [winner] (`HTTP_3_0`, or the
+     * HTTP/3 and TCP connection setups raced (docs/guide/client-http3.md, "Racing and fallback"): [winner] (`HTTP_3_0`, or the
      * TCP side's `HTTP_2_0` or `HTTP_1_1`) won after HTTP/3's
      * [headStart]; [h3Failure] is why HTTP/3 lost when it failed rather than being slower.
      */

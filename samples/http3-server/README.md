@@ -58,7 +58,7 @@ with a flag that accepts it; do not do either with a CA you did not make yoursel
 ## Configuration
 
 Every key of `application.conf` takes an environment variable, so a container or a systemd unit configures the server
-without a rebuild; any other key of the [`EngineMain` table](../../docs/guide/ktor.md#enginemain-and-configuration-keys)
+without a rebuild; any other key of the [`EngineMain` table](../../docs/guide/server-config-file.md#enginemain-and-configuration-keys)
 can be added there, or passed as `-P:<key>=<value>`.
 
 | Variable | Key | Default |
@@ -85,7 +85,7 @@ The [deployment guide](../../docs/guide/deployment.md) has the details; for this
   `call.request.origin.remoteAddress` is the client. The header is TCP only; HTTP/3 reports its UDP peer. Unless the
   proxy also forwards UDP on the same port number (nginx `stream` with `listen 8443 udp`, which then sends from its
   own address), set `ALT_SVC=false`: otherwise `Alt-Svc` points clients at a UDP port nobody serves
-  ([PROXY protocol](../../docs/guide/ktor.md#proxy-protocol)).
+  ([PROXY protocol](../../docs/guide/server-proxies.md#proxy-protocol)).
 - **Behind an L7 proxy that terminates TLS and HTTP/3 itself** (nginx `http`, a CDN), the server only ever sees that
   proxy's TCP requests: set `ALT_SVC=false`, and the proxy's own HTTP/3 serves the clients
   ([What can sit in front of the server](../../docs/guide/deployment.md#what-can-sit-in-front-of-the-server)).

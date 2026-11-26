@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 An Android and iOS app, one Compose Multiplatform UI, that shows what HTTP/3 changes for a mobile client: a download
 over Kuicksilver's HTTP/3 carries on when the phone switches from Wi-Fi to the mobile network, while the same download
 over TCP, next to it, breaks. It also compares the two under packet loss and shows why a request did not use HTTP/3.
-It is not published. The guide behind it is [docs/guide/ktor.md, "Connection migration"](../../docs/guide/ktor.md#connection-migration).
+It is not published. The guide behind it is [docs/guide/ktor.md, "Connection migration"](../../docs/guide/client-http3.md#connection-migration).
 
 | Screen | What it does |
 |---|---|

@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * How the client engine's HTTP/3 connections follow the device's network (connection migration, RFC 9000 section 9;
- * docs/guide/ktor.md, "Connection migration"): set it with `engine { http3 { migration = ... } }`. Off (null) by
+ * docs/guide/client-http3.md, "Connection migration"): set it with `engine { http3 { migration = ... } }`. Off (null) by
  * default, as in 0.2: a connection then stays on its first socket, which is bound to no network, so it lives on only if
  * the system routes that socket over the new network and the server follows the new address as a NAT rebinding; it
  * may also die at its idle timeout.
