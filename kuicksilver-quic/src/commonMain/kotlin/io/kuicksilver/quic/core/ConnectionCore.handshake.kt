@@ -13,6 +13,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.qlog.QlogWriter
 import io.kuicksilver.quic.recovery.LossDetection
 import io.kuicksilver.quic.recovery.Pacer
 import io.kuicksilver.quic.recovery.SpaceId
@@ -71,9 +72,12 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     return tp
 }
 
+/** [buildLocalTp] as handed to TLS; a qlog trace keeps it until it logs it with the peer's ([QlogWriter.pendingLocalTp]). */
+internal fun ConnectionCore.localTpForTls(): TransportParameters = buildLocalTp().also { qlog?.pendingLocalTp = it }
+
 /** Re-encodes the local transport parameters (test hooks set after construction, before the first drive). */
 internal fun ConnectionCore.refreshLocalTp() {
-    handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp().also { localTp = it }, role, 27))
+    handshake.session.setTransportParameters(TransportParametersCodec.encode(localTpForTls(), role, 27))
 }
 
 internal fun ConnectionCore.installInitialKeys(profile: VersionProfile) {
@@ -344,7 +348,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     flightVersion = next
     clientVersionFixed = false
     handshake = HandshakeDriver(crypto.newSession(tlsConfig, earlyMode != EarlyDataState.Disabled), ConnectionHandshakeSink(this))
-    handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp().also { localTp = it }, role, 27))
+    handshake.session.setTransportParameters(TransportParametersCodec.encode(localTpForTls(), role, 27))
     handshake.session.setQuicVersion(next.version)
     loss = LossDetection(rtt, config, role, ConnectionLossListener(this))
     path.cc = config.congestionController()
@@ -549,7 +553,8 @@ internal class ConnectionHandshakeSink(
         // qlog transport:parameters_set (quic-events-04 section 5.3): ours and the peer's, once the peer's are accepted (a
         // forged Initial never gets here, so it opens no trace)
         core.qlog?.let { q ->
-            core.localTp?.let { q.parametersSet(local = true, tp = it, now = core.now) }
+            q.pendingLocalTp?.let { q.parametersSet(local = true, tp = it, now = core.now) }
+            q.pendingLocalTp = null
             q.parametersSet(local = false, tp = tp, now = core.now)
         }
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }

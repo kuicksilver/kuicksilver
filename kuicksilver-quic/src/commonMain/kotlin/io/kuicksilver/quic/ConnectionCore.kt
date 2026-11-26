@@ -45,6 +45,7 @@ import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
+import io.kuicksilver.quic.core.localTpForTls
 import io.kuicksilver.quic.core.memoryCeiling
 import io.kuicksilver.quic.core.newPmtud
 import io.kuicksilver.quic.core.probePreferredFrom
@@ -690,8 +691,6 @@ public class ConnectionCore internal constructor(
     internal val builder = PacketBuilder(this)
     internal var peerTp: TransportParameters? = null
 
-    /** The transport parameters we gave TLS last ([buildLocalTp]); logged with the peer's once those arrive (qlog). */
-    internal var localTp: TransportParameters? = null
     internal var peerGreaseQuicBit = false
     internal var tlsDirty = false
     internal var handshakeDoneReceived = false
@@ -942,7 +941,7 @@ public class ConnectionCore internal constructor(
             cids.adoptInitialLocalCid(localCid)
             // before the transport parameters: the server's stateless_reset_token is the token of its handshake ID
             if (role == TlsRole.Server) cids.adoptInitialPeerCid(remoteCid)
-            val tp = buildLocalTp().also { localTp = it }
+            val tp = localTpForTls()
             handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
             handshake.session.setQuicVersion(startVersion.version)
             serverEarly?.let { enableServerEarlyData(it) }

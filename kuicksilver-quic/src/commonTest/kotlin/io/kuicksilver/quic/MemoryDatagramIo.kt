@@ -9,6 +9,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.yield
 
@@ -54,15 +56,29 @@ internal class MemoryNetwork {
     @kotlin.concurrent.Volatile
     private var held: Map<InetSocketAddress, Channel<Pair<InetSocketAddress, ByteArray>>> = emptyMap()
 
+    /** Datagrams [hold] kept per address since its hold began (none lost). */
+    @kotlin.concurrent.Volatile
+    private var heldCounts: Map<InetSocketAddress, MutableStateFlow<Int>> = emptyMap()
+
     /** From now on datagrams to [addr] wait (none lost) until [release]: a stalled return path that orders a test's steps. */
     fun hold(addr: InetSocketAddress) {
+        heldCounts = heldCounts + (addr to MutableStateFlow(0))
         held = held + (addr to Channel(Channel.UNLIMITED))
+    }
+
+    /** Returns once the hold of [addr] keeps [n] datagrams: what was sent to it while it was held. */
+    suspend fun awaitHeld(
+        addr: InetSocketAddress,
+        n: Int,
+    ) {
+        checkNotNull(heldCounts[addr]) { "$addr is not held" }.first { it >= n }
     }
 
     /** Delivers what [hold] kept for [addr], in order, and lets later datagrams through again. */
     fun release(addr: InetSocketAddress) {
         val q = held[addr] ?: return
         held = held - addr
+        heldCounts = heldCounts - addr
         q.close()
         while (true) {
             val (from, bytes) = q.tryReceive().getOrNull() ?: break
@@ -79,7 +95,12 @@ internal class MemoryNetwork {
             dropped++
             return
         }
-        held[to]?.let { if (it.trySend(from to bytes).isSuccess) return } // closed by release: delivered directly
+        held[to]?.let {
+            if (it.trySend(from to bytes).isSuccess) {
+                heldCounts[to]?.update { n -> n + 1 }
+                return
+            }
+        } // closed by release: delivered directly
         val target = sockets[to]
         if (target == null || target.closed || target.deaf) {
             dropped++
