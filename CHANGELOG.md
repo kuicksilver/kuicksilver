@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client (experimental): `AltSvcStore.originOf(url)` gives the origin key the engine stores a URL's alternatives
+  under, in the one canonical form the `AltSvcStore` KDoc now states: `scheme://host:port` with the host in lowercase,
+  without a trailing dot, an IPv6 address in brackets and the port always written. A store that seeds or looks up an
+  origin no longer has to rebuild the engine's format.
 - QUIC (experimental): `QuicConnection.version` and `ConnectionInfo.version` say which QUIC version the handshake settled,
   `VersionProfile.V1` or `V2` (RFC 9369); null until then. With both versions configured it can differ from the one the
   client's first flight offered (compatible version negotiation, RFC 9368). The Ktor client's `QuicConnectionSnapshot`
@@ -1068,6 +1072,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: the origin key of the Alt-Svc store, the broken marks and the remembered RTTs is canonical. The host is
+  lowercased and loses a trailing dot, and an IPv6 host set without brackets gets them, so `https://Example.com./` and
+  `https://example.com/` share their alternatives (RFC 6454 section 4). Before, they were two origins, and a
+  `FileAltSvcStore` record of an uppercase host is now found under its lowercase key only.
 - Ktor client: `client.engine.coroutineContext.job.join()` after `HttpClient.close()` now returns once the engine closed
   its pools, its UDP endpoints and its selector. That includes every QUIC connection's qlog trace, so an app that exits
   after the join keeps complete traces (`docs/guide/ktor.md`, "Closing the client"). Before, the cleanup ran outside the

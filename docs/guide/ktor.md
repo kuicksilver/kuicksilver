@@ -1473,7 +1473,12 @@ reads at most the first 8 MiB of a file (a full store takes less).
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
-(one engine per file: two engines sharing a file overwrite each other). Both built-in stores keep at most 8 alternatives
+(one engine per file: two engines sharing a file overwrite each other). A store is keyed by origin in one canonical form:
+`scheme://host:port`, the host in lowercase without a trailing dot, an IPv6 address in brackets, the port always
+written (`https://example.com:443`, `https://[2001:db8::1]:8443`), a `wss` URL keyed as its `https` origin.
+`AltSvcStore.originOf(url)` (experimental, 0.3.0) builds that key, for a store that looks an origin up or seeds one. There
+is no change callback: wrap the store to see what it learns, as the engine calls `put`, `remove`, `clearNonPersistent` and
+`clear` for every change. Both built-in stores keep at most 8 alternatives
 per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
 the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. Entries
 without `persist=1` are dropped when the network changes (RFC 7838 section 2.2): when `networkId()` reports a new network,

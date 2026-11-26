@@ -38,8 +38,15 @@ public class AltSvcEntry(
 }
 
 /**
- * Storage of Alt-Svc records by origin (`https://host:port`); implement it to keep them across restarts. The engine calls
- * it under its own lock, so an implementation used by one engine needs no locking of its own.
+ * Storage of Alt-Svc records by origin; implement it to keep them across restarts. The engine calls it under its own lock,
+ * so an implementation used by one engine needs no locking of its own.
+ *
+ * Every `origin` the engine passes has one canonical form, the one [originOf] gives for a URL: `scheme://host:port` with
+ * the scheme in lowercase (`https`; a `wss` URL is its `https` origin, a `ws` URL its `http` one), the host in lowercase
+ * without a trailing dot, an IPv6 address in brackets, and the port always written, the scheme's default included:
+ * `https://example.com:443`, `https://[2001:db8::1]:8443`. A store that looks an origin up, or seeds one, by a key it
+ * builds itself builds it with [originOf]. There is no change callback: wrap the store (the engine calls [put], [remove],
+ * [clearNonPersistent] and [clear] for every change) to observe what it learns.
  */
 public interface AltSvcStore {
     /** The entries stored for [origin], expired ones included (the engine skips those); empty when there are none. */
@@ -86,6 +93,17 @@ public interface AltSvcStore {
         set(value) {
             // not kept
         }
+
+    /** [originOf], the origin key of a URL. */
+    public companion object {
+        /**
+         * The origin key the engine stores [url]'s alternatives under, in the canonical form [AltSvcStore] describes:
+         * `originOf(Url("https://Example.COM./x"))` is `https://example.com:443`, `originOf(Url("wss://[2001:DB8::1]:8443/"))`
+         * is `https://[2001:db8::1]:8443`. The path, query and user info are not part of it.
+         */
+        @ExperimentalKuicksilverApi
+        public fun originOf(url: Url): String = originKeyOf(url)
+    }
 }
 
 /**
@@ -572,17 +590,22 @@ internal fun <K, V> MutableMap<K, V>.evictEldest(max: Int) {
 }
 
 /**
- * The origin of [url] as the client's per-origin state keys it (Alt-Svc, broken marks, RTTs): `scheme://host:port` with a
- * WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the `https` origin (RFC 8441 section 5, which RFC 9220
- * applies to HTTP/3: ":scheme MUST be https for wss-schemed WebSockets"), and an alternative serves all requests to its
- * origin (RFC 7838 section 2.4), so `wss://` and `https://` to one host and port share it.
+ * The origin of [url] as the client's per-origin state keys it (Alt-Svc, broken marks, RTTs), in the canonical form of
+ * [AltSvcStore.originOf]: `scheme://host:port` with a WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the
+ * `https` origin (RFC 8441 section 5, which RFC 9220 applies to HTTP/3: ":scheme MUST be https for wss-schemed
+ * WebSockets"), and an alternative serves all requests to its origin (RFC 7838 section 2.4), so `wss://` and `https://`
+ * to one host and port share it. The host is compared case-insensitively and an absolute name (`example.com.`) names the
+ * same host as its relative form (RFC 6454 section 4 lowercases it; RFC 1034 section 3.1), so both reduce to one key.
  */
 internal fun originKeyOf(url: Url): String {
     val scheme =
-        when (url.protocol.name) {
+        when (val name = url.protocol.name.lowercase()) {
             "wss" -> "https"
             "ws" -> "http"
-            else -> url.protocol.name
+            else -> name
         }
-    return "$scheme://${url.host}:${url.port}"
+    var host = url.host.lowercase()
+    if (host.length > 1 && host.endsWith('.')) host = host.dropLast(1)
+    if (':' in host && !host.startsWith('[')) host = "[$host]" // an IPv6 literal set without its brackets
+    return "$scheme://$host:${url.port}"
 }

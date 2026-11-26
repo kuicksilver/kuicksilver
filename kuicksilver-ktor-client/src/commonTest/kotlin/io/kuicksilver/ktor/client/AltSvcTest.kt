@@ -25,6 +25,26 @@ class AltSvcTest {
         delayMillis: Long = 0,
     ) = cache.onResponse(url, status, values.toList(), verified, age, delayMillis)
 
+    @Test fun originOfIsTheCanonicalStoreKey() {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        fun originOf(url: String) = AltSvcStore.originOf(Url(url))
+        assertEquals("https://example.com:443", originOf("https://example.com/path?q=1"), "the port is always written")
+        assertEquals("https://example.com:443", originOf("HTTPS://Example.COM./"), "lowercase, no trailing dot")
+        assertEquals("https://example.com:8443", originOf("wss://example.com:8443/chat"), "wss is its https origin")
+        assertEquals("http://example.com:80", originOf("ws://example.com/"))
+        assertEquals("https://[2001:db8::1]:443", originOf("https://[2001:DB8::1]/"), "IPv6 in brackets, lowercase")
+        assertEquals("https://192.0.2.1:8443", originOf("https://user:pw@192.0.2.1:8443/"), "no user info")
+        val bare =
+            io.ktor.http
+                .URLBuilder("https://placeholder/")
+                .apply { host = "2001:db8::1" }
+                .build()
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        assertEquals("https://[2001:db8::1]:443", AltSvcStore.originOf(bare), "an IPv6 host set without brackets")
+        // the engine's own key is the same one: what a store is called with
+        assertEquals(originOf("https://Example.COM./"), originKeyOf(Url("https://example.com:443/")))
+    }
+
     @Test fun parsesMaAndPersist() {
         val e = AltSvcParser.parse("h3=\":443\"; ma=3600; persist=1, h3-29=\":443\"", now)!!
         assertEquals(1, e.size)

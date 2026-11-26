@@ -1474,6 +1474,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.neg
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storedAlternativeFailingTheParserRulesIsNotUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_unicodeSpaceIsNoOws
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.networkChangeClearsNonPersistent
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.originOfIsTheCanonicalStoreKey
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.overflowingMaIsCapped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.parsesMaAndPersist
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.quotedPairsAreProcessed
