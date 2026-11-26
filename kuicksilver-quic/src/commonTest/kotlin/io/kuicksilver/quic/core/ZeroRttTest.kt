@@ -912,8 +912,8 @@ class ZeroRttTest {
      * RFC 9001 section 4.6.2, "The client therefore MUST reset the state of all streams": the client in 0-RTT holds the server's
      * 1-RTT packets until the handshake's end settled the 0-RTT (as ngtcp2's client buffers them until its handshake completed),
      * so a stream the server opened in its 0.5-RTT flight is reported after the rejection, never before it, where the
-     * application would read it while the rejected streams still looked alive. Red before: the packet held for the 1-RTT key
-     * was replayed when the key arrived, a step before the handshake's end, and its StreamOpened came first.
+     * application would read it while the rejected streams still looked alive. A pin, green before too: the core already
+     * queued stream events behind EarlyDataRejected and HandshakeCompleted (`nextEvent` drains stream events last).
      */
     @Test fun aServerStreamOfTheHalfRttFlightIsReportedAfterTheRejection() {
         val p = rejectedWithHalfRttFrames { byteArrayOf(0x0b, 0x03, 0x02, 'h'.code.toByte(), 'i'.code.toByte()) }

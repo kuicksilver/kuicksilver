@@ -69,10 +69,17 @@ internal suspend fun H3Session.writeCritical(
         var gen = madeFor ?: criticalGen
         while (true) {
             awaitCriticalStreams()
+            var notYet = false
             val written =
                 lock.withLock {
                     val c = critical
-                    if (gen != criticalGen || c == null) return@withLock false
+                    if (gen != criticalGen) return@withLock false
+                    if (c == null) {
+                        // this generation's streams are not open yet (a rejection noted while an attempt was finishing took
+                        // the older ones): they are waited for, never a reason to drop the bytes
+                        notYet = true
+                        return@withLock false
+                    }
                     try {
                         pick(c).output.writeFully(b)
                         // the write returned: its qlog frame_created, as for every frame (a later flush failure does not retract it)
@@ -97,6 +104,10 @@ internal suspend fun H3Session.writeCritical(
                     }
                 }
             if (written) return@withContext
+            if (notYet) {
+                check(!criticalStreams.isCompleted) { "critical streams of generation $gen reported open without them" }
+                continue
+            }
             // the stream it was for is gone with the rejected 0-RTT. The runtime may not have reported the rejection yet
             // (its event waits behind a flush): the handshake's end comes after it, and a connection that ends first
             // leaves nothing to write on. Waiting here also keeps this loop from spinning on a failed stream
@@ -167,10 +178,10 @@ internal suspend fun H3Session.noteRejectedZeroRtt() = withContext(dispatcher) {
  * Client, before a stream of the server is read: waits until the server's answer to our 0-RTT is known (RFC 9001 section
  * 4.6.2), at the latest once the handshake completed; false when the connection ended first. The transport hands a peer
  * stream out only after it settled that answer (the `QuicConnection.acceptStream` contract; the core holds the server's
- * 1-RTT packets until the handshake's end settled the 0-RTT), so this is defence in depth: a stream read before the
- * rejection was noted let the server's SETTINGS reach QPACK first. The encoder's Set Dynamic Table Capacity went to the
- * encoder stream the rejection dropped and its inserts to the new one, and the server's decoder, its table still of
- * capacity 0, closed the connection with QPACK_ENCODER_STREAM_ERROR (RFC 9204 sections 3.2.3 and 4.3.1).
+ * 1-RTT packets until the handshake's end settled the 0-RTT), so this is defence in depth against a hypothetical order
+ * our transport does not produce: a stream read before the rejection was noted would let the server's SETTINGS reach
+ * QPACK first, and our encoder's Set Dynamic Table Capacity go to the encoder stream the rejection dropped (RFC 9204
+ * section 3.2.3).
  */
 internal suspend fun H3Session.awaitZeroRttAnswer(): Boolean {
     // the answer is in (also while a Tofu client's handshake waits for its trust store, `trustCommitPending`)
@@ -391,6 +402,12 @@ internal suspend fun H3Session.openCriticalStreams(
         }
         return false
     }
+    hook?.invoke(AttemptStep.Done, gen)
+    // a rejection noted since the attempt published its streams (the accept loop runs while this coroutine waits to resume
+    // after attemptUntilTheLimitIsLow) superseded them: completing [criticalStreams] for them would let writers of the
+    // next generation through before its streams exist (CI run 45756922960: our Set Dynamic Table Capacity met
+    // `critical == null` and was dropped, and the server's decoder refused the inserts after it)
+    if (gen != criticalGen || critical == null) return false
     criticalStreams.complete(Unit)
     // the peer stops a reserved stream at once (RFC 9114 section 6.2.3), so failures here are expected and never fatal
     if (settings.grease) {

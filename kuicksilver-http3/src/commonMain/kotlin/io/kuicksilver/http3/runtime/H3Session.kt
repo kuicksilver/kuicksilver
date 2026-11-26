@@ -376,7 +376,7 @@ internal class H3Session(
     internal var criticalReadsHookForTest: (suspend (Int) -> Unit)? = null
 
     /** Where an [openCriticalStreams] attempt is ([criticalAttemptHookForTest]). */
-    internal enum class AttemptStep { Started, Opened, ControlWritten }
+    internal enum class AttemptStep { Started, Opened, ControlWritten, Done }
 
     internal val controlLock = Mutex()
     internal val encoderLock = Mutex()

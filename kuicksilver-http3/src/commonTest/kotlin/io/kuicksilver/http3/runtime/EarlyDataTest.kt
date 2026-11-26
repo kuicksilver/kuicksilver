@@ -606,14 +606,15 @@ class EarlyDataTest {
         }
 
     /**
-     * CI run 45756922960 (macOS arm64, 3 CPUs): the transport handed the server's control stream over before it reported the
-     * rejection of the 0-RTT (it reads the server's 1-RTT packets once it has their key, a step before the handshake's end
-     * settles the 0-RTT, and reports the rejection on its own thread), so the client read the server's SETTINGS before it
-     * noted the rejection. The encoder's Set Dynamic Table Capacity went to the encoder stream the rejection had dropped,
-     * its inserts to the new one, and the server's decoder, its table of capacity 0, closed the connection with
-     * QPACK_ENCODER_STREAM_ERROR (RFC 9204 section 3.2.3: the table's capacity is 0 until the encoder sets it). Here the
-     * transport reports the answer only once the session, on its dispatcher, asks for the handshake's end after it took the
-     * server's first stream: the session must not read that stream before. Red before: QPACK_ENCODER_STREAM_ERROR.
+     * Defence in depth, for a transport that would break the `QuicConnection.acceptStream` contract (ours reports the
+     * 0-RTT's answer before any peer stream, so this order is hypothetical): a server stream handed over before the answer
+     * is not read until the answer is known. Read at once, the server's SETTINGS reached QPACK before the rejection was
+     * noted, our encoder's Set Dynamic Table Capacity went to the encoder stream the rejection dropped and its inserts to the
+     * new one, and the server's decoder, its table of capacity 0 (RFC 9204 section 3.2.3), closed the connection with
+     * QPACK_ENCODER_STREAM_ERROR. The transport view here reports the answer only once the session, on its dispatcher, asks
+     * for the handshake's end after it took the server's first stream. Red without the wait: QPACK_ENCODER_STREAM_ERROR.
+     * The failure of CI run 45756922960 had another cause
+     * ([aRejectionNotedAsTheFirstAttemptEndsLeavesTheStreamsToTheNextOne]).
      */
     @Test fun aServerStreamTakenBeforeTheRejectionIsReportedWaitsForIt(): Unit =
         runBlocking {
@@ -682,6 +683,66 @@ class EarlyDataTest {
                         },
                     )
                 assertNull(answer)
+            }
+        }
+
+    /**
+     * CI run 45756922960 (macOS arm64, 3 CPUs), found by review: the first attempt opened and typed its critical streams in
+     * 0-RTT and published them, and while its coroutine waited to resume (after `attemptUntilTheLimitIsLow`) the accept loop
+     * took the server's control stream and noted the rejection, which moved the critical streams to generation 1. The
+     * superseded attempt then completed `criticalStreams` anyway, so our encoder's Set Dynamic Table Capacity, made for
+     * generation 1 once the server's SETTINGS arrived, found no streams (`critical == null`) and was dropped; the server's
+     * decoder, its table of capacity 0 (RFC 9204 section 3.2.3), refused the inserts after it with
+     * QPACK_ENCODER_STREAM_ERROR. Here the attempt, about to report its streams open, lets the server's flight through and
+     * waits until the rejection was noted. Red before: QPACK_ENCODER_STREAM_ERROR (with the encoder's writes made loud,
+     * H3_INTERNAL_ERROR).
+     */
+    @Test fun aRejectionNotedAsTheFirstAttemptEndsLeavesTheStreamsToTheNextOne(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val hold = AtomicInt(1)
+                val superseded = AtomicInt(0)
+                val endedIn0Rtt = AtomicInt(0) // 1: the first attempt ended in 0-RTT, 2: after the handshake
+                val headers = Http3Headers.of("x-session-detail" to "a value worth putting into the dynamic table")
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings { enableQpackDynamicTable() },
+                        resumer =
+                            http3Settings {
+                                enableQpackDynamicTable()
+                                h3Datagram = false
+                            },
+                        earlyRequest = true,
+                        clientSettings = http3Settings { enableQpackDynamicTable() },
+                        responseHeaders = headers,
+                        clientHold = hold,
+                        clientSession = { session ->
+                            session.criticalAttemptHookForTest = { step, gen ->
+                                if (step == H3Session.AttemptStep.Done && gen == 0) {
+                                    // recorded, asserted after the run: a throw here would surface as an H3_INTERNAL_ERROR
+                                    endedIn0Rtt.store(if (session.quic.isHandshakeComplete) 2 else 1)
+                                    hold.store(0) // the server's flight comes, and its control stream with it
+                                    while (!session.zeroRttRejectionNotedForTest) kotlinx.coroutines.yield()
+                                    if (session.criticalGen != gen) superseded.incrementAndFetch()
+                                }
+                            }
+                        },
+                    ) { c, resumed ->
+                        val s = resumed().single()
+                        repeat(3) {
+                            val r = c.request(http3Request("GET", "server.test", "/again"))
+                            assertEquals(204, r.status)
+                            assertEquals("a value worth putting into the dynamic table", r.headers["x-session-detail"])
+                        }
+                        s.session.criticalStreamsSeen.first { it == 3 }
+                        withContext(s.session.dispatcher) {
+                            assertEquals(4096L, s.session.qpack.decoderTableForTest().second, "the client's Set Dynamic Table Capacity")
+                        }
+                        assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
+                    }
+                assertEquals(false, accepted)
+                assertEquals(1, endedIn0Rtt.load(), "the first attempt ended in 0-RTT")
+                assertEquals(1, superseded.load(), "the rejection superseded the first attempt as it ended")
             }
         }
 
