@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- `kq` (`samples/kq-cli`, not published): a curl-like command line on the Ktor client engine, built as a native
+  executable for macOS arm64, Linux x64 and arm64 and Windows x64. `kq get|head <url>` with `--http3`, `--http3-only`,
+  `--http2`, `--http1.1`, `-i`, `-H`, `-o`, `--repeat`, `--0rtt`, `--qlog <dir>`, `--cacert`, `--alt-svc <file>` and
+  `--connect-timeout`; `-v` prints for each response the protocol and why (`ProtocolDiagnostics`), the QUIC connection
+  (handshake time, RTT, ALPN, the 0-RTT outcome, the QUIC version offered), the race and the `Alt-Svc` fields received,
+  and a failed call's connect failures. Public API only. Its tests run kq against an in-process server over loopback on
+  the JVM and macOS; the local gate runs them and builds every executable in a new step, `sample: kq-cli (tests, the kq
+  executables)`, and hosted CI in the `apple`, `apple-native` and `linux-native` jobs.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.

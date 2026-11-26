@@ -366,6 +366,8 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2046,SC2086   # the lists split into Gradle task paths on purpose
           $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
+      - name: 'sample: kq-cli (the kq executables for linuxX64, linuxArm64 and mingwX64, linked only)'
+        run: (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64)
       - name: 'c-tests: mingw-x64 (cross-built, -Werror; run by windows)'
         # the ksl C tests (test_udp_win.c among them) with the Kotlin/Native llvm + mingw sysroot the link step fetched;
         # only system DLLs are imported, so the exe runs as is on the windows runner
@@ -655,6 +657,11 @@ jobs:
         run: |
           (cd samples/realtime-telemetry && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
           python3 -I tools/check/test-bytecode.py samples/realtime-telemetry/build/classes/kotlin/jvm/test
+      - name: 'sample: kq-cli (JVM tests)'
+        # the kq command line against an in-process server; the native executables are built by apple-native and linux-native
+        run: |
+          (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
+          python3 -I tools/check/test-bytecode.py samples/kq-cli/build/classes/kotlin/jvm/test
       - name: 'fuzz: regression corpus'
         run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"
       - name: 'sim: Monte-Carlo (KSL_SIM_RUNS=200)'
@@ -733,6 +740,8 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_MACOS_TESTS
+      - name: 'sample: kq-cli (macosArm64 tests, the kq executable)'
+        run: (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace macosArm64Test linkReleaseExecutableMacosArm64)
       - name: 'native: iosSimulatorArm64 tests'
         run: |
           . tools/ci/matrix.sh

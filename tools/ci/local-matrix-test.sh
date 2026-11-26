@@ -23,11 +23,11 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
     else echo "FAIL $name: exit $rc, want $want and '$exp' before any preflight or step"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
   fi
 }
-t onlyListAndRange          0 "25 50 51 55"                          -- --only 25,50-51,55
+t onlyListAndRange          0 "25 51 52 56"                          -- --only 25,51-52,56
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 50 77 | tr '\n' ' ' | sed 's/ $//')" -- --from 50
-t onlyWithItsProducer       0 "44 45"                                -- --only 44,45
-t oldPlatformSteps          0 "35 36 57"                             -- --only 35-36,57
+t fromWithDependencies      0 "$(seq 51 78 | tr '\n' ' ' | sed 's/ $//')" -- --from 51
+t onlyWithItsProducer       0 "45 46"                                -- --only 45,46
+t oldPlatformSteps          0 "35 36 58"                             -- --only 35-36,58
 t negative_noValue          2 "needs a value"                        -- --only
 t negative_optionAsValue    2 "needs a value"                        -- --only --skip-android
 t negative_emptyList        2 "an empty step list"                   -- --only ""
@@ -40,19 +40,19 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,78
+t negative_pastLast         2 "past the last step"                   -- --only 3,79
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 78
+t negative_fromPastLast     2 "past the last step"                   -- --from 79
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
-t negative_missingProducer  2 "select those steps too: --only 44,47" -- --only 47
-t negative_missingMarkers   2 "select those steps too: --only 67-69" -- --only 69
-t negative_fromMissesLink   2 "select those steps too: --only 62,70-77" -- --from 70
+t negative_missingProducer  2 "select those steps too: --only 45,48" -- --only 48
+t negative_missingMarkers   2 "select those steps too: --only 68-70" -- --only 70
+t negative_fromMissesLink   2 "select those steps too: --only 63,71-78" -- --from 71
 KSL_MATRIX_ALL_MODULES=yes t negative_allModulesValue 2 "KSL_MATRIX_ALL_MODULES='yes'" -- --only 35
 KSL_MATRIX_ALL_MODULES=" 1" t negative_allModulesSpace 2 "KSL_MATRIX_ALL_MODULES=' 1'" -- --only 1
 # a release run tests every module on the old platforms, whatever KSL_MATRIX_ALL_MODULES says
-out=$(KSL_MATRIX_ALL_MODULES=0 bash "$script" --dry-run --with-interop --with-windows --only 35,57 2>&1)
+out=$(KSL_MATRIX_ALL_MODULES=0 bash "$script" --dry-run --with-interop --with-windows --only 35,58 2>&1)
 if grep -q '^scope of the old-platform steps: a release run' <<< "$out" && grep -q '^  JDK 17 and 25: kuicksilver-native ' <<< "$out" \
   && grep -q '^  API 24: *kuicksilver-' <<< "$out"; then echo "ok   releaseRunTestsEveryModule"
 else echo "FAIL releaseRunTestsEveryModule:"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
@@ -64,13 +64,13 @@ done
 KSL_DEVICE_SERIAL=emulator-5580 t negative_deviceIsApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
 KSL_DEVICE_SERIAL=emulator-5582 KSL_AVD_API24_PORT=5582 t negative_deviceIsMovedApi24Emulator 2 "is the API 24 emulator's serial" -- --only 1
 # the device of the current-API steps, an override included, is printed and written into the gate record
-out=$(KSL_DEVICE_SERIAL=emulator-5556 bash "$script" --dry-run --only 54 2>&1)
+out=$(KSL_DEVICE_SERIAL=emulator-5556 bash "$script" --dry-run --only 55 2>&1)
 if grep -qx 'device of the current-API device steps: emulator-5556 (gate record: android.device_serial)' <<< "$out" \
   && grep -qF 'echo "android.device_serial=$dev"' "$script"; then echo "ok   deviceSerialOverrideRecorded"
 else echo "FAIL deviceSerialOverrideRecorded"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
-out=$(bash "$script" --dry-run --only 54 2>&1)
+out=$(bash "$script" --dry-run --only 55 2>&1)
 if grep -q '^device of the current-API device steps: emulator-5554 ' <<< "$out"; then echo "ok   deviceSerialDefault"; else echo "FAIL deviceSerialDefault"; fails=$((fails + 1)); fi
-# compose-demo (steps 38 and 56) is a build of its own without local.properties: with ANDROID_HOME and ANDROID_SDK_ROOT
+# compose-demo (steps 39 and 57) is a build of its own without local.properties: with ANDROID_HOME and ANDROID_SDK_ROOT
 # unset, the root build's sdk.dir becomes ANDROID_HOME (escapes undone); with no SDK at all such a step is refused early
 sdk_case() { # <name> <properties content, or - for no file> <expected exit> <expected line> <args...>
   local name=$1 props=$2 want=$3 exp=$4 out rc; shift 4
@@ -79,18 +79,18 @@ sdk_case() { # <name> <properties content, or - for no file> <expected exit> <ex
   if [ "$rc" = "$want" ] && grep -qF -- "$exp" <<< "$out" && { [ "$want" = 0 ] || ! grep -q '^preflight:\|^\[' <<< "$out"; }; then echo "ok   $name"
   else echo "FAIL $name: exit $rc (want $want), want '$exp'"; printf '    %s\n' "$out" | head -5; fails=$((fails + 1)); fi
 }
-sdk_case sdkDirFromRootLocalProperties "sdk.dir=$fx/sdk" 0 "android sdk: $fx/sdk (sdk.dir of $fx/case.properties;" --only 38
-sdk_case sdkDirEscapedAndSpaced "  sdk.dir = ${fx//:/\\:}/C\\:/Android/sdk\\ dir" 0 "android sdk: $fx/C:/Android/sdk dir (" --only 38
-sdk_case sdkDirLastWins "$(printf 'sdk.dir=/nonexistent/one\nsdk.dir=%s' "$fx/sdk")" 0 "android sdk: $fx/sdk (" --only 56
+sdk_case sdkDirFromRootLocalProperties "sdk.dir=$fx/sdk" 0 "android sdk: $fx/sdk (sdk.dir of $fx/case.properties;" --only 39
+sdk_case sdkDirEscapedAndSpaced "  sdk.dir = ${fx//:/\\:}/C\\:/Android/sdk\\ dir" 0 "android sdk: $fx/C:/Android/sdk dir (" --only 39
+sdk_case sdkDirLastWins "$(printf 'sdk.dir=/nonexistent/one\nsdk.dir=%s' "$fx/sdk")" 0 "android sdk: $fx/sdk (" --only 57
 mkdir -p "$here/../../build/ci/local-matrix-test-sdk"
-sdk_case sdkDirRelativeToTheRepositoryRoot "sdk.dir=build/ci/local-matrix-test-sdk" 0 "android sdk: $(cd "$here/../.." && pwd)/build/ci/local-matrix-test-sdk (" --only 38
+sdk_case sdkDirRelativeToTheRepositoryRoot "sdk.dir=build/ci/local-matrix-test-sdk" 0 "android sdk: $(cd "$here/../.." && pwd)/build/ci/local-matrix-test-sdk (" --only 39
 sdk_case noSdkButNoComposeStep - 0 "" --only 37
-sdk_case negative_noSdkComposeBuild - 2 "step 38 (sample: compose-demo (build, tests)) builds samples/compose-demo" --only 38
-sdk_case negative_noSdkComposeDevice "ndk.dir=/x" 2 "step 56 (android: compose demo migration" --only 56
-sdk_case negative_sdkDirNotADirectory "sdk.dir=/nonexistent/sdk" 2 "its sdk.dir '/nonexistent/sdk' is not a directory" --only 38
-out=$(ANDROID_HOME=/from/env KSL_MATRIX_LOCAL_PROPERTIES=/nonexistent bash "$script" --dry-run --only 38 2>&1); rc=$?
+sdk_case negative_noSdkComposeBuild - 2 "step 39 (sample: compose-demo (build, tests)) builds samples/compose-demo" --only 39
+sdk_case negative_noSdkComposeDevice "ndk.dir=/x" 2 "step 57 (android: compose demo migration" --only 57
+sdk_case negative_sdkDirNotADirectory "sdk.dir=/nonexistent/sdk" 2 "its sdk.dir '/nonexistent/sdk' is not a directory" --only 39
+out=$(ANDROID_HOME=/from/env KSL_MATRIX_LOCAL_PROPERTIES=/nonexistent bash "$script" --dry-run --only 39 2>&1); rc=$?
 if [ "$rc" = 0 ] && ! grep -q '^android sdk:' <<< "$out"; then echo "ok   androidHomeFromTheShellWins"; else echo "FAIL androidHomeFromTheShellWins: exit $rc"; fails=$((fails + 1)); fi
-# the counts in docs/process.md ("**77 steps**; ... which makes **82** (... a Chrome WebTransport run, 83)") against --dry-run
+# the counts in docs/process.md ("**<n> steps**; ... which makes **<m>** (... a Chrome WebTransport run, <k>)") against --dry-run
 doc="$here/../../docs/process.md"
 count() { bash "$script" --dry-run "$@" 2>&1 | grep -c '^\['; }
 documented=$(tr '\n' ' ' < "$doc" | sed -n 's/.*has \*\*\([0-9]*\) steps\*\*;.*makes \*\*\([0-9]*\)\*\* (and `--with-browser` *adds a Chrome WebTransport run, \([0-9]*\)).*/\1 \2 \3/p')

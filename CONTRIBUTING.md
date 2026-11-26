@@ -66,10 +66,11 @@ pull requests too), update the file in the same pull request and review its diff
 ```
 
 `--write-verification-metadata` adds what the run resolved and keeps the rest; remove entries of versions no longer used.
-The samples `samples/realtime-telemetry` and `samples/compose-demo` (their own builds) link the same two files; after a
-change to their plugins or dependencies run
+The samples `samples/realtime-telemetry`, `samples/kq-cli` and `samples/compose-demo` (their own builds) link the same
+two files; after a change to their plugins or dependencies run
 `../../gradlew -I ../../tools/check/resolve-all.init.gradle.kts --write-verification-metadata sha256,pgp --export-keys
-ksResolveAll jvmTest` in the first, and the same with `ksResolveAll :composeApp:allTests :androidApp:assembleDebug
+ksResolveAll jvmTest` in the first, the same with `ksResolveAll jvmTest macosArm64Test linkReleaseExecutableMacosArm64
+linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64` in kq-cli, and the same with `ksResolveAll :composeApp:allTests :androidApp:assembleDebug
 :androidApp:assembleDebugAndroidTest :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test :server:installDist` in the second
 (it replaces the keyring link with a copy: copy it over `gradle/verification-keyring.keys` and put the link back). Run the update with the
 pins as they will be committed (an AGP or Kotlin pin that moves afterwards brings other tool artifacts), and check it

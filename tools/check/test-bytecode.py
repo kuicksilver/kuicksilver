@@ -241,6 +241,7 @@ KINDS = {"jvm": ("jvm/test", ("commonTest", "jvmTest", "jvmCommonTest")),
 # the samples are builds of their own: (class directory, source sets compiled into it)
 SAMPLES = [("samples/realtime-telemetry/build/classes/kotlin/jvm/test", ("samples/realtime-telemetry/src/commonTest/",
                                                                          "samples/realtime-telemetry/src/jvmTest/")),
+           ("samples/kq-cli/build/classes/kotlin/jvm/test", ("samples/kq-cli/src/commonTest/", "samples/kq-cli/src/jvmTest/")),
            ("samples/compose-demo/composeApp/build/classes/kotlin/android/hostTest",
             ("samples/compose-demo/composeApp/src/commonTest/", "samples/compose-demo/composeApp/src/androidHostTest/")),
            ("samples/compose-demo/server/build/classes/kotlin/test", ("samples/compose-demo/server/src/test/",)),

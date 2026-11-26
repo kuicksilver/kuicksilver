@@ -50,8 +50,8 @@ while [ $# -gt 0 ]; do
 done
 case "${KSL_MATRIX_ALL_MODULES-}" in ''|0|1) ;; *) refuse_args "KSL_MATRIX_ALL_MODULES='${KSL_MATRIX_ALL_MODULES}': 1 (every module on the old platforms) or 0 (the changed ones), nothing else" ;; esac
 # a release run tests every module on the old platforms: its gate must not depend on what changed since origin/main
-# the device of the current-API device steps (54-56 by default); never the API 24 emulator's, which step 57 starts and
-# stops (tools/ci/avd-api24.sh: emulator-<KSL_AVD_API24_PORT, default 5580>)
+# the device of the current-API device steps (the `android:` emulator steps before the API 24 one); never the API 24
+# emulator's, which its own step starts and stops (tools/ci/avd-api24.sh: emulator-<KSL_AVD_API24_PORT, default 5580>)
 dev="${KSL_DEVICE_SERIAL:-emulator-5554}"
 [ "$dev" != "emulator-${KSL_AVD_API24_PORT:-5580}" ] || refuse_args "KSL_DEVICE_SERIAL='$dev' is the API 24 emulator's serial (tools/ci/avd-api24.sh); the current-API device steps need the other emulator"
 release_run=0
@@ -288,6 +288,8 @@ step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-en
 step "jvm: module tests on JDK 17"              jdk_tests 17   # CI's jdk-compat (17): the changed modules and their dependents
 step "jvm: module tests on JDK 25"              jdk_tests 25   # CI's jdk-compat (25), restricted native access denied
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
+# the kq command line: its tests on the JVM and macOS, its executable for every native target (linux and mingw linked only)
+step "sample: kq-cli (tests, the kq executables)" bash -c 'cd samples/kq-cli && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest macosArm64Test linkReleaseExecutableMacosArm64 linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64'
 # the samples' test classes are read by tools/check/test-bytecode.py too (the instrumented test of the demo app compiled here)
 step "sample: compose-demo (build, tests)"     bash -c "$G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :androidApp:compileDebugAndroidTestKotlin :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test && python3 -I tools/check/test-bytecode.py --targets samples"   # its own build, verified against gradle/verification-metadata.xml
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
