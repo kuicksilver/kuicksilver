@@ -327,7 +327,7 @@ see [Misdirected requests](server-proxies.md#misdirected-requests).
 
 The client offers TLS 1.2 and TLS 1.3 by default, over TCP; the server picks the highest both speak. TLS 1.2 runs under
 a fixed profile: ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 (AEAD) suites only, so a server that offers only CBC
-suites or static RSA key exchange fails the handshake. TLS 1.3 only (`Tls13Only` in `tls { versions }`) refuses TLS 1.2
+suites or static RSA key exchange fails the handshake. TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`; the default is `TlsVersions.Tls12And13`) refuses TLS 1.2
 servers instead; Encrypted Client Hello needs it ([below](#encrypted-client-hello-experimental)). HTTP/3 is always TLS
 1.3 (QUIC). A server that fails: [troubleshooting](troubleshooting.md#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only).
 
@@ -423,7 +423,7 @@ val client =
   may set the proxy's own (its entry for the proxy's host is what that hop offers). A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, as the default
   does, `configLists` fails the engine's creation and the records' `ech` is not used; set `tls { versions }` to TLS 1.3
-  only (`Tls13Only`).
+  only (`TlsVersions.Tls13`).
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
   given for a host never turns into GREASE with the host's name in the clear. The engine builds each entry's client

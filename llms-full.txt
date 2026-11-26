@@ -152,8 +152,8 @@ suspend fun main() {
   and the TLS session tickets.
 
 Without configuring anything, the client falls back to TCP when HTTP/3 fails, speaks HTTP/2 or HTTP/1.1 over TCP, offers
-TLS 1.2 and 1.3 with the platform's trust store (TLS 1.2 with ECDHE key exchange and AEAD ciphers only; TLS 1.3 only is a
-`tls { versions }` setting), tries IPv6 and IPv4 addresses (Happy Eyeballs), logs warnings and up through the platform's
+TLS 1.2 and 1.3 with the platform's trust store (TLS 1.2 with ECDHE key exchange and AEAD ciphers only; TLS 1.3 only is
+`tls { versions = TlsVersions.Tls13 }`), tries IPv6 and IPv4 addresses (Happy Eyeballs), logs warnings and up through the platform's
 logger (SLF4J on the JVM, which needs a binding such as `slf4j-simple`; Logcat on Android; `NSLog` on Apple platforms),
 and keeps 0-RTT and connection migration off.
 
@@ -2776,7 +2776,7 @@ see [Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/
 
 The client offers TLS 1.2 and TLS 1.3 by default, over TCP; the server picks the highest both speak. TLS 1.2 runs under
 a fixed profile: ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 (AEAD) suites only, so a server that offers only CBC
-suites or static RSA key exchange fails the handshake. TLS 1.3 only (`Tls13Only` in `tls { versions }`) refuses TLS 1.2
+suites or static RSA key exchange fails the handshake. TLS 1.3 only (`tls { versions = TlsVersions.Tls13 }`; the default is `TlsVersions.Tls12And13`) refuses TLS 1.2
 servers instead; Encrypted Client Hello needs it ([below](#encrypted-client-hello-experimental)). HTTP/3 is always TLS
 1.3 (QUIC). A server that fails: [troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only).
 
@@ -2872,7 +2872,7 @@ val client =
   may set the proxy's own (its entry for the proxy's host is what that hop offers). A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, as the default
   does, `configLists` fails the engine's creation and the records' `ech` is not used; set `tls { versions }` to TLS 1.3
-  only (`Tls13Only`).
+  only (`TlsVersions.Tls13`).
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
   given for a host never turns into GREASE with the host's name in the clear. The engine builds each entry's client
@@ -4664,7 +4664,7 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 | `connectTimeout` | `HttpTimeout`'s `connectTimeoutMillis`, else `engine { connectTimeout }` | `HttpTimeout`'s wins when set; covers DNS, the pool wait, TCP and TLS or the QUIC handshake; 10 s by default, as OkHttp's |
 | `readTimeout`, `writeTimeout` | `HttpTimeout`'s `socketTimeoutMillis` | one inactivity timeout for both directions; **none by default** (OkHttp: 10 s), so install `HttpTimeout` |
 | `callTimeout` | `HttpTimeout`'s `requestTimeoutMillis`, or `withTimeout { }` around the call | `requestTimeoutMillis` holds for each request sent (a redirect or a retry starts it again); OkHttp's covers the whole call, as `withTimeout` does |
-| `connectionSpecs` (TLS versions, suites) | `engine { tls { versions; cipherSuites } }` | TLS 1.2 and 1.3 by default, as OkHttp's; TLS 1.2 only with ECDHE key exchange and AEAD suites (OkHttp's default also takes some CBC suites); TLS 1.3 only is a `versions` setting (`Tls13Only`); HTTP/3 is always TLS 1.3 |
+| `connectionSpecs` (TLS versions, suites) | `engine { tls { versions; cipherSuites } }` | TLS 1.2 and 1.3 by default, as OkHttp's; TLS 1.2 only with ECDHE key exchange and AEAD suites (OkHttp's default also takes some CBC suites); `versions = TlsVersions.Tls13` for TLS 1.3 only (the default is `TlsVersions.Tls12And13`); HTTP/3 is always TLS 1.3 |
 | `certificatePinner` | `tls { trust = TrustConfig.Pinned(pins, base = TrustConfig.Platform) }` | same `sha256/<base64>` text; see [Certificate pinning](#certificate-pinning) for the differences |
 | `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) }`; on the JVM `TrustConfig.fromTrustManager(trustManager)` | a private CA; [TLS: Trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#trust) has every variant |
 | `sslSocketFactory` with a `KeyManager` (a client certificate) | `tls { identity = TlsIdentity.fromPem(…) }`; on the JVM `TlsIdentity.fromKeyStore` or `fromPkcs12` | [Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates) |
@@ -4794,7 +4794,7 @@ val client = HttpClient(Kuicksilver) {
 | Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)) |
 | Darwin `configureSession` | none: Kuicksilver does not use `URLSession` ([iOS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md)) |
 | Darwin and App Transport Security | ATS governs `URLSession`, not Kuicksilver's own sockets: its `Info.plist` exceptions do nothing here, and an `http://` URL is not blocked by ATS ([App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md)) |
-| TLS versions | the client offers TLS 1.2 and 1.3 by default, TLS 1.2 with ECDHE and AEAD suites only; TLS 1.3 only is a `tls { versions }` setting (`Tls13Only`) |
+| TLS versions | the client offers TLS 1.2 and 1.3 by default (`TlsVersions.Tls12And13`), TLS 1.2 with ECDHE and AEAD suites only; `tls { versions = TlsVersions.Tls13 }` for TLS 1.3 only |
 | `proxy` | the same Ktor `proxy`; HTTP/3 never goes through an HTTP proxy |
 | `pipelining`, `threadsCount` | not used |
 

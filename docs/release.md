@@ -39,9 +39,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    of that size fit in a month (2808 files, 99.6 MB); the project still plans at most one release a month. A Kuicksilver release is
    eight Kotlin Multiplatform modules from 0.3.0 (`kuicksilver-http2` joined, ADR-0017) with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
-   `local-release.sh` counts it from a local publication before every upload and refuses above the limits
-   (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (3900 files,
-   150000000 bytes; `KSL_CENTRAL_MAX_FILES` and `KSL_CENTRAL_MAX_BYTES` override them). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
+   `local-release.sh` counts it from a local publication before every upload and refuses above what is left of the
+   month (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (3900 files,
+   150000000 bytes, 7 releases; `KSL_CENTRAL_MAX_FILES`, `KSL_CENTRAL_MAX_BYTES` and `KSL_CENTRAL_MAX_RELEASES`
+   override them), less what this month's earlier deployments took (`KSL_CENTRAL_USED_FILES`, `KSL_CENTRAL_USED_BYTES`,
+   `KSL_CENTRAL_USED_RELEASES`, from the portal). `--count-only` counts the publication a previous run left, without
+   building. Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
    `kuicksilver-native` JVM jar carries the five JNI libraries.
 5. **Toolchains** of `gradle/toolchains.toml` on the Mac: the pinned NDK (`sdkmanager --install "ndk;<pin>"`) and Xcode
    (`xcode-select -s`); Docker with the `tools/openssl/docker` images (built on first use); a Windows 11 VM (Parallels)
@@ -321,24 +324,62 @@ guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses t
 
 ## Prereleases on Maven Central
 
-`tools/release/local-release.sh <version> --central-prerelease` releases a prerelease (`X.Y.Z-rcN`, say) as
-[Every release](#every-release) releases a final version: the same preconditions, gate record, build, checks, signing,
-SBOM and provenance, one deployment to the Central Portal and a GitHub release. 0.3.0-rc1 is released this way. Use it
-sparingly: Central's monthly quota for the namespace is small, and the version can never be removed.
+`--central-prerelease` releases a prerelease (`X.Y.Z-rcN`, say) to Maven Central as [Every release](#every-release)
+releases a final version: the same preconditions, gate record, build, checks, signing, SBOM and provenance, one
+deployment to the Central Portal, and a GitHub release marked as a prerelease. 0.3.0-rc1 is released this way. A
+version on Central can never be removed, and the namespace's quota is counted per month (releases, files and bytes,
+[above](#once-accounts-keys-dns)), so use it for a candidate meant to be tried, not for every build.
 
-What the documentation says at that point:
+In this order (the script prints the steps after the upload, with the commands filled in):
 
-- The tree is still the line of the final version: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT`, which
-  the script checks as for any release. The README, `docs/install.md`, `docs/guide/ios.md` and
-  `docs/guide/quickstart.md` keep naming the final version `X.Y.Z` as the version to depend on, and keep saying that it
-  is the release in preparation: the script checks their coordinates, and refuses the "release in preparation" note,
-  only for a final version.
+1. **Measure.** `tools/release/local-release.sh <version> --central-prerelease --dry-run` builds and counts everything
+   and uploads nothing. Its count is held to what is left of the month: give the portal's figures for this month's
+   earlier deployments as `KSL_CENTRAL_USED_RELEASES`, `KSL_CENTRAL_USED_FILES` and `KSL_CENTRAL_USED_BYTES` (0 by
+   default), and it refuses when no release is left. To count again later (another month's figures, another limit)
+   without building: `tools/release/local-release.sh <version> --count-only` counts the publication the last run left in
+   `build/release/m2`.
+2. **Release.** `tools/release/local-release.sh <version> --central-prerelease --resume` from the same commit (`--resume`
+   reuses the JNI libraries the dry run built and checked). It uploads one deployment, not released.
+3. **The upload failed?** On a large bundle the portal can answer HTTP 408. The script prints the next steps all the
+   same, with the browser upload first: *Publish Component* on <https://central.sonatype.com/publishing>, and the bundle
+   the run left in `build/publish/`, `io.kuicksilver-<version>-*.zip`. Earlier runs leave their bundles in the same
+   folder: take the one of this version with the newest time.
+4. **VALIDATED.** The deployment must read VALIDATED in the portal. A FAILED one is dropped there and the script runs
+   again after the fix; it still counts against the month's quota.
+5. **Before Publish:** `tools/release/swift-package-check.sh local <version>`, the Swift package against the local zip.
+   After Publish nothing about the version can change.
+6. **Publish**, then PUBLISHED (minutes; `repo1.maven.org` within about an hour), then the consumer check:
+   `tools/check/consumer-smoke.sh --central <version>`.
+7. **The tag**, only once the deployment reads PUBLISHED, as the script prints it (UTC, the release key's identity).
+8. **The GitHub release as a draft prerelease**: `gh release create v<version> --draft --prerelease --verify-tag`,
+   with the six files of step 6 of [Every release](#every-release) and the source tarballs (the script's command lists
+   them all); then `swift-package-check.sh remote <version> --draft`, `gh release edit v<version> --draft=false` and
+   `swift-package-check.sh remote <version>`.
+9. **The Swift package**, only then (its tag is immutable): the commands the script prints, and
+   `tools/release/swift-package-check.sh resolve <version>` from an empty package (`exact: "<version>"`).
+10. **Checks and pages.** `tools/verify/verify-release.sh <version>` applies to a Central prerelease as to a final
+    release. Its documentation site is built by hand, since a published prerelease does not start `pages.yml`:
+    `gh workflow run pages -f version=<version>` (the workflow takes `X.Y.Z-rcN`); it lands under `/<version>/`, and
+    `/latest/` stays the newest final release.
+
+The documentation around it:
+
+- The tree is still the line of the final version: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT`, which the
+  script checks as for any release. The README, `docs/install.md`, `docs/guide/ios.md` and `docs/guide/quickstart.md`
+  keep naming the final version `X.Y.Z` as the version to depend on, and keep calling it the release in preparation:
+  the script checks their coordinates, and refuses the "release in preparation" note, only for a final version.
 - The CHANGELOG gets the prerelease's section as described under [Prereleases on GitHub only](#prereleases-on-github-only).
-- After the prerelease is on Central, and not before (its coordinates would not resolve), a commit of its own on
-  `main` adds the pointer to it: in the README's status note, in the "Versions" section of `docs/install.md` and in step
-  1 of the quickstart, the prerelease's version as the one to try now (`0.3.0-rc1` in the BOM line), next to the
-  build-from-source path. The release commit of the final version removes that pointer with the
-  "release in preparation" note.
+- **The pointer to the prerelease**: after it is on Central, and not before (its coordinates would not resolve), a commit
+  of its own on `main` adds it, in the README's status note, the "Versions" section of `docs/install.md` and step 1 of
+  the quickstart: the prerelease's version as the one to try now (`0.3.0-rc1` in the BOM line), next to the
+  build-from-source path. The release commit of the final version removes it with the "release in preparation" note.
+- **Context7** (`context7.json`): the prerelease's tag (`v0.3.0-rc1`) goes into `previousVersions` after the release, in
+  that same commit; the release commit of the final version replaces it with the final tag (`v0.3.0`).
+
+**Rollback.** A version on Central cannot be removed or replaced. When a prerelease turns out broken, release the next
+one (`-rc2`) with the fix, after checking that the month's quota still allows a release, and mark the broken one with a
+known-issue note on its GitHub release (`gh release edit v<version> --notes-file <notes with the issue first>`). The
+pointer commit then names the new prerelease.
 
 ## Prereleases on GitHub only
 
@@ -428,10 +469,10 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
 7. Maven: an empty Gradle project as the instructions file says (download, `shasum -a 256 -c`, unzip, the `file:`
    repository).
 
-`pages.yml` does not run for a published prerelease (its pages would name Maven Central coordinates that do not
-resolve); *Run workflow* with the version still builds them, and `/latest/` is only ever a final release
+`pages.yml` does not run for a published prerelease (a GitHub-only one has no Maven Central coordinates its pages could
+name); *Run workflow* with the version still builds them, and `/latest/` is only ever a final release
 (`tools/docs/site.py`: without one there is no `/latest/`). `tools/verify/verify-release.sh` reads Maven Central and does not
-apply to such a prerelease: check it with `shasum -a 256 -c kuicksilver-<version>-SHA256SUMS` and
+apply to a GitHub-only prerelease (it does to a [Central one](#prereleases-on-maven-central)): check it with `shasum -a 256 -c kuicksilver-<version>-SHA256SUMS` and
 `tools/release/verify-signature.sh` on the assets. `tools/release/local-release-test.sh` runs the mode's refusals, its
 credential check, the end of a run on a fixture publication with Gradle and the signature check stubbed, which must
 keep three invariants (nothing reaches Central; every published asset is signed and listed in `SHA256SUMS`; nothing
@@ -440,8 +481,9 @@ an unsigned file in the publication, a `+0500` zone in the environment, a home p
 or in a POM, a final version), `github-repository.py` against fixture publications and the checks of
 `swift-package-check.sh` (`gh` and the download stubbed; its iOS builds need a real xcframework and are run by hand).
 
-Without `--github-prerelease` the script refuses a prerelease version, also in a dry run: Central's monthly quota is
-small. `--central-prerelease` sends a prerelease to Maven Central after all.
+Without `--github-prerelease` or `--central-prerelease` the script refuses a prerelease version, also in a dry run:
+Central's monthly quota is small. `--central-prerelease` sends it to Maven Central:
+[Prereleases on Maven Central](#prereleases-on-maven-central).
 
 ## Supply chain: SBOM and provenance
 

@@ -224,8 +224,9 @@ def landing(out):
     if not versions and not dev:
         sys.exit(f"site.py: no version directory in {out}")
     finals = [v for v in versions if VERSION.match(v).group(4) is None]
-    # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is not on Maven Central,
-    # so its pages as "the" version would name coordinates that do not resolve there. Without a final release: none.
+    # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is a candidate to try, not
+    # the version to depend on (and one published on GitHub only has no Maven Central coordinates at all); its pages stay
+    # under /<version>/. Without a final release: none.
     latest = finals[-1] if finals else None
     shutil.rmtree(os.path.join(out, "latest"), ignore_errors=True)
     if latest:

@@ -1159,8 +1159,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   GitHub can show them as Verified), and required by
   `local-release.sh` (docs/process.md, "Privacy pre-push hook"). `tools/check/build-paths.py` also refuses temporary
   directories (`/tmp/`, `/var/folders/`, ...), home-relative paths, and the user, host and configured names, looked up
-  at scan time. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
-  "Prereleases on GitHub only").
+  at scan time. 0.3.0-rc1 goes to Maven Central with `--central-prerelease` instead (docs/release.md,
+  "Prereleases on Maven Central").
 
 ### Changed
 

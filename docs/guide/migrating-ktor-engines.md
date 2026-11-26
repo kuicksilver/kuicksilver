@@ -53,7 +53,7 @@ val client = HttpClient(Kuicksilver) {
 | Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Certificate pinning](engine-tls.md#certificate-pinning)) |
 | Darwin `configureSession` | none: Kuicksilver does not use `URLSession` ([iOS](ios.md)) |
 | Darwin and App Transport Security | ATS governs `URLSession`, not Kuicksilver's own sockets: its `Info.plist` exceptions do nothing here, and an `http://` URL is not blocked by ATS ([App Store](app-store.md)) |
-| TLS versions | the client offers TLS 1.2 and 1.3 by default, TLS 1.2 with ECDHE and AEAD suites only; TLS 1.3 only is a `tls { versions }` setting (`Tls13Only`) |
+| TLS versions | the client offers TLS 1.2 and 1.3 by default (`TlsVersions.Tls12And13`), TLS 1.2 with ECDHE and AEAD suites only; `tls { versions = TlsVersions.Tls13 }` for TLS 1.3 only |
 | `proxy` | the same Ktor `proxy`; HTTP/3 never goes through an HTTP proxy |
 | `pipelining`, `threadsCount` | not used |
 

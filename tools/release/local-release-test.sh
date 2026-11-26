@@ -677,15 +677,17 @@ p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(|^tagger=\$\(git confi
 tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swift-repo>: the tail on <dir>/m2, output in $tail_out
   local d="$1"
   mkdir -p "$d/out/logs"; printf 'x' > "$d/x"; (cd "$d" && zip -q out/Kuicksilver.xcframework.zip x)
+  mkdir -p "$d/src"; for f in openssl-4.1.0.tar.gz openssl-4.1.0.tar.gz.asc zlib-1.4.tar.gz zlib-1.4.tar.gz.asc brotli-1.2.1.tar.gz; do printf 's' > "$d/src/$f"; done
   git init -q --bare -b main "$d/swift.git"
   if [ "$3" = home-swift-repo ]; then   # the package repository already holds a file naming a home directory
     ( git init -q -b main "$d/seed" && cd "$d/seed" && printf 'built in /Users/someone/src\n' > NOTES && git add NOTES \
       && TZ=UTC git -c user.email=t@example.invalid -c user.name=t commit -q -m seed && git push -q "$d/swift.git" main ) || exit 2
   fi
-  tail_out=$(cd "$root" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=kuicksilver.privacy.tagger GIT_CONFIG_VALUE_0="Kuicksilver <hello@kuicksilver.io>" KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" bash -c '
+  tail_out=$(cd "$root" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=kuicksilver.privacy.tagger GIT_CONFIG_VALUE_0="Kuicksilver <hello@kuicksilver.io>" KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" MODE="${TAIL_MODE:-github}" bash -c '
   set -euo pipefail
-  version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; gh=1; dry=0; problems=0; n=0; started=1794688855
-  given="$V --github-prerelease"; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
+  version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; dry=0; problems=0; n=0; started=1794688855
+  if [ "$MODE" = central ]; then gh=0; central_pre=1; given="$V --central-prerelease"; else gh=1; central_pre=0; given="$V --github-prerelease"; fi
+  src_dir=$TL/src; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
   head=$(git rev-parse HEAD); short=$(git rev-parse --short=7 HEAD); xcf_sum=$(shasum -a 256 "$xcf" | cut -d" " -f1)
   # an explicit zone in the environment overrides TZ for git
   [ "$ATTACK" = commit-zone ] && export GIT_AUTHOR_DATE="2026-11-15T10:00:00+0500" GIT_COMMITTER_DATE="2026-11-15T10:00:00+0500"
@@ -695,6 +697,8 @@ tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swif
   gradle() { printf "%s\n" "$*" >> "$TL/tasks"; local a f
     for a in "$@"; do case "$a" in
       sbomZip) (cd "$TL" && printf "{}" > bom.json && zip -q "$out/kuicksilver-$version-sbom.zip" bom.json) ;;
+      # the Central upload: the portal that times out on a large bundle
+      publishToMavenCentral) if [ "$ATTACK" = upload-408 ]; then echo "Upload failed: 408 Request Timeout"; return 1; fi ;;
       -Pkuicksilver.release.sign=*) for f in $(tr , " " <<< "${a#*=}"); do
         # the signing that leaves one file unsigned
         [ "$ATTACK" = unsigned-sbom ] && [ "$f" = "$out/kuicksilver-$version-sbom.zip" ] && continue
@@ -746,6 +750,26 @@ printf '<project><url>file:/home/someone/kuicksilver</url></project>\n' > "$a/m2
 tail_attack "negative_tailHomePathInPom (I3)"         "privacy: no home-directory path in the repository zip FAIL" "$a" "$V" none
 a="$tmp/attack-final"; V=0.4.0 mk_m2 "$a/m2" signed
 tail_attack "negative_tailFinalVersion"               "is not a prerelease"              "$a" 0.4.0 none
+
+# --central-prerelease: the same end of a run on a fixture publication, with the upload to Central (a stub) and the
+# prerelease's next steps: the Swift package checked against the local zip before Publish, the tag only after it, the
+# GitHub release a draft prerelease with the source tarballs attached, the site of the prerelease. A failed upload (the
+# portal's 408) still prints them, with the browser upload of the bundle in front, and the run fails.
+cl="$tmp/central"; mk_m2 "$cl/m2" signed; TAIL_MODE=central tail_run "$cl" "$V" none
+L="central prerelease: the end of a run (one upload, the prerelease's next steps in order)"
+order_ok=$(awk '/swift-package-check.sh local/ {a=NR} /Press Publish/ {b=NR} /consumer-smoke.sh --central/ {c=NR} / tag -s v/ {d=NR}
+  /gh release create/ {e=NR} /gh workflow run pages -f version=/ {f=NR} END {print (a && a<b && b<c && c<d && d<e && e<f) ? "yes" : "no"}' <<< "$tail_out")
+if [ "$tail_rc" = 0 ] && [ "$tail_central" = 1 ] && [ "$order_ok" = yes ] && grep -q -- '--draft --prerelease' <<< "$tail_out" \
+    && grep -q "$cl/src/openssl-4.1.0.tar.gz $cl/src/openssl-4.1.0.tar.gz.asc" <<< "$tail_out" && grep -q "$cl/src/brotli-1.2.1.tar.gz" <<< "$tail_out" \
+    && ! grep -q 'Publish Component' <<< "$tail_out"; then
+  pass=$((pass+1)); echo "ok   $L"
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc central=$tail_central order=$order_ok"; printf '%s\n' "$tail_out" | tail -30 | sed 's/^/     | /'; fi
+c4="$tmp/central-408"; mk_m2 "$c4/m2" signed; TAIL_MODE=central tail_run "$c4" "$V" upload-408
+L="negative_centralUploadFails: the next steps are printed with the browser upload, the run fails"
+if [ "$tail_rc" != 0 ] && grep -q 'Publish Component' <<< "$tail_out" && grep -q "io.kuicksilver-$V-\*.zip" <<< "$tail_out" \
+    && grep -q ' tag -s v' <<< "$tail_out" && grep -q 'swift-package-check.sh local' <<< "$tail_out"; then
+  pass=$((pass+1)); echo "ok   $L"
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc"; printf '%s\n' "$tail_out" | tail -20 | sed 's/^/     | /'; fi
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published

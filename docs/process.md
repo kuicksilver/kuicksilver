@@ -536,8 +536,8 @@ Central validates it.
 
 A prerelease can be published on GitHub only, never on Maven Central, with `--github-prerelease`
 ([release.md](release.md#prereleases-on-github-only)); `--central-prerelease` sends a prerelease to Central instead
-([release.md](release.md#prereleases-on-maven-central)), as for 0.3.0-rc1; without the mode the script refuses a prerelease unless `--central-prerelease` asks for Central. The mode
-refuses a final version, runs the same preconditions, build, checks, signing and home-directory scan, does not read or
+([release.md](release.md#prereleases-on-maven-central)), as for 0.3.0-rc1; without either mode the script refuses a
+prerelease. The GitHub-only mode refuses a final version, runs the same preconditions, build, checks, signing and home-directory scan, does not read or
 pass on the Central Portal token and uploads nothing. Instead of the deployment it writes a signed Maven
 repository zip of the publication (every artifact with its POM, Gradle module metadata, `.asc` and checksums), a short
 file that says how to consume it, and a signed `SHA256SUMS` of every asset, for the maintainer to attach to the GitHub
