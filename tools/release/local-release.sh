@@ -159,6 +159,10 @@ echo "-- preconditions"
 [ "$gh" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --github-prerelease takes a prerelease (X.Y.Z-alphaN|betaN|rcN), not $version: a final version goes to Maven Central" >&2; exit 1; }
 [ "$gh" = 0 ] || [ "$central_pre" = 0 ] || { echo "REFUSED: --github-prerelease and --central-prerelease exclude each other" >&2; exit 1; }
 [ "$central_pre" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --central-prerelease takes a prerelease, not $version" >&2; exit 1; }
+# the month's Central quota: what earlier deployments took is the operator's to give (0 when there were none), never assumed
+if [ "$gh" = 0 ] && [ "$dry" = 0 ] && { [ -z "${KSL_CENTRAL_USED_RELEASES+x}" ] || [ -z "${KSL_CENTRAL_USED_FILES+x}" ] || [ -z "${KSL_CENTRAL_USED_BYTES+x}" ]; }; then
+  refuse "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set: give this month's earlier deployments from the portal (0 when there were none)"
+fi
 # the month's Central quota counts releases too (a deployment that is dropped counts all the same)
 if [ "$gh" = 0 ] && [ "$left_releases" -le 0 ]; then
   refuse "no Central release left this month ($used_releases of $max_releases used, KSL_CENTRAL_USED_RELEASES): wait for the next month"
@@ -616,6 +620,7 @@ echo "-- upload"
 src_dir="${src_dir:-build/openssl-work/src}"
 src_tars=$(ls "$src_dir"/openssl-*.tar.gz "$src_dir"/openssl-*.tar.gz.asc "$src_dir"/zlib-*.tar.gz "$src_dir"/zlib-*.tar.gz.asc \
   "$src_dir"/brotli-*.tar.gz 2>/dev/null | tr '\n' ' ' || true)
+[ -n "$src_tars" ] || echo "  WARN: no source tarballs in $src_dir: attach the verified OpenSSL, zlib and brotli tarballs to the GitHub release by hand (docs/release.md, step 6)"
 # the upload may fail on the network (the portal answers HTTP 408 to a slow upload of a large bundle): the next steps are
 # printed all the same, with the browser upload in their place
 n=$((n+1)); upload_log="$logs/$(printf '%02d' $n).log"
@@ -626,11 +631,12 @@ if [ "$upload_ok" = 1 ]; then
   first="Deployment uploaded; nothing is released yet. Next, by hand:"
   portal="  1. https://central.sonatype.com/publishing/deployments: the deployment of io.kuicksilver $version must read VALIDATED"
 else
-  first="The upload FAILED; nothing is released. If the portal answered HTTP 408 (a timeout on a large bundle), upload the
-bundle in the browser instead, then go on with the same steps:"
-  portal="  1. https://central.sonatype.com/publishing: Publish Component, upload the bundle the run left in build/publish/,
-     io.kuicksilver-$version-*.zip, the newest one of this version (older bundles stay in that folder: check the name and
-     the time). Its deployment must read VALIDATED"
+  first="The upload FAILED; nothing is released. If the portal answered HTTP 408 (a timeout on a large bundle), the bundle
+may have arrived all the same: look before uploading again, since every deployment counts against the month's releases."
+  portal="  1. https://central.sonatype.com/publishing/deployments: a deployment of io.kuicksilver $version is there? Use it.
+     Only if there is none: https://central.sonatype.com/publishing, Publish Component, and the bundle the run left in
+     build/publish/, io.kuicksilver-$version-*.zip, the newest one of this version (older bundles stay in that folder:
+     check the name and the time). The deployment must read VALIDATED"
 fi
 if [ "$central_pre" = 1 ]; then
 cat <<NEXT
@@ -660,6 +666,7 @@ $swift_next
   8. From an empty package, exact: "$version":
        tools/release/swift-package-check.sh resolve $version
   9. The documentation site of the prerelease (no /latest/): gh workflow run pages -f version=$version
+ 10. The release as a user checks it: tools/verify/verify-release.sh $version
 NEXT
 else
 cat <<NEXT
@@ -678,6 +685,7 @@ $portal
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
   5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:
 $swift_next
+  6. The release as a user checks it: tools/verify/verify-release.sh $version
 NEXT
 fi
 [ "$upload_ok" = 1 ] || exit 1

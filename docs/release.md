@@ -334,16 +334,20 @@ In this order (the script prints the steps after the upload, with the commands f
 
 1. **Measure.** `tools/release/local-release.sh <version> --central-prerelease --dry-run` builds and counts everything
    and uploads nothing. Its count is held to what is left of the month: give the portal's figures for this month's
-   earlier deployments as `KSL_CENTRAL_USED_RELEASES`, `KSL_CENTRAL_USED_FILES` and `KSL_CENTRAL_USED_BYTES` (0 by
-   default), and it refuses when no release is left. To count again later (another month's figures, another limit)
+   earlier deployments as `KSL_CENTRAL_USED_RELEASES`, `KSL_CENTRAL_USED_FILES` and `KSL_CENTRAL_USED_BYTES` (a dry run
+   takes 0 for one not given; an upload refuses until all three are given, 0 when there were none), and it refuses when
+   no release is left. To count again later (another month's figures, another limit)
    without building: `tools/release/local-release.sh <version> --count-only` counts the publication the last run left in
    `build/release/m2`.
 2. **Release.** `tools/release/local-release.sh <version> --central-prerelease --resume` from the same commit (`--resume`
    reuses the JNI libraries the dry run built and checked). It uploads one deployment, not released.
-3. **The upload failed?** On a large bundle the portal can answer HTTP 408. The script prints the next steps all the
-   same, with the browser upload first: *Publish Component* on <https://central.sonatype.com/publishing>, and the bundle
-   the run left in `build/publish/`, `io.kuicksilver-<version>-*.zip`. Earlier runs leave their bundles in the same
-   folder: take the one of this version with the newest time.
+3. **The upload failed?** On a large bundle the portal can answer HTTP 408, and the bundle may have arrived all the same.
+   The script prints the next steps anyway, with this first: open <https://central.sonatype.com/publishing/deployments>
+   and use the deployment of this version if there is one; a second upload makes a second deployment, which takes
+   another of the month's releases. Only if there is none, *Publish Component* on
+   <https://central.sonatype.com/publishing> with the bundle the run left in `build/publish/`,
+   `io.kuicksilver-<version>-*.zip`. Earlier runs leave their bundles in the same folder: take the one of this version
+   with the newest time.
 4. **VALIDATED.** The deployment must read VALIDATED in the portal. A FAILED one is dropped there and the script runs
    again after the fix; it still counts against the month's quota.
 5. **Before Publish:** `tools/release/swift-package-check.sh local <version>`, the Swift package against the local zip.

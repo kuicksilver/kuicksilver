@@ -31,6 +31,8 @@ printf '#!/bin/sh\nif [ -n "${KSL_CENTRAL_STATUS:-}" ]; then echo "$KSL_CENTRAL_
 printf '#!/bin/sh\necho "curl called in a test: $*" >&2; exit 7\n' > "$tmp/bin/curl"
 chmod +x "$tmp/bin/central" "$tmp/bin/curl"
 export KSL_CENTRAL_PROBE="$tmp/bin/central" PATH="$tmp/bin:$PATH"
+# this month's earlier Central deployments, which an upload refuses to assume: none, for every case but the ones that test it
+export KSL_CENTRAL_USED_RELEASES=0 KSL_CENTRAL_USED_FILES=0 KSL_CENTRAL_USED_BYTES=0
 # the Swift package repository: empty (no version released there yet); swift-tagged.git already has 0.2.1 and 0.4.0-rc1
 for r in swift swift-tagged; do git init -q --bare -b main "$tmp/$r.git"; done
 ( w="$tmp/swift-w"; git init -q -b main "$w" && cd "$w" && git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m x \
@@ -659,6 +661,35 @@ hook_t "negative_releaseUserIsNotTheIdentity"        "refuse:user.name/user.emai
 hook_t "negative_releaseWithoutTagger"               "refuse:no kuicksilver.privacy.tagger"         linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" kinchpik ""
 hook_t "negative_releaseTaggerNotAKeyUid"            "refuse:is not a user ID of the release key"   linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" kinchpik "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 hook_t "hook check: prints the tag identity"         "ok:tags by Kuicksilver <hello@kuicksilver.io>" linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
+
+# the month's Central quota and --count-only: run as given (with variables unset or set), the exit code and the output
+direct() { # <label> <exit code> <pattern> <checkout target> <command...>
+  local label="$1" want="$2" pat="$3" tgt="$4"; shift 4
+  git checkout -q "$tgt" || { echo "FAIL: checkout $tgt"; exit 2; }
+  local out rc; out=$("$@" 2>&1); rc=$?
+  if [ "$rc" = "$want" ] && grep -qE -- "$pat" <<< "$out"; then pass=$((pass+1)); echo "ok   $label"
+  else fail=$((fail+1)); echo "FAIL $label: rc=$rc (expected $want)"; printf '%s\n' "$out" | tail -5 | sed 's/^/     | /'; fi
+}
+direct "negative_centralUsedUnset" 1 "KSL_CENTRAL_USED_RELEASES, KSL_CENTRAL_USED_FILES and KSL_CENTRAL_USED_BYTES are not all set" \
+  release/0.4.x env -u KSL_CENTRAL_USED_FILES bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralNoReleaseLeft" 1 "no Central release left this month" \
+  release/0.4.x env KSL_CENTRAL_USED_RELEASES=7 bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_centralQuotaNotANumber" 2 "take whole numbers, not 'lots'" \
+  release/0.4.x env KSL_CENTRAL_USED_BYTES=lots bash tools/release/local-release.sh 0.4.0-rc1 --central-prerelease
+direct "negative_countOnlyWithoutPublication" 2 "no publication of 0.4.0-rc1" \
+  release/0.4.x bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+# a publication an earlier run left (build/ is ignored): counted without building; no release left this month is exit 3
+logs_before=$(ls build/release/logs 2>/dev/null | wc -l | tr -d ' ')
+mkdir -p build/release/m2/io/kuicksilver/kuicksilver-bom/0.4.0-rc1
+printf '<project/>\n' > build/release/m2/io/kuicksilver/kuicksilver-bom/0.4.0-rc1/kuicksilver-bom-0.4.0-rc1.pom
+direct "countOnly: counted, within" 0 "Central limits left this month: 3900 files" \
+  release/0.4.x bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+direct "negative_countOnlyNoReleaseLeft" 3 "no release left this month" \
+  release/0.4.x env KSL_CENTRAL_USED_RELEASES=7 bash tools/release/local-release.sh 0.4.0-rc1 --count-only
+[ "$(ls build/release/logs 2>/dev/null | wc -l | tr -d ' ')" = "$logs_before" ] && { pass=$((pass+1)); echo "ok   countOnly: nothing built (no step log)"; } \
+  || { fail=$((fail+1)); echo "FAIL countOnly: a step ran"; }
+rm -r build/release/m2
+git checkout -q main
 
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)
