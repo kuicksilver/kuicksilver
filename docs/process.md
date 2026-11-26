@@ -191,7 +191,7 @@ result and `result=pass` only when every step passed on a clean tree that stayed
 accepts only a passing record of the release commit that ran every step, with `--with-interop --with-windows` and without
 `--skip-*` (stage 8).
 
-After a fix, some steps can be run again without the whole gate: `--only 25,48-49,52` runs the listed steps (numbers
+After a fix, some steps can be run again without the whole gate: `--only 25,47-49,52` runs the listed steps (numbers
 and ranges), `--from 44` runs step 44 and every later one. The numbers are those of a full run with the same
 `--skip-*` and `--with-*` options, as `--dry-run` with those options lists them and as a failure line (`[25] ...`,
 `build/ci/25.log`) shows them; the steps left out print nothing. Such a run is never a gate: it does not write or change

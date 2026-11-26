@@ -116,7 +116,7 @@ bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documenta
 ./gradlew -Pkuicksilver.docs.reportUndocumented :dokkaGenerate   # the API reference alone, warning on every public declaration without KDoc
 bash tools/docs/verify-test.sh                                   # the "How we verify" pages generator on fixtures; a new engine interop test class needs a row in tools/docs/engine-pairs.tsv, a new page label a message in every tools/docs/messages/*.json
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
-tools/ci/local-matrix.sh --only 25,48-49                         # run again only those steps (or --from 44); never a gate
+tools/ci/local-matrix.sh --only 25,47-49                         # run again only those steps (or --from 44); never a gate
 bash tools/ci/local-matrix-test.sh                               # the step selection's refusals, through --dry-run
 ```
 

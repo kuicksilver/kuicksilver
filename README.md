@@ -65,7 +65,8 @@ Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the clien
 [http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);
 [webtransport-chat](samples/webtransport-chat/README.md) (WebTransport streams and datagrams, a common-code client);
 [realtime-telemetry](samples/realtime-telemetry/README.md) (QUIC streams and datagrams);
-[compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS).
+[compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS);
+[iOS app](samples/ios/README.md) (SwiftUI over a Kotlin facade).
 
 ## Add it
 

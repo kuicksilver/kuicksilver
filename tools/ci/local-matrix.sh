@@ -16,7 +16,7 @@
 #   $KSL_WIN_JVM_TEST (default ~/.kuicksilver-tools/win-jvm-test, Parallels; outside the repository).
 # --with-browser also runs ChromeWebTransportTest against the installed Chrome (headless; skipped by the test itself
 #   when no Chrome or Chromium is installed).
-# --only <steps> runs only the listed steps, a comma list of numbers and ranges (--only 25,48-49,52); --from <n> runs step
+# --only <steps> runs only the listed steps, a comma list of numbers and ranges (--only 25,47-49,52); --from <n> runs step
 #   n and every later one (--from 44). The numbers are those of a full run with the same --skip-*/--with-* options (what --dry-run
 #   with those options prints, the [n] of the output and build/ci/<n>.log), so a failure line maps onto --only n; the
 #   steps left out print nothing. A step that reads what an earlier step produced (the AAR, the linked test executables,
@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;;
     --only|--from)
       [ $# -gt 0 ] && [ "${1#--}" = "$1" ] || refuse_args "$a needs a value: --only <steps> (e.g. 25,48-49,52) or --from <n>"
-      [ -z "$selection" ] || [ "--${selection%%=*}" != "$a" ] || refuse_args "$a given twice (one list per run: --only 25,48-49)"
+      [ -z "$selection" ] || [ "--${selection%%=*}" != "$a" ] || refuse_args "$a given twice (one list per run: --only 25,47-49)"
       [ -z "$selection" ] || refuse_args "--only and --from together (one selection per run; --only n-<last> is --from n)"
       if [ "$a" = --only ]; then only="$1"; selection="only=$1"; else from="$1"; selection="from=$1"; fi; shift ;;
     -h|--help) usage; exit 0 ;;

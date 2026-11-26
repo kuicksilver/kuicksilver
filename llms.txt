@@ -26,6 +26,7 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 
 ## Samples
 
+- [kq command line](https://github.com/kuicksilver/kuicksilver/blob/main/samples/kq-cli/README.md): a curl-like command line on the Ktor client engine, a native executable for macOS, Linux and Windows: kq get|head with --http3/--http2/--http1.1, -v (protocol and why, the QUIC connection, Alt-Svc learned), --qlog, --alt-svc
 - [HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/samples/http3-server/README.md): an HTTP/3 Ktor server from EngineMain and application.conf: TLS from PEM files, Alt-Svc, HTTP/2 and HTTP/1.1 on the same port, the PROXY protocol behind HAProxy or nginx, curl --http3
 - [WebTransport chat](https://github.com/kuicksilver/kuicksilver/blob/main/samples/webtransport-chat/README.md): a Ktor WebTransport server and a common-code client: a bidirectional stream for messages, datagrams for typing indicators, close codes, slow readers, graceful stop
 - [Real-time telemetry](https://github.com/kuicksilver/kuicksilver/blob/main/samples/realtime-telemetry/README.md): a QUIC application on kuicksilver-quic: stream priorities, datagrams, connection migration, tests over MemoryNetwork
