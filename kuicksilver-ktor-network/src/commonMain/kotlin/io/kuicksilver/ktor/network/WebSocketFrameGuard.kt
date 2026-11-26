@@ -391,6 +391,7 @@ private class InputGuard(
             if (mask != null) unmask(closeBody, size, mask, 0)
             checkCloseBody(closeBody, size)
             peerClosed = true
+            pongs?.peerClosed()
             onClose()
         }
         // RFC 6455 section 5.5.2: a Pong "as soon as is practical", "unless it already received a Close frame"

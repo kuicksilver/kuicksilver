@@ -6,12 +6,20 @@ package io.kuicksilver.ktor.network
 
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The Pongs of one WebSocket connection, sent by the engine itself, between the frame guards of its input
@@ -25,8 +33,9 @@ import kotlinx.coroutines.sync.withLock
  * input guard hands each Ping's Application data to [answer] as soon as it has read the Ping, before it hands the Ping on;
  * the Pong, with "identical Application data" (section 5.5.3), goes out at the output's next frame boundary: at once when
  * the output is idle (a coroutine of its own writes it), or right after the frame the session is writing. Pings are
- * answered after this side's Close too, until the peer's (section 5.5.1 forbids only data frames after a Close), while the
- * output is open and its writer has not ended it; see [guardWebSocketOutput].
+ * answered after this side's Close too, until the peer's (section 5.5.1 forbids only data frames after a Close): when the
+ * session's writer ends its channel right after its Close, as Ktor's does, the transport end is held open for Pongs
+ * ([holdEnd]) until the peer's Close is read, the input ends or [closeWait] passes; see [guardWebSocketOutput].
  *
  * The Pong the session then writes for the same Ping is dropped by the output guard (one dropped per Ping answered here,
  * matched by its data), so the peer gets one Pong per Ping, as before. The engine cannot tell Ktor's default session from
@@ -46,7 +55,9 @@ import kotlinx.coroutines.sync.withLock
  * Kotlin/Native.
  */
 @InternalKuicksilverApi
-public class WebSocketPongs {
+public class WebSocketPongs(
+    private val closeWait: Duration = DEFAULT_CLOSE_WAIT,
+) {
     /** Taken by the output guard around everything it writes, and by the writer of Pongs. */
     internal val lock = Mutex()
 
@@ -75,8 +86,56 @@ public class WebSocketPongs {
         wake.trySend(Unit)
     }
 
+    /** The peer's Close was read, or the input ended: no Ping is answered any more, and a held transport end may go. */
+    private val peerDone = CompletableDeferred<Unit>()
+
+    /** Whether the peer's Close was read or the input ended. */
+    internal val peerFinished: Boolean get() = peerDone.isCompleted
+
+    @kotlin.concurrent.Volatile private var scope: CoroutineScope? = null
+
+    /** The input guard read the peer's Close: from here the transport end the output guard holds may go. */
+    internal fun peerClosed() {
+        peerDone.complete(Unit)
+    }
+
+    /**
+     * The writer ended the output guard's channel after this side's Close, before the peer's Close: the transport stays
+     * open for Pongs until the peer's Close is read, the input ends, or [closeWait] passes (RFC 6455 section 5.5.2: Pongs
+     * are owed "unless it already received a Close frame"; section 5.5.1: the transport is closed "after both sending and
+     * receiving a Close message"), then [OutputPongs.endHeld] ends it. The engine's own end of the session (its job
+     * cancelled) ends the wait too: when the peer's Close was read or the input ended by then, the held end is still ended
+     * in order, within one more close wait (the engine ends the transport cleanly next and looks at that end); otherwise
+     * it is only marked ended and the engine ends the transport itself. False when there is no scope to wait in (the
+     * input guard never started): the caller ends the transport at once.
+     */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class) // ATOMIC: the held end is ended also when the job was cancelled first
+    internal fun holdEnd(guard: OutputPongs): Boolean {
+        val s = scope ?: return false
+        s.launch(CoroutineName("ws-held-end"), start = CoroutineStart.ATOMIC) {
+            var ended = false
+            try {
+                withTimeoutOrNull(closeWait) { peerDone.await() }
+                lock.withLock { guard.endHeld(this@WebSocketPongs, close = true) }
+                ended = true
+            } finally {
+                if (!ended) {
+                    // cancelled (the engine ended the session): once the peer's Close was read, or the input ended, the
+                    // held end is still ended in order (the engine is about to end the transport cleanly), within one close
+                    // wait (a peer that reads nothing more cannot keep it); otherwise it is only marked ended
+                    val inOrder = peerDone.isCompleted
+                    withContext(NonCancellable) {
+                        withTimeoutOrNull(closeWait) { lock.withLock { guard.endHeld(this@WebSocketPongs, close = inOrder) } }
+                    }
+                }
+            }
+        }
+        return true
+    }
+
     /** Writes the waiting Pongs while the output is idle, until [stop]; runs in [scope] (the input guard's). */
     internal fun start(scope: CoroutineScope) {
+        this.scope = scope
         scope.launch {
             for (w in wake) {
                 try {
@@ -94,6 +153,7 @@ public class WebSocketPongs {
     }
 
     internal fun stop() {
+        peerDone.complete(Unit)
         wake.close()
     }
 
@@ -136,6 +196,12 @@ public class WebSocketPongs {
     internal companion object {
         const val MAX_WAITING = 16
         const val MAX_OWED = 64
+
+        /**
+         * How long a transport end held for Pongs waits for the peer's Close: the engines' own close wait (the client's
+         * `webSocketCloseWaitMillis`, 5 s by default; the server's wait for the client's end, 5 s).
+         */
+        val DEFAULT_CLOSE_WAIT: Duration = 5.seconds
     }
 }
 
@@ -145,5 +211,14 @@ internal interface OutputPongs {
     suspend fun sendWaiting(
         pongs: WebSocketPongs,
         flush: Boolean,
+    )
+
+    /**
+     * Under the lock: ends the transport end held for Pongs ([WebSocketPongs.holdEnd]): with [close], the waiting Pongs go
+     * out and the transport is ended in order; without, it is only marked ended (the engine ends it). Once only.
+     */
+    suspend fun endHeld(
+        pongs: WebSocketPongs,
+        close: Boolean,
     )
 }

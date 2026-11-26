@@ -1805,12 +1805,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for that Ping is dropped, so the peer still gets one Pong per Ping; under a raw session (`webSocketRaw`), which
   never answered a Ping and now gets it answered, the application's Pong with that Ping's data is dropped as its
   answer (an unsolicited Pong with other data goes out). Pings are answered after this side's Close too, until the
-  peer's, while the session's writer keeps its channel open; Ktor's writers end theirs right after their Close, so
-  under Ktor's sessions a Ping in that window stays unanswered (a recorded deviation, `docs/spec/rfc/6455.md`). At
-  most 16 Pings wait; past that only the newest is answered and the session answers the others (section 5.5.3). A Pong
-  whose write fails (a reset transport) is not an uncaught exception. Before, the Pong was left to Ktor's session,
-  whose pong coroutine could run after the application had echoed the whole message the Ping came in the middle of
-  (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20 failed in some runs).
+  peer's: the engine keeps its side of the transport open after its own Close (Ktor's writer ends its channel right
+  after it) until the peer's Close is read, the input ends or the close wait passes (5 s; the client's
+  `webSocketCloseWaitMillis`), and closes it then (RFC 6455 section 5.5.1: the transport is closed "after both sending
+  and receiving a Close message"); a peer that answers the Close at once sees no delay. Before, a server that closed
+  first ended the transport (FIN, END_STREAM) right after its Close, and a Ping sent before the client's Close went
+  unanswered on both engines. At most 16 Pings wait; past that only the newest is answered and the session answers the
+  others (section 5.5.3). A Pong whose write fails (a reset transport) is not an uncaught exception. Before, the Pong
+  was left to Ktor's session, whose pong coroutine could run after the application had echoed the whole message the
+  Ping came in the middle of (Autobahn|Testsuite 5.6 to 5.8, 5.19 and 5.20 failed in some runs).
 - WebSocket (both Ktor engines): a text frame whose bytes are not UTF-8 fails the connection with 1007 as soon as those
   bytes arrive (RFC 6455 section 8.1), compressed or not. Before, the check waited for the rest of the frame, up to 16 KiB,
   so a peer that sent the bad bytes and then nothing kept the connection open (Autobahn|Testsuite 6.4.3 and 6.4.4).

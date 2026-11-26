@@ -14,6 +14,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
@@ -170,6 +171,8 @@ internal class H2UpgradeResponse(
             // the order is for clarity, not safety)
             guard.cancel()
             webSocket?.done()
+            // the stream end the frame guard held for Pongs after the server's Close is ended first (RFC 6455 section 5.5.2)
+            sessionOutput?.awaitWebSocketOutputEnd()
             // a call cancelled while the session ran cannot end the stream in order: CANCEL both ways (RFC 8441 section 5).
             // Otherwise the session's output ends the stream: END_STREAM once its last frames went out, then the client's
             // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client

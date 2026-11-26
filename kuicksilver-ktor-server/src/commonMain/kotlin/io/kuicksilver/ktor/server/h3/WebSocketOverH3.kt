@@ -16,6 +16,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
@@ -143,6 +144,8 @@ internal class H3UpgradeResponse(
             // a codec of its own)
             guard.cancel()
             webSocket?.done()
+            // the stream end the frame guard held for Pongs after the server's Close is ended first (RFC 6455 section 5.5.2)
+            sessionOutput?.awaitWebSocketOutputEnd()
             // a call cancelled while the session ran, or while the flush below waits, cannot end the stream in order: RFC
             // 9220 section 3 has "RST exceptions" as a stream error of type H3_REQUEST_CANCELLED, so both directions are
             // aborted with it, STOP_SENDING first (RFC 9114 section 4.1.1), never left with neither a FIN nor a reset.

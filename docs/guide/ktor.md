@@ -1181,8 +1181,9 @@ val client = HttpClient(Kuicksilver) {
   application brings with its own specification defines its payload: with one agreed, text is not checked. The engine
   answers every Ping itself as soon as it reads it (RFC 6455 section 5.5.2: "as soon as is practical"), with a Pong
   carrying its data, between the frames the session is sending; it drops the Pong the session then writes for that
-  Ping, so the peer gets one. (A Ping between this side's Close and the peer's goes unanswered: Ktor's writer ends its
-  channel right after its Close; `docs/spec/rfc/6455.md` records it.) This holds for a raw `webSocketRaw` session too,
+  Ping, so the peer gets one. Pings are answered after this side's Close too, until the peer's: the engine keeps its
+  side of the transport open after its Close until the peer's Close arrives (or the close wait passes, 5 s; on the
+  client `webSocketCloseWaitMillis`), and closes it then, at once when the peer answers the Close promptly. This holds for a raw `webSocketRaw` session too,
   which still sees the Ping in `incoming` but no longer needs to answer it: its own Pong with the Ping's data is taken
   for that answer and dropped (an unsolicited Pong with other data goes out).
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp

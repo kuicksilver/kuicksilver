@@ -27,6 +27,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.fieldListElements
 import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
@@ -125,6 +126,8 @@ internal class H1Response(
             // the order is for clarity, not safety)
             guard.cancel()
             webSocket?.done()
+            // the transport end the frame guard held for Pongs after the server's Close is ended first (RFC 6455 section 5.5.2)
+            sessionOutput?.awaitWebSocketOutputEnd()
             if (sessionOutput?.isWebSocketFrameCut() == true) {
                 // a session whose writer ended inside a frame (the guard resets that already): never a FIN after the cut
                 // frame, which would end a truncated stream as if whole (RFC 6455 section 7.1.1); a failed response resets

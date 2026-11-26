@@ -14,12 +14,14 @@ import io.ktor.server.websocket.webSocket
 import io.ktor.server.websocket.webSocketRaw
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
@@ -190,6 +192,36 @@ class ServerWebSocketGuardTest {
                     serverFrame(r).let { (b0, _) -> got += b0 to "" }
                 }
                 assertEquals(listOf(0x8A to "p", 0x81 to "a", 0x88 to ""), got)
+            }
+        }
+
+    /**
+     * RFC 6455 section 5.5.2: a Pong is owed "unless it already received a Close frame", so also after this side's own
+     * Close, until the peer's; section 5.5.1 forbids only data frames after a Close, and the transport is closed "after
+     * both sending and receiving a Close message". The server closes first; the client sends a Ping before its own Close
+     * and gets the Pong, then sends its Close, and only then does the server end the connection. Before, the server's FIN
+     * followed its Close at once (Ktor's writer ends its channel right after its Close) and the Ping went unanswered.
+     */
+    @Test fun negative_pingAfterTheServersCloseIsAnsweredBeforeTheFin() =
+        serverTest {
+            h1WebSocket({
+                install(WebSockets)
+                routing {
+                    webSocket("/ws") {
+                        close(io.ktor.websocket.CloseReason(io.ktor.websocket.CloseReason.Codes.NORMAL, "bye"))
+                        for (frame in incoming) continue
+                    }
+                }
+            }) { w, r ->
+                withTimeout(10.seconds) {
+                    assertEquals(0x88, serverFrame(r).first, "the server's Close")
+                    w.writeFully(masked(0x89, "still".encodeToByteArray()))
+                    val (b0, payload) = serverFrame(r)
+                    assertEquals(0x8A, b0, "the Pong after the server's Close")
+                    assertEquals("still", payload.decodeToString())
+                    w.writeFully(masked(0x88, byteArrayOf(0x03, 0xE8.toByte())))
+                    assertTrue(r.readBuffer().exhausted(), "nothing more, then the end of the connection")
+                }
             }
         }
 

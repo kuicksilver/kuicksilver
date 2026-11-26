@@ -612,7 +612,8 @@ internal suspend fun readResponse(
                         onHandOver(handOver)
                         onBodyDone(AfterResponse.HandOver)
                         val wsConfig = request.attributes[WEBSOCKETS_KEY]
-                        val pongs = WebSocketPongs() // the engine answers Pings itself (RFC 6455 section 5.5.2)
+                        // the engine answers Pings itself (RFC 6455 section 5.5.2), after its own Close too, until the server's
+                        val pongs = WebSocketPongs(lifetime.closeWait.milliseconds)
                         val guarded =
                             guardWebSocketInput(
                                 input,

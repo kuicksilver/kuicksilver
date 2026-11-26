@@ -17,7 +17,10 @@ import io.kuicksilver.ktor.network.WsTestFrames.header
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -25,6 +28,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The engines answer the peer's Pings themselves ([WebSocketPongs]), between the input guard that reads them and the output
@@ -165,15 +169,18 @@ class WebSocketPongsTest {
     /**
      * After this side's Close a Ping is still answered, until the peer's Close: section 5.5.2 asks for a Pong "unless it
      * already received a Close frame", and section 5.5.1 forbids only data frames after a Close ("the application MUST
-     * NOT send any more data frames"). A Ping after the peer's Close is not answered.
+     * NOT send any more data frames"). The writer ends its channel right after its Close, as Ktor's does: the transport is
+     * held open for the Pong, and ended once the peer's Close is read (section 5.5.1: the transport is closed "after both
+     * sending and receiving a Close message"). Before, the transport ended with the writer and the Ping went unanswered.
      */
     @Test
     fun pongAfterOurCloseUntilThePeersClose() =
         runTest {
             val c = connection(masking = false)
             c.session.writeFully(close(1000))
-            c.session.flush()
+            c.session.flushAndClose()
             assertEquals(0x88, oneFrame(c.wire).b0)
+            assertTrue(!c.wire.isClosedForWrite, "the transport is held open after our Close")
             c.peerSends(frame(0x89, "after".encodeToByteArray(), mask))
             advanceUntilIdle()
             val pong = oneFrame(c.wire)
@@ -181,30 +188,76 @@ class WebSocketPongsTest {
             assertEquals("after", pong.payload.decodeToString())
             c.peerSends(close(1000, mask = mask) + frame(0x89, "late".encodeToByteArray(), mask))
             advanceUntilIdle()
-            assertEquals(0, c.wire.availableForRead, "nothing after the peer's Close")
+            assertEquals(emptyList(), frames(c.wire), "the transport ends at the peer's Close, nothing after it")
+            assertTrue(c.wire.isClosedForWrite)
+            c.peer.flushAndClose()
+        }
+
+    /** A peer that never sends its Close: the held transport is ended when the close wait has passed, not before. */
+    @Test
+    fun negative_theHeldTransportEndsAtTheCloseWait() =
+        runTest {
+            val c = connection(masking = false)
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            assertEquals(0x88, oneFrame(c.wire).b0)
+            advanceTimeBy(WebSocketPongs.DEFAULT_CLOSE_WAIT - 1.milliseconds)
+            assertTrue(!c.wire.isClosedForWrite, "held for the whole close wait")
+            advanceTimeBy(2.milliseconds)
+            runCurrent()
+            assertTrue(c.wire.isClosedForWrite, "ended when the close wait passed")
+            c.peer.flushAndClose()
+        }
+
+    /** The peer's Close came first (this side answers it): the transport ends with the writer, without any wait. */
+    @Test
+    fun noWaitWhenThePeersCloseCameFirst() =
+        runTest {
+            val c = connection(masking = false)
+            c.peerSends(close(1000, mask = mask))
+            advanceUntilIdle()
+            assertEquals(0x88, oneFrame(c.input).b0)
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            assertTrue(c.wire.isClosedForWrite, "ended at once")
+            assertEquals(listOf(0x88), frames(c.wire).map { it.b0 })
+            c.peer.flushAndClose()
+        }
+
+    /** A peer that answers our Close promptly: the held transport ends as soon as its Close is read, no close wait. */
+    @Test
+    fun noWaitWhenThePeerAnswersOurClosePromptly() =
+        runTest {
+            val c = connection(masking = false)
+            c.session.writeFully(close(1000))
+            c.session.flushAndClose()
+            c.peerSends(close(1000, mask = mask))
+            runCurrent()
+            assertTrue(c.wire.isClosedForWrite, "ended without waiting")
+            assertEquals(0L, currentTime, "no virtual time passed")
             c.peer.flushAndClose()
         }
 
     /**
-     * Once the session's writer ended its channel (Ktor's does so right after its Close), no Pong is written any more, also
-     * when the transport under it stays open (the client engines hold it until they end it themselves).
+     * Once the held transport end was ended (here at the close wait, the peer never sending its Close), no Pong is written
+     * any more, also when the channel under the guard stays open (the client engines' held transport end only flushes).
      */
     @Test
-    fun negative_noPongAfterTheWriterEndedTheChannel() =
+    fun negative_noPongAfterTheTransportClosed() =
         runTest {
             val peer = ByteChannel()
             val wire = ByteChannel()
-            val held = HeldOpen(wire)
             val pongs = WebSocketPongs()
             guardWebSocketInput(peer, 0, false, peerMasks = true, context = coroutineContext, pongs = pongs)
-            val session = guardWebSocketOutput(held, masking = false, pongs = pongs)
+            val session = guardWebSocketOutput(HeldOpen(wire), masking = false, pongs = pongs)
             session.writeFully(close(1000))
             session.flushAndClose()
             assertEquals(0x88, oneFrame(wire).b0)
+            advanceTimeBy(WebSocketPongs.DEFAULT_CLOSE_WAIT + 1.milliseconds)
             peer.writeFully(frame(0x89, "x".encodeToByteArray(), mask))
             peer.flush()
             advanceUntilIdle()
-            assertEquals(0, wire.availableForRead, "no Pong after the writer's end")
+            assertEquals(0, wire.availableForRead, "no Pong after the transport end")
             peer.flushAndClose()
         }
 

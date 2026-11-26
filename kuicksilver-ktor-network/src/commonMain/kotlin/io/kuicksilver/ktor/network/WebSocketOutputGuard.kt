@@ -64,9 +64,11 @@ import kotlinx.io.readTo
  * With [pongs] (the same instance as the input guard's), the engine answers the peer's Pings itself, as soon as they are
  * read ([WebSocketPongs]): their Pongs go out at the next frame boundary of [output], between the frames of the session,
  * and the session's own Pong for each of them is dropped here. Pongs keep going out after this side's Close, until the
- * peer's (RFC 6455 section 5.5.2; section 5.5.1 forbids only data frames after a Close), as long as [output] is open and
- * the writer has not ended this channel: once it has ([flushAndClose]), the engine ends the transport itself, outside
- * this guard, and no Pong is written any more.
+ * peer's (RFC 6455 section 5.5.2; section 5.5.1 forbids only data frames after a Close): when the writer ends this channel
+ * after its Close (Ktor's does so right after it) and the peer's Close has not been read, [output] is not ended yet but
+ * held open for Pongs until the peer's Close is read, the input ends or the close wait passes (section 5.5.1: the
+ * transport is closed "after both sending and receiving a Close message"), and ended then; an engine that ends the
+ * transport itself after the session waits for that first ([awaitWebSocketOutputEnd]).
  *
  * After that Close, data frames are discarded (RFC 6455 section 5.5.1: "After sending a Close frame, the application
  * MUST NOT send any more data frames"): nothing of them reaches [output] and the write does not fail, so a session that
@@ -116,6 +118,23 @@ public class WebSocketFrameCutException :
 @InternalKuicksilverApi
 public fun ByteWriteChannel.isWebSocketFrameCut(): Boolean =
     closedCause is WebSocketFrameCutException || (this as? OutputGuard)?.frameCutOnOutput == true
+
+/**
+ * Waits until this channel, made by [guardWebSocketOutput], has ended the transport end it held for the engine's Pongs
+ * after this side's Close ([WebSocketPongs]): at once when it holds none, as for any other channel. An engine calls it
+ * before it ends the transport itself after the session, so that no Pong is written while it does; bounded by the close
+ * wait of the [WebSocketPongs], and over at once when the engine stopped the input guard (its job). A cancelled caller
+ * returns without waiting (the engine then resets the transport anyway).
+ */
+@InternalKuicksilverApi
+public suspend fun ByteWriteChannel.awaitWebSocketOutputEnd() {
+    val guard = this as? OutputGuard ?: return
+    try {
+        guard.awaitHeldEnd()
+    } catch (_: kotlinx.coroutines.CancellationException) {
+        // the caller was cancelled: it resets the transport
+    }
+}
 
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
@@ -241,22 +260,73 @@ private class OutputGuard(
     private suspend fun closeLocked() {
         try {
             if (failure != null) return // the output was cancelled
+            if (holding || closed) return // ended already: the held end goes its own way
             process()
-            // the Pongs that were due went out above; from here the engine ends the transport, outside this lock
-            closed = true
-            pongs?.dropWaiting()
             if (frameCutOnOutput) {
                 // the writer ended its channel in order inside a frame (Ktor's does so when it is cancelled): a clean end
                 // after a cut frame would present a truncated stream as whole (RFC 6455 section 7.1.1), so it is reset
+                closed = true
+                pongs?.dropWaiting()
                 val e = WebSocketFrameCutException()
                 failure = e
                 output.cancel(e)
                 return
             }
+            // after this side's Close and before the peer's, the transport stays open for Pongs (RFC 6455 section 5.5.2)
+            // until the peer's Close, the input's end or the close wait ([WebSocketPongs.holdEnd]); then it is ended
+            if (pongs != null && closeWritten && !pongs.peerFinished && !output.isClosedForWrite) {
+                output.flush()
+                if (pongs.holdEnd(this)) {
+                    holding = true
+                    return
+                }
+            }
+            closed = true
+            pongs?.dropWaiting()
             output.flushAndClose()
         } finally {
             sideInflater?.close()
+            if (!holding) heldEnded.complete(Unit) // nothing held: a wait for the held end is over at once
         }
+    }
+
+    /** The writer's end of the transport is held for Pongs ([WebSocketPongs.holdEnd]) and not ended yet. */
+    @kotlin.concurrent.Volatile private var holding = false
+
+    /** The held end was ended ([endHeld]). */
+    private val heldEnded = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    override suspend fun endHeld(
+        pongs: WebSocketPongs,
+        close: Boolean,
+    ) {
+        if (closed) {
+            heldEnded.complete(Unit)
+            return
+        }
+        try {
+            if (close && failure == null && !output.isClosedForWrite) {
+                sendWaiting(pongs, flush = false)
+                if (frameCutOnOutput) {
+                    output.cancel(WebSocketFrameCutException().also { failure = it })
+                } else {
+                    output.flushAndClose()
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // the transport failed under the held end: the engine sees it on the output
+        } finally {
+            closed = true
+            pongs.dropWaiting()
+            heldEnded.complete(Unit)
+        }
+    }
+
+    /** Waits for a held end ([holding]) to be ended; at once when none is held. */
+    suspend fun awaitHeldEnd() {
+        if (holding) heldEnded.await()
     }
 
     override fun cancel(cause: Throwable?) {

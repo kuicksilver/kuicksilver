@@ -59,6 +59,7 @@ import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.abort
+import io.kuicksilver.ktor.network.awaitWebSocketOutputEnd
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.tls
@@ -1429,6 +1430,8 @@ internal class H1Pool(
                                             webSocketConnectionForTest?.invoke(conn)
                                             ws.lifetime.invokeOnEnd { cause ->
                                                 try {
+                                                    // the end the frame guard held for Pongs after the client's Close goes first
+                                                    ws.guard?.awaitWebSocketOutputEnd()
                                                     val failed = ws.output.closedCause != null
                                                     val writerDone = ws.output.endRequested && !failed
                                                     val end =
