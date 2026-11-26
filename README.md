@@ -62,6 +62,8 @@ Experimental ones (`@ExperimentalKuicksilverApi`) are marked *exp.*
   [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/ktor.md#observability-experimental)).
 
 Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the client engine (macOS, Linux, Windows);
+[http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);
+[webtransport-chat](samples/webtransport-chat/README.md) (WebTransport streams and datagrams, a common-code client);
 [realtime-telemetry](samples/realtime-telemetry/README.md) (QUIC streams and datagrams);
 [compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS).
 
@@ -142,7 +144,8 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
   [docs/spec/rfc/](docs/spec/rfc/)), [interop results](docs/spec/interop.md), [compatibility
   shims](docs/spec/compat-shims.md), [reliability signals](docs/reliability.md), [benchmarks](docs/benchmarks.md),
   [threat model](docs/spec/threat-model.md).
-- Samples, each a Gradle build of its own that takes the library by coordinates: an [HTTP/3 Ktor server in about twenty
+- Samples, each a Gradle build of its own that takes the library by coordinates: [`kq`](samples/kq-cli/README.md), a
+  curl-like command line on the client engine built as a native executable, an [HTTP/3 Ktor server in about twenty
   lines](samples/http3-server/README.md) (TLS, Alt-Svc, HTTP/2 and HTTP/1.1 on the same port, the PROXY protocol), a
   [WebTransport chat](samples/webtransport-chat/README.md) (Ktor server and a common-code client: streams for messages,
   datagrams for typing indicators), a [real-time QUIC application](samples/realtime-telemetry/README.md) (streams,
