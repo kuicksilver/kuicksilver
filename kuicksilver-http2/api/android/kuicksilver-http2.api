@@ -61,6 +61,7 @@ public final class io/kuicksilver/http2/Http2Settings$Builder$FloodLimits {
 	public static final field Companion Lio/kuicksilver/http2/Http2Settings$Builder$FloodLimits$Companion;
 	public static final field MAX_CONTINUATION_FRAMES I
 	public static final field MAX_CONTROL_FRAMES_QUEUED I
+	public static final field MAX_EMPTY_FRAMES I
 	public final fun getGlitches ()Lio/kuicksilver/config/RateLimit;
 	public final fun getMaxContinuationFrames ()I
 	public final fun getMaxControlFramesQueued ()I

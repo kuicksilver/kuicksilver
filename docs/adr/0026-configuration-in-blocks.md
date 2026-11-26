@@ -254,8 +254,9 @@ The design left these cases open or met them only in the code; each was decided 
   `MAX_GLITCHES`). The count limits got ceilings of the same kind: `maxContinuationFrames` at most 800 (100 times
   nghttp2's 8; at the smallest frame size 12.5 MiB of field block, while a CONTINUATION flood spends its CPU on the count)
   and `maxControlFramesQueued` at most 100 000 (10 times Go's 10 000, not 100: a queued frame holds tens of bytes, and a
-  peer that never reads would hold tens of MiB per connection at 1 000 000), public as `MAX_CONTINUATION_FRAMES` and
-  `MAX_CONTROL_FRAMES_QUEUED`.
+  peer that never reads would hold tens of MiB per connection at 1 000 000), and `maxEmptyFrames` at most 10 000 (100
+  times the default; a run of empty DATA frames that long is an empty-frame flood, CVE-2019-9518, whatever its rate),
+  public as `MAX_CONTINUATION_FRAMES`, `MAX_CONTROL_FRAMES_QUEUED` and `MAX_EMPTY_FRAMES`.
 - **RFC 9114's section 6 SHOULDs are refused, not left to the application.** Section 6.1 says "at least 100 request
   streams SHOULD be permitted at a time", section 6.2 that the transport parameters "SHOULD also provide at least 1,024
   bytes of flow-control credit to each unidirectional stream". Both were met by the defaults only. An HTTP/3 server

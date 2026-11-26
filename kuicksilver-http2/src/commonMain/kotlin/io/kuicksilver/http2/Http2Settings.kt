@@ -142,7 +142,7 @@ public class Http2Settings private constructor(
             @SecuritySensitive
             public var maxControlFramesQueued: Int = 10_000
 
-            /** DATA frames in a row with no content and no END_STREAM; default 100. */
+            /** DATA frames in a row with no content and no END_STREAM; default 100, at most [MAX_EMPTY_FRAMES]. */
             @SecuritySensitive
             public var maxEmptyFrames: Int = 100
 
@@ -186,6 +186,13 @@ public class Http2Settings private constructor(
                  * per connection; 100 times the default would be tens of MiB per connection.
                  */
                 public const val MAX_CONTROL_FRAMES_QUEUED: Int = 100_000
+
+                /**
+                 * The largest [maxEmptyFrames]: 10 000, 100 times the default. An empty-frame flood (CVE-2019-9518) costs
+                 * the peer 9 bytes a frame and us a frame's processing each; no sender has a reason to send more than a few
+                 * empty DATA frames in a row, and a run this long is a flood whatever its rate.
+                 */
+                public const val MAX_EMPTY_FRAMES: Int = 10_000
             }
         }
 
@@ -215,7 +222,10 @@ public class Http2Settings private constructor(
                 "floodLimits { maxControlFramesQueued } must be 1..${FloodLimits.MAX_CONTROL_FRAMES_QUEUED}: more lets a peer " +
                     "that never reads hold that much memory, got ${f.maxControlFramesQueued}"
             }
-            require(f.maxEmptyFrames >= 0) { "floodLimits { maxEmptyFrames } must not be negative" }
+            require(f.maxEmptyFrames in 0..FloodLimits.MAX_EMPTY_FRAMES) {
+                "floodLimits { maxEmptyFrames } must be 0..${FloodLimits.MAX_EMPTY_FRAMES}: more no longer bounds an empty-frame " +
+                    "flood (CVE-2019-9518), got ${f.maxEmptyFrames}"
+            }
             require(f.resets.perSecond <= FloodLimits.MAX_RESETS.perSecond && f.resets.burst <= FloodLimits.MAX_RESETS.burst) {
                 "floodLimits { resets } must be at most ${FloodLimits.MAX_RESETS}: a larger budget no longer bounds Rapid Reset " +
                     "(CVE-2023-44487), got ${f.resets}"

@@ -7769,7 +7769,7 @@ passes it.
 |---|---|---|---|---|---|---|
 | `maxContinuationFrames` | `Int` | 8 | 0.3.0 | experimental | 🔒 | CONTINUATION frames allowed in one field block; at most `FloodLimits.MAX_CONTINUATION_FRAMES`, 800 (100 times that) |
 | `maxControlFramesQueued` | `Int` | 10 000 | 0.3.0 | experimental | 🔒 | control frames (SETTINGS and PING acknowledgements, RST_STREAM, WINDOW_UPDATE) queued for the peer; at most `FloodLimits.MAX_CONTROL_FRAMES_QUEUED`, 100 000 |
-| `maxEmptyFrames` | `Int` | 100 | 0.3.0 | experimental | 🔒 | DATA frames in a row with no content and no END_STREAM |
+| `maxEmptyFrames` | `Int` | 100 | 0.3.0 | experimental | 🔒 | DATA frames in a row with no content and no END_STREAM; at most 10 000 (`MAX_EMPTY_FRAMES`) |
 | `resets` | `RateLimit` | `RateLimit(33, 1000)` | 0.3.0 | experimental | 🔒 | a server's budget for the client's RST_STREAM frames (Rapid Reset): 33 a second, 1000 at once, as nghttp2; at most `FloodLimits.MAX_RESETS`, `RateLimit(3300, 100000)` (100 times that), above which it would no longer bound a flood |
 | `glitches` | `RateLimit` | `RateLimit(330, 10000)` | 0.3.0 | experimental | 🔒 | the glitch budget (PRIORITY, unknown frame types, SETTINGS, empty DATA, an unanswered-data PING, every stream error the peer causes), as nghttp2; at most `FloodLimits.MAX_GLITCHES`, `RateLimit(33000, 1000000)` |
 

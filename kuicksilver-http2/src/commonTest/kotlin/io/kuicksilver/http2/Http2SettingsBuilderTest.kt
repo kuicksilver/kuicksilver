@@ -122,14 +122,26 @@ class Http2SettingsBuilderTest {
                 e.message,
             )
         }
+        for (bad in listOf(-1, 10_001, Int.MAX_VALUE)) {
+            val e = assertFailsWith<IllegalArgumentException>("$bad") { http2Settings { floodLimits { maxEmptyFrames = bad } } }
+            assertEquals(
+                "floodLimits { maxEmptyFrames } must be 0..10000: more no longer bounds an empty-frame flood (CVE-2019-9518), " +
+                    "got $bad",
+                e.message,
+            )
+        }
         val top =
             http2Settings {
                 floodLimits {
                     maxContinuationFrames = Http2Settings.Builder.FloodLimits.MAX_CONTINUATION_FRAMES
                     maxControlFramesQueued = Http2Settings.Builder.FloodLimits.MAX_CONTROL_FRAMES_QUEUED
+                    maxEmptyFrames = Http2Settings.Builder.FloodLimits.MAX_EMPTY_FRAMES
                 }
             }
         assertEquals(800, top.maxContinuationFrames)
         assertEquals(100_000, top.maxControlFramesQueued)
+        assertEquals(10_000, top.maxEmptyFrames)
+        // zero tolerance stays possible: the first empty DATA frame ends the connection
+        assertEquals(0, http2Settings { floodLimits { maxEmptyFrames = 0 } }.maxEmptyFrames)
     }
 }
