@@ -384,7 +384,7 @@ internal class H3Session(
     val qpack =
         QpackRuntime(
             settings,
-            { b -> writeCritical(encoderLock, { it.encoder }, b) },
+            { b -> writeCritical(encoderLock, { it.encoder }, b, mustArrive = true) },
             { b -> queueDecoderBytes(b) },
             qlog,
             // no encoder stream yet: no credit known, so no insert
@@ -584,7 +584,7 @@ internal class H3Session(
         // RFC 9114 section 10.5 (Rapid Reset, CVE-2023-44487): a request stream keeps its MAX_STREAMS credit until the
         // application is done with the request, not only until the client reset it; before the first stream is taken
         if (isServer) quic.holdPeerStreamCredit()
-        scope.launch { acceptLoop() }
+        acceptLoopJob = scope.launch { acceptLoop() }
         datagrams.start()
         if (isServer) return
         try {
@@ -750,6 +750,10 @@ internal class H3Session(
             }
         }
     }
+
+    /** The coroutine of [acceptLoop] once the session started (a test checks that it ends with the connection). */
+    @kotlin.concurrent.Volatile
+    internal var acceptLoopJob: kotlinx.coroutines.Job? = null
 
     /** What [acceptNext] took; acceptLoop's coroutine only. */
     private var nextAccepted: QuicStream? = null

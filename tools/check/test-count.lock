@@ -751,6 +751,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.nega
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_acceptedZeroRttLeavesNoHeaderState
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_acceptedZeroRttReleasesTheEarlyControlCopy
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_answerBetweenTheDeadlineReadsStillGetsTheDeadline
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_encoderInstructionsForADroppedGenerationFailTheConnection
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_qpackCapacityChangedAfter0RttIsDecoderStreamError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_rejectedZeroRttLeavesNoHeaderState
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_rejectionWithFewerUniStreamsDuringTheAttemptGetsTheDeadline
@@ -5023,6 +5024,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.VersionUpgradeTest.v1On
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.VersionUpgradeTest.versionInformationCheckedOnBothSides
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.WindowAutoTuneTest.fastReaderGrowsTheWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.WindowAutoTuneTest.slowReaderKeepsTheInitialWindow
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.aServerStreamOfTheHalfRttFlightIsReportedAfterTheRejection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.anAcceptedZeroRttReadsTheHalfRttFlightAfterTheAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.applicationDataRidesWithTheRememberedParameters
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.concurrentSameTicketGetsEarlyDataOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyBidiResetAndStoppedReportsAfterTheAccept
@@ -5032,12 +5035,14 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStream
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamRetiredBeforeTheAnswerIsOfferedAgainAtTheAcceptance
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.halfRttMaxDataAndMaxStreamsSurviveTheRejection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterAcceptedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterRejectedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttMaxDatagramFrameSizeReduced
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttReplayRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttTransportParamsReduced
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_aHalfRttAckOfARejectedZeroRttPacketIsProtocolViolation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_ackOfARejectedZeroRttPacketIsProtocolViolation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_earlyBidiResetBeforeARejectionReportsNothing
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_earlyStreamOfARequiredRejectionReportsNothing

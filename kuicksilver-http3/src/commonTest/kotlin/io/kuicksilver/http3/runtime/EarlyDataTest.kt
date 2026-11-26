@@ -654,7 +654,8 @@ class EarlyDataTest {
 
     /**
      * The wait for the 0-RTT's answer before a server stream is read ends with the connection: a client that closes while
-     * the answer is still unreported ends, and the stream it took is never read (no critical stream of the server seen).
+     * the answer is still unreported ends, its accept loop (the one waiting) completes within the bound instead of hanging,
+     * and the stream it took is never read (no critical stream of the server seen).
      */
     @Test fun negative_aServerStreamWaitingForTheAnswerEndsWithTheConnection(): Unit =
         runBlocking {
@@ -674,6 +675,9 @@ class EarlyDataTest {
                             while (!t.tookEarly.load()) kotlinx.coroutines.yield()
                             c.close()
                             withTimeout(10.seconds) { c.closed.await() }
+                            // no hang: the accept loop, which waited for the answer, ends with the connection
+                            withTimeout(10.seconds) { c.session.acceptLoopJob!!.join() }
+                            assertTrue(c.session.closed.isCompleted, "the session ended")
                             assertEquals(0, c.session.criticalStreamsSeen.value, "a server stream was read before the answer")
                         },
                     )
@@ -760,6 +764,48 @@ class EarlyDataTest {
                     }
                 assertEquals(false, accepted)
                 assertEquals(2, attempts.load(), "the interrupted attempt and the one after it")
+            }
+        }
+
+    /**
+     * Our encoder's instructions are about the dynamic table, not about a stream: dropping one leaves the server's decoder
+     * without a Set Dynamic Table Capacity or an insert its next sections need (RFC 9204 sections 3.2.3 and 4.3). The encoder
+     * makes none before the rejection was noted, so one made for the critical streams the rejection dropped is a broken
+     * invariant: the connection closes with H3_INTERNAL_ERROR and the write throws, never a silent drop (decoder-stream bytes
+     * of the dropped streams still go quietly: they name early requests the server never saw).
+     */
+    @Test fun negative_encoderInstructionsForADroppedGenerationFailTheConnection(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val hold = AtomicInt(1)
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        clientHold = hold,
+                        clientSession = { session ->
+                            session.criticalAttemptHookForTest = { step, gen ->
+                                // opened in 0-RTT; the rejection drops them before their type is written
+                                if (step == H3Session.AttemptStep.Opened && gen == 0) {
+                                    hold.store(0)
+                                    runCatching { session.quic.awaitHandshake() }
+                                }
+                            }
+                        },
+                    ) { c, _ ->
+                        val session = c.session
+                        val gen = withContext(session.dispatcher) { session.criticalGen }
+                        assertEquals(1, gen, "the rejection dropped the first critical streams")
+                        withContext(session.dispatcher) {
+                            assertFailsWith<IllegalStateException> {
+                                session.writeCritical(session.encoderLock, { it.encoder }, byteArrayOf(0x3f, 0x61), madeFor = 0, mustArrive = true)
+                            }
+                        }
+                        val e = withTimeout(10.seconds) { session.closed.await() }
+                        val p = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(e)
+                        assertEquals(io.kuicksilver.http3.Http3ErrorCode.INTERNAL_ERROR, p.h3Code, "$e")
+                    }
+                assertEquals(false, accepted)
             }
         }
 

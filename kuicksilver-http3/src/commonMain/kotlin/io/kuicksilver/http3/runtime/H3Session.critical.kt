@@ -42,11 +42,15 @@ import kotlin.time.Duration
 /**
  * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
  * below is the dispatcher's alone; callers such as `updatePriority` run on the application's thread). Bytes made for
- * streams a rejected 0-RTT dropped (an older `criticalGen`, or a write the drop failed) never reach the newer ones:
- * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
- * sent again reuse (a Stream Cancellation there would cancel the new request's sections).
- * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is); one written before the
- * handshake told the 0-RTT's fate is kept for that (`earlyControl`).
+ * streams a rejected 0-RTT dropped (an older `criticalGen`, or a write the drop failed) never reach the newer ones.
+ * Decoder-stream bytes ([madeFor] their generation) made then can only be about early request streams the server never
+ * saw, whose IDs the requests sent again reuse (a Stream Cancellation there would cancel the new request's sections):
+ * they go. [again] says whether a control frame is still wanted on the new control stream (a GOAWAY is); one written
+ * before the handshake told the 0-RTT's fate is kept for that (`earlyControl`). Encoder-stream bytes ([mustArrive]) are
+ * about the dynamic table, not about streams: the encoder makes none before the server's SETTINGS, which are read only
+ * once the rejection was noted ([awaitZeroRttAnswer]), so one that would go is a broken invariant. Dropped, the
+ * server's decoder would miss a Set Dynamic Table Capacity or an insert the next sections rely on (RFC 9204 sections
+ * 3.2.3 and 4.3): the connection closes with H3_INTERNAL_ERROR instead, and the write throws.
  */
 internal suspend fun H3Session.writeCritical(
     lock: Mutex,
@@ -54,6 +58,8 @@ internal suspend fun H3Session.writeCritical(
     b: ByteArray,
     again: (() -> Boolean)? = null,
     madeFor: Int? = null,
+    /** The bytes must reach the server (our encoder's instructions): one that would be dropped fails the connection. */
+    mustArrive: Boolean = false,
     /** Runs with the stream once [b] was written on it (each time: a frame sent again after a rejected 0-RTT too). */
     written: ((QuicStream) -> Unit)? = null,
 ): Unit =
@@ -102,6 +108,10 @@ internal suspend fun H3Session.writeCritical(
                 return@withContext
             }
             noteRejectedZeroRttHere()
+            if (mustArrive) {
+                fail(Http3ErrorCode.INTERNAL_ERROR, "QPACK encoder instructions made for a critical stream a rejected 0-RTT dropped")
+                throw IllegalStateException("QPACK encoder instructions made for the critical streams of generation $gen were dropped")
+            }
             if (criticalGen == gen || again == null || !again()) return@withContext // no newer streams, or not wanted there
             gen = criticalGen
         }
@@ -155,16 +165,16 @@ internal suspend fun H3Session.noteRejectedZeroRtt() = withContext(dispatcher) {
 
 /**
  * Client, before a stream of the server is read: waits until the server's answer to our 0-RTT is known (RFC 9001 section
- * 4.6.2), which it is once the handshake completed; false when the connection ended first. The transport can hand a
- * server's stream over before it reports the answer: the server's 1-RTT packets are read as soon as their key exists,
- * before the handshake's end settles the 0-RTT, and the transport's loop reports the rejection on its own thread while
- * this dispatcher already reads the stream. Read then, the server's SETTINGS reached QPACK before the rejection was
- * noted: the encoder's Set Dynamic Table Capacity went to the encoder stream the rejection dropped and its inserts to
- * the new one, and the server's decoder, its table still of capacity 0, closed the connection with
- * QPACK_ENCODER_STREAM_ERROR (RFC 9204 sections 3.2.3 and 4.3.1).
+ * 4.6.2), at the latest once the handshake completed; false when the connection ended first. The transport hands a peer
+ * stream out only after it settled that answer (the `QuicConnection.acceptStream` contract; the core holds the server's
+ * 1-RTT packets until the handshake's end settled the 0-RTT), so this is defence in depth: a stream read before the
+ * rejection was noted let the server's SETTINGS reach QPACK first. The encoder's Set Dynamic Table Capacity went to the
+ * encoder stream the rejection dropped and its inserts to the new one, and the server's decoder, its table still of
+ * capacity 0, closed the connection with QPACK_ENCODER_STREAM_ERROR (RFC 9204 sections 3.2.3 and 4.3.1).
  */
 internal suspend fun H3Session.awaitZeroRttAnswer(): Boolean {
-    if (isServer || zeroRttRejectionNoted || quic.isHandshakeComplete) return true
+    // the answer is in (also while a Tofu client's handshake waits for its trust store, `trustCommitPending`)
+    if (isServer || zeroRttRejectionNoted || quic.earlyDataAccepted != null || quic.isHandshakeComplete) return true
     return try {
         quic.awaitHandshake()
         true
