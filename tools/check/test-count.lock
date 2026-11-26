@@ -2883,6 +2883,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.LiveEchTest.https
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.negative_blockingSelectorFailsAtConnectTimeout
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.selectorGetsAWebSocketsResourceName
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.systemResolverFollowsDefaultProxySelector
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ZeroRttGuideSamplesTest.clientCheckSeesZeroRtt
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.CampaignTableTest.aCorpusInputNamedByTheSha1OfItsBytesPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.CampaignTableTest.aWellFormedTablePasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.CampaignTableTest.negative_aCorpusInputWhoseBytesChangedUnderItsNameFails
@@ -4108,6 +4109,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.StopWithPooledCli
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.StopWithPooledClientsJvmTest.justAnsweredConnectionDoesNotHoldTheStop
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.UnreadBodyLingerJvmTest.negative_clientWritingItsWholeBodyGetsTheResponse
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.UpgradeFailureJvmTest.negative_aFailedUpgradeWhoseErrorResponseFailsEndsOnlyItsConnection
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ZeroRttGuideSamplesTest.replayableSample
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ZeroRttGuideSamplesTest.serverSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebSocketH2Test.chromeWebSocketOverH2
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebTransportTest.chromeDraft02
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.browser.ChromeWebTransportTest.chromeSessionOutlivesAQuicLbChange

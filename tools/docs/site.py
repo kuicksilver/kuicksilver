@@ -38,7 +38,9 @@ REPO = "https://github.com/kuicksilver/kuicksilver"
 DEV = "dev"   # the directory of the development snapshot (the current main), beside the release versions
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
 # reading order of the guide index; a page not listed here follows in file name order
-GUIDE_ORDER = ["quic", "http3", "tls", "ktor", "deployment", "ios", "app-store", "configuration", "troubleshooting"]
+GUIDE_ORDER = ["quickstart", "ktor", "client", "client-http3", "client-proxies", "server", "server-proxies", "server-config-file",
+               "engine-tls", "realtime", "observability", "zero-rtt", "deployment", "migrating-from-okhttp",
+               "migrating-ktor-engines", "configuration", "troubleshooting", "quic", "http3", "tls", "ios", "app-store"]
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 
 STYLE = """
