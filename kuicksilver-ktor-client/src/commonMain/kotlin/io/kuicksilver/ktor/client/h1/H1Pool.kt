@@ -152,8 +152,10 @@ internal class H1Connection(
     /**
      * Watches the input of the connection while it is idle, as Go's net/http (its persistConn's read loop peeks while
      * idle): the server's close (close_notify, its FIN, a failure) or bytes no request asked for (RFC 9112 section 9.2:
-     * "the client SHOULD close the connection") run [onSignal], which closes the connection in order when it is still
-     * idle. RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure
+     * "the client SHOULD close the connection [...] unless the data consists only of one or more CRLF (which can be
+     * discarded per Section 2.2)") run [onSignal], which closes the connection in order when it is still idle. Data of
+     * CRLFs only closes it too: the exception allows discarding them, it does not require it (Go's net/http closes on any
+     * byte as well). RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure
      * signal and respond to it as appropriate". Before, such a connection was seen only when it was next taken, at its
      * eviction or the engine's close, and stayed half-closed (CLOSE_WAIT) for up to `idleTimeout`. The same for TLS
      * and cleartext, direct or through a proxy (the input is the one the exchanges read).
@@ -162,18 +164,26 @@ internal class H1Connection(
         scope: CoroutineScope,
         onSignal: () -> Unit,
     ) {
-        watchLock.withLock {
-            if (idleWatch?.isActive == true) return
-            idleWatch =
-                scope.launch {
-                    try {
-                        input.awaitUnsolicited()
-                    } catch (_: Throwable) {
-                        // a failed or cancelled input is a closure signal too; this watch's own end is not (below)
-                    }
-                    if (isActive) onSignal()
+        // created and recorded under the lock, started after it: the watch never runs (nor resumes inline) while it is held
+        val watch =
+            scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    input.awaitUnsolicited()
+                } catch (_: Throwable) {
+                    // a failed or cancelled input is a closure signal too; this watch's own end is not (below)
                 }
-        }
+                if (isActive) onSignal()
+            }
+        val recorded =
+            watchLock.withLock {
+                if (idleWatch?.isActive == true) {
+                    false
+                } else {
+                    idleWatch = watch
+                    true
+                }
+            }
+        if (recorded) watch.start() else watch.cancel()
     }
 
     override suspend fun stopIdleWatch() {

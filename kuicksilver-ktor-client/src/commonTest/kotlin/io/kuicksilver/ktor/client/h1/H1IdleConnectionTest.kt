@@ -32,6 +32,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlinx.io.IOException
 import kotlinx.io.readString
 import kotlin.test.Test
@@ -158,8 +159,34 @@ class H1IdleConnectionTest {
                 assertSame(conn, pool.acquire("r"))
                 assertEquals(0, watchers.coroutineContext[Job]!!.children.count(), "the watch ended with the take")
                 wire.fromServer.flushAndClose()
+                watchesOver(watchers)
+                assertEquals(0, watchers.coroutineContext[Job]!!.children.count(), "a taken connection is watched no more")
                 assertFalse(conn.closed, "the pool closed a connection it had handed out")
                 assertEquals(1, pool.liveCount)
+            } finally {
+                watchers.cancel()
+            }
+        }
+
+    /**
+     * The other edge: the server ended the connection before it was released (its close came with the end of the
+     * response). The release itself sees it and closes the connection; nothing goes idle, and the slot comes back.
+     */
+    @Test fun negative_aConnectionTheServerEndedBeforeItsReleaseIsClosedByTheRelease() =
+        runTest {
+            val watchers = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            try {
+                val wire = Wire()
+                val pool = ConnectionPool<H1Connection>(KuicksilverEngineConfig().poolLimits(), watchers) { 0L }
+                assertNull(pool.acquire("r"))
+                val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "r")
+                pool.adopt(conn)
+                wire.fromServer.flushAndClose()
+                assertFalse(pool.release(conn), "a connection the server ended was kept")
+                watchesOver(watchers)
+                assertTrue(conn.closed)
+                assertEquals(0, pool.idleCount)
+                assertEquals(0, pool.liveCount, "its slot came back")
             } finally {
                 watchers.cancel()
             }
@@ -180,8 +207,22 @@ class H1IdleConnectionTest {
                 try {
                     val wire = Wire()
                     val (pool, conn) = watchedIdle(wire, watchers)
-                    val end = launch(Dispatchers.Default) { wire.fromServer.flushAndClose() }
-                    val got = async(Dispatchers.Default) { pool.acquire("r") }.await()
+                    // both sides start from one gate, and which one yields first alternates: either can win
+                    val go = CompletableDeferred<Unit>()
+                    val end =
+                        launch(Dispatchers.Default) {
+                            go.await()
+                            if (it % 2 == 0) yield()
+                            wire.fromServer.flushAndClose()
+                        }
+                    val take =
+                        async(Dispatchers.Default) {
+                            go.await()
+                            if (it % 2 == 1) yield()
+                            pool.acquire("r")
+                        }
+                    go.complete(Unit)
+                    val got = take.await()
                     end.join()
                     watchesOver(watchers)
                     if (got === conn) {
@@ -199,6 +240,7 @@ class H1IdleConnectionTest {
                 }
             }
             assertEquals(500, taken + closed)
+            assertTrue(taken >= 1 && closed >= 1, "both sides won at least once: taken $taken, closed $closed")
         }
 
     /** An idle connection with nothing to read is reused. */

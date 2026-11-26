@@ -2626,6 +2626,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConne
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.anEarlyResponseWithConnectionCloseStopsTheUpload
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.anImmediateCloseEndsAWriterWaitingForTheApplication
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.connectionIsIdleWhenTheBodyEnds
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_aConnectionTheServerEndedBeforeItsReleaseIsClosedByTheRelease
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_aFailedStreamedRequestBodyClosesTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_anIdleConnectionIsTakenOrClosedNeverBoth
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.H1IdleConnectionTest.negative_anIdleConnectionTheServerEndsIsClosedWhileIdle

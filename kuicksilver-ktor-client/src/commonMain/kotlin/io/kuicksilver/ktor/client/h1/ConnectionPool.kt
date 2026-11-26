@@ -314,6 +314,8 @@ internal class ConnectionPool<C : PooledConnection>(
         val kept =
             lock.withLock {
                 val r = routes[c.route]
+                // isOpen reads the connection's channels, which the peer's side moves on its own: a racy snapshot, and a benign
+                // one (a close or bytes that come after it are seen by the watch, which closes the connection while idle)
                 if (shutDown || r == null || !c.isOpen || expired(c, now())) {
                     toClose += c
                     return@withLock false
