@@ -214,7 +214,7 @@ val client = HttpClient(KuicksilverClient)
 ```
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
-(`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
+(`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS (`kuicksilver-ktor-network`; TLS 1.2 and 1.3 by default on the client, TLS 1.3 on the server) and HTTP/3
 (`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), on by default on both since
 0.3.0 ([HTTP/2 on the server](server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. Every Kotlin block of the engine pages is compiled, and most also run, in the
 test classes named `GuideSamplesTest`

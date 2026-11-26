@@ -34,6 +34,7 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 - [iOS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md): using Kuicksilver from iOS and Swift
 - [App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md): publishing an app that embeds Kuicksilver on the App Store
 - [Building from source](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/building.md): the native build scripts, adding your own compiler and flags (CC, CPPFLAGS, CFLAGS, LDFLAGS), and why releases are built without them
+- [Glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md): origin, alternative, Alt-Svc, route, race, broken alternative, ALPN, SPKI, ksl, accelerated and portable socket, loop, Initial and Retry, 4-tuple, connection ID, QUIC-LB, PROXY protocol
 - [Configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md): every option by configuration block with its type, default, release, stability status and security marker; the first-screen options of each engine, the configuration-file keys and the migration tables from 0.2.x
 - [Troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md): symptoms by exact error text or code (handshake timeout, certificate errors, ALPN mismatch, CONNECTION_REFUSED and connection limits, 0-RTT, HTTP/3 fallback reasons, HTTP/2 failures) with cause and action
 

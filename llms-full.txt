@@ -6,14 +6,19 @@ Features (each described in the guides below; experimental ones are marked so th
 
 ## Quickstart
 
-**What this page is for.** The shortest path to a first HTTP/3 request with the Ktor client engine and a first HTTP/3
-server with the Ktor server engine: the dependencies, one client, one server with a local test certificate, and what
-you get without configuring anything. Every Kotlin block on this page compiles with no opt-in (stable API only).
+**What this page is for.** A first HTTP/3 server with the Ktor server engine and a first HTTP/3 request with the Ktor
+client engine, on your machine: the dependencies, a local test certificate, the server, the client, and what each does
+without configuring anything. Every Kotlin block on this page compiles with no opt-in (stable API only).
 
 ### 1. Add the dependencies
 
-Kuicksilver needs Ktor 3.6.x (another Ktor version fails when the engine is created: [Install: Supported Ktor
-versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#supported-ktor-versions)), JVM 17 or newer, Android `minSdk` 24 or iOS 15.
+You need Kotlin 2.3 or newer (Kotlin/Native: 2.4.x), JVM 17 or newer (Android: `minSdk` 24; iOS 15) and Ktor 3.6.x:
+another Ktor version fails when the engine is created ([Install: Supported Ktor
+versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#supported-ktor-versions)).
+
+**0.3.0 is not published yet.** Until it is, the block below does not resolve: build the library from a checkout and
+depend on `0.3.0-SNAPSHOT` with `mavenLocal()`, which needs Docker (and Xcode on macOS) even for a JVM application
+([Install: Versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#versions) has the commands).
 
 <!-- guide-sync: not compiled (a Gradle build script) -->
 ```kotlin
@@ -27,55 +32,13 @@ dependencies {
 }
 ```
 
-0.3.0 is the release in preparation and is not on Maven Central yet: [Install: Versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#versions) says
-how to build it and which version to use until then. Android, Kotlin Multiplatform with iOS and Kotlin/Native setups:
-[Install: Gradle](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#gradle).
+Android, Kotlin Multiplatform with iOS and Kotlin/Native setups: [Install: Gradle](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#gradle).
 
-### 2. A client
+### 2. A server
 
-The imports of this page's client code:
-
-```kotlin
-// guide:quickstart:client-imports
-import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.kuicksilver.ktor.client.Kuicksilver
-import io.kuicksilver.tls.Certificate
-import io.kuicksilver.tls.TrustConfig
-import kotlinx.coroutines.delay
-import java.io.File
-import kotlin.time.Duration.Companion.seconds
-```
-
-```kotlin
-// guide:quickstart:client
-suspend fun main() {
-    val client = HttpClient(Kuicksilver) // name the engine: HttpClient() alone may pick another one
-    repeat(3) {
-        val response = client.get("https://example.com/")
-        println(response.version) // HTTP/2.0 (or HTTP/1.1) first; HTTP/3.0 once the server announced it
-        delay(1.seconds)
-    }
-    client.close()
-}
-```
-
-- **Name the engine.** `HttpClient()` without an argument takes the engine Ktor finds first, and the OkHttp and Android
-  engines come before Kuicksilver on the JVM and Android. In an app that already has `ktor-client-okhttp`, it is OkHttp
-  that answers, silently ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#httpclient-uses-another-engine)).
-- **The first request to a host goes over TCP.** The server announces HTTP/3 in an `Alt-Svc` header field of that
-  response. The next request races HTTP/3 against the TCP connection already open, which usually wins this once; from
-  then on the client's HTTP/3 connection to the host serves the requests. Your own API can skip the TCP-only start:
-  `engine { http3 { hints = setOf(HostPort("api.example.com", 443)) } }` ([configuration: first
-  screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-client)).
-- **Keep one client.** Create the `HttpClient` once and share it: it holds the connections, what it learned from `Alt-Svc`
-  and the TLS session tickets.
-
-### 3. A server
-
-The server needs a certificate chain and its private key as PEM files. On a real host they are usually certbot's
-`fullchain.pem` and `privkey.pem`. To try it locally, make a test CA and a certificate for `localhost` with an OpenSSL 3
-command line (on macOS `/usr/bin/openssl` is LibreSSL, which lacks `-copy_extensions`: use Homebrew's `openssl`):
+The server needs a certificate chain and its private key as PEM files. To try it locally, make a test CA and a
+certificate for `localhost` with an OpenSSL 3 command line (on macOS `/usr/bin/openssl` is LibreSSL, which lacks
+`-copy_extensions`: use Homebrew's `openssl`):
 
 ```sh
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout ca.key -out ca.pem -days 30 \
@@ -87,13 +50,10 @@ openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -days 30 -copy_extensi
 
 **The key must be unencrypted PKCS#8**: its file starts with `-----BEGIN PRIVATE KEY-----`, as the commands above write
 it. A key that starts with `BEGIN EC PRIVATE KEY` or `BEGIN RSA PRIVATE KEY` fails the start with `TlsException.Config`
-("expected exactly one PKCS#8 PRIVATE KEY block"); convert it once:
+("expected exactly one PKCS#8 PRIVATE KEY block"); convert it once with
+`openssl pkcs8 -topk8 -nocrypt -in key.pem -out privkey.pem`.
 
-```sh
-openssl pkcs8 -topk8 -nocrypt -in key.pem -out privkey.pem
-```
-
-The imports of this page's server code:
+The imports of this page's server code, then the server:
 
 ```kotlin
 // guide:quickstart:server-imports
@@ -126,42 +86,85 @@ curl --cacert ca.pem -i https://localhost:8443/              # Hello over HTTP/2
 curl --cacert ca.pem --http3-only https://localhost:8443/    # Hello over HTTP/3
 ```
 
-or with the client from step 2, trusting the test CA instead of the platform's store:
+Without configuring anything, the server speaks HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP of the same port, announces
+HTTP/3 with `Alt-Svc`, allows TLS 1.3 only (TLS 1.2 for old clients: `tls { versions }`), logs through Ktor's application
+log, and keeps 0-RTT and WebTransport off. A `tlsConnector` without a `host` listens on every interface, IPv6 and IPv4;
+Ktor's own `embeddedServer(..., port = ...)` connector listens on IPv4 `0.0.0.0` only.
+
+**On a real host**, certbot's `fullchain.pem` and `privkey.pem` take the place of the test files, with port 443:
+
+- Open the port for **both TCP and UDP** in the firewall and the cloud security group: with UDP closed, clients
+  quietly stay on HTTP/2.
+- Port 443 needs root, or the capability to bind it: run the server as its own user with `CAP_NET_BIND_SERVICE`
+  (systemd: `AmbientCapabilities=CAP_NET_BIND_SERVICE`).
+- certbot's `privkey.pem` is readable by root only. Give the server's user read access (a group with read access to
+  `/etc/letsencrypt/live` and `/etc/letsencrypt/archive`, or an ACL), or copy the files where it can read them from a
+  certbot deploy hook; `tls { reloadInterval }` picks up each renewal.
+
+More in [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md) (Docker, Kubernetes, load balancers) and, for the same server from
+`application.conf`, [Configuration file (EngineMain)](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-config-file.md).
+
+### 3. A client
+
+The imports of this page's client code:
 
 ```kotlin
-// guide:quickstart:local-client
-val client = HttpClient(Kuicksilver) {
-    engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(File("ca.pem").readText())) } }
+// guide:quickstart:client-imports
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.kuicksilver.ktor.client.Kuicksilver
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.delay
+import java.io.File
+import kotlin.time.Duration.Companion.seconds
+```
+
+The client below talks to the server of step 2, which surely announces HTTP/3, and trusts the test CA:
+
+```kotlin
+// guide:quickstart:client
+suspend fun main() {
+    val client = HttpClient(Kuicksilver) { // name the engine: HttpClient() alone may pick another one
+        engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(File("ca.pem").readText())) } }
+    }
+    repeat(3) {
+        println(client.get("https://localhost:8443/").version) // HTTP/2.0, then HTTP/3.0 from about the third request
+        delay(1.seconds)
+    }
+    client.close()
 }
 ```
 
-On a server, open the port for **both TCP and UDP** in the firewall and the cloud security group: with UDP closed,
-clients quietly stay on HTTP/2 ([Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md)). The same server from an
-`application.conf` with `EngineMain`: [Ktor: Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example).
+- **Name the engine.** `HttpClient()` without an argument takes the engine Ktor finds first, and the OkHttp, Android, Java,
+  Apache and Jetty engines come before Kuicksilver on the JVM and Android. In an app that already has `ktor-client-okhttp`,
+  it is OkHttp that answers, silently ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#httpclient-uses-another-engine)).
+- **HTTP/3 starts after the first request.** The first request to a host goes over TCP, and its response announces
+  HTTP/3 in an `Alt-Svc` header field. The second request races HTTP/3 against the TCP connection that is already open,
+  and TCP usually wins that one; from about the third request on, the HTTP/3 connection serves the requests. Your own API
+  can skip the TCP-only start with `engine { http3 { hints = setOf(HostPort("api.example.com", 443)) } }` (`HostPort` is
+  `io.kuicksilver.ktor.client.HostPort`; [configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-client)).
+- **A public host.** Drop the `engine { }` block, which trusts only the test CA: the client then trusts the platform's
+  store. If every response stays `HTTP/2.0`, the host does not announce HTTP/3 or UDP does not get through:
+  [troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it) tells which.
+- **Keep one client.** Create the `HttpClient` once and share it: it holds the connections, what it learned from `Alt-Svc`
+  and the TLS session tickets.
 
-### What you get by default
-
-- **HTTP/3 with a fallback.** The client starts on TCP, moves to HTTP/3 after `Alt-Svc`, and goes back to TCP when HTTP/3
-  fails (UDP blocked, a handshake timeout); the server announces HTTP/3 on its HTTP/2 and HTTP/1.1 responses.
-- **HTTP/2 on both sides**, chosen in the TLS handshake (ALPN), and HTTP/1.1 for peers without it.
-- **TLS 1.3 and the platform's trust store** on the client; TLS 1.3 only on the server (TLS 1.2: `tls { versions }`).
-- **Dual stack.** The server listens on every interface, IPv6 and IPv4; the client tries both address families
-  (Happy Eyeballs).
-- **Logging** through the platform's logger on the client (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
-  platforms), warnings and up, and through Ktor's application log on the server.
-- **Off until you opt in:** 0-RTT, connection migration on the client, WebTransport.
+Without configuring anything, the client falls back to TCP when HTTP/3 fails, speaks HTTP/2 or HTTP/1.1 over TCP, offers
+TLS 1.2 and 1.3 with the platform's trust store (TLS 1.2 with ECDHE key exchange and AEAD ciphers only; TLS 1.3 only is a
+`tls { versions }` setting), tries IPv6 and IPv4 addresses (Happy Eyeballs), logs warnings and up through the platform's
+logger (SLF4J on the JVM, which needs a binding such as `slf4j-simple`; Logcat on Android; `NSLog` on Apple platforms),
+and keeps 0-RTT and connection migration off.
 
 ### Next steps
 
-- The options most applications set, one table per engine: [configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen).
-- The client in an app: trust and pins, timeouts, Android and iOS: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md).
-- A request that should use HTTP/3 and does not:
-  [troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it).
-- Putting the server on the internet (ports, Docker, Kubernetes, load balancers): [Deploying the HTTP/3
-  server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md).
+- The options most applications set, one table per engine: [configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen),
+  and which setting controls what: [Which setting controls what](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#which-setting-controls-what).
+- The client in an app: timeouts, a private CA, Android and iOS: [Ktor client engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md); pins and client
+  certificates: [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md).
 - Coming from OkHttp or Retrofit: [Migrating from OkHttp and Retrofit](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/migrating-from-okhttp.md); from another Ktor engine:
   [Migrating from another Ktor engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/migrating-ktor-engines.md).
-- 0-RTT, and whether it is safe for your requests: [0-RTT](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/zero-rtt.md).
+- Words such as origin, alternative and route: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 
 ## Ktor engines
 
@@ -374,7 +377,7 @@ val client = HttpClient(KuicksilverClient)
 ```
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
-(`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
+(`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS (`kuicksilver-ktor-network`; TLS 1.2 and 1.3 by default on the client, TLS 1.3 on the server) and HTTP/3
 (`kuicksilver-http3`); both also speak HTTP/2 over TLS (`kuicksilver-http2`, ADR-0017), on by default on both since
 0.3.0 ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server)): one port serves HTTP/1.1, HTTP/2 and HTTP/3. Every Kotlin block of the engine pages is compiled, and most also run, in the
 test classes named `GuideSamplesTest`
@@ -598,7 +601,8 @@ timeouts, HTTP/2, h2c, the connection pool and coalescing, Happy Eyeballs and na
 
 **Before you start**
 
-- The first client: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#2-a-client). The options most clients set:
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
+- The first client: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#3-a-client). The options most clients set:
   [configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-client).
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 - Related pages: how the client finds and uses HTTP/3 in [HTTP/3 in the Ktor client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md); pins and client
@@ -752,8 +756,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
-- **TLS 1.2.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers `h2` too, and a server
-  without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
+- **TLS 1.2.** The client allows TLS 1.2 by default ([TLS versions on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#tls-versions-on-the-client))
+  and offers `h2` there too, so a server without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
   the TLS 1.2 suites of the profile, ECDHE with an AEAD (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 among them),
   none of which section 9.2.2 prohibits. Renegotiation stays refused: a server that asks for one (a HelloRequest) ends
   the connection with PROTOCOL_ERROR (section 9.2.1) and the calls on it fail with `Http2Exception.ConnectionClosed`
@@ -1070,7 +1074,7 @@ The contract (the KDoc of `Dns` has it in full):
 
 How the engine behaves in detail, for when a guide above is not enough.
 
-- `https://` and `wss://` go over TLS 1.3 with the same `tls { }` (trust, client certificate, versions, suites) whatever
+- `https://` and `wss://` go over TLS (1.3, or 1.2 over TCP with a server without 1.3) with the same `tls { }` (trust, client certificate, versions, suites) whatever
   the protocol;
   SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
   HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
@@ -1122,6 +1126,7 @@ connection migration between networks.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - In short: the first request to a host goes over TCP (HTTP/2 or HTTP/1.1); the server's `Alt-Svc` announces HTTP/3; the
   next request races HTTP/3 against the open TCP connection (TCP usually wins that one), and from then on the HTTP/3
   connection serves the requests; when HTTP/3 fails, the request goes over TCP.
@@ -1522,7 +1527,7 @@ without the application noticing. When HTTP/3 fails before the response headers,
 — always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
 (bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
 is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
-`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
+`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS settings. When a call ends before its body was read, the rest of the stream is abandoned
 with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
 `bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
 (`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
@@ -1536,6 +1541,7 @@ PAC files, an explicit proxy, credentials) and how HTTP/3 goes through a CONNECT
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - HTTP/3 never goes through an HTTP or SOCKS proxy: a request a proxy applies to goes over TCP.
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 
@@ -1755,7 +1761,8 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
 
 **Before you start**
 
-- The first server, with a local test certificate: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#3-a-server). The options most servers set:
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
+- The first server, with a local test certificate: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#2-a-server). The options most servers set:
   [configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-server).
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 - Related pages: certificates, client certificates and reload in [TLS in the Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md); a load balancer
@@ -2239,6 +2246,7 @@ name (`421 Misdirected Request`), and how it reads the client's address from the
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - Load balancers, Kubernetes, QUIC connection IDs and UDP behind them: [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md).
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 
@@ -2339,6 +2347,7 @@ on a TCP-mode backend). The rules ([ADR-0022](https://github.com/kuicksilver/kui
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - A complete example: [Ktor engines: Minimal example](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#minimal-example) and the
   [http3-server sample](https://github.com/kuicksilver/kuicksilver/blob/main/samples/http3-server/README.md). Every option with its key: [configuration: HOCON
   keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#hocon-keys).
@@ -2444,7 +2453,8 @@ Encrypted Client Hello.
 
 **Before you start**
 
-- A server certificate from PEM files, and a local test certificate: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#3-a-server). Trust and
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
+- A server certificate from PEM files, and a local test certificate: [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#2-a-server). Trust and
   certificates below the engines (`TrustConfig`, `TlsIdentity`, TLS over a socket): [TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md).
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
 
@@ -2475,7 +2485,7 @@ A pin is `sha256/` and the base64 SHA-256 of the key's SubjectPublicKeyInfo, the
 uses. From the server's certificate:
 
 ```sh
-openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64
+echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
 - The pins hold for every host the client talks to: give a pinned API a client of its own.
@@ -2755,6 +2765,14 @@ ticket of another name, or after the selector started answering with another cer
 (`http3 { earlyData { enabled } }` applies to the other names). Requests on a connection must be for the name its identity was chosen for:
 see [Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#misdirected-requests).
 
+### TLS versions on the client
+
+The client offers TLS 1.2 and TLS 1.3 by default, over TCP; the server picks the highest both speak. TLS 1.2 runs under
+a fixed profile: ECDHE key exchange with AES-GCM or ChaCha20-Poly1305 (AEAD) suites only, so a server that offers only CBC
+suites or static RSA key exchange fails the handshake. TLS 1.3 only (`Tls13Only` in `tls { versions }`) refuses TLS 1.2
+servers instead; Encrypted Client Hello needs it ([below](#encrypted-client-hello-experimental)). HTTP/3 is always TLS
+1.3 (QUIC). A server that fails: [troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only).
+
 ### TLS 1.2 on the server
 
 A TLS connector speaks TLS 1.3 only by default: a client without it is refused with a `protocol_version` alert.
@@ -2845,8 +2863,9 @@ val client =
   TCP; the TLS (or QUIC) hop to an `https://` or CONNECT-UDP proxy has a ClientHello of its own, which never offers the
   origin's configuration: it sends GREASE as `tls { ech { grease } }` says, and `proxies { tls { ech { configLists } } }`
   may set the proxy's own (its entry for the proxy's host is what that hop offers). A rejection on that hop fails the request as a proxy failure, never as a retry of the origin's ECH.
-- **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
-  the engine's creation and the records' `ech` is not used.
+- **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, as the default
+  does, `configLists` fails the engine's creation and the records' `ech` is not used; set `tls { versions }` to TLS 1.3
+  only (`Tls13Only`).
 - **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
   given for a host never turns into GREASE with the host's name in the clear. The engine builds each entry's client
@@ -2909,6 +2928,7 @@ WebTransport sessions on the server and the client, and request priorities.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports). WebTransport below the engines: [HTTP/3:
   WebTransport](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#webtransport-experimental).
 
@@ -3301,6 +3321,7 @@ request did not use HTTP/3, which connection served it, and why a call failed.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - The engines log through `observability { logger }`: the platform's logger on the client (warnings and up), Ktor's
   application log on the server.
 - The imports of the code blocks: [Ktor engines: Imports](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#imports).
@@ -3622,6 +3643,7 @@ name their own switches ([Without Ktor](#without-ktor)).
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - 0-RTT is experimental (`@ExperimentalKuicksilverApi`): the code on this page needs
   `@file:OptIn(ExperimentalKuicksilverApi::class)` ([stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md#stability-levels)). The design is in
   [ADR-0015](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0015-0rtt-implementation.md).
@@ -3644,8 +3666,9 @@ and only requests that are safe to run twice may.
   connection. Keep one `HttpClient` for the life of the process;
 - the requests are not GET, HEAD or OPTIONS without a body: everything else waits for the handshake anyway;
 - the server asks for client certificates (mutual TLS), which 0-RTT cannot carry;
-- the server's configuration changed since the ticket was issued (ALPN, transport limits, HTTP/3 SETTINGS, its
-  certificate): the next handshake is a full one.
+- the server's configuration changed since the ticket was issued: with other ALPN, transport limits or HTTP/3 SETTINGS
+  the connection still resumes, in 1-RTT, and only its early data is refused; under another certificate the ticket
+  resumes nothing and the handshake is a full one.
 
 ### The client
 
@@ -3760,8 +3783,9 @@ A replay can only repeat requests the policy runs early, and the server also lim
    every `http3 { endpoint { loops } }` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is
    refused and the handshake goes on in 1-RTT: it fails closed.
 3. **The configuration that issued the ticket.** A ticket allows 0-RTT only for the same ALPN, transport parameters and
-   HTTP/3 SETTINGS, and only under the certificate it was issued with, so after a [certificate
-   reload](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-rotation) old tickets resume nothing.
+   HTTP/3 SETTINGS (otherwise the connection resumes in 1-RTT without its early data), and resumes only under the
+   certificate it was issued with, so after a [certificate reload](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-rotation) old tickets resume
+   nothing.
 4. **The handshake.** A replayed flight never completes the handshake, so what waits for it, or got a 425, never runs
    from a replay.
 
@@ -3812,6 +3836,7 @@ work: ports, firewalls, containers, load balancers, certificates, host settings 
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - A server built with `io.kuicksilver:kuicksilver-ktor-server` (version `0.3.0` or newer) and Ktor 3.6.x, on JVM 17 or
   newer or as a Kotlin/Native server on Linux, macOS or Windows ([Platforms](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md#platforms)).
 - A certificate chain and private key (PEM) for the host name clients use. HTTP/3 uses the same certificate as TLS over TCP.
@@ -3841,7 +3866,7 @@ import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 
 This guide is for running `embeddedServer(Kuicksilver)` in production with HTTP/3 working: what has to reach the server,
 what the host and the network in front of it need, and how to check from both ends why a client does or does not use
-HTTP/3. The engine's options are in [Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md) and the
+HTTP/3. The engine's options are in [Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md) and the
 [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-server); error messages are in
 [troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md). This page links there instead of repeating them.
 
@@ -3859,7 +3884,7 @@ documentation before you rely on them.
 3. The client opens QUIC to that UDP port. The TLS handshake there uses the origin's host name (SNI) and checks the
    same certificate, with ALPN `h3`.
 4. The client caches the alternative. If UDP does not get through it falls back to TCP; the Kuicksilver client then
-   marks the alternative broken for a while ([Ktor: Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback)).
+   marks the alternative broken for a while ([Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback)).
 
 So the TCP port, the UDP port, the `Alt-Svc` header and the certificate all have to work for HTTP/3. When one of them
 is missing, clients quietly stay on HTTP/2 or HTTP/1.1.
@@ -3873,7 +3898,7 @@ identity (with `EngineMain`, the `kuicksilver.tls.*` keys). A Kuicksilver connec
 clients arriving as IPv4-mapped addresses, or `0.0.0.0` on a host without IPv6, which the start logs at Info ("no IPv6 on
 this host, so every interface is every IPv4 one (0.0.0.0)"); `host = "0.0.0.0"` keeps IPv4 alone. The deployment port of
 `EngineMain` without `ktor.deployment.host` does the same; Ktor's own `connector { }` keeps Ktor's default, `0.0.0.0`. The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
-([Ktor: HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
+([HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
 `<port>/udp` everywhere on the way.
 
 The engine's `Alt-Svc` names the port it bound, `h3=":<bound port>"` (no host: the same host as the request).
@@ -3911,7 +3936,7 @@ The sample also sends its header on HTTP/3 responses, where the engine sends non
 client already uses.
 
 The client side has its own rule: the Kuicksilver client ignores an alternative on an unprivileged port (1024 and up) for
-an origin on a privileged one, as Chromium does ([Ktor: Discovery and Alt-Svc](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#discovery-and-alt-svc)).
+an origin on a privileged one, as Chromium does ([Discovery and Alt-Svc](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#discovery-and-alt-svc)).
 So for an origin on `https://host/` (port 443), HTTP/3 must also be reachable on a port below 1024, in practice UDP 443.
 
 `ma=86400` means clients remember the alternative for a day. To withdraw HTTP/3, use `Clear` or `Drain` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)), which
@@ -3940,7 +3965,7 @@ request; for a port other than 443 the name is `_<port>._https.<host>`.
   network ACL needs an outbound rule for UDP from the port to the clients' ports.
 - Many corporate and guest networks block UDP 443 on the client side. You cannot fix that from the server. Clients
   fall back to TCP: the Kuicksilver client reports `FallbackReason.HandshakeTimeout` and then `BrokenAlternative`
-  ([Ktor: Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)).
+  ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)).
 
 ### Containers
 
@@ -4073,7 +4098,7 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
   tokens are also bound to the address the server sees.
-- **Rolling updates.** A graceful stop already does what an HTTP/3 client needs ([Ktor: Graceful stop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#graceful-stop)):
+- **Rolling updates.** A graceful stop already does what an HTTP/3 client needs ([Graceful stop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#graceful-stop)):
   GOAWAY to every live HTTP/3 connection, and new QUIC clients refused with CONNECTION_REFUSED (under the stateless rate
   limit) instead of timing out. Stop the server with Ktor's `shutdownGracePeriod` and `shutdownTimeout`; the larger of the
   two bounds the stop (keep the timeout ≥ the grace period), so keep the `preStop` delay plus `shutdownTimeout` below
@@ -4081,7 +4106,7 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   Clients like the Kuicksilver client recover quickly: it treats `CONNECTION_REFUSED` as transient, and a connection
   the pod closes with H3_NO_ERROR after its GOAWAY (at the end of the grace period) as an orderly end; either way the affected call falls
   back to TCP once (when it may be repeated) and the next one tries HTTP/3 again, which another pod may take. Neither
-  marks the alternative broken ([Ktor: Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback); before 0.3.0 both did, for 5
+  marks the alternative broken ([Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback); before 0.3.0 both did, for 5
   minutes doubling up to 2 days). Switching a pod to `Http3Advertising.Drain` before it stops has a cost: its responses send
   `Alt-Svc: clear` for the whole origin, not just that pod, so clients that get one drop the alternative until another
   response announces it again. Use `Drain` to take HTTP/3 out of service, not for routine restarts.
@@ -4274,7 +4299,7 @@ it gets:
 | JVM portable socket (when `ksl` is not used) | 8 MiB | the same OS limits |
 
 Kuicksilver does not read the size back, does not log it, and does not use `SO_RCVBUFFORCE`. The engine has no option
-for it ("UDP socket buffer sizes are not configurable yet", [Ktor: HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)).
+for it ("UDP socket buffer sizes are not configurable yet", [HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)).
 On Linux, raise the limits so the request is granted in full (values in bytes; 8 MiB, 8 388 608, covers the 7 MiB of
 the `ksl` socket and the 8 MiB of the JVM portable socket):
 
@@ -4324,10 +4349,10 @@ are covered by black-hole detection ([QUIC: Path MTU](https://github.com/kuicksi
 - One identity serves both sides: the same chain and key over TCP and over QUIC. The certificate must cover the host
   name clients use for the origin. The alternative in `Alt-Svc` has no host of its own, so the name is the same.
 - A `tlsConnector` with an `sniSelector` picks each name's identity on TCP and QUIC alike, so the `Alt-Svc` of a name's
-  TCP responses leads to a QUIC handshake that presents that name's certificate ([Ktor: Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-per-name-sni)).
+  TCP responses leads to a QUIC handshake that presents that name's certificate ([Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-per-name-sni)).
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or `tls { pemFiles(chain, key); reloadInterval = 1.hours }`
   in code, or with `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
-  `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-rotation),
+  `kuicksilver.tls.privateKey` ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-rotation),
   [TLS: Rotating the server certificate](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)). Handshakes whose ClientHello arrives
   after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.
 - The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as
@@ -4340,7 +4365,7 @@ are covered by black-hole detection ([QUIC: Path MTU](https://github.com/kuicksi
 ### Turning HTTP/3 off without a restart
 
 On the server, `engine.http3Advertising` (experimental) is read per response and per new QUIC client
-([Ktor: Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server)):
+([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server)):
 
 | Value | Use it when |
 |---|---|
@@ -4355,7 +4380,7 @@ set it on every instance.
 
 On the client, an application can switch HTTP/3 off from its remote configuration with `http3 { allowed }` and take
 open connections out of use with `client.closeHttp3Connections()`
-([Ktor: Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#turning-http3-off-remotely)).
+([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#turning-http3-off-remotely)).
 
 ### Security limits
 
@@ -4380,7 +4405,7 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
   HTTP/2 alike ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connection-limits)).
 - **Transport and HTTP/3 settings.** `http3 { quic { } }` (idle timeout, windows, congestion control), `http3 { settings { } }`,
   `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `tcp { idleTimeout }` against slow clients
-  ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md)).
+  ([Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md)).
 
 #### QUIC connection limits
 
@@ -4456,7 +4481,7 @@ kuicksilver.http3.endpoint {
   `maxConnections` or `maxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
   `connectionsRefusedAcceptQueue` the accept queue, `connectionsRefusedAdmission` the admission policy.
 
-See [Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md) for a sample of the listeners. A debug log or a packet
+See [Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md) for a sample of the listeners. A debug log or a packet
 capture answers the same question without code.
 
 ### Checking a deployment
@@ -4483,10 +4508,14 @@ chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)). The repository runs
 engine in a container (`tools/check/deployment-guide.sh`), so the commands stay current.
 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
-`response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
-([Ktor: Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). Keep in mind that in `Auto`
-mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a `FileAltSvcStore` remembers the
-alternative from an earlier run; HTTP/3 starts from the next call.
+`response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
+the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
+alternative, a proxy); a call to an origin that never announced HTTP/3 (`NoAlternative`) is logged at `Debug` only
+([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). So: `NoAlternative` on
+every call, and no line at `Info`, is a server that sends no `Alt-Svc` (check it with the curl lines above); a line at
+`Info` with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot
+reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
+`FileAltSvcStore` remembers the alternative from an earlier run.
 
 ### Troubleshooting checklist
 
@@ -4520,7 +4549,9 @@ Ktor engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/mig
   keeps working as before, without HTTP/3, so both can live in one app while you move it piece by piece.
 - Dependencies as in the [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#1-add-the-dependencies) (the client engine and Ktor 3.6.x). The
   Ktor plugins below (`HttpTimeout`, `HttpRequestRetry`, `HttpCookies`, `HttpCache`) are in `ktor-client-core`.
-- Every Kotlin block on this page compiles with no opt-in (stable API only).
+- Every Kuicksilver block on this page compiles with no opt-in (stable API only). `currentPin`, `backupPin` and `token()` stand
+  for your own values: the pins of your server's keys (made as in [Certificate pinning](#certificate-pinning)) and your
+  access token.
 
 ### The same client, side by side
 
@@ -4555,6 +4586,8 @@ import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TrustConfig
@@ -4585,12 +4618,14 @@ val client = HttpClient(Kuicksilver) {
         socketTimeoutMillis = 15_000    // readTimeout and writeTimeout: time without progress
         requestTimeoutMillis = 60_000   // callTimeout
     }
-    install(HttpRequestRetry) { retryOnException(maxRetries = 2) }   // your own retries
+    install(HttpRequestRetry) {   // your own retries: GET only, a POST is never sent twice
+        retryOnExceptionIf(maxRetries = 2) { request, _ -> request.method == HttpMethod.Get }
+    }
     install(HttpCookies)   // cookieJar
     install(HttpCache)     // cache, in memory
-    install(createClientPlugin("Auth") {
-        // addInterceptor: an application interceptor that adds a header
-        onRequest { request, _ -> request.headers.append("Authorization", "Bearer ${token()}") }
+    install(createClientPlugin("BearerHeader") {
+        // addInterceptor: an application interceptor that sets a header
+        onRequest { request, _ -> request.headers[HttpHeaders.Authorization] = "Bearer ${token()}" }
     })
 }
 ```
@@ -4609,28 +4644,33 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 
 | OkHttp | Kuicksilver and Ktor | Notes |
 |---|---|---|
-| `connectTimeout` | `engine { connectTimeout }`, or `HttpTimeout`'s `connectTimeoutMillis` | covers DNS, the pool wait, TCP and TLS or the QUIC handshake; 10 s by default, as OkHttp's |
+| `connectTimeout` | `HttpTimeout`'s `connectTimeoutMillis`, else `engine { connectTimeout }` | `HttpTimeout`'s wins when set; covers DNS, the pool wait, TCP and TLS or the QUIC handshake; 10 s by default, as OkHttp's |
 | `readTimeout`, `writeTimeout` | `HttpTimeout`'s `socketTimeoutMillis` | one inactivity timeout for both directions; **none by default** (OkHttp: 10 s), so install `HttpTimeout` |
-| `callTimeout` | `HttpTimeout`'s `requestTimeoutMillis` | |
-| `certificatePinner` | `tls { trust = TrustConfig.Pinned(pins, base = TrustConfig.Platform) }` | same `sha256/<base64>` text; see [Certificate pinning](#certificate-pinning) for two differences |
-| `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) }` | a private CA; [TLS: Trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#trust) has every variant |
+| `callTimeout` | `HttpTimeout`'s `requestTimeoutMillis`, or `withTimeout { }` around the call | `requestTimeoutMillis` holds for each request sent (a redirect or a retry starts it again); OkHttp's covers the whole call, as `withTimeout` does |
+| `connectionSpecs` (TLS versions, suites) | `engine { tls { versions; cipherSuites } }` | TLS 1.2 and 1.3 by default, as OkHttp's; TLS 1.2 only with ECDHE key exchange and AEAD suites (OkHttp's default also takes some CBC suites); TLS 1.3 only is a `versions` setting (`Tls13Only`); HTTP/3 is always TLS 1.3 |
+| `certificatePinner` | `tls { trust = TrustConfig.Pinned(pins, base = TrustConfig.Platform) }` | same `sha256/<base64>` text; see [Certificate pinning](#certificate-pinning) for the differences |
+| `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) }`; on the JVM `TrustConfig.fromTrustManager(trustManager)` | a private CA; [TLS: Trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#trust) has every variant |
+| `sslSocketFactory` with a `KeyManager` (a client certificate) | `tls { identity = TlsIdentity.fromPem(…) }`; on the JVM `TlsIdentity.fromKeyStore` or `fromPkcs12` | [Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates) |
 | `hostnameVerifier` | none | the host name is always checked (RFC 9525); `TrustConfig.ExpectedName` checks another name |
-| `connectionPool` | `engine { pool { } }` | [Ktor: Connection pool](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#connection-pool) compares the defaults |
+| `connectionPool` | `engine { pool { } }` | the pool belongs to one `HttpClient`: two clients never share connections, where OkHttp clients made with `newBuilder()` share one pool; [Connection pool](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#connection-pool) compares the defaults |
 | `dispatcher.maxRequests`, `maxRequestsPerHost` | `pool { maxConnections; maxConnectionsPerRoute }` | these limit connections, not requests; HTTP/2 and HTTP/3 carry many requests on one |
-| `protocols(listOf(Protocol.HTTP_1_1))` | `engine { http2 { enabled = false } }` | HTTP/2 is on by default, as in OkHttp |
-| `retryOnConnectionFailure` | built in | the engine repeats an idempotent request once when a pooled connection turns out closed, and a request HTTP/3 failed goes over TCP; anything else: `HttpRequestRetry` |
-| `followRedirects`, `followSslRedirects` | `followRedirects` in `HttpClient { }` | on by default |
-| `addInterceptor` | a client plugin: `createClientPlugin` (`onRequest`, `onResponse`), or `plugin(HttpSend).intercept` to send again | Ktor's custom client plugins |
+| `protocols(listOf(Protocol.HTTP_1_1))` | `engine { http2 { enabled = false }; http3 { enabled = false } }` | HTTP/2 and HTTP/3 are both on by default; `http2 { enabled = false }` alone still lets HTTP/3 in |
+| `retryOnConnectionFailure` | built in | the engine repeats an idempotent request once when a pooled connection turns out closed; a request HTTP/3 failed goes over TCP when it cannot have reached the server, or when it is idempotent and its body can be sent again; anything else: `HttpRequestRetry`, whose `retryOnException` repeats every method, POST included |
+| `followRedirects`, `followSslRedirects` | `followRedirects` in `HttpClient { }` (Ktor's `HttpRedirect`) | on by default; Ktor follows redirects of GET and HEAD only and never from `https` to `http`, where OkHttp turns a POST into a GET on 301, 302 and 303 |
+| `addInterceptor` | a client plugin: `createClientPlugin` (`onRequest`, `onResponse`), or `plugin(HttpSend).intercept` to send again | Ktor's custom client plugins; give yours a name of its own (Ktor's `Auth` plugin exists) |
+| `HttpLoggingInterceptor` | Ktor's `Logging` plugin (`ktor-client-logging`) | |
 | `addNetworkInterceptor` | none | there is no hook between the engine and the wire; to observe, use the event listener (next row) |
-| `eventListener` | `engine { observability { eventListener } }` (experimental) | `KuicksilverEventListener`: `callStart`, `callEnd`, `callFailed`, `dnsStart`, `dnsEnd`, `connectionAcquired` and more ([Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md)) |
+| `eventListener` | `engine { observability { eventListener } }` (experimental) | `KuicksilverEventListener`: `callStart`, `callEnd`, `callFailed`, `dnsStart`, `dnsEnd`, `connectionAcquired` and more ([Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md)) |
 | `authenticator` (answers 401) | Ktor's `Auth` plugin (`ktor-client-auth`) | |
-| `proxy`, `proxySelector`, `proxyAuthenticator` | Ktor's `proxy`; `engine { proxies { resolver; credentials } }` (experimental) | the system proxy settings are used by default; HTTP/3 never goes through an HTTP proxy ([Ktor: Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies)) |
+| `proxy`, `proxySelector` | Ktor's `proxy`; `engine { proxies { resolver } }` (experimental) | the system proxy settings are used by default; HTTP/3 never goes through an HTTP or SOCKS proxy, only through a CONNECT-UDP one ([Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#proxies)) |
+| `proxyAuthenticator` | `engine { proxies { credentials } }` (experimental) | Basic credentials sent with the first request to the proxy; a 407 challenge is not answered, and Digest and NTLM are not supported |
 | `dns` | `engine { network { dns } }` (experimental) | |
 | `cookieJar` | `install(HttpCookies)` | in memory by default; your own `CookiesStorage` to keep them |
-| `cache` | `install(HttpCache)` | in memory by default |
+| `cache` | `install(HttpCache)` | in memory and without a size limit by default (OkHttp's `Cache` is on disk, with a maximum size); give it a storage of your own for anything large |
 | `pingInterval` | `install(WebSockets) { pingIntervalMillis }` for WebSockets; `engine { http2 { pingInterval } }` for HTTP/2 connections | |
 | `MockWebServer` in tests | Ktor's `MockEngine`, or a local Kuicksilver server | a `MockEngine` test does not run Kuicksilver |
-| Android Network Security Config | honoured | cleartext rules for `http://`, and the trust anchors through the platform's `TrustManager` ([TLS: Platform trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#platform-trust)) |
+| Android Network Security Config | honoured with the default trust | cleartext rules for `http://`; with `TrustConfig.Platform` (the default) its trust anchors and `<pin-set>` through the platform's `TrustManager` ([TLS: Platform trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#platform-trust)); another trust, `AnchoredCa` say, does not read them |
+| Android `minSdk` | 24 | the AAR brings its native library for three ABIs, its R8 rules (applied as consumer rules) and the `INTERNET` and `ACCESS_NETWORK_STATE` permissions (merged into your manifest) |
 
 ### Certificate pinning
 
@@ -4638,30 +4678,35 @@ The pins are the same text as OkHttp's: `sha256/` and the base64 SHA-256 of the 
 certificate file:
 
 ```sh
-openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64
+echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
-Two differences from `CertificatePinner`:
+Two differences from `CertificatePinner`, and a consequence:
 
 - **The pins hold for every host the client talks to.** OkHttp pins per host name; `TrustConfig.Pinned` is the trust of
   the whole client. Give your pinned API a client of its own, and use a client with the default trust for everything
   else.
+- **A redirect to another host** (a CDN, a sign-in host) meets the same pins, and fails unless one of them matches that
+  host's key too.
 - **The leaf's key by default.** OkHttp accepts a pin that matches any certificate of the chain; `Pinned` matches the
-  server's own certificate unless `scope = PinScope.AnyInValidatedChain` (an intermediate CA's key, say).
+  server's own certificate unless `scope = PinScope.AnyInValidatedChain` (`io.kuicksilver.tls.PinScope`; an
+  intermediate CA's key, say).
 
 The chain is still verified against `base`, the pins come on top, and they hold over HTTP/3 and the TCP fallback alike
-([Ktor: Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)). Pin a backup key you hold offline, or a key change locks
+([Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)). Pin a backup key you hold offline, or a key change locks
 the app out until it is updated.
 
 ### What is different
 
-- **HTTP/3.** The first request to a host goes over TCP (HTTP/2 or HTTP/1.1); from the next one on the client uses
-  HTTP/3 when the server announced it with `Alt-Svc`. `engine { http3 { hints } }` names your own API's hosts to use
+- **HTTP/3.** The first request to a host goes over TCP (HTTP/2 or HTTP/1.1); once the server announced HTTP/3 with
+  `Alt-Svc`, the next request races it against TCP, and the HTTP/3 connection serves the requests after that. `engine { http3 { hints } }` names your own API's hosts to use
   HTTP/3 from the first request ([configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-client)).
 - **Timeouts.** Without `HttpTimeout` only the connect timeout applies: a server that accepts the connection and then
   says nothing keeps the call waiting.
-- **Name the engine.** `HttpClient()` without an argument picks the OkHttp engine when `ktor-client-okhttp` is on the
-  class path. Write `HttpClient(Kuicksilver)`.
+- **Name the engine.** `HttpClient()` without an argument picks the OkHttp, Android, Java, Apache or Jetty engine when
+  one of them is on the class path. Write `HttpClient(Kuicksilver)`.
+- **TLS.** TLS 1.2 and 1.3, as with OkHttp, but TLS 1.2 only with ECDHE and AEAD suites: a server that offers only CBC
+  or RSA key exchange suites fails the handshake ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#a-ktor-client-call-failed-over-which-transport)).
 - **Ktor's version.** Kuicksilver needs Ktor 3.6.x ([Install: Supported Ktor versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#supported-ktor-versions)).
 
 ### Retrofit
@@ -4680,7 +4725,7 @@ Retrofit builds its calls on OkHttp, and Kuicksilver cannot be put under it. Thr
 
 Not supported: a Retrofit `callFactory` backed by Kuicksilver. None exists, and writing one means implementing OkHttp's
 `Call` on top of Ktor; we do not provide or recommend it. Libraries that take an `OkHttpClient` (image loaders, SDKs)
-keep their own OkHttp; some image loaders can fetch through a Ktor client instead (Coil 3 has a Ktor network module).
+keep their own OkHttp; some image loaders can fetch through a Ktor client instead (Coil 3, for one, documents a Ktor-based network fetcher; check its current documentation).
 
 ## Migrating from another Ktor engine
 
@@ -4695,7 +4740,7 @@ routes, plugins and client calls do not change. Apps that call OkHttp directly, 
   version moves to 3.6 first ([Install: Supported Ktor versions](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#supported-ktor-versions)).
 - Dependencies as in the [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#1-add-the-dependencies). Remove the old engine's artifact
   (`ktor-client-okhttp`, `ktor-server-netty`...) when nothing else uses it.
-- Every Kotlin block on this page compiles with no opt-in (stable API only). The engines are
+- Every Kotlin block on this page that shows Kuicksilver compiles with no opt-in (stable API only). The engines are
   `io.kuicksilver.ktor.client.Kuicksilver` and `io.kuicksilver.ktor.server.Kuicksilver`: two objects with the same name.
 
 ### The client engine
@@ -4714,22 +4759,25 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-- **Name the engine.** `HttpClient()` without an argument picks the OkHttp or Android engine over Kuicksilver when they
-  are on the class path. Pass `Kuicksilver` everywhere a client is created, and drop the other engine's dependency if
+- **Name the engine.** `HttpClient()` without an argument picks the OkHttp, Android, Java, Apache or Jetty engine over
+  Kuicksilver when one of them is on the class path. Pass `Kuicksilver` everywhere a client is created, and drop the other engine's dependency if
   nothing else needs it.
 - **Timeouts** go through Ktor's `HttpTimeout` plugin, as with every engine; without it the engine's own
-  `connectTimeout` (10 s) applies and nothing else. CIO's `requestTimeout` is `HttpTimeout`'s `requestTimeoutMillis`;
+  `connectTimeout` (10 s) applies and nothing else. CIO's engine has a `requestTimeout` of its own, 15 s by default, that
+  is lost in the swap: set `HttpTimeout`'s `requestTimeoutMillis` to keep it;
   the Android engine's `connectTimeout` and `socketTimeout` are `connectTimeoutMillis` and `socketTimeoutMillis`.
 - **The engine's own settings** move to blocks of `engine { }`:
 
 | Old engine setting | Kuicksilver |
 |---|---|
-| CIO `maxConnectionsCount`, `endpoint { maxConnectionsPerRoute; keepAliveTime }` | `pool { maxConnections; maxConnectionsPerRoute; idleTimeout }` (the same defaults, but the idle timeout: 5 min, CIO's is 5 s) |
+| CIO `maxConnectionsCount`, `endpoint { maxConnectionsPerRoute; keepAliveTime }` | `pool { maxConnections; maxConnectionsPerRoute; idleTimeout }`: the limits have CIO's defaults (1000, 100); an idle connection stays 5 min, where CIO keeps it 5 s |
 | CIO `endpoint { connectTimeout }`, `https { trustManager }` | `connectTimeout`; `tls { trust }` |
 | OkHttp `config { }`, `preconfigured` | the settings themselves: [Migrating from OkHttp](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/migrating-from-okhttp.md#setting-by-setting) |
 | Android `sslManager` | `tls { trust }`; the platform's trust, including the Network Security Config, is the default |
-| Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Ktor: Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)) |
+| Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)) |
 | Darwin `configureSession` | none: Kuicksilver does not use `URLSession` ([iOS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md)) |
+| Darwin and App Transport Security | ATS governs `URLSession`, not Kuicksilver's own sockets: its `Info.plist` exceptions do nothing here, and an `http://` URL is not blocked by ATS ([App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md)) |
+| TLS versions | the client offers TLS 1.2 and 1.3 by default, TLS 1.2 with ECDHE and AEAD suites only; TLS 1.3 only is a `tls { versions }` setting (`Tls13Only`) |
 | `proxy` | the same Ktor `proxy`; HTTP/3 never goes through an HTTP proxy |
 | `pipelining`, `threadsCount` | not used |
 
@@ -4758,24 +4806,55 @@ embeddedServer(Kuicksilver, configure = {
   CIO do: behind a TLS-terminating proxy, for instance. HTTP/3 needs TLS on the server itself, so it needs a
   `tlsConnector` or an identity in `tls { }`.
 - **TLS.** `tls { pemFiles(...) }` reads the chain and the key (unencrypted PKCS#8, `-----BEGIN PRIVATE KEY-----`;
-  [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#3-a-server) converts another key format), and `tls { reloadInterval }` picks up renewed
+  [Quickstart](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quickstart.md#2-a-server) converts another key format), and `tls { reloadInterval }` picks up renewed
   files. On the JVM, Ktor's `sslConnector(keyStore, ...)` and the `ktor.security.ssl.*` keys still work, as in the Netty
-  and Jetty engines ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md)).
+  and Jetty engines, TLS 1.3 only unless its `enabledProtocols` names `TLSv1.2` and `TLSv1.3`
+  ([Ktor server engine](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md)).
 - **`EngineMain`.** Set `mainClass` to `io.kuicksilver.ktor.server.EngineMain`. The `ktor.deployment.*` keys keep their
-  meaning; the engine's own keys are under `kuicksilver.` and follow the DSL, and an unknown key under `kuicksilver.`
-  fails the start ([Ktor: EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-config-file.md#enginemain-and-configuration-keys)).
+  meaning, with two differences: a port without `ktor.deployment.host` listens on every interface, IPv6 and IPv4 (Netty
+  and CIO: IPv4 `0.0.0.0`), and `ktor.deployment.connectionIdleTimeoutSeconds` is the engine's `tcp { idleTimeout }`
+  (45 s). The engine's own keys are under `kuicksilver.` and follow the DSL, and an unknown key under `kuicksilver.`
+  fails the start ([Configuration file (EngineMain)](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-config-file.md)).
 - **Open UDP.** HTTP/3 needs the port open for UDP next to TCP, in the firewall, the security group and the container's
   port mappings ([Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md)).
 - **What does not change:** the application, its routes and plugins (`StatusPages`, `CallLogging`, `WebSockets`,
-  `ContentNegotiation`...). Ktor's engine contract tests run against Kuicksilver ([Ktor:
+  `ContentNegotiation`...). Ktor's engine contract tests run against Kuicksilver ([Ktor engines:
   Compatibility](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#compatibility)).
 - **What differs:**
-  - TLS 1.3 only by default: `tls { versions = TlsVersions.Tls12And13 }` for old clients.
-  - Limits that Netty and CIO do not have: a 30 s deadline for a complete request head (`requestHeaderTimeout`), at
+  - TLS 1.3 only by default on the server: `tls { versions = TlsVersions.Tls12And13 }` for old clients.
+  - Limits the other engines do not set: a 30 s deadline for a complete request head (`requestHeaderTimeout`), at
     most 256 QUIC connections per client address (`http3 { endpoint { maxConnectionsPerIp } }`, `null` behind a NAT
     or kube-proxy) ([configuration: first screen](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#first-screen-ktor-server)).
   - `call.request.local.remoteHost` is an IP literal: the engine makes no reverse DNS lookup.
-  - The engine cannot be a CONNECT proxy.
+  - The engine cannot be a CONNECT proxy for TCP tunnels; it can be a CONNECT-UDP proxy for HTTP/3
+    ([CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connect-udp-over-http3-experimental)).
+
+## Glossary
+
+**What this page is for.** The words the guides use for HTTP/3, QUIC and Kuicksilver's own parts, each in a few lines,
+with the page that explains it in full. Read it when a guide uses a word before it explains it.
+
+| Word | Meaning |
+|---|---|
+| **origin** | The scheme, host and port of a URL (`https://api.example.com:443`): what a client's connections, `Alt-Svc` entries and trust decisions belong to (RFC 9110 section 4.3.1). |
+| **alternative** | Another place where an origin is served: for HTTP/3, the UDP port (and possibly another host) a server names in an `Alt-Svc` header field or an HTTPS DNS record. The client connects there, still checking the origin's certificate ([Discovery and Alt-Svc](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#discovery-and-alt-svc)). |
+| **Alt-Svc** | The response header field (RFC 7838) by which a server announces an alternative: `alt-svc: h3=":443"; ma=86400` says "HTTP/3 on UDP port 443 of this host, for a day". |
+| **route** | What the client's TCP connection pool groups connections by: scheme, host, port and proxy ([Connection pool](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#connection-pool)). |
+| **race**, **head start** | Once an origin has an HTTP/3 alternative, the client sets up QUIC and, after a short head start, TCP as well, and the request goes over whichever is ready first ([Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback)). |
+| **broken alternative** | An alternative whose HTTP/3 failed while TCP worked: the client skips it for a while (5 minutes, doubling up to 2 days) and forgets the mark on a network change. |
+| **fallback** | A request that HTTP/3 could have served going over TCP (HTTP/2 or HTTP/1.1) instead; `FallbackReason` says why ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-ktor-client-never-uses-http3-or-stops-using-it)). |
+| **ALPN** | The TLS extension by which client and server agree on the protocol: `h3` over QUIC, `h2` or `http/1.1` over TCP. |
+| **0-RTT** | Sending the first requests with the first packets of a resumed connection, one round trip earlier, at the price of possible replay ([0-RTT](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/zero-rtt.md)). |
+| **connection migration** | A QUIC connection that moves to another network path (Wi-Fi to mobile data) without starting over ([Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration)). |
+| **SPKI**, **pin** | The SubjectPublicKeyInfo, the public key of a certificate; a pin is its SHA-256 as `sha256/<base64>` ([Certificate pinning](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-pinning)). |
+| **ksl** | Kuicksilver's C library around OpenSSL, shipped inside the `kuicksilver-native` artifact (the JNI library on the JVM and Android, linked in on Kotlin/Native): TLS, QUIC crypto and the accelerated UDP socket. |
+| **accelerated socket**, **portable socket** | The two UDP sockets QUIC can run on. The accelerated one is `ksl`'s (batched sends, GSO and GRO on Linux, ECN, Don't Fragment); the portable one is the platform's (NIO on the JVM), used where `ksl` cannot open its socket ([QUIC: Binding an endpoint](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#binding-an-endpoint-and-connecting)). |
+| **loop** | One endpoint loop: a coroutine that owns a UDP socket and the QUIC connections on it. `http3 { endpoint { loops } }` runs several on one port ([QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)). |
+| **Initial**, **Retry** | A client's first QUIC packets are Initial packets; a server under load may answer one with a Retry packet, which makes the client prove its address with a token before the server keeps any state for it ([QUIC: Admission and endpoint limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#admission-and-endpoint-limits)). |
+| **4-tuple** | Source address and port, destination address and port of a packet: what a NAT or a load balancer usually keys a flow on. QUIC keys connections on connection IDs instead, so a connection survives a change of 4-tuple. |
+| **connection ID** | The identifier QUIC packets carry for their connection, chosen by each side; a load balancer can route by it ([Behind a proxy or load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md)). |
+| **QUIC-LB** | A scheme (an IETF draft) by which a server encodes its identity in its connection IDs, so a load balancer routes every packet of a connection to the same server ([QUIC: Behind a load balancer](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#behind-a-load-balancer)). |
+| **PROXY protocol** | A header an L4 load balancer puts in front of a TCP connection to tell the server the client's real address ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#proxy-protocol)). |
 
 ## Configuration reference
 
@@ -4797,8 +4876,8 @@ guides explain how options work together.
 stable. Every other option sits in a block, and the heading of its section is the block's path in the DSL
 (`engine { http3 { stall { } } }`): [Ktor client](#ktor-client), [Ktor server](#ktor-server), the
 [configuration-file keys](#hocon-keys) of `EngineMain`, and the [low-level](#low-level) builders that the engines' `quic { }`
-and `settings { }` blocks also take. A minimal working setup is in [Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md) and
-[Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md).
+and `settings { }` blocks also take. A minimal working setup is in [Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md) and
+[Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md).
 
 **The columns.** *Since* names the release that introduced the option under this name and in this block (`0.3.0`: the
 release in preparation; an option that moved to a block in 0.3.0 is `0.3.0`). *Status* is the option's stability
@@ -4869,6 +4948,30 @@ UDP on the same port.
 Behind an L4 load balancer that sends the PROXY protocol: `tlsConnector { proxyProtocol { trust("10.0.0.0/8") } }`. The
 same server from `application.conf`: [HOCON keys](#hocon-keys).
 
+### Which setting controls what
+
+Some goals have several settings that look alike. Each does one thing:
+
+| Goal | Setting | What it does |
+|---|---|---|
+| HTTP/3 off on the client | `engine { http3 { enabled = false } }` | TCP only, fixed when the client is created |
+| | `engine { http3 { allowed } }` | asked before each request: a remote kill switch; `client.closeHttp3Connections()` drops the open ones ([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#turning-http3-off-remotely)) |
+| | `engine { http3 { discovery } }` | when HTTP/3 is tried: after `Alt-Svc` (`Auto`), first (`Preferred`), only (`H3Only`) |
+| HTTP/3 off on the server | `http3 { enabled = false }` | no UDP listener at all |
+| | `http3 { altSvc = false }` | HTTP/3 is served but not announced (a load balancer announces it, or nobody) |
+| | `engine.http3Advertising` | at run time: announce, clear the announcement, drain ([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server)) |
+| Connections per client address | `http3 { endpoint { maxConnectionsPerIp } }` (256) | QUIC connections; `null` behind a NAT or kube-proxy, where clients share one address |
+| | `tcp { maxConnectionsPerIp }` (`null`) | TCP connections; 256 for a server that faces its clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connection-limits)) |
+| Connect timeout | `HttpTimeout`'s `connectTimeoutMillis` | wins when set |
+| | `engine { connectTimeout }` (10 s) | used when `HttpTimeout` sets none; also the QUIC and TLS handshake deadline |
+| Idle connections | client `pool { idleTimeout }` (5 min) | pooled connections without requests are closed after this |
+| | `http3 { quic { maxIdleTimeout } }` (30 s) | QUIC's own idle timeout, negotiated with the peer: an HTTP/3 connection closes after the smaller of this and `pool { idleTimeout }` unless `quic { keepAlive }` is set |
+| | server `tcp { idleTimeout }` (45 s) | TCP connections without requests (`ktor.deployment.connectionIdleTimeoutSeconds` in `EngineMain`) |
+| | server `requestHeaderTimeout` (30 s) | the time for a complete request head, on every protocol |
+| Keeping a quiet connection alive | `http3 { quic { keepAlive } }` | QUIC PINGs |
+| | `engine { http2 { pingInterval } }` | HTTP/2 PINGs, which also detect a dead connection |
+| | Ktor's `WebSockets { pingIntervalMillis }` | WebSocket pings |
+
 ### Where each option is set
 
 The DSL path of an option and its configuration-file key are the same (`http3 { endpoint { maxConnections } }` is
@@ -4887,7 +4990,7 @@ The DSL path of an option and its configuration-file key are the same (`http3 { 
 `HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`): `connectTimeout` at the top, everything else in
 the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } quic { } settings { } expert { } }`,
 `http2 { settings { } }`, `http1 { }`, `pool { }`, `network { }`, `proxies { tls { } }`, `webSockets { }` and
-`observability { }`. Values are checked when the engine is created. Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md).
+`observability { }`. Values are checked when the engine is created. Guide: [Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md).
 
 #### `engine { }`
 
@@ -4907,7 +5010,7 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)) |
-| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Ktor: Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates)) |
+| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates)) |
 | `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP; `Tls12And13` keeps HTTP/2 on over TLS 1.2 (a server's renegotiation request then ends the connection, RFC 9113 section 9.2.1); QUIC is TLS 1.3 only |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
 | `keyExchangeGroups` | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | 0.3.0 | experimental | 🔒 | key-exchange groups and the key shares sent ([`tlsConfig(role) { }`](#tlsconfigrole--)) |
@@ -5060,7 +5163,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 #### `engine { observability { } }`
 
-`ClientObservability` (guide: [Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md)).
+`ClientObservability` (guide: [Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -5076,7 +5179,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 at the top, everything else in the blocks `tls { }`, `tlsConnector { tls { } proxyProtocol { } }`,
 `plainConnector { proxyProtocol { } }`, `http1 { }`, `http2 { settings { } }`,
 `http3 { earlyData { } webTransport { } quic { } settings { } endpoint { expert { } } }`, `webSockets { }`, `tcp { }`
-and `observability { }`. Values are checked when the server starts. Guide: [Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md).
+and `observability { }`. Values are checked when the server starts. Guide: [Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md).
 
 #### `configure { }`
 
@@ -5111,7 +5214,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 | `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the certificate chain and key, for TCP and QUIC; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#certificate-rotation)); setting it in a block that called `pemFiles` fails |
 | `pemFiles(certificateChain, privateKey)` | function | | 0.3.0 | stable | 🔒 | reads the chain (PEM, leaf first) and the unencrypted PKCS#8 key (`-----BEGIN PRIVATE KEY-----`) now, as `identity`; with `reloadInterval` the engine watches both files; a file larger than 1 MiB, a damaged one, an encrypted key or a key that does not match the chain is refused |
 | `reloadInterval` | `Duration?` | `null` (read once) | 0.3.0 | stable | | how often the files of `pemFiles`, `clientCaFile` and `ocspStaplingFile` are checked; a new chain is applied once two reads a second apart agree and the key matches it, a failure keeps what is in use and is retried; needs `pemFiles` (the start fails without); at least 1 s |
-| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Ktor: Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates)) |
+| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Mutual TLS](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#mutual-tls-client-certificates)) |
 | `clientTrust` | `TrustConfig?` | `null` | 0.3.0 | stable | 🔒 | verifies client certificates: `AnchoredCa` or `ReloadableCa` (rotated for TCP and QUIC alike), optionally under `Pinned` |
 | `clientCaFile(path)` | function | | 0.3.0 | stable | 🔒 | reads the CA certificates client certificates are verified against from a PEM file now, as `clientTrust`; watched with `reloadInterval`; a file that holds a private key is refused |
 | `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#tls-12-on-the-server)) |
@@ -5127,7 +5230,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 #### `configure { tlsConnector { } }`
 
 `KuicksilverTlsConnector.Builder`: a TLS connector, HTTP/2 and HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port
-([Ktor: HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
+([HTTP/3 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -5942,6 +6045,7 @@ not move), what causes each one and what to do about it.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/glossary.md).
 - Have the exact text or code of the failure: the exception type and message, the log line, or the counter name.
 - Know the module you use (QUIC, HTTP/3, the Ktor client or server) and its version. The entries describe 0.3.0 behaviour;
   some entries name the release that changed the behaviour ("since 0.2.1", "since 0.3.0"); the CHANGELOG lists every change.
@@ -5981,6 +6085,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `QuicStalledException`, `fallback = QuicStalled`, `"HTTP/3 connection stalled"` | [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a failed Ktor client call: over QUIC or TCP? `kuicksilverDiagnostics` on the exception, `connectFailed`, `ConnectFailure` | [which transport failed](#a-ktor-client-call-failed-over-which-transport) |
+| the client fails against a server with `protocol_version` or `handshake_failure` | [a server that speaks TLS 1.2 only](#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
 | `QuicException.DontFragmentUnavailable`, "QUIC not used: the UDP socket cannot set Don't Fragment", `fallback = QuicUnavailable` | [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
@@ -6006,10 +6111,11 @@ Search this page for the exact text or code you see; the table sends you to the 
 | Ktor server events | `observability { eventListener = object : KuicksilverServerEventListener() { … } }` | connections per protocol, `tlsHandshakeFailed`, requests with their failure |
 | Key log | `tlsConfig(…) { keylog = keylogFile(path) }` (`@DelicateKuicksilverApi`) | TLS secrets for Wireshark; see [Key logging is refused](#key-logging-is-refused) |
 
-The logger, the listeners and the newer `EndpointStats` counters are experimental API (`@ExperimentalKuicksilverApi`, see
-[stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md)); `QuicConnection.stats` and the first `EndpointStats` counters are stable. None of it costs
+The logger (`KuicksilverLogger`, the engines' `observability { logger }`) and qlog are stable; the listeners, the Ktor
+client's `kuicksilverDiagnostics` and the newer `EndpointStats` counters are experimental API (`@ExperimentalKuicksilverApi`,
+see [stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md)); `QuicConnection.stats` and the first `EndpointStats` counters are stable. None of it costs
 anything per packet. Details: [QUIC: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#observability),
-[QUIC: qlog](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#qlog), [Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md).
+[QUIC: qlog](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#qlog), [Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md).
 
 A failed connection's cause is always a `QuicException`: `QuicConnection.closed` completes with it, and every waiting
 call (`openBidi`, `acceptStream`, the stream channels, `sendDatagram`) fails with the same instance. Look at its type and
@@ -6112,7 +6218,7 @@ queue is closed with the reason "accept queue full". The server counts them in `
 Fix on the server: accept faster (one coroutine per connection, `incomingConnections()`), or raise `acceptQueue` for
 bursty arrivals. On the client, retry after a delay; during a shutdown, connect to another instance. The Kuicksilver Ktor
 client does this by itself: the call falls back to TCP (`fallback = Refused`), the alternative is not marked
-broken, and the next call tries HTTP/3 again ([Ktor: Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback)).
+broken, and the next call tries HTTP/3 again ([Racing and fallback](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#racing-and-fallback)).
 
 #### The handshake fails with a certificate error
 
@@ -6597,7 +6703,7 @@ its permissions instead. The same message comes when the file holds two keys.
 
 Since 0.3.0 the server engine serves HTTP/2 on its TLS connectors by default: their ALPN offers `h2`, then `http/1.1`,
 so every client that offers both (browsers, curl, OkHttp, the JDK's client, Kuicksilver's) gets HTTP/2 where 0.2 gave
-it HTTP/1.1 ([Ktor: HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server)). Plain connectors and h2c are unchanged. Signs
+it HTTP/1.1 ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#http2-on-the-server)). Plain connectors and h2c are unchanged. Signs
 of it: `call.request.httpVersion` is `HTTP/2.0`, access logs and metrics show `h2`
 (`HTTP_2_0` in `connectionOpened` of the server's event listener).
 
@@ -6606,7 +6712,7 @@ of it: `call.request.httpVersion` is `HTTP/2.0`, access logs and metrics show `h
 - WebSockets come over HTTP/2 with it (RFC 8441, Extended CONNECT): a browser's `wss://` opens on its HTTP/2 connection
   to the origin. A proxy in front that does not know RFC 8441 breaks those WebSockets; turn them off with
   `webSockets { overHttp2 = false }` (`kuicksilver.webSockets.overHttp2 = false`), and they go over HTTP/1.1 again
-  ([Ktor: WebSockets over HTTP/2](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http2)).
+  ([WebSockets over HTTP/2](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/realtime.md#websockets-over-http2)).
 - A client without the certificate a server with `tls { clientAuth = ClientAuth.Required }` asks for sees the refusal
   differently over HTTP/2: the Ktor client's call fails with `Http2Exception.ConnectionClosed` carrying the TLS alert, where over HTTP/1.1 it failed with
   the `TlsException` itself.
@@ -6657,8 +6763,12 @@ Go through these in order:
 Every response says why: `response.kuicksilverDiagnostics?.fallback` is a `FallbackReason` (`HandshakeTimeout` when UDP
 is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`, ...), with what to check for each in
 the `FallbackReason` table below; with
-`engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per such call
-(at `observability { protocolChoiceLogLevel }`, `Info` by default, which the default logger at `Warn` leaves out). The
+`engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
+HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
+default logger at `Warn` leaves out). A call to an origin that never announced HTTP/3 (`NoAlternative`, the most common
+case) is logged at `Debug` only: no line at `Info` and `NoAlternative` on every response means the server sends no
+`Alt-Svc`, while a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach
+it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
 "HTTP/3 to <origin> failed (<reason>); using TCP for <duration>. See response.kuicksilverDiagnostics"; after it the
 alternative is skipped for that long, and the next warning comes only after a network change. The event
@@ -6707,21 +6817,21 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `ServerConnectionIdChanged` | the server switched its Source Connection ID during the QUIC handshake (an msquic server given a ClientHello of 3 or more datagrams): this call went over TCP at once; after a resumed handshake the next ones use HTTP/3 without resumption (no 0-RTT) for a while, after a full one the alternative is marked broken: [msquic servers](#msquic-servers-and-a-large-clienthello) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
-alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#discovery-and-alt-svc)).
+alternatives over verified TLS count ([Discovery and Alt-Svc](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#discovery-and-alt-svc)).
 
 #### QUIC misbehaves in production
 
 When HTTP/3 causes trouble on some networks or after a release and you need it off before a fix ships, flip
 `http3 { allowed }` from your remote configuration and, to drop the open connections at once, call
 `client.closeHttp3Connections()`: requests go over TCP (HTTP/2 or HTTP/1.1) from the next one on, calls in flight finish, and switching
-back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#turning-http3-off-remotely)). Clients in
+back needs no warm-up ([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#turning-http3-off-remotely)). Clients in
 `H3Only` mode fail instead of using TCP. Before that, `response.kuicksilverDiagnostics` and a qlog trace
 ([Getting more information](#getting-more-information)) usually tell what goes wrong.
 
 #### Calls fail with `QuicStalledException`, or fall back with `QuicStalled`
 
 The HTTP/3 connection under the call stopped carrying packets in both directions: its probe timeouts went unanswered and
-nothing came back from the server for `http3 { stall { minSilence } }` (2 s), or a 0-RTT request got no answer at all ([Ktor: Stalled
+nothing came back from the server for `http3 { stall { minSilence } }` (2 s), or a 0-RTT request got no answer at all ([Stalled
 HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
 drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine drained the
 connection and marked the alternative broken (5 minutes, doubling at each new stall on this network). An idempotent
@@ -6770,14 +6880,14 @@ proxy at all: QUIC is TLS 1.3. A failure of the origin's TLS behind the proxy is
 
 #### A Ktor client call failed: over which transport?
 
-`e.kuicksilverDiagnostics` on the exception says it ([Ktor: Why did this call fail?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-call-fail)):
+`e.kuicksilverDiagnostics` on the exception says it ([Why did this call fail?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-call-fail)):
 `transport` is `Quic` or `Tcp`, `h3Failure` is HTTP/3's failure when TCP came after it, and `connectFailures` names each
 setup that failed with its stage and address (a QUIC one also with `quicProgress`: `NoPacketReceived` is UDP blocked or
 a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
 attempt it cut short, or as `NameLookup`, `PoolWait` or `H2DialWait` when the time went to waiting before any address
 was tried (`PoolWait`: raise `pool { maxConnectionsPerRoute }`, or find the calls holding the connections): a `TlsHandshake` failure with `TlsException.AlertReceived`
-(`protocol_version`) is a server without TLS 1.3 (allow TLS 1.2 on the client with `tls { versions =
-TlsVersions.Tls12And13 }` if you must reach it); `TcpConnect` failures for every address mean nothing listens there or a
+(`protocol_version` or `handshake_failure`) is a server the client's TLS versions and suites do not meet ([a server that
+speaks TLS 1.2 only](#the-client-cannot-connect-to-a-server-that-speaks-tls-12-only)); `TcpConnect` failures for every address mean nothing listens there or a
 firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).
 It is null on a connection's failure met while reading a response body (the instance every request on the connection
 gets carries no call's diagnostics) and on a cancellation; `callFailed` has the request's own diagnostics in its
@@ -6797,7 +6907,7 @@ the connect timeout. Over HTTP/2 a request waits only when every connection of i
 SETTINGS_MAX_CONCURRENT_STREAMS and the route has no room for another connection. A pile-up usually means response bodies that are never read or closed, which keep their
 connections. Read or cancel every body; raise the limits only for real concurrency. HTTP/3 requests instead wait for
 the server's stream credit (MAX_STREAMS) until the request or socket timeout
-([Ktor: Connection pool](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#connection-pool)).
+([Connection pool](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#connection-pool)).
 
 A WebSocket over HTTP/1.1 fails with `ConnectTimeoutException` ("The WebSocket was not connected within the connect
 timeout") when the server accepted the connection but did not answer the opening handshake within the connect timeout.
@@ -6805,6 +6915,19 @@ WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so th
 this one until then. That queue does not count against the connect timeout of the WebSockets in it: many WebSockets
 started at once to one address connect one after another, bounded only by each call's request timeout (`HttpTimeout`)
 or its cancellation.
+
+#### The client cannot connect to a server that speaks TLS 1.2 only
+
+The client offers TLS 1.2 and 1.3 by default, so a TLS 1.2 server works, unless:
+
+- the client is set to TLS 1.3 only (`Tls13Only` in `tls { versions }`, which Encrypted Client Hello needs): the server
+  answers `protocol_version`. Allow TLS 1.2 again for a client that must reach it, or give that server a client of its
+  own;
+- the server offers only suites outside the client's TLS 1.2 profile (CBC suites, static RSA key exchange, finite-field
+  DHE): the handshake fails with `handshake_failure`. Only the server's configuration fixes that; the profile is fixed
+  ([TLS versions on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/engine-tls.md#tls-versions-on-the-client)).
+
+HTTP/3 needs TLS 1.3, so such a server is reached over TCP only.
 
 #### A TLS 1.2 client cannot connect to the server
 
@@ -6835,7 +6958,7 @@ engine can replay (bytes, a `WriteChannelContent` writer) when such retries matt
 
 #### Calls over HTTP/2 fail, or a server misbehaves with HTTP/2
 
-The client offers HTTP/2 to every `https://` server over TCP since 0.3.0 ([Ktor: HTTP/2 on the
+The client offers HTTP/2 to every `https://` server over TCP since 0.3.0 ([HTTP/2 on the
 client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#http2-on-the-client)). A server or middlebox whose HTTP/2 is broken shows as `Http2Exception` failures
 (`StreamReset`, `ConnectionClosed`, `MalformedMessage`) where HTTP/1.1 worked before. `engine { http2 { enabled = false } }`
 offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the `Http2Exception` and its code).
@@ -6866,7 +6989,7 @@ Without HTTP/3 the server sends no `Alt-Svc`. Also check `http3 { enabled }` (on
 that `http3 { altSvc }` is on so clients learn about HTTP/3 ([Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md) has a checklist for
 the network in front of the server). `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
 CONNECTION_REFUSED (0x2) while TCP answers, mean `engine.http3Advertising` is `Clear` or `Drain`
-([Ktor: Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server)).
+([Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#turning-http3-off-on-the-server)).
 
 #### The server answers `421 Misdirected Request`
 
@@ -6894,7 +7017,7 @@ Only when every client of a connector is a trusted gateway, such as a TLS-termin
 internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
 `tlsConnector { allowMisdirectedHosts = true }` or `plainConnector { allowMisdirectedHosts = true }` (both
 `@DelicateKuicksilverApi`; `kuicksilver.connector.allowMisdirectedHosts` for the deployment port)
-([Ktor: Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#misdirected-requests)). Never set it on a connector that clients reach directly.
+([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#misdirected-requests)). Never set it on a connector that clients reach directly.
 
 #### A PROXY protocol connector resets connections
 
@@ -8141,7 +8264,7 @@ A quiet connection shows nothing of a path that stopped carrying packets: with n
 section 10.1.2): a live peer acknowledges it, and on a dead path it leads to probe timeouts that `stats.ptoCount` counts.
 It answers false before the handshake completed (the handshake's own probes test the path then) and once the connection
 is closing. `stats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides' once the peer's
-transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#stalled-http3-connections));
+transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Stalled HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#stalled-http3-connections));
 `QuicConfig.keepAlive` sends PINGs on a timer instead.
 
 ### Observability
@@ -8280,7 +8403,7 @@ closes the files. Its queue holds `queueCapacity` records (8192) over all connec
 dropped and counted in `dropped`, so a stalled disk loses trace lines, never throughput. `sampleEvery = n` traces one
 connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
 connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
-`client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
+`client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Closing the
 client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client.md#closing-the-client)).
 
 ```kotlin
@@ -9392,8 +9515,8 @@ sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the ta
 travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
 and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
 and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024). The Ktor
-engines offer it too: the server engine's `http3 { connectUdp }` ([Ktor: CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connect-udp-over-http3-experimental))
-and the client engine's `proxies { connectUdp }` ([Ktor: HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental)).
+engines offer it too: the server engine's `http3 { connectUdp }` ([CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#connect-udp-over-http3-experimental))
+and the client engine's `proxies { connectUdp }` ([HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental)).
 
 A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
 default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
@@ -9844,7 +9967,7 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
   suspended ([QUIC: Network changes](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#network-changes)). The sample's echo screen has a "Follow the default
   network" toggle for it and a manual Rebind button. For `HttpClient(Kuicksilver)`,
   `http3 { migration = Http3ConnectionMigration.followDefaultNetwork() }` (experimental, off by default) does
-  the same for every pooled HTTP/3 connection ([Ktor: Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration)).
+  the same for every pooled HTTP/3 connection ([Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/client-http3.md#connection-migration)).
 
 ### Checks
 

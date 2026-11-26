@@ -19,7 +19,7 @@ import os, re, sys
 mode, root = sys.argv[1], sys.argv[2]
 BASE = "https://github.com/kuicksilver/kuicksilver/blob/main/"
 ORDER = ["quickstart.md", "ktor.md", "client.md", "client-http3.md", "client-proxies.md", "server.md", "server-proxies.md",
-         "server-config-file.md", "engine-tls.md", "realtime.md", "observability.md", "zero-rtt.md", "deployment.md", "migrating-from-okhttp.md", "migrating-ktor-engines.md",
+         "server-config-file.md", "engine-tls.md", "realtime.md", "observability.md", "zero-rtt.md", "deployment.md", "migrating-from-okhttp.md", "migrating-ktor-engines.md", "glossary.md",
          "configuration.md", "troubleshooting.md", "quic.md", "tls.md", "http3.md", "ios.md", "app-store.md", "building.md"]
 if os.environ.get("LLMS_FULL_ORDER"): ORDER = os.environ["LLMS_FULL_ORDER"].split(",")   # for the negative controls
 guide = os.path.join(root, "docs", "guide")

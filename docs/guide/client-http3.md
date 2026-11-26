@@ -11,6 +11,7 @@ connection migration between networks.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - In short: the first request to a host goes over TCP (HTTP/2 or HTTP/1.1); the server's `Alt-Svc` announces HTTP/3; the
   next request races HTTP/3 against the open TCP connection (TCP usually wins that one), and from then on the HTTP/3
   connection serves the requests; when HTTP/3 fails, the request goes over TCP.
@@ -411,7 +412,7 @@ without the application noticing. When HTTP/3 fails before the response headers,
 — always if it cannot have reached the server, otherwise only for idempotent methods whose body can be sent again
 (bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
 is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
-`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
+`H3BodyConsumed` and the application decides. The fallback uses the same `tls { }`: trust, pins and TLS settings. When a call ends before its body was read, the rest of the stream is abandoned
 with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
 `bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
 (`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`

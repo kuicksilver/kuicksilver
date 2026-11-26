@@ -15,7 +15,6 @@ SPDX-License-Identifier: Apache-2.0
 
 <p align="center">
   <a href="https://github.com/kuicksilver/kuicksilver/actions/workflows/build.yml?query=branch%3Amain"><img alt="Build" src="https://github.com/kuicksilver/kuicksilver/actions/workflows/build.yml/badge.svg?branch=main"></a>
-  <a href="https://central.sonatype.com/namespace/io.kuicksilver"><img alt="Maven Central" src="https://img.shields.io/maven-central/v/io.kuicksilver/kuicksilver-quic?label=Maven%20Central"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="gradle/libs.versions.toml"><img alt="Kotlin 2.4" src="https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white"></a>
   <a href="docs/guide/ktor.md"><img alt="Ktor 3.6" src="https://img.shields.io/badge/Ktor-3.6-087CFA"></a>
@@ -25,48 +24,13 @@ SPDX-License-Identifier: Apache-2.0
   <a href="https://www.bestpractices.dev/projects/16654"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/16654/badge"></a>
 </p>
 
-Kuicksilver is one QUIC, HTTP/3 and TLS 1.3 implementation in Kotlin for the JVM, Android, iOS, macOS, Linux and
-Windows, with drop-in Ktor client and server engines.
+Kuicksilver is QUIC, HTTP/3 and TLS in Kotlin, the same code on the JVM, Android, iOS, macOS, Linux and Windows, with
+drop-in Ktor client and server engines.
 
 > **Status: 0.x, experimental, no production users we know of. Do not use it in production yet.** The API can change between any two 0.x releases
 > ([stability](docs/stability.md)). 0.2.0 and 0.2.1 are withdrawn; this README describes 0.3.0,
 > the release in preparation. Until 0.3.0 is on Maven Central, build it from `main` and use `0.3.0-SNAPSHOT`
 > ([Install](docs/install.md#versions)). Try it, and tell us what breaks.
-
-## Features
-
-Experimental ones (`@ExperimentalKuicksilverApi`) are marked *exp.*
-
-- **HTTP/3, HTTP/2, HTTP/1.1** in one Ktor client engine and one server engine, on the JVM, Android, iOS, macOS, Linux
-  and Windows ([Ktor engines](docs/guide/ktor.md)).
-- **Alt-Svc discovery, protocol race and adaptive fallback**: HTTP/3 raced against TCP with a head start from the host's
-  RTT (TCP almost at once on a network where QUIC was never seen working); a broken alternative or a stalled QUIC
-  connection falls back to TCP
-  ([discovery](docs/guide/client-http3.md#discovery-and-alt-svc), [racing and fallback](docs/guide/client-http3.md#racing-and-fallback),
-  [stalled connections](docs/guide/client-http3.md#stalled-http3-connections)).
-- **WebTransport** over HTTP/3, draft-ietf-webtrans-http3-17; servers also take drafts 16, 14 and 02 (browsers),
-  clients also offer 16 and 02 (*exp.*, [HTTP/3 guide](docs/guide/http3.md#webtransport-experimental)).
-- **QUIC datagrams** (RFC 9221) and HTTP datagrams (RFC 9297) ([QUIC guide](docs/guide/quic.md#datagrams-rfc-9221)).
-- **Encrypted Client Hello** (RFC 9849), client and server, over TCP and HTTP/3 (*exp.*,
-  [client](docs/guide/engine-tls.md#encrypted-client-hello-experimental), [server](docs/guide/engine-tls.md#encrypted-client-hello-on-the-server)).
-- **CONNECT-UDP** (RFC 9298, MASQUE): HTTP/3 through a CONNECT-UDP proxy, and the proxy side (*exp.*,
-  [client](docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental), [proxy](docs/guide/http3.md#connect-udp-experimental)).
-- **0-RTT**, opt-in on both sides, replay-guarded (*exp.*, [0-RTT](docs/guide/zero-rtt.md)).
-- **Connection migration** across networks (RFC 9000 section 9) (*exp.* in the client,
-  [Ktor](docs/guide/client-http3.md#connection-migration), [QUIC](docs/guide/quic.md#migration-and-paths)).
-- **RFC-strict**: one row per requirement with the tests behind it ([RFC compliance](docs/spec/rfc-compliance.md)); every
-  departure for a specific peer is listed ([compatibility shims](docs/spec/compat-shims.md)).
-- **Interop** against 6 QUIC stacks: msquic, ngtcp2, picoquic, quic-go, quiche, quinn
-  ([interop results](docs/spec/interop.md)).
-- **qlog** per connection and per-call diagnostics (which protocol, why, which connection) (*exp.* in the Ktor engines,
-  [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/observability.md)).
-
-Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the client engine (macOS, Linux, Windows);
-[http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);
-[webtransport-chat](samples/webtransport-chat/README.md) (WebTransport streams and datagrams, a common-code client);
-[realtime-telemetry](samples/realtime-telemetry/README.md) (QUIC streams and datagrams);
-[compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS);
-[iOS app](samples/ios/README.md) (SwiftUI over a Kotlin facade).
 
 ## Add it
 
@@ -100,6 +64,39 @@ engine](docs/guide/migrating-ktor-engines.md)); an app on OkHttp or Retrofit wit
 Retrofit](docs/guide/migrating-from-okhttp.md). Discovery modes, trust and pins, HTTP/2, WebSockets and WebTransport: the
 [Ktor engine pages](docs/guide/ktor.md#the-engine-pages). Open both `8443/tcp` and `8443/udp`: [deploying the HTTP/3
 server](docs/guide/deployment.md).
+
+## Features
+
+Experimental ones (`@ExperimentalKuicksilverApi`) are marked *exp.*
+
+- **HTTP/3, HTTP/2, HTTP/1.1** in one Ktor client engine and one server engine, on the JVM, Android, iOS, macOS, Linux
+  and Windows ([Ktor engines](docs/guide/ktor.md)).
+- **Alt-Svc discovery, protocol race and adaptive fallback**: HTTP/3 raced against TCP with a head start from the host's
+  RTT (TCP almost at once on a network where QUIC was never seen working); a broken alternative or a stalled QUIC
+  connection falls back to TCP
+  ([discovery](docs/guide/client-http3.md#discovery-and-alt-svc), [racing and fallback](docs/guide/client-http3.md#racing-and-fallback),
+  [stalled connections](docs/guide/client-http3.md#stalled-http3-connections)).
+- **WebTransport** over HTTP/3, draft-ietf-webtrans-http3-17; servers also take drafts 16, 14 and 02 (browsers),
+  clients also offer 16 and 02 (*exp.*, [HTTP/3 guide](docs/guide/http3.md#webtransport-experimental)).
+- **QUIC datagrams** (RFC 9221) and HTTP datagrams (RFC 9297) ([QUIC guide](docs/guide/quic.md#datagrams-rfc-9221)).
+- **Encrypted Client Hello** (RFC 9849), client and server, over TCP and HTTP/3 (*exp.*,
+  [client](docs/guide/engine-tls.md#encrypted-client-hello-experimental), [server](docs/guide/engine-tls.md#encrypted-client-hello-on-the-server)).
+- **CONNECT-UDP** (RFC 9298, MASQUE): HTTP/3 through a CONNECT-UDP proxy, and the proxy side (*exp.*,
+  [client](docs/guide/client-proxies.md#http3-through-a-connect-udp-proxy-experimental), [proxy](docs/guide/http3.md#connect-udp-experimental)).
+- **0-RTT**, opt-in on both sides, replay-guarded (*exp.*, [0-RTT](docs/guide/zero-rtt.md)).
+- **Connection migration** across networks (RFC 9000 section 9) (*exp.* in the client,
+  [Ktor](docs/guide/client-http3.md#connection-migration), [QUIC](docs/guide/quic.md#migration-and-paths)).
+- **Checked against the standards and other stacks**: one row per RFC requirement with the tests behind it ([RFC
+  compliance](docs/spec/rfc-compliance.md)), interop with 6 QUIC stacks ([interop results](docs/spec/interop.md)).
+- **qlog** per connection and per-call diagnostics (which protocol, why, which connection) (*exp.* in the Ktor engines,
+  [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/observability.md)).
+
+Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the client engine (macOS, Linux, Windows);
+[http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);
+[webtransport-chat](samples/webtransport-chat/README.md) (WebTransport streams and datagrams, a common-code client);
+[realtime-telemetry](samples/realtime-telemetry/README.md) (QUIC streams and datagrams);
+[compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS);
+[iOS app](samples/ios/README.md) (SwiftUI over a Kotlin facade).
 
 ## Platforms
 
@@ -138,7 +135,7 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
 ## Documentation
 
 - [kuicksilver.github.io/kuicksilver](https://kuicksilver.github.io/kuicksilver/): the guide and the API reference
-  (Dokka) of every release, from 0.3.0 on.
+  (Dokka) of every release, once 0.3.0 is released; until then, the guides in `docs/guide` and the KDoc in the sources.
 - Guides: [quickstart](docs/guide/quickstart.md), [install](docs/install.md), the [Ktor engines](docs/guide/ktor.md) and
   their task pages, [0-RTT](docs/guide/zero-rtt.md), [migrating from OkHttp and
   Retrofit](docs/guide/migrating-from-okhttp.md), [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),

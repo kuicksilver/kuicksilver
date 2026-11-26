@@ -10,7 +10,8 @@ timeouts, HTTP/2, h2c, the connection pool and coalescing, Happy Eyeballs and na
 
 **Before you start**
 
-- The first client: [Quickstart](quickstart.md#2-a-client). The options most clients set:
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
+- The first client: [Quickstart](quickstart.md#3-a-client). The options most clients set:
   [configuration: first screen](configuration.md#first-screen-ktor-client).
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 - Related pages: how the client finds and uses HTTP/3 in [HTTP/3 in the Ktor client](client-http3.md); pins and client
@@ -164,8 +165,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   wait for it within their connect timeout. Within an exchange, a response or a send window that stays shut is bounded by the socket timeout
   (`HttpTimeout`), and with `pingInterval` a connection whose PING is still unanswered at the next one is closed and its
   calls fail; with neither, a connection that dies mid-exchange holds the call until TCP gives up, as over HTTP/1.1.
-- **TLS 1.2.** A client that allows TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) offers `h2` too, and a server
-  without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
+- **TLS 1.2.** The client allows TLS 1.2 by default ([TLS versions on the client](engine-tls.md#tls-versions-on-the-client))
+  and offers `h2` there too, so a server without TLS 1.3 gets HTTP/2 over TLS 1.2 under RFC 9113 section 9.2: SNI from the URL's host, no TLS compression, and
   the TLS 1.2 suites of the profile, ECDHE with an AEAD (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 among them),
   none of which section 9.2.2 prohibits. Renegotiation stays refused: a server that asks for one (a HelloRequest) ends
   the connection with PROTOCOL_ERROR (section 9.2.1) and the calls on it fail with `Http2Exception.ConnectionClosed`
@@ -482,7 +483,7 @@ The contract (the KDoc of `Dns` has it in full):
 
 How the engine behaves in detail, for when a guide above is not enough.
 
-- `https://` and `wss://` go over TLS 1.3 with the same `tls { }` (trust, client certificate, versions, suites) whatever
+- `https://` and `wss://` go over TLS (1.3, or 1.2 over TCP with a server without 1.3) with the same `tls { }` (trust, client certificate, versions, suites) whatever
   the protocol;
   SNI and verification use the URL's host. Over TCP, `https://` is HTTP/2 when the server picks `h2` in ALPN and
   HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow

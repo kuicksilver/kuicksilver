@@ -10,6 +10,7 @@ WebTransport sessions on the server and the client, and request priorities.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports). WebTransport below the engines: [HTTP/3:
   WebTransport](http3.md#webtransport-experimental).
 

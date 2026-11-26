@@ -14,6 +14,8 @@ import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TrustConfig
@@ -49,13 +51,16 @@ internal fun migratedClient(
                 socketTimeoutMillis = 15_000 // readTimeout and writeTimeout: time without progress
                 requestTimeoutMillis = 60_000 // callTimeout
             }
-            install(HttpRequestRetry) { retryOnException(maxRetries = 2) } // your own retries
+            install(HttpRequestRetry) {
+                // your own retries: GET only, a POST is never sent twice
+                retryOnExceptionIf(maxRetries = 2) { request, _ -> request.method == HttpMethod.Get }
+            }
             install(HttpCookies) // cookieJar
             install(HttpCache) // cache, in memory
             install(
-                createClientPlugin("Auth") {
-                    // addInterceptor: an application interceptor that adds a header
-                    onRequest { request, _ -> request.headers.append("Authorization", "Bearer ${token()}") }
+                createClientPlugin("BearerHeader") {
+                    // addInterceptor: an application interceptor that sets a header
+                    onRequest { request, _ -> request.headers[HttpHeaders.Authorization] = "Bearer ${token()}" }
                 },
             )
         }

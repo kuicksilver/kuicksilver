@@ -10,6 +10,7 @@ PAC files, an explicit proxy, credentials) and how HTTP/3 goes through a CONNECT
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - HTTP/3 never goes through an HTTP or SOCKS proxy: a request a proxy applies to goes over TCP.
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 

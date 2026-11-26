@@ -10,6 +10,7 @@ name (`421 Misdirected Request`), and how it reads the client's address from the
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - Load balancers, Kubernetes, QUIC connection IDs and UDP behind them: [Deploying the HTTP/3 server](deployment.md).
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 

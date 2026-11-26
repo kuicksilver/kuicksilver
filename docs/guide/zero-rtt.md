@@ -11,6 +11,7 @@ name their own switches ([Without Ktor](#without-ktor)).
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - 0-RTT is experimental (`@ExperimentalKuicksilverApi`): the code on this page needs
   `@file:OptIn(ExperimentalKuicksilverApi::class)` ([stability](../stability.md#stability-levels)). The design is in
   [ADR-0015](../adr/0015-0rtt-implementation.md).
@@ -33,8 +34,9 @@ and only requests that are safe to run twice may.
   connection. Keep one `HttpClient` for the life of the process;
 - the requests are not GET, HEAD or OPTIONS without a body: everything else waits for the handshake anyway;
 - the server asks for client certificates (mutual TLS), which 0-RTT cannot carry;
-- the server's configuration changed since the ticket was issued (ALPN, transport limits, HTTP/3 SETTINGS, its
-  certificate): the next handshake is a full one.
+- the server's configuration changed since the ticket was issued: with other ALPN, transport limits or HTTP/3 SETTINGS
+  the connection still resumes, in 1-RTT, and only its early data is refused; under another certificate the ticket
+  resumes nothing and the handshake is a full one.
 
 ## The client
 
@@ -149,8 +151,9 @@ A replay can only repeat requests the policy runs early, and the server also lim
    every `http3 { endpoint { loops } }` loop of the process shares it. When it is full (it uses at most 1 MiB), 0-RTT is
    refused and the handshake goes on in 1-RTT: it fails closed.
 3. **The configuration that issued the ticket.** A ticket allows 0-RTT only for the same ALPN, transport parameters and
-   HTTP/3 SETTINGS, and only under the certificate it was issued with, so after a [certificate
-   reload](engine-tls.md#certificate-rotation) old tickets resume nothing.
+   HTTP/3 SETTINGS (otherwise the connection resumes in 1-RTT without its early data), and resumes only under the
+   certificate it was issued with, so after a [certificate reload](engine-tls.md#certificate-rotation) old tickets resume
+   nothing.
 4. **The handshake.** A replayed flight never completes the handshake, so what waits for it, or got a 425, never runs
    from a replay.
 

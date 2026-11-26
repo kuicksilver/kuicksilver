@@ -10,6 +10,7 @@ request did not use HTTP/3, which connection served it, and why a call failed.
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - The engines log through `observability { logger }`: the platform's logger on the client (warnings and up), Ktor's
   application log on the server.
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).

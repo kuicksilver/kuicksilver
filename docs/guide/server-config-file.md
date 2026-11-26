@@ -10,6 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Before you start**
 
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
 - A complete example: [Ktor engines: Minimal example](ktor.md#minimal-example) and the
   [http3-server sample](../../samples/http3-server/README.md). Every option with its key: [configuration: HOCON
   keys](configuration.md#hocon-keys).

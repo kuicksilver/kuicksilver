@@ -40,7 +40,7 @@ VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
 # reading order of the guide index; a page not listed here follows in file name order
 GUIDE_ORDER = ["quickstart", "ktor", "client", "client-http3", "client-proxies", "server", "server-proxies", "server-config-file",
                "engine-tls", "realtime", "observability", "zero-rtt", "deployment", "migrating-from-okhttp",
-               "migrating-ktor-engines", "configuration", "troubleshooting", "quic", "http3", "tls", "ios", "app-store"]
+               "migrating-ktor-engines", "glossary", "configuration", "troubleshooting", "quic", "http3", "tls", "ios", "app-store"]
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 # a marker line of tools/check/guide-sync.sh inside a code block: for the check, noise for a reader of the site
 GUIDE_MARKER = re.compile(r"^[ \t]*//[ \t]*guide:[a-z0-9-]+:[A-Za-z0-9_-]+(?:[ \t]*\([^)\n]*\))?[ \t]*\n", re.M)

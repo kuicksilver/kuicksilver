@@ -23,8 +23,8 @@ guides explain how options work together.
 stable. Every other option sits in a block, and the heading of its section is the block's path in the DSL
 (`engine { http3 { stall { } } }`): [Ktor client](#ktor-client), [Ktor server](#ktor-server), the
 [configuration-file keys](#hocon-keys) of `EngineMain`, and the [low-level](#low-level) builders that the engines' `quic { }`
-and `settings { }` blocks also take. A minimal working setup is in [Ktor: Server](server.md) and
-[Ktor: Client](client.md).
+and `settings { }` blocks also take. A minimal working setup is in [Server](server.md) and
+[Client](client.md).
 
 **The columns.** *Since* names the release that introduced the option under this name and in this block (`0.3.0`: the
 release in preparation; an option that moved to a block in 0.3.0 is `0.3.0`). *Status* is the option's stability
@@ -95,6 +95,30 @@ UDP on the same port.
 Behind an L4 load balancer that sends the PROXY protocol: `tlsConnector { proxyProtocol { trust("10.0.0.0/8") } }`. The
 same server from `application.conf`: [HOCON keys](#hocon-keys).
 
+## Which setting controls what
+
+Some goals have several settings that look alike. Each does one thing:
+
+| Goal | Setting | What it does |
+|---|---|---|
+| HTTP/3 off on the client | `engine { http3 { enabled = false } }` | TCP only, fixed when the client is created |
+| | `engine { http3 { allowed } }` | asked before each request: a remote kill switch; `client.closeHttp3Connections()` drops the open ones ([Turning HTTP/3 off remotely](client-http3.md#turning-http3-off-remotely)) |
+| | `engine { http3 { discovery } }` | when HTTP/3 is tried: after `Alt-Svc` (`Auto`), first (`Preferred`), only (`H3Only`) |
+| HTTP/3 off on the server | `http3 { enabled = false }` | no UDP listener at all |
+| | `http3 { altSvc = false }` | HTTP/3 is served but not announced (a load balancer announces it, or nobody) |
+| | `engine.http3Advertising` | at run time: announce, clear the announcement, drain ([Turning HTTP/3 off on the server](server.md#turning-http3-off-on-the-server)) |
+| Connections per client address | `http3 { endpoint { maxConnectionsPerIp } }` (256) | QUIC connections; `null` behind a NAT or kube-proxy, where clients share one address |
+| | `tcp { maxConnectionsPerIp }` (`null`) | TCP connections; 256 for a server that faces its clients directly ([Connection limits](server.md#connection-limits)) |
+| Connect timeout | `HttpTimeout`'s `connectTimeoutMillis` | wins when set |
+| | `engine { connectTimeout }` (10 s) | used when `HttpTimeout` sets none; also the QUIC and TLS handshake deadline |
+| Idle connections | client `pool { idleTimeout }` (5 min) | pooled connections without requests are closed after this |
+| | `http3 { quic { maxIdleTimeout } }` (30 s) | QUIC's own idle timeout, negotiated with the peer: an HTTP/3 connection closes after the smaller of this and `pool { idleTimeout }` unless `quic { keepAlive }` is set |
+| | server `tcp { idleTimeout }` (45 s) | TCP connections without requests (`ktor.deployment.connectionIdleTimeoutSeconds` in `EngineMain`) |
+| | server `requestHeaderTimeout` (30 s) | the time for a complete request head, on every protocol |
+| Keeping a quiet connection alive | `http3 { quic { keepAlive } }` | QUIC PINGs |
+| | `engine { http2 { pingInterval } }` | HTTP/2 PINGs, which also detect a dead connection |
+| | Ktor's `WebSockets { pingIntervalMillis }` | WebSocket pings |
+
 ## Where each option is set
 
 The DSL path of an option and its configuration-file key are the same (`http3 { endpoint { maxConnections } }` is
@@ -113,7 +137,7 @@ The DSL path of an option and its configuration-file key are the same (`http3 { 
 `HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`): `connectTimeout` at the top, everything else in
 the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { } quic { } settings { } expert { } }`,
 `http2 { settings { } }`, `http1 { }`, `pool { }`, `network { }`, `proxies { tls { } }`, `webSockets { }` and
-`observability { }`. Values are checked when the engine is created. Guide: [Ktor: Client](client.md).
+`observability { }`. Values are checked when the engine is created. Guide: [Client](client.md).
 
 ### `engine { }`
 
@@ -133,7 +157,7 @@ verify another name with `TrustConfig.ExpectedName`) and the handshake deadline 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | 0.3.0 | stable | 🔒 | how the server is verified ([TrustConfig](#trustconfig)) |
-| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Ktor: Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
+| `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the client certificate, sent when a server asks for one ([Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
 | `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | the TLS versions offered over TCP; `Tls12And13` keeps HTTP/2 on over TLS 1.2 (a server's renegotiation request then ends the connection, RFC 9113 section 9.2.1); QUIC is TLS 1.3 only |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` | 0.3.0 | stable | 🔒 | TLS 1.3 suites in preference order |
 | `keyExchangeGroups` | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | 0.3.0 | experimental | 🔒 | key-exchange groups and the key shares sent ([`tlsConfig(role) { }`](#tlsconfigrole--)) |
@@ -286,7 +310,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 
 ### `engine { observability { } }`
 
-`ClientObservability` (guide: [Ktor: Observability](observability.md)).
+`ClientObservability` (guide: [Observability](observability.md)).
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|
@@ -302,7 +326,7 @@ limits `webTransport { initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxDa
 at the top, everything else in the blocks `tls { }`, `tlsConnector { tls { } proxyProtocol { } }`,
 `plainConnector { proxyProtocol { } }`, `http1 { }`, `http2 { settings { } }`,
 `http3 { earlyData { } webTransport { } quic { } settings { } endpoint { expert { } } }`, `webSockets { }`, `tcp { }`
-and `observability { }`. Values are checked when the server starts. Guide: [Ktor: Server](server.md).
+and `observability { }`. Values are checked when the server starts. Guide: [Server](server.md).
 
 ### `configure { }`
 
@@ -337,7 +361,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 | `identity` | `TlsIdentity?` | `null` | 0.3.0 | stable | 🔒 | the certificate chain and key, for TCP and QUIC; a `TlsIdentity.Reloadable` can be replaced at run time ([Certificate rotation](engine-tls.md#certificate-rotation)); setting it in a block that called `pemFiles` fails |
 | `pemFiles(certificateChain, privateKey)` | function | | 0.3.0 | stable | 🔒 | reads the chain (PEM, leaf first) and the unencrypted PKCS#8 key (`-----BEGIN PRIVATE KEY-----`) now, as `identity`; with `reloadInterval` the engine watches both files; a file larger than 1 MiB, a damaged one, an encrypted key or a key that does not match the chain is refused |
 | `reloadInterval` | `Duration?` | `null` (read once) | 0.3.0 | stable | | how often the files of `pemFiles`, `clientCaFile` and `ocspStaplingFile` are checked; a new chain is applied once two reads a second apart agree and the key matches it, a failure keeps what is in use and is retried; needs `pemFiles` (the start fails without); at least 1 s |
-| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Ktor: Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
+| `clientAuth` | `ClientAuth` | `ClientAuth.None` | 0.3.0 | stable | 🔒 | ask for (`Optional`) or require (`Required`) client certificates; other than `None` it needs `clientTrust` or `clientCaFile` ([Mutual TLS](engine-tls.md#mutual-tls-client-certificates)) |
 | `clientTrust` | `TrustConfig?` | `null` | 0.3.0 | stable | 🔒 | verifies client certificates: `AnchoredCa` or `ReloadableCa` (rotated for TCP and QUIC alike), optionally under `Pinned` |
 | `clientCaFile(path)` | function | | 0.3.0 | stable | 🔒 | reads the CA certificates client certificates are verified against from a PEM file now, as `clientTrust`; watched with `reloadInterval`; a file that holds a private key is refused |
 | `versions` | `TlsVersions` | `TlsVersions.Tls13` | 0.3.0 | stable | 🔒 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](engine-tls.md#tls-12-on-the-server)) |
@@ -353,7 +377,7 @@ does not set is the engine's, and an identity or a trust set there replaces the 
 ### `configure { tlsConnector { } }`
 
 `KuicksilverTlsConnector.Builder`: a TLS connector, HTTP/2 and HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port
-([Ktor: HTTP/3 on the server](server.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
+([HTTP/3 on the server](server.md#http3-on-the-server)). It needs an identity, from the engine's `tls { }` or its own.
 
 | Option | Type | Default | Since | Status | 🔒 | Description |
 |---|---|---|---|---|---|---|

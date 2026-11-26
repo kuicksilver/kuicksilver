@@ -27,7 +27,7 @@ and, on macOS, Xcode. For a JVM application,
 
 publishes only the JVM jars, the multiplatform metadata and the BOM: no Android AAR (no NDK) and no Kotlin/Native
 klibs. The metadata still runs the C interop of every native target, so OpenSSL is still built for each of them (Docker,
-and Xcode on macOS), and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
+and Xcode on macOS): there is no build without Docker today, not even for a JVM application, and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
 macOS arm64), so the application runs on that kind of machine alone. [Building from source](guide/building.md) covers
 your own compiler and flags.
 
@@ -120,7 +120,7 @@ An app with no Kotlin of its own uses the Swift package
 | Artifact (`io.kuicksilver:`) | What it is | Guide |
 |---|---|---|
 | `kuicksilver-native` | the `ksl` C shim with OpenSSL inside (version pinned in `gradle/openssl.toml`), its JNI and cinterop bindings, the native loader | [architecture](architecture.md) |
-| `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](guide/tls.md) |
+| `kuicksilver-tls` | TLS configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](guide/tls.md) |
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](guide/quic.md) |
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](guide/http3.md) |

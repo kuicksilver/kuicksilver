@@ -17,20 +17,14 @@ import kotlin.time.Duration.Companion.seconds
 
 // guide:quickstart:client
 suspend fun main() {
-    val client = HttpClient(Kuicksilver) // name the engine: HttpClient() alone may pick another one
+    val client =
+        HttpClient(Kuicksilver) {
+            // name the engine: HttpClient() alone may pick another one
+            engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(File("ca.pem").readText())) } }
+        }
     repeat(3) {
-        val response = client.get("https://example.com/")
-        println(response.version) // HTTP/2.0 (or HTTP/1.1) first; HTTP/3.0 once the server announced it
+        println(client.get("https://localhost:8443/").version) // HTTP/2.0, then HTTP/3.0 from about the third request
         delay(1.seconds)
     }
     client.close()
-}
-
-internal fun quickstartLocalClient(): HttpClient {
-    // guide:quickstart:local-client
-    val client =
-        HttpClient(Kuicksilver) {
-            engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(File("ca.pem").readText())) } }
-        }
-    return client
 }

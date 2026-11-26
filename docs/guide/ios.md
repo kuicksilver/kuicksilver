@@ -194,7 +194,7 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
   suspended ([QUIC: Network changes](quic.md#network-changes)). The sample's echo screen has a "Follow the default
   network" toggle for it and a manual Rebind button. For `HttpClient(Kuicksilver)`,
   `http3 { migration = Http3ConnectionMigration.followDefaultNetwork() }` (experimental, off by default) does
-  the same for every pooled HTTP/3 connection ([Ktor: Connection migration](client-http3.md#connection-migration)).
+  the same for every pooled HTTP/3 connection ([Connection migration](client-http3.md#connection-migration)).
 
 ## Checks
 

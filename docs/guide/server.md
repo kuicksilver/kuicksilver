@@ -10,7 +10,8 @@ limits, HTTP/3 and HTTP/2 on the server, h2c, turning HTTP/3 off, the CONNECT-UD
 
 **Before you start**
 
-- The first server, with a local test certificate: [Quickstart](quickstart.md#3-a-server). The options most servers set:
+- Words such as origin, alternative, route or race: the [glossary](glossary.md).
+- The first server, with a local test certificate: [Quickstart](quickstart.md#2-a-server). The options most servers set:
   [configuration: first screen](configuration.md#first-screen-ktor-server).
 - The imports of the code blocks: [Ktor engines: Imports](ktor.md#imports).
 - Related pages: certificates, client certificates and reload in [TLS in the Ktor engines](engine-tls.md); a load balancer
