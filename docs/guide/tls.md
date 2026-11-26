@@ -275,6 +275,10 @@ val roots = Certificate.parsePem(caPem)   // every CERTIFICATE block, in order; 
 val trust = TrustConfig.AnchoredCa(roots)
 ```
 
+`TrustConfig.fromPem(caPem)` and `TrustConfig.fromPemFile(path)` make the same `AnchoredCa` in one step and refuse what a CA
+file must not hold: no certificate, a private key, an encrypted block, a file over 1 MiB, each with a message that says
+which ([Your own CA](engine-tls.md#your-own-ca)).
+
 Every certificate given to `AnchoredCa` is a trust anchor, also one that is not self-signed: anchoring at an
 intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `X509_V_FLAG_PARTIAL_CHAIN`, as JDK
 `TrustAnchor`s, Apple anchor certificates and Go's root pools behave).

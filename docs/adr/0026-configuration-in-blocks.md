@@ -63,7 +63,7 @@ The principles, checked by `tools/check/config-table.sh` and review:
 The layout itself (every block, field, type, default and status) is the one `docs/guide/configuration.md` documents.
 Its outline:
 
-- client engine: `connectTimeout`, and the blocks `tls { ech { } }`, `http3 { earlyData { } stall { } webTransport { }
+- client engine: `connectTimeout`, `socketTimeout`, and the blocks `tls { ech { } pins { } }`, `http3 { earlyData { } stall { } webTransport { }
   quic { } settings { } expert { } }`, `http2 { settings { } }`, `http1 { }`, `pool { }`, `network { }`, `proxies { tls { } }`,
   `webSockets { }`, `observability { }`;
 - server engine: `requestHeaderTimeout`, and `tls { }` (with `pemFiles`, `clientCaFile`, `ocspStaplingFile`),
@@ -96,6 +96,8 @@ Its outline:
 - the NEW_TOKEN replay register grows on demand up to `newTokenReplayCapacity` instead of being allocated in full at the
   first token;
 - `Http3Settings.maxInformationalResponses`, ignored since 0.2.1, is removed.
+- the client has a socket timeout of 10 s (`engine { socketTimeout }`, OkHttp's read and write timeouts) where it had
+  none without `HttpTimeout` (decided 2026-11-26 with the DX items below).
 
 The QUIC per-address limit keeps its default (256) and logs one warning per endpoint at most every 5 minutes when it
 refuses a client; the client logs one warning when it first marks an HTTP/3 alternative broken on a network.
@@ -354,3 +356,53 @@ The design left these cases open or met them only in the code; each was decided 
   origin's default unless `proxies { tls { } }` says otherwise. The negotiated version is in the call diagnostics
   (`TcpConnectionSnapshot.tlsVersion`). Making QUIC TLS 1.3 only in the client fixed a bug: with `Tls12And13`, every
   HTTP/3 connection had failed in `TlsConfig.validateFor(quic)` and the client had fallen back to TCP.
+- **Three DX items join 0.3.0 (owner decision 2026-11-26; design in the OkHttp bridge study, section 7).** Each fits the
+  principles without a new top-level block:
+  - **`TrustConfig.fromPem(text)` and `fromPemFile(path)`** are value factories of `kuicksilver-tls`, not block options:
+    `engine { tls { trust = TrustConfig.fromPemFile(path) } }`, `Pinned(…, base = TrustConfig.fromPem(pem))` and the
+    server's `clientTrust` all take them. The client gets no `tls { caFile() }` (principle 2: one way; the server's
+    `clientCaFile` exists because it watches the file). The file is read by the server's reader, moved into
+    `kuicksilver-tls` (`readPemText`, `readSecretFile`, `@InternalKuicksilverApi`): 1 MiB at most, a private key refused
+    before any `String` of it is made, an encrypted one named as such. A text or file without a certificate, with a key
+    or with an encrypted block fails with a message that says which and never quotes the text. The server's warning for
+    non-CA certificates is not repeated: a client that anchors a server's self-signed certificate is the common case.
+    "Platform roots plus my CA" stays out (the study's Q17): `AnchoredCa` replaces the roots, and Android's network
+    security config `<trust-anchors>` under `Platform` covers the combination.
+  - **`engine { tls { pins { } } }`** (`HostPinsConfig`, stable, 🔒) pins per host as OkHttp's `CertificatePinner` does:
+    its patterns (`*.` one label, `**.` any number, none included), matched on the request URL's host. A host is keyed by
+    the TLS layer's own reference identifier (`HostName.normalize`: lower case, spaces and tabs around it and one trailing
+    dot dropped; IPv6 then in RFC 5952 text, an IPv4-mapped address as IPv4), so no spelling the handshake accepts as the
+    host can miss its pins (a request to `example.com.` escapes OkHttp's; a leading space escaped a first version of
+    these), and once a pin is configured a host the TLS layer cannot take fails closed with `TlsException.Config`. The
+    pattern's name follows the same rules (LDH, no `_`, a last label not all digits); a non-ASCII pattern is refused with
+    a message asking for its A-labels, as the TLS layer refuses non-ASCII hosts, an `xn--` label must round-trip through
+    Punycode, and a wildcard in front of an IP literal is refused: no IDNA mapping of our own, so no pattern can mean a
+    name other than the one the certificate is checked against. No new verification: a host's connections verify as `Pinned(pins, scope, base = trust)`, so the session
+    cache and the shared contexts key them by their pins as before and every protocol and route (`Alt-Svc`, proxy
+    tunnels, redirects) meets the host's set. `scope` is `PinScope.Leaf` by default (study Q7: one concept, one default
+    in both forms; `AnyInValidatedChain` is OkHttp's rule). Two sources of pins are refused rather than ordered:
+    `pins { }` with `trust = TrustConfig.Pinned(…)` fails when the engine is created (a precedence would silently drop
+    one set), as pins on `Tofu` or `Custom` do. Coalescing joins hosts only when their pin sets are equal (RFC 9113
+    section 9.1.1 lets a client decline any reuse; a subset or a superset would be another policy than the host's own
+    new connection). `proxies { tls { } }` is a `ClientTlsConfig` too, so it has `pins { }` for the proxy's host: an
+    `https://` proxy is a TLS server with a key of its own that a company may pin, and keying pins by host makes the two
+    sets disjoint by construction; the engine's pins never reach the proxy hop, as `Pinned` never did.
+    `VerifyReason.PinMismatch` gained `host`, so a failure names the host next to the chain's pins.
+  - **`engine { socketTimeout }`** (`Duration?`, 10 s, stable) sits on the client's first screen next to `connectTimeout`,
+    with the same rule: `HttpTimeout`'s `socketTimeoutMillis` wins when set, `INFINITE_TIMEOUT_MS` there turns it off for a
+    request, and `null` is off (principle 6). It runs on the existing inactivity machinery (every byte either way restarts
+    it), so a stream that keeps moving never trips it. Left alone by design: WebSockets (the handshake is bounded by
+    `connectTimeout`, the session by its pings), SSE (the `SSE` plugin's requests, and a `text/event-stream` body the
+    request's `Accept` asked for, so a server cannot switch the timeout off by its choice of type) and WebTransport
+    sessions; a per-request `timeout { }` still applies to the first two (Ktor's client-wide `HttpTimeout` skips WebSocket
+    and SSE requests). A long
+    poll cannot be told from a silent server, so it sets its own timeout per request (the same answer as OkHttp's).
+    QUIC's idle timeout and HTTP/2 PINGs watch the connection and fail every call on it with the connection's error; the
+    socket timeout watches one call. With the defaults (30 s idle, 10 s socket) the socket timeout fires first. On an
+    HTTP/3 connection whose stall detection declared a stall, the socket timeout stands still (request and response body)
+    and `stall { abandonAfter }` decides, as `StallConfig` promised before the socket timeout had a default: a request
+    that may be repeated goes over TCP, other work waits for the path and fails with `QuicStalledException` at
+    `abandonAfter`; the timer starts over when the path is back. A timeout that runs out as a stall is being declared has
+    the `QuicStalledException` as its cause. The first
+    screen's 10-row limit holds: `http2 { enabled }`, a workaround for broken middleboxes, moved to the line below the
+    table.

@@ -15,7 +15,8 @@ Ktor engine](migrating-ktor-engines.md).
 - Kuicksilver is an engine for the **Ktor client**, not a transport for OkHttp. There is no adapter in either direction:
   OkHttp cannot send its calls through Kuicksilver, and Kuicksilver does not implement OkHttp's `Call.Factory`,
   `Interceptor` or `EventListener`. Moving means moving your calls to `HttpClient`. Code that keeps an `OkHttpClient`
-  keeps working as before, without HTTP/3, so both can live in one app while you move it piece by piece.
+  keeps working as before, without HTTP/3, so both can live in one app while you move it piece by piece. An OkHttp and
+  Retrofit bridge is planned for 0.4.0 ([Retrofit](#retrofit)).
 - Dependencies as in the [Quickstart](quickstart.md#1-add-the-dependencies) (the client engine and Ktor 3.6.x). The
   Ktor plugins below (`HttpTimeout`, `HttpRequestRetry`, `HttpCookies`, `HttpCache`) are in `ktor-client-core`.
 - Every Kuicksilver block on this page compiles with no opt-in (stable API only). `currentPin`, `backupPin` and `token()` stand
@@ -58,8 +59,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.kuicksilver.ktor.client.Kuicksilver
-import io.kuicksilver.tls.SpkiSha256
-import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 ```
@@ -69,14 +68,9 @@ import kotlin.time.Duration.Companion.seconds
 val client = HttpClient(Kuicksilver) {
     engine {
         connectTimeout = 10.seconds   // connectTimeout
+        socketTimeout = 15.seconds    // readTimeout and writeTimeout: time without progress
         tls {
-            trust = TrustConfig.Pinned(   // certificatePinner: for every host of this client
-                setOf(
-                    SpkiSha256.parse(currentPin),   // "sha256/...", the same text as in OkHttp
-                    SpkiSha256.parse(backupPin),    // a key you hold offline
-                ),
-                base = TrustConfig.Platform,
-            )
+            pins { add("api.example.com", currentPin, backupPin) }   // certificatePinner: same patterns, same "sha256/..." text
         }
         pool {
             maxIdleConnectionsPerRoute = 5   // connectionPool(ConnectionPool(5, 5, MINUTES))
@@ -84,7 +78,6 @@ val client = HttpClient(Kuicksilver) {
         }
     }
     install(HttpTimeout) {
-        socketTimeoutMillis = 15_000    // readTimeout and writeTimeout: time without progress
         requestTimeoutMillis = 60_000   // callTimeout
     }
     install(HttpRequestRetry) {   // your own retries: GET only, a POST is never sent twice
@@ -114,11 +107,11 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 | OkHttp | Kuicksilver and Ktor | Notes |
 |---|---|---|
 | `connectTimeout` | `HttpTimeout`'s `connectTimeoutMillis`, else `engine { connectTimeout }` | `HttpTimeout`'s wins when set; covers DNS, the pool wait, TCP and TLS or the QUIC handshake; 10 s by default, as OkHttp's |
-| `readTimeout`, `writeTimeout` | `HttpTimeout`'s `socketTimeoutMillis` | one inactivity timeout for both directions; **none by default** (OkHttp: 10 s), so install `HttpTimeout` |
+| `readTimeout`, `writeTimeout` | `engine { socketTimeout }`, or `HttpTimeout`'s `socketTimeoutMillis`, which wins | one inactivity timeout for both directions, 10 s by default, as OkHttp's; `null` for none; not applied to WebSocket sessions and SSE by default ([Timeouts](client.md#timeouts)) |
 | `callTimeout` | `HttpTimeout`'s `requestTimeoutMillis`, or `withTimeout { }` around the call | `requestTimeoutMillis` holds for each request sent (a redirect or a retry starts it again); OkHttp's covers the whole call, as `withTimeout` does |
 | `connectionSpecs` (TLS versions, suites) | `engine { tls { versions; cipherSuites } }` | TLS 1.2 and 1.3 by default, as OkHttp's; TLS 1.2 only with ECDHE key exchange and AEAD suites (OkHttp's default also takes some CBC suites); `versions = TlsVersions.Tls13` for TLS 1.3 only (the default is `TlsVersions.Tls12And13`); HTTP/3 is always TLS 1.3 |
-| `certificatePinner` | `tls { trust = TrustConfig.Pinned(pins, base = TrustConfig.Platform) }` | same `sha256/<base64>` text; see [Certificate pinning](#certificate-pinning) for the differences |
-| `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) }`; on the JVM `TrustConfig.fromTrustManager(trustManager)` | a private CA; [TLS: Trust](tls.md#trust) has every variant |
+| `certificatePinner` | `tls { pins { add("api.example.com", pin1, pin2) } }` | the same patterns (`*.`, `**.`) and `sha256/<base64>` text, per host; see [Certificate pinning](#certificate-pinning) for the differences |
+| `sslSocketFactory` with your own `X509TrustManager` | `tls { trust = TrustConfig.fromPemFile(caPath) }` (or `fromPem(caPem)`); on the JVM `TrustConfig.fromTrustManager(trustManager)` | a private CA, which replaces the platform's roots; [Your own CA](engine-tls.md#your-own-ca), and [TLS: Trust](tls.md#trust) for every variant |
 | `sslSocketFactory` with a `KeyManager` (a client certificate) | `tls { identity = TlsIdentity.fromPem(…) }`; on the JVM `TlsIdentity.fromKeyStore` or `fromPkcs12` | [Mutual TLS](engine-tls.md#mutual-tls-client-certificates) |
 | `hostnameVerifier` | none | the host name is always checked (RFC 9525); `TrustConfig.ExpectedName` checks another name |
 | `connectionPool` | `engine { pool { } }` | the pool belongs to one `HttpClient`: two clients never share connections, where OkHttp clients made with `newBuilder()` share one pool; [Connection pool](client.md#connection-pool) compares the defaults |
@@ -151,28 +144,31 @@ certificate file:
 echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
-Two differences from `CertificatePinner`, and a consequence:
+`CertificatePinner.Builder().add(pattern, pins…)` is `tls { pins { add(pattern, pins…) } }`: the same patterns (a host,
+`*.` for one label, `**.` for any number of labels), the same text, one match among the matching patterns' pins is
+enough, and the pins hold for HTTP/3 and the TCP fallback alike. The differences:
 
-- **The pins hold for every host the client talks to.** OkHttp pins per host name; `TrustConfig.Pinned` is the trust of
-  the whole client. Give your pinned API a client of its own, and use a client with the default trust for everything
-  else.
-- **A redirect to another host** (a CDN, a sign-in host) meets the same pins, and fails unless one of them matches that
-  host's key too.
-- **The leaf's key by default.** OkHttp accepts a pin that matches any certificate of the chain; `Pinned` matches the
-  server's own certificate unless `scope = PinScope.AnyInValidatedChain` (`io.kuicksilver.tls.PinScope`; an
-  intermediate CA's key, say).
+- **The leaf's key by default.** OkHttp accepts a pin that matches any certificate of the chain; Kuicksilver matches the
+  server's own certificate unless `scope = PinScope.AnyInValidatedChain` is set inside `pins { }`
+  (`io.kuicksilver.tls.PinScope`), which gives OkHttp's behaviour (your intermediate CA's key, say).
+- **`sha1/` pins are refused** when the client is built; use the `sha256/` pin of the same key (OkHttp's failure message
+  lists both).
+- **A request to `api.example.com.`** (with the trailing dot) is pinned as `api.example.com`; OkHttp would not pin it.
+- **Connection coalescing** (`pool { coalescing }`, off by default) shares a connection only between hosts with the same
+  pins.
 
-The chain is still verified against `base`, the pins come on top, and they hold over HTTP/3 and the TCP fallback alike
-([Certificate pinning](engine-tls.md#certificate-pinning)). Pin a backup key you hold offline, or a key change locks
-the app out until it is updated.
+The chain is still verified against `trust`, the pins come on top ([Certificate pinning](engine-tls.md#certificate-pinning)).
+Pin a backup key you hold offline, or a key change locks the app out until it is updated. `TrustConfig.Pinned` pins
+every host of a client instead; it cannot be combined with `pins { }`.
 
 ## What is different
 
 - **HTTP/3.** The first request to a host goes over TCP (HTTP/2 or HTTP/1.1); once the server announced HTTP/3 with
   `Alt-Svc`, the next request races it against TCP, and the HTTP/3 connection serves the requests after that. `engine { http3 { hints } }` names your own API's hosts to use
   HTTP/3 from the first request ([configuration: first screen](configuration.md#first-screen-ktor-client)).
-- **Timeouts.** Without `HttpTimeout` only the connect timeout applies: a server that accepts the connection and then
-  says nothing keeps the call waiting.
+- **Timeouts.** 10 s to connect and 10 s without progress, as OkHttp's, and no call timeout. The socket timeout leaves
+  WebSocket sessions, SSE and WebTransport alone by default; a long poll that waits longer sets its own per request
+  ([Timeouts](client.md#timeouts)).
 - **Name the engine.** `HttpClient()` without an argument picks the OkHttp, Android, Java, Apache or Jetty engine when
   one of them is on the class path. Write `HttpClient(Kuicksilver)`.
 - **TLS.** TLS 1.2 and 1.3, as with OkHttp, but TLS 1.2 only with ECDHE and AEAD suites: a server that offers only CBC
@@ -181,7 +177,9 @@ the app out until it is updated.
 
 ## Retrofit
 
-Retrofit builds its calls on OkHttp, and Kuicksilver cannot be put under it. Three ways to go:
+Retrofit builds its calls on OkHttp, and Kuicksilver cannot be put under it today. A bridge that serves an
+`OkHttpClient`'s calls (and so Retrofit's) through Kuicksilver, `kuicksilver-okhttp`, is planned for 0.4.0; its shape is
+not final. Until then, three ways to go:
 
 1. **Keep Retrofit on OkHttp.** Nothing changes and nothing breaks, and those calls get no HTTP/3. Move the calls that
    gain most (large downloads, calls on mobile networks) to a Ktor client first.
@@ -193,6 +191,6 @@ Retrofit builds its calls on OkHttp, and Kuicksilver cannot be put under it. Thr
    become Ktor's `ContentNegotiation` plugin (`ktor-client-content-negotiation` with `ktor-serialization-kotlinx-json`,
    say), `Call<T>` becomes a suspend call, `Response<T>` an `HttpResponse`.
 
-Not supported: a Retrofit `callFactory` backed by Kuicksilver. None exists, and writing one means implementing OkHttp's
-`Call` on top of Ktor; we do not provide or recommend it. Libraries that take an `OkHttpClient` (image loaders, SDKs)
+Not supported in 0.3.0: a Retrofit `callFactory` backed by Kuicksilver. None exists, and writing one means implementing
+OkHttp's `Call` on top of Ktor; we do not recommend it, and the 0.4.0 bridge is the planned way. Libraries that take an `OkHttpClient` (image loaders, SDKs)
 keep their own OkHttp; some image loaders can fetch through a Ktor client instead (Coil 3, for one, documents a Ktor-based network fetcher; check its current documentation).

@@ -31,7 +31,18 @@ class ClientConfigMappingTest {
     @Test fun defaults() {
         val c = KuicksilverEngineConfig()
         assertEquals(10.seconds, c.connectTimeout)
+        assertEquals(10.seconds, c.socketTimeout)
         assertSame(TrustConfig.Platform, c.tls.trust)
+        // tls { pins { } }: none, Leaf when some are added; add() and scope reach each connection's trust (ClientHostPinsTest)
+        assertTrue(c.tls.pins.isEmpty)
+        assertEquals(io.kuicksilver.tls.PinScope.Leaf, c.tls.pins.scope)
+        c.tls.pins { add("a.test", io.kuicksilver.tls.SpkiSha256(ByteArray(32))) }
+        assertEquals(
+            1,
+            c.tls.pins
+                .pinsFor("A.test")
+                .size,
+        )
         assertNull(c.tls.identity)
         // TLS 1.3, or 1.2 with a server without 1.3, as OkHttp and the browsers (0.3.0; RFC 9325 profile); Tls13 is the opt-in
         assertEquals(TlsVersions.Tls12And13, c.tls.versions)

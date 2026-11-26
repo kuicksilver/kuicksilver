@@ -70,7 +70,7 @@ class ClientDeadlineRaceTest {
     @Test fun negative_responseDataThatArrivedAsTheSocketTimeoutFiresIsRead() =
         race({ millis ->
             val socket = ByteChannel()
-            val body = SocketTimeoutChannel(socket, millis, HttpRequestBuilder().build()) { hold() }
+            val body = SocketTimeoutChannel(socket, millis, HttpRequestBuilder().build(), contentForTest = { hold() })
             coroutineScope {
                 val read = async(start = CoroutineStart.UNDISPATCHED) { body.awaitContent(1) }
                 socket.writeByte(1)

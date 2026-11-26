@@ -40,7 +40,7 @@ val client = HttpClient(Kuicksilver) {
   Kuicksilver when one of them is on the class path. Pass `Kuicksilver` everywhere a client is created, and drop the other engine's dependency if
   nothing else needs it.
 - **Timeouts** go through Ktor's `HttpTimeout` plugin, as with every engine; without it the engine's own
-  `connectTimeout` (10 s) applies and nothing else. CIO's engine has a `requestTimeout` of its own, 15 s by default, that
+  `connectTimeout` (10 s) and `socketTimeout` (10 s without progress, [Timeouts](client.md#timeouts)) apply. CIO's engine has a `requestTimeout` of its own, 15 s by default, that
   is lost in the swap: set `HttpTimeout`'s `requestTimeoutMillis` to keep it;
   the Android engine's `connectTimeout` and `socketTimeout` are `connectTimeoutMillis` and `socketTimeoutMillis`.
 - **The engine's own settings** move to blocks of `engine { }`:
@@ -51,7 +51,7 @@ val client = HttpClient(Kuicksilver) {
 | CIO `endpoint { connectTimeout }`, `https { trustManager }` | `connectTimeout`; `tls { trust }` |
 | OkHttp `config { }`, `preconfigured` | the settings themselves: [Migrating from OkHttp](migrating-from-okhttp.md#setting-by-setting) |
 | Android `sslManager` | `tls { trust }`; the platform's trust, including the Network Security Config, is the default |
-| Darwin `handleChallenge` (pinning) | `tls { trust = TrustConfig.Pinned(...) }` ([Certificate pinning](engine-tls.md#certificate-pinning)) |
+| Darwin `handleChallenge` (pinning) | `tls { pins { add(host, pins…) } }`, or `tls { trust = TrustConfig.Pinned(...) }` for every host ([Certificate pinning](engine-tls.md#certificate-pinning)) |
 | Darwin `configureSession` | none: Kuicksilver does not use `URLSession` ([iOS](ios.md)) |
 | Darwin and App Transport Security | ATS governs `URLSession`, not Kuicksilver's own sockets: its `Info.plist` exceptions do nothing here, and an `http://` URL is not blocked by ATS ([App Store](app-store.md)) |
 | TLS versions | the client offers TLS 1.2 and 1.3 by default (`TlsVersions.Tls12And13`), TLS 1.2 with ECDHE and AEAD suites only; `tls { versions = TlsVersions.Tls13 }` for TLS 1.3 only |

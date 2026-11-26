@@ -32,6 +32,7 @@ internal object FirstScreenMobileSample {
             HttpClient(Kuicksilver) {
                 engine {
                     connectTimeout = 10.seconds
+                    socketTimeout = 10.seconds // no progress this long fails the call
                     http3 {
                         hints = setOf(HostPort("api.example.com", 443)) // HTTP/3 from the first request
                         altSvcStore = FileAltSvcStore(File(context.cacheDir, "alt-svc")) // remember HTTP/3 across restarts

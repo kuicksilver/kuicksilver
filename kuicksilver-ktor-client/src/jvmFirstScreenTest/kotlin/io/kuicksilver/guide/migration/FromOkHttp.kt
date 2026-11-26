@@ -17,8 +17,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.kuicksilver.ktor.client.Kuicksilver
-import io.kuicksilver.tls.SpkiSha256
-import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -32,15 +30,9 @@ internal fun migratedClient(
         HttpClient(Kuicksilver) {
             engine {
                 connectTimeout = 10.seconds // connectTimeout
+                socketTimeout = 15.seconds // readTimeout and writeTimeout: time without progress
                 tls {
-                    trust =
-                        TrustConfig.Pinned( // certificatePinner: for every host of this client
-                            setOf(
-                                SpkiSha256.parse(currentPin), // "sha256/...", the same text as in OkHttp
-                                SpkiSha256.parse(backupPin), // a key you hold offline
-                            ),
-                            base = TrustConfig.Platform,
-                        )
+                    pins { add("api.example.com", currentPin, backupPin) } // certificatePinner: same patterns, same "sha256/..." text
                 }
                 pool {
                     maxIdleConnectionsPerRoute = 5 // connectionPool(ConnectionPool(5, 5, MINUTES))
@@ -48,7 +40,6 @@ internal fun migratedClient(
                 }
             }
             install(HttpTimeout) {
-                socketTimeoutMillis = 15_000 // readTimeout and writeTimeout: time without progress
                 requestTimeoutMillis = 60_000 // callTimeout
             }
             install(HttpRequestRetry) {

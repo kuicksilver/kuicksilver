@@ -113,10 +113,8 @@ The imports of this page's client code:
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.kuicksilver.ktor.client.Kuicksilver
-import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.delay
-import java.io.File
 import kotlin.time.Duration.Companion.seconds
 ```
 
@@ -126,7 +124,7 @@ The client below talks to the server of step 2, which surely announces HTTP/3, a
 // guide:quickstart:client
 suspend fun main() {
     val client = HttpClient(Kuicksilver) { // name the engine: HttpClient() alone may pick another one
-        engine { tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(File("ca.pem").readText())) } }
+        engine { tls { trust = TrustConfig.fromPemFile("ca.pem") } }
     }
     repeat(3) {
         println(client.get("https://localhost:8443/").version) // HTTP/2.0, then HTTP/3.0 from about the third request

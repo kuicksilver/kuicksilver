@@ -5,7 +5,10 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.SocketTimeoutException
+import io.ktor.client.plugins.sse.SSECapability
+import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
 import io.ktor.client.request.HttpRequestData
+import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.availableForRead
@@ -13,6 +16,7 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Source
 
@@ -43,9 +47,51 @@ internal const val WEBSOCKET_NOT_CONNECTED = "The WebSocket was not connected wi
 internal fun HttpRequestData.requestTimeoutMillis(): Long? =
     getCapabilityOrNull(HttpTimeoutCapability)?.requestTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
 
-/** Socket (inactivity) timeout of a request, null for none. The request timeout itself belongs to the `HttpTimeout` plugin. */
-internal fun HttpRequestData.socketTimeoutMillis(): Long? =
+/**
+ * The socket (inactivity) timeout `HttpTimeout` set for a request, null for none: what a WebSocket session keeps after its
+ * opening handshake (the engine's `socketTimeout` never applies there). The request timeout itself belongs to the
+ * `HttpTimeout` plugin.
+ */
+internal fun HttpRequestData.explicitSocketTimeoutMillis(): Long? =
     getCapabilityOrNull(HttpTimeoutCapability)?.socketTimeoutMillis?.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
+
+/**
+ * The socket (inactivity) timeout of a request until its response head and over its request body, null for none:
+ * `HttpTimeout`'s `socketTimeoutMillis` when it sets one (`INFINITE_TIMEOUT_MS` turns it off for the request), else the
+ * engine's [KuicksilverEngineConfig.socketTimeout], except for the long-lived exchanges it leaves alone by design: a
+ * WebSocket (its opening handshake is bounded by the connect timeout, its session by its pings) and an SSE session (Ktor's
+ * `SSE` plugin, [SSECapability]). WebTransport sessions never take a socket timeout.
+ */
+@OptIn(InternalAPI::class)
+internal fun HttpRequestData.socketTimeoutMillis(config: KuicksilverEngineConfig): Long? {
+    val explicit = getCapabilityOrNull(HttpTimeoutCapability)?.socketTimeoutMillis
+    if (explicit != null) return explicit.takeIf { it != HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
+    if (attributes.contains(WEBSOCKETS_KEY) || getCapabilityOrNull(SSECapability) != null) return null
+    return config.socketTimeout?.inWholeMilliseconds
+}
+
+/**
+ * The socket timeout of a response body with [contentType]: [socketTimeoutMillis], and none by default for an event stream
+ * (`text/event-stream`, the SSE media type) the request asked for (Ktor's `SSE` plugin, or an `Accept` that names the
+ * type), since its events may lie further apart than any inactivity timeout. A server cannot turn the client's timeout off
+ * by answering an ordinary request with that type. An explicit `HttpTimeout` value still applies.
+ */
+internal fun HttpRequestData.bodySocketTimeoutMillis(
+    config: KuicksilverEngineConfig,
+    contentType: String?,
+): Long? {
+    val asked = getCapabilityOrNull(SSECapability) != null || headers.getAll(HttpHeaders.Accept).orEmpty().any { isEventStream(it) }
+    val explicit = getCapabilityOrNull(HttpTimeoutCapability)?.socketTimeoutMillis != null
+    if (!explicit && asked && contentType != null && isEventStream(contentType)) return null
+    return socketTimeoutMillis(config)
+}
+
+/**
+ * Whether a `Content-Type` or `Accept` value is or lists `text/event-stream` (RFC 9110 sections 8.3.1 and 12.5.1: the type
+ * and subtype without case, parameters dropped).
+ */
+internal fun isEventStream(value: String): Boolean =
+    value.split(',').any { it.substringBefore(';').trim().equals("text/event-stream", ignoreCase = true) }
 
 /**
  * The TLS configuration of a connection to [host] with [alpn]: the same trust, pins and identity for HTTP/3 and its
@@ -65,7 +111,7 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
         // ECH route is TLS 1.3 only, the retry after a rejection included, also when it offers nothing (RFC 9849 section 6.1:
         // ECH is TLS 1.3; a TLS 1.2 server fails it, never sees the name in the clear), and so is QUIC (RFC 9001 section 4.2)
         val offered = ech?.list
-        this@tlsConfigFor.tls.applyTo(this, tls13Only = quic || offered != null || ech?.retry == true)
+        this@tlsConfigFor.tls.applyTo(this, host, tls13Only = quic || offered != null || ech?.retry == true)
         // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
         this.alpn = alpn
         serverName = host
@@ -115,7 +161,7 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             val proxy = origin.copy()
             proxy.trust = proxyTrustOf(origin.trust)
             proxy.identity = null
-            proxy.applyTo(this, tls13Only = quic)
+            proxy.applyTo(this, host, tls13Only = quic)
             ech {
                 configList = null
                 grease = origin.ech.grease
@@ -126,7 +172,7 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             proxy.ech.grease = origin.ech.grease
             proxy.own()
             val offered = proxy.ech.listFor(host)
-            proxy.applyTo(this, tls13Only = quic || offered != null)
+            proxy.applyTo(this, host, tls13Only = quic || offered != null)
             ech {
                 configList = offered
                 grease = proxy.ech.grease
@@ -142,8 +188,10 @@ internal const val PROXY_ALPN: String = "http/1.1"
 
 /**
  * [delegate] with the request's socket timeout on every wait for data (as the CIO engine's socket timeout): a body that
- * stalls longer than [millis] fails with `SocketTimeoutException`. Reads go straight to [delegate]'s buffer, so wrapping
- * the connection input for one body never reads past it.
+ * stalls longer than [millis] fails with `SocketTimeoutException`, whose cause is [cause]'s (an HTTP/3 body: the stall its
+ * connection is in). While [hold] is true (an HTTP/3 stall detected: `stall { abandonAfter }` governs then) the timer
+ * stands still and starts over when it turns false. Reads go straight to [delegate]'s buffer, so wrapping the connection
+ * input for one body never reads past it.
  */
 @OptIn(InternalAPI::class)
 internal class SocketTimeoutChannel(
@@ -152,6 +200,8 @@ internal class SocketTimeoutChannel(
     private val request: HttpRequestData,
     /** Test hook: runs once a wait for data returned, still inside the socket timeout. */
     private val contentForTest: (suspend () -> Unit)? = null,
+    private val hold: StateFlow<Boolean>? = null,
+    private val cause: () -> Throwable? = { null },
 ) : ByteReadChannel {
     override val closedCause: Throwable? get() = delegate.closedCause
     override val isClosedForRead: Boolean get() = delegate.isClosedForRead
@@ -159,6 +209,16 @@ internal class SocketTimeoutChannel(
 
     override suspend fun awaitContent(min: Int): Boolean {
         if (delegate.availableForRead >= min) return true
+        if (hold != null) {
+            try {
+                return Activity().within(millis, { SocketTimeoutException(request, cause()) }, hold = hold) {
+                    delegate.awaitContent(min).also { contentForTest?.invoke() }
+                }
+            } catch (e: io.ktor.client.network.sockets.SocketTimeoutException) {
+                delegate.cancel(e)
+                throw e
+            }
+        }
         // set as the wait returns: data that arrived as the timeout fires is read, though withTimeoutOrNull drops what the
         // wait returned when its timeout lands after it
         var arrived: Boolean? = null
@@ -167,7 +227,7 @@ internal class SocketTimeoutChannel(
             contentForTest?.invoke()
         }
         arrived?.let { return it }
-        val timeout = SocketTimeoutException(request, null)
+        val timeout = SocketTimeoutException(request, cause())
         delegate.cancel(timeout)
         throw timeout
     }
@@ -177,9 +237,13 @@ internal class SocketTimeoutChannel(
     }
 }
 
-/** [this] with [request]'s socket timeout, if it has one. */
-internal fun ByteReadChannel.withSocketTimeout(request: HttpRequestData): ByteReadChannel =
-    request.socketTimeoutMillis()?.let { SocketTimeoutChannel(this, it, request) } ?: this
+/** [this] with [millis] as the socket timeout of [request]'s body (see [SocketTimeoutChannel]), or as it is for null. */
+internal fun ByteReadChannel.withSocketTimeout(
+    request: HttpRequestData,
+    millis: Long?,
+    hold: StateFlow<Boolean>? = null,
+    cause: () -> Throwable? = { null },
+): ByteReadChannel = millis?.let { SocketTimeoutChannel(this, it, request, null, hold, cause) } ?: this
 
 /**
  * The server answered an HTTP/2 request with HTTP_1_1_REQUIRED (RFC 9113 section 7), on its stream or for the whole

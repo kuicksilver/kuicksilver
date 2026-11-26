@@ -90,9 +90,11 @@ public final class io/kuicksilver/ktor/client/ClientTlsConfig {
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeyExchangeGroups ()Lio/kuicksilver/tls/KeyExchangeGroups;
 	public final fun getKeylog ()Lio/kuicksilver/tls/KeylogSink;
+	public final fun getPins ()Lio/kuicksilver/ktor/client/HostPinsConfig;
 	public final fun getRevocation ()Lio/kuicksilver/tls/RevocationPolicy;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
+	public final fun pins (Lkotlin/jvm/functions/Function1;)V
 	public final fun setCertificateCompression (Z)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
@@ -248,6 +250,14 @@ public final class io/kuicksilver/ktor/client/FileAltSvcStore_jvmCommonKt {
 public final class io/kuicksilver/ktor/client/H3BodyConsumed : java/lang/IllegalStateException {
 	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/ktor/client/HostPinsConfig {
+	public fun <init> ()V
+	public final fun add (Ljava/lang/String;[Lio/kuicksilver/tls/SpkiSha256;)V
+	public final fun add (Ljava/lang/String;[Ljava/lang/String;)V
+	public final fun getScope ()Lio/kuicksilver/tls/PinScope;
+	public final fun setScope (Lio/kuicksilver/tls/PinScope;)V
 }
 
 public final class io/kuicksilver/ktor/client/HostPort {
@@ -452,6 +462,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getObservability ()Lio/kuicksilver/ktor/client/ClientObservability;
 	public final fun getPool ()Lio/kuicksilver/ktor/client/PoolConfig;
 	public final fun getProxies ()Lio/kuicksilver/ktor/client/ProxiesConfig;
+	public final fun getSocketTimeout-FghU774 ()Lkotlin/time/Duration;
 	public final fun getTls ()Lio/kuicksilver/ktor/client/ClientTlsConfig;
 	public final fun getWebSockets ()Lio/kuicksilver/ktor/client/ClientWebSocketsConfig;
 	public final fun http1 (Lkotlin/jvm/functions/Function1;)V
@@ -462,6 +473,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun pool (Lkotlin/jvm/functions/Function1;)V
 	public final fun proxies (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setSocketTimeout-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun tls (Lkotlin/jvm/functions/Function1;)V
 	public final fun webSockets (Lkotlin/jvm/functions/Function1;)V
 }

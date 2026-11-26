@@ -232,6 +232,43 @@ class ClientEchTest {
             }
         }
 
+    /**
+     * Per-host pins and ECH (M2 of the DX review): the rejected connection is authenticated for the public_name by the base
+     * trust alone (RFC 9849 section 6.1.7), so neither the origin's pins nor the public_name's apply to it; the retry is held
+     * to the origin's pins. Pinned wrong, the retry fails with the origin's PinMismatch after the rejection's handshake.
+     */
+    @Test fun negative_theEchRetryIsHeldToTheOriginsPins() =
+        clientTest {
+            val leaf = io.kuicksilver.tls.SpkiSha256(TestCerts.serverSpkiSha256)
+            val wrong = io.kuicksilver.tls.SpkiSha256(ByteArray(32) { 7 })
+            for (originPinned in listOf(true, false)) {
+                val names = Names()
+                val (server, port) = echServer(EchServerKeys(listOf(keyB)), names)
+                try {
+                    client(more = {
+                        tls {
+                            ech { configLists = mapOf("server.test" to listA) }
+                            pins {
+                                add("server.test", if (originPinned) leaf else wrong)
+                                add(EchTestKeys.PUBLIC_NAME, wrong) // never consulted: the rejection is not the origin
+                            }
+                        }
+                    }).use { c ->
+                        if (originPinned) {
+                            assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
+                        } else {
+                            val e = assertFailsWith<Throwable> { c.get("https://server.test:$port/") }
+                            val v = generateSequence(e) { it.cause }.filterIsInstance<io.kuicksilver.tls.TlsException.Verify>().first()
+                            assertEquals("server.test", (v.reason as io.kuicksilver.tls.VerifyReason.PinMismatch).host, "$e")
+                        }
+                    }
+                    assertEquals(listOf<String?>(EchTestKeys.PUBLIC_NAME, "server.test"), names.all().take(2), "rejected, then retried")
+                } finally {
+                    server.stopSuspend(0, 0)
+                }
+            }
+        }
+
     /** RFC 9849 section 6.1.6: a server without ECH sends no retry configurations: "securely disabled", retried without ECH. */
     @Test fun negative_serverWithoutEchIsRetriedWithoutEch() =
         clientTest {

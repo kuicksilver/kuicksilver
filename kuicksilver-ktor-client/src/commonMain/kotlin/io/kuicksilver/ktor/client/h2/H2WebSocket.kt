@@ -26,13 +26,13 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 import io.kuicksilver.ktor.client.WebSocketLifetime
+import io.kuicksilver.ktor.client.explicitSocketTimeoutMillis
 import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.h3Path
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.headersOf
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.unwrap
 import io.kuicksilver.ktor.client.priority
-import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.WebSocketPongs
@@ -160,7 +160,7 @@ internal suspend fun h2WebSocket(
                 requestTime,
                 headers,
                 HttpProtocolVersion.HTTP_2_0,
-                stream.body.withSocketTimeout(data),
+                stream.body.withSocketTimeout(data, data.explicitSocketTimeoutMillis()),
                 callContext,
             )
         }
@@ -179,7 +179,7 @@ internal suspend fun h2WebSocket(
         // connection, the socket timeout while it waits for window) fails the session's writes with it
         val output =
             H2StreamOutput(CoroutineScope(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket"))) { source, end ->
-                stream.sendBody(source, end, data.socketTimeoutMillis()) {
+                stream.sendBody(source, end, data.explicitSocketTimeoutMillis()) {
                     io.ktor.client.plugins
                         .SocketTimeoutException(data, null)
                 }

@@ -52,6 +52,20 @@ internal fun coalescingTrust(trust: TrustConfig): Boolean {
     return base !is TrustConfig.Tofu && base !is TrustConfig.ExpectedName
 }
 
+/**
+ * Whether [host] and [other] have the same set of per-host pins (`tls { pins { } }`, both none included): the condition for one
+ * connection to carry both (RFC 9113 section 9.1.1 lets a client decline any reuse).
+ */
+internal fun KuicksilverEngineConfig.samePins(
+    host: String,
+    other: String,
+): Boolean =
+    try {
+        tls.pins.pinsFor(host) == tls.pins.pinsFor(other)
+    } catch (_: io.kuicksilver.tls.TlsException.Config) {
+        false // a host the pins cannot key: its own connection fails, it never rides on another's
+    }
+
 /** What [checkCoalescing] decided for one request. */
 internal enum class Coalesce {
     /** The connection may carry the request. */
@@ -185,6 +199,8 @@ internal class CoalescingPeer(
  *   lives. The host's name is hidden from the verifier's network requests (RFC 9849 section 10.7) when the connection's ECH
  *   was accepted or a new connection to the host would offer ECH. A refusal is remembered for the connection, and so is a
  *   421 ([CoalescedHosts.record]).
+ * - **the pins**, every time: the host has the same set of per-host pins as the connection's own origin ([samePins]).
+ *   RFC 9113 section 9.1.1 lets a client decline a reuse, and a different set is a different policy.
  * - **the TLS version**, every time: a connection that negotiated TLS 1.2 never carries a host whose new connection would
  *   be TLS 1.3 only (one of an ECH route, the endpoint's of an HTTPS record or the configured list's: [tlsConfigFor]'s
  *   rule; a `versions = Tls13` client never has such a connection), since that host's check of a new connection includes
@@ -210,6 +226,10 @@ internal suspend fun KuicksilverEngineConfig.checkCoalescing(
 ): Coalesce {
     val hosts = peer.hosts
     if (peer.chain.isEmpty() || !coalescingTrust(tls.trust) || hosts.verdict(host) == false) return Coalesce.No
+    // per-host pins (tls { pins { } }): only hosts with the same set share a connection, whatever the chain passes. A host
+    // with fewer pins would otherwise ride on a connection a stricter host's pins chose, and one with more on a check made
+    // for another host's set; both are another policy than a new connection to the host would apply
+    if (!samePins(host, peer.ownHost)) return Coalesce.No
     try {
         if (dns.answeredDestinations(lookupHost, port).none { Destination.of(it).sameAs(peer.remote) }) return Coalesce.No
         // the route of the host's own connection: the endpoint's when dns is an HTTPS record endpoint's view (connectTo),

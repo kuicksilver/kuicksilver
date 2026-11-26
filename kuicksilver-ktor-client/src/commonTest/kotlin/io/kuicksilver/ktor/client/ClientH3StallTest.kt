@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
@@ -44,6 +45,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -176,9 +178,11 @@ class ClientH3StallTest {
         abandonAfter: Duration = 2.seconds,
         // windows that take a whole 4 MiB response before the application reads any of it
         windows: Boolean = false,
+        socketTimeout: Duration? = 10.seconds,
         block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
         testClient(Http3Discovery.Auto, engine = {
+            this.socketTimeout = socketTimeout
             http3 {
                 quic {
                     maxIdleTimeout = idle
@@ -560,6 +564,97 @@ class ClientH3StallTest {
                 }
             } finally {
                 s.stop()
+            }
+        }
+
+    /**
+     * H3 of the DX review: while a stall is in force the socket timeout stands still and `stall { abandonAfter }` decides,
+     * as StallConfig promises. A POST (not repeatable) on a connection cut for 6 s, with a 3 s socket timeout and a 15 s
+     * abandonAfter (the QUIC idle timeout 30 s), completes once the path is back; without the hold it failed at the socket
+     * timeout. The stall is declared about 1 s after the cut, before the socket timeout could run out; after the heal the
+     * client's backed-off probes take a few seconds to find the path, well within abandonAfter.
+     */
+    @Test fun aStallHoldsTheSocketTimeoutUntilThePathComesBack() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, idle = 30.seconds, abandonAfter = 15.seconds, socketTimeout = 3.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val stalled = CompletableDeferred<Unit>()
+                    engine.h3.stalledForTest = { stalled.complete(Unit) }
+                    ios.cut()
+                    val t0 = TimeSource.Monotonic.markNow()
+                    coroutineScope {
+                        val post = async { c.post(url) { setBody("x") } }
+                        withTimeout(10.seconds) { stalled.await() }
+                        delay(6.seconds - t0.elapsedNow()) // twice the socket timeout
+                        ios.heal()
+                        val r = post.await()
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals("posted", r.bodyAsText())
+                    }
+                    assertEquals(1, s.posts.load())
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * The same with a path that never comes back: the POST fails with the stall at `abandonAfter`, not with a
+     * SocketTimeoutException at the (shorter) socket timeout; and a body being read when the path was cut too (M1).
+     */
+    @Test fun negative_aStallThatLastsFailsAtAbandonAfterNotAtTheSocketTimeout() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, abandonAfter = 6.seconds, socketTimeout = 5.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    // a request waiting for its response
+                    ios.cut()
+                    val t0 = TimeSource.Monotonic.markNow()
+                    val e = assertFailsWith<Throwable> { c.post(url) { setBody("x") } }
+                    assertNotNull(e.stall(), "the failure names the stall: $e")
+                    assertFalse(generateSequence(e) { it.cause }.any { it is SocketTimeoutException }, "the socket timeout fired: $e")
+                    assertTrue(t0.elapsedNow() >= 6.seconds, "failed after ${t0.elapsedNow()}, before abandonAfter")
+                }
+                // a response body being read (M1)
+                ios.heal()
+            } finally {
+                s.stop()
+            }
+            val s2 = server()
+            val ios2 = FaultyIos()
+            try {
+                client(ios2, Heard(), abandonAfter = 6.seconds, socketTimeout = 5.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s2.port}/"
+                    warm(c, url)
+                    c.prepareGet("${url}partial").execute { r ->
+                        val ch = r.bodyAsChannel()
+                        val first = ByteArray(5)
+                        var got = 0
+                        while (got < 5) {
+                            val n = ch.readAvailable(first, got, 5 - got)
+                            if (n < 0) fail("the body ended after $got bytes")
+                            got += n
+                        }
+                        ios2.cut()
+                        val t0 = TimeSource.Monotonic.markNow()
+                        val e = assertFailsWith<Throwable> { ch.readBuffer() }
+                        assertNotNull(e.stall(), "the failure names the stall: $e")
+                        assertFalse(generateSequence(e) { it.cause }.any { it is SocketTimeoutException }, "the socket timeout fired: $e")
+                        assertTrue(t0.elapsedNow() >= 6.seconds, "failed after ${t0.elapsedNow()}, before abandonAfter")
+                    }
+                }
+            } finally {
+                s2.stop()
             }
         }
 

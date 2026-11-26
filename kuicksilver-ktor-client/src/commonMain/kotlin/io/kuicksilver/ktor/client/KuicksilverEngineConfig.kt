@@ -157,9 +157,56 @@ public sealed class KnownServers {
  */
 @KuicksilverDsl
 public class ClientTlsConfig {
-    /** How the server is trusted; default [TrustConfig.Platform], the OS trust store. */
+    /**
+     * How the server is trusted; default [TrustConfig.Platform], the OS trust store. Your own CA:
+     * `TrustConfig.fromPemFile(path)` or `TrustConfig.fromPem(text)` (it replaces the OS roots). Pins: [pins] per host, or
+     * `TrustConfig.Pinned` for every host of the client (not both).
+     */
     @SecuritySensitive
     public var trust: TrustConfig = TrustConfig.Platform
+
+    /** Certificate pins per host, as OkHttp's `CertificatePinner` ([HostPinsConfig]); none by default. Change it with [pins]. */
+    @SecuritySensitive
+    public val pins: HostPinsConfig = HostPinsConfig()
+
+    /**
+     * Pins keys per host on top of [trust]: `tls { pins { add("api.example.com", "sha256/…", "sha256/…") } }`
+     * ([HostPinsConfig]: OkHttp's patterns, the same check as `TrustConfig.Pinned` for each host they match). Refused when
+     * the engine is created together with `trust = TrustConfig.Pinned(…)`, the whole-client form: use one of the two.
+     */
+    @SecuritySensitive
+    public fun pins(block: HostPinsConfig.() -> Unit) {
+        pins.block()
+    }
+
+    /**
+     * The trust of a connection to [host] (the request's host, the origin's even through a proxy or to an `Alt-Svc`
+     * alternative): [trust], under `Pinned` with the host's [pins] and their scope when it has any. Null [host]: [trust].
+     */
+    internal fun trustFor(host: String?): TrustConfig {
+        val set = host?.let { pins.pinsFor(it) }
+        return if (set.isNullOrEmpty()) trust else TrustConfig.Pinned(set, pins.scope, trust)
+    }
+
+    /**
+     * The refusals of [pins] when the engine is created ([outer]: the block around this one, `proxies` for the proxies'):
+     * with a `Pinned` [trust] (two sources of pins), and with a trust pins cannot sit on (`TrustConfig.Pinned`'s own
+     * refusals: `Tofu`, `Custom`, `ExpectedName` over `Custom`).
+     */
+    internal fun checkPins(outer: String? = null) {
+        val any = pins.anyPins() ?: return
+
+        fun path(inner: String) = if (outer == null) "tls { $inner }" else "$outer { tls { $inner } }"
+        require(trust !is TrustConfig.Pinned) {
+            "${path("pins { }")} and ${path("trust = TrustConfig.Pinned(…)")} are two sources of pins: use pins { } for pins " +
+                "per host, or Pinned for every host of the client, not both"
+        }
+        try {
+            TrustConfig.Pinned(any, pins.scope, trust)
+        } catch (e: io.kuicksilver.tls.TlsException.Config) {
+            throw IllegalArgumentException("${path("pins { }")} cannot be combined with trust = $trust: ${e.message}", e)
+        }
+    }
 
     /** The client certificate, sent when a server asks for one (mTLS); default null. */
     @SecuritySensitive
@@ -224,9 +271,11 @@ public class ClientTlsConfig {
     @OptIn(DelicateKuicksilverApi::class)
     internal fun applyTo(
         b: TlsConfig.Builder,
+        // the request's host, whose pins apply ([trustFor]); null for the checks when the engine is created
+        host: String?,
         tls13Only: Boolean = false,
     ) {
-        b.trust = trust
+        b.trust = trustFor(host)
         b.identity = identity
         b.versions = if (tls13Only) TlsVersions.Tls13 else versions
         b.cipherSuites = cipherSuites
@@ -236,7 +285,7 @@ public class ClientTlsConfig {
         b.keylog = keylog
     }
 
-    /** A copy of these settings (ECH: the GREASE switch only). */
+    /** A copy of these settings (ECH: the GREASE switch only; no [pins], which are the origin's). */
     @OptIn(DelicateKuicksilverApi::class)
     internal fun copy(): ClientTlsConfig =
         ClientTlsConfig().also {
@@ -772,7 +821,7 @@ public class ClientObservability {
 }
 
 /**
- * Configuration of `HttpClient(Kuicksilver)`: [connectTimeout] at the top, everything else in blocks (docs/guide/configuration.md,
+ * Configuration of `HttpClient(Kuicksilver)`: [connectTimeout] and [socketTimeout] at the top, everything else in blocks (docs/guide/configuration.md,
  * "Ktor client"). Ktor's own `proxy`, `pipelining` and `threadsCount` are inherited.
  */
 public class KuicksilverEngineConfig : HttpClientEngineConfig() {
@@ -783,6 +832,28 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * `ConnectTimeoutException`.
      */
     public var connectTimeout: Duration = 10.seconds
+
+    /**
+     * The socket timeout when `HttpTimeout` sets none: the longest time without progress on a call, in either direction,
+     * before it fails with Ktor's `SocketTimeoutException` (OkHttp's `readTimeout` and `writeTimeout`; Ktor's "maximum time
+     * of inactivity between two data packets"). 10 s by default; null for none. It runs from the request until the
+     * response head, over every piece of the request body the transport takes and every byte of the response that arrives,
+     * and over every read of the response body: a download or an upload that keeps moving never times out, however long it
+     * takes; one that stalls for this long does. `HttpTimeout`'s `socketTimeoutMillis` wins when set, per client or per
+     * request, and its `INFINITE_TIMEOUT_MS` turns the timeout off for a request.
+     *
+     * Not applied by default (a per-request `timeout { socketTimeoutMillis }` still is; Ktor's client-wide `HttpTimeout`
+     * skips these requests): to WebSockets (the opening handshake is bounded by [connectTimeout], the session by its
+     * pings), to SSE (requests of Ktor's `SSE` plugin, and a `text/event-stream` response to a request whose `Accept` asked
+     * for one: a server cannot turn the timeout off by its choice of type) and to WebTransport sessions. A long poll whose
+     * server holds the answer longer than this sets its own on the request: `timeout { socketTimeoutMillis = 60_000 }`.
+     * QUIC's idle timeout and HTTP/2 PINGs (`http2 { pingInterval }`) watch the connection, this watches the call. On an
+     * HTTP/3 connection whose stall detection declared a stall (`http3 { stall { } }`) the timeout stands still while the
+     * stall lasts, for the request and its response body, and `stall { abandonAfter }` decides (as [StallConfig] says); it
+     * starts over when the path is back. At least 1 ms; another value fails the engine's creation with
+     * IllegalArgumentException.
+     */
+    public var socketTimeout: Duration? = 10.seconds
 
     /** TLS of the engine's connections; change it with [tls]. */
     public val tls: ClientTlsConfig = ClientTlsConfig()

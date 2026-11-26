@@ -91,6 +91,7 @@ internal class KuicksilverEngine(
         require(config.http3.enabled || config.http3.discovery != Http3Discovery.H3Only) {
             "http3 { discovery = H3Only } needs http3 { enabled }: with HTTP/3 off no request could be sent"
         }
+        config.socketTimeout?.let { require(it >= 1.milliseconds) { "socketTimeout must be at least 1 ms or null (none), was $it" } }
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val extraWait = config.network.httpsRecordWait
         // RFC 9460 section 5.1: "Clients implementing this optimization SHOULD wait for 50 milliseconds"
@@ -118,8 +119,12 @@ internal class KuicksilverEngine(
         // the proxies' block as an https:// proxy's connection takes it
         checkTlsBlock("tls { }") {
             io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
-                config.tls.applyTo(this, tls13Only = config.http3.discovery == Http3Discovery.H3Only)
+                config.tls.applyTo(this, host = null, tls13Only = config.http3.discovery == Http3Discovery.H3Only)
             }
+        }
+        config.tls.checkPins()
+        config.proxies.tlsBlock?.let { block ->
+            ClientTlsConfig().apply { trust = proxyTrustOf(config.tls.trust) }.apply(block).checkPins("proxies")
         }
         if (config.proxies.tlsBlock != null) checkTlsBlock("proxies { tls { } }") { config.proxyTlsConfigFor(PROXY_CHECK_HOST) }
         // RFC 9113 section 9.2.2: "Deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
@@ -147,7 +152,7 @@ internal class KuicksilverEngine(
             try {
                 // a connection that offers it is TLS 1.3 only, whatever tls { versions } says (RFC 9849 section 6.1)
                 io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
-                    config.tls.applyTo(this, tls13Only = true)
+                    config.tls.applyTo(this, host = null, tls13Only = true)
                     ech { configList = list }
                 }
             } catch (e: io.kuicksilver.tls.TlsException.Config) {
