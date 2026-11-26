@@ -1260,7 +1260,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   behaviour): one dual-stack socket per protocol on `::`, IPv4 clients arriving as IPv4-mapped addresses, or `0.0.0.0` where
   the host has no IPv6 (logged at Info). `call.request.local` reports such a client, and the local address it reached, as
   the IPv4 addresses they are (`127.0.0.1`, on Kotlin/Native too, where TCP sockets reported `::ffff:127.0.0.1`), and an
-  HTTP/3 call's `localAddress` is the address the client sent to where the UDP socket reports it, else the connector's. 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
+  HTTP/3 call's `localAddress` is the address the client sent to (the active path's destination, as the UDP socket reports
+  it, on the JVM and Kotlin/Native alike), else the connector's. 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
   keeps IPv4 alone. `host` is `String?` now, and Ktor logs `Responding at https://:::443` for such a connector (`[::]:443`;
   `resolvedConnectors()` keeps the bare `::`, which socket APIs take back). The deployment port of `EngineMain` without
   `ktor.deployment.host` (or `-host`) binds the same way; an explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4

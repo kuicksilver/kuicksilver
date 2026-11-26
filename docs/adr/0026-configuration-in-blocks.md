@@ -294,3 +294,8 @@ The design left these cases open or met them only in the code; each was decided 
   behind a guard that asks the level before a line is built, reads a throwing `isEnabled` as false and drops what the
   logger throws, a CancellationException too, as the QUIC endpoints' guard does. A marker is dropped: a
   `KuicksilverLogger` has none.
+- **An HTTP/3 call's local address is the active path's destination.** It was the path's socket address, the wildcard
+  on a connector without a host, while the CHANGELOG promised the address the client sent to. The call now reads the
+  active path's `PathInfo.localAddress` (the destination the accelerated socket reports, unmapped), on the JVM and
+  Native alike, and falls back to the socket's specific address, then the connector's, only where the socket cannot
+  tell (the portable one).

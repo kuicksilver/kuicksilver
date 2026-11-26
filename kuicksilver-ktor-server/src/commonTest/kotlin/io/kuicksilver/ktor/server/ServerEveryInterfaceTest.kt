@@ -151,11 +151,11 @@ class ServerEveryInterfaceTest {
                     assertEquals(v4, addresses(c, "https://127.0.0.1:$port/addresses", token), "HTTP/2")
                     if (ipv6Bindable() && ipv6Loopback()) assertEquals(v6, addresses(c, "https://[::1]:$port/addresses", token), "HTTP/2")
                 }
-                // HTTP/3: the local address is the one the client sent to where the UDP socket reports it, else the wildcard
+                // HTTP/3: the local address is the one the client sent to, as the accelerated UDP socket reports it on the
+                // JVM and Native alike (IP_PKTINFO / IPV6_PKTINFO, unmapped), never the wildcard the socket is bound to
                 client(Http3Discovery.H3Only).use { c ->
-                    val (remoteHost, remoteAddress, localHost, localAddress) = addresses(c, "https://127.0.0.1:$port/addresses", token)
-                    assertEquals(listOf("127.0.0.1", "127.0.0.1"), listOf(remoteHost, remoteAddress), "HTTP/3")
-                    assertTrue(localHost == localAddress && localHost in setOf("127.0.0.1", "::"), "HTTP/3 local $localHost $localAddress")
+                    assertEquals(v4, addresses(c, "https://127.0.0.1:$port/addresses", token), "HTTP/3")
+                    if (ipv6Bindable() && ipv6Loopback()) assertEquals(v6, addresses(c, "https://[::1]:$port/addresses", token), "HTTP/3")
                 }
             }
         }

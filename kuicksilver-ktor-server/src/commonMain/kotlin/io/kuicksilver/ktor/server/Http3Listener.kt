@@ -231,12 +231,20 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                                 // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                                 try {
                                                     beforeH3HandlerForTest?.invoke()
-                                                    // the address the client sent to where the socket reports it (an IPv4
-                                                    // one of a dual-stack socket unmapped), else the connector's own
+                                                    // the address the client sent to, where the socket reports it (the
+                                                    // active path's, an IPv4 one of a dual-stack socket unmapped): the same
+                                                    // on the JVM and Native; else the socket's own when it is specific, else
+                                                    // the connector's
+                                                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                                                     val here =
-                                                        conn.quic.activePath
+                                                        conn.quic.info
+                                                            ?.paths
+                                                            ?.firstOrNull { it.active }
                                                             ?.localAddress
-                                                            ?.specificIpOrNull() ?: local
+                                                            ?.specificIpOrNull()
+                                                            ?: conn.quic.activePath
+                                                                ?.localAddress
+                                                                ?.specificIpOrNull() ?: local
                                                     handleHttp3(req, here, peer, authorityCheck)
                                                 } catch (e: CancellationException) {
                                                     throw e

@@ -418,7 +418,9 @@ at Info that HTTP/3 is advertised for the UDP port, which must be open.
 In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is the request's `:scheme`
 (`"https"` from browsers and the Kuicksilver client; `"http"` when a client sends that), `serverPort` without a port in
 `:authority` is that scheme's default (80 or 443), the `:authority` appears as the `Host` header, and `call.request.local.remoteAddress` follows the client when it migrates to another
-network. Responses never carry `Transfer-Encoding` or other connection-specific headers: bodies of unknown length are
+network. `call.request.local.localAddress` is the address the client sent to, on a connector without a host too (an IPv4
+client of the dual-stack socket as IPv4), as the UDP socket reports it, the same on the JVM and Kotlin/Native; only a
+socket that cannot report it (the portable one) gives the connector's own address. Responses never carry `Transfer-Encoding` or other connection-specific headers: bodies of unknown length are
 simply a sequence of DATA frames.
 
 The options are in the `http3 { }` block: `enabled` (true), `altSvc` (true), `quic { }` (the transport, `QuicConfig.Builder`:
