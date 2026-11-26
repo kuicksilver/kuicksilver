@@ -788,7 +788,9 @@ server picks the first of the route's `protocols` the client offers. Then the se
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
 an empty reason. With WebTransport flow control (on by default, see the [HTTP/3 guide](http3.md#webtransport-experimental))
 a connection carries up to `http3 { webTransport { maxSessionsPerConnection } }` (4) sessions; one more, or one beyond the rate a
-connection takes new sessions at (a burst of 32, then 8 a second), is refused before any route runs. A draft-14 client that leaves a session without flow-control credit for ten seconds is logged once, as a warning,
+connection takes new sessions at (a burst of 32, then 8 a second), is refused before any route runs. The engine raises the
+connection's receive window to `maxSessionsPerConnection x initialMaxData` (15 MiB with the defaults), so the server's
+worst case of unread stream data is that times `http3 { endpoint { maxConnections } }`: size the three together. A draft-14 client that leaves a session without flow-control credit for ten seconds is logged once, as a warning,
 through the application's log.
 
 ```kotlin
@@ -2743,7 +2745,10 @@ and a qlog trace per connection, built for macOS, Linux and Windows.
 
 **Server.** In the engine's `observability { }` block, `logger` receives the engine's diagnostics, its listeners and
 connections on every protocol and its HTTP/3 endpoints (`ServerObservability.ApplicationLog`, the default, is the
-application's log, `environment.log`; a warning about one call's answer goes there either way),
+application's log, `environment.log`; a warning about one call's answer goes there either way; on Android a logger of
+your own needs `org.slf4j:slf4j-api` 2.x on the class path, since the engine hands it to Ktor as an SLF4J `Logger` built on
+SLF4J 2's `LegacyAbstractLogger`: Ktor's server brings 2.x, but an app whose dependencies force SLF4J 1.7, as some older
+Android libraries do, fails at the engine's start with a `NoClassDefFoundError`),
 `connectionListener` (*experimental*) hears every QUIC connection, `qlog` adds a trace per HTTP/3 connection, and
 `eventListener` (*experimental*) takes a
 `KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` or `HTTP/2.0`

@@ -111,7 +111,11 @@ public abstract class KuicksilverEventListener {
 
     /**
      * The engine marked [alternative] of [origin] broken (RFC 7838 section 2.4): HTTP/3 failed there while HTTP/1.1 worked,
-     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stalled connection).
+     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stalled connection). Sent after the
+     * engine's Alt-Svc lock is released: when the network changed (or every mark was cleared) between the mark and this
+     * event, the mark is gone and the event is dropped, never sent late; a change that lands in the instant between that
+     * check and the call is not caught, so this event may still arrive just after a network change that already cleared
+     * the mark.
      */
     public open fun altSvcMarkedBroken(
         origin: String,
