@@ -4,15 +4,21 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.native.KslLoader
@@ -22,6 +28,7 @@ import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsVersion
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,6 +39,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import io.ktor.server.websocket.WebSockets as ServerWebSockets
+import io.ktor.server.websocket.webSocket as serverWebSocket
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 
 /**
@@ -51,6 +60,7 @@ class ClientTls12KslServerTest {
     private suspend fun <T> backend(block: suspend (Int) -> T): T {
         val server =
             embeddedServer(KuicksilverServer, configure = {
+                webSockets { overHttp2 = true }
                 plainConnector {
                     host = "127.0.0.1"
                     port = 0
@@ -59,7 +69,16 @@ class ClientTls12KslServerTest {
                     @OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
                     allowMisdirectedHosts = true
                 }
-            }) { routing { get("/") { call.respondText("ok") } } }
+            }) {
+                install(ServerWebSockets)
+                routing {
+                    get("/") { call.respondText("ok") }
+                    serverWebSocket("/ws") {
+                        val f = incoming.receive() as Frame.Text
+                        send(Frame.Text("echo:" + f.readText() + " " + call.request.httpVersion))
+                    }
+                }
+            }
         server.startSuspend(false)
         try {
             return block(
@@ -75,13 +94,14 @@ class ClientTls12KslServerTest {
 
     private fun client(
         trust: TrustConfig = anchored,
+        block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
         more: KuicksilverEngineConfig.() -> Unit = {},
     ) = testClient(engine = {
         resolverForTest = loopback
         connectTimeout = 20.seconds
         tls { this.trust = trust }
         more()
-    })
+    }, block = block)
 
     private fun tcpOf(r: HttpResponse) = assertIs<TcpConnectionSnapshot>(assertNotNull(r.kuicksilverDiagnostics).connection)
 
@@ -122,6 +142,39 @@ class ClientTls12KslServerTest {
                         assertEquals("h2", t.alpn)
                     }
                     assertEquals("h2", s.next().alpn)
+                }
+            }
+        }
+
+    /**
+     * WebSockets over HTTP/2 (RFC 8441, Extended CONNECT) on a TLS 1.2 connection: a `wss://` WebSocket goes as a stream of
+     * the origin's h2 connection over TLS 1.2 (no second handshake), once the server allowed it in its SETTINGS
+     * (SETTINGS_ENABLE_CONNECT_PROTOCOL), and echoes a message; RFC 9113 section 9.2's rules hold as for any stream.
+     */
+    @Test fun webSocketOverH2OnATls12Connection() =
+        clientTest {
+            backend { b ->
+                Tls12KslServer.with(b) { s ->
+                    client(block = { install(WebSockets) }).use { c ->
+                        val r = c.get("https://server.test:${s.port}/")
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                        assertEquals(TlsVersion.Tls12, tcpOf(r).tlsVersion)
+                        var version: HttpProtocolVersion? = null
+                        var echo = ""
+                        withTimeout(20.seconds) {
+                            c.webSocket("wss://server.test:${s.port}/ws") {
+                                version = call.response.version
+                                send(Frame.Text("tls12"))
+                                echo = (incoming.receive() as Frame.Text).readText()
+                            }
+                        }
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, version, "Extended CONNECT on the h2 connection")
+                        assertEquals("echo:tls12 HTTP/2", echo)
+                    }
+                    val first = s.next()
+                    assertEquals("h2", first.alpn)
+                    assertEquals(0x0303, first.version)
+                    assertNull(s.outcomes.tryReceive().getOrNull(), "one TLS 1.2 handshake: the WebSocket took a stream of it")
                 }
             }
         }

@@ -2179,6 +2179,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12Ksl
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.negative_pinsHoldOverTls12
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.negative_tls12ServerWithoutEmsIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.tls12SessionIsResumedOnTheEnginesNextConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientTls12KslServerTest.webSocketOverH2OnATls12Connection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.clientClosesPlainServerClosesTcpFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.clientClosesTlsServerClosesFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.h2ClientClosesServerEndsStreamFirst
