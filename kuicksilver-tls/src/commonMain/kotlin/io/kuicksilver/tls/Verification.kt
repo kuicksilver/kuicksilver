@@ -240,6 +240,9 @@ internal class Verification(
         p.store.put(p.name, p.pin)
     }
 
+    /** The reference identifier the pins are checked for, as `tofu` names it: the normalized server name, null for a server. */
+    private fun pinnedHost(): String? = config.serverName?.let { runCatching { HostName.normalize(it).value }.getOrDefault(it) }
+
     /** Pin check against a chain the verifier (or `ksl`) built; also used after an AnchoredCa handshake. */
     fun pinCheck(validated: List<Certificate>): VerifyResult {
         val pinned = trust as? TrustConfig.Pinned ?: return VerifyResult.Accepted(validated)
@@ -250,7 +253,7 @@ internal class Verification(
         ) {
             VerifyResult.Accepted(validated)
         } else {
-            VerifyResult.Rejected(VerifyReason.PinMismatch(validated.map { it.spkiSha256 }))
+            VerifyResult.Rejected(VerifyReason.PinMismatch(validated.map { it.spkiSha256 }, pinnedHost()))
         }
     }
 
@@ -289,7 +292,7 @@ internal class Verification(
             }
 
             else -> {
-                VerifyResult.Rejected(VerifyReason.PinMismatch(listOf(leaf)))
+                VerifyResult.Rejected(VerifyReason.PinMismatch(listOf(leaf), reference.value))
             }
         }
     }

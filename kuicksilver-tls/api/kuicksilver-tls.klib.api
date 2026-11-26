@@ -424,6 +424,8 @@ sealed interface io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustCon
     }
 
     final object Companion { // io.kuicksilver.tls/TrustConfig.Companion|null[0]
+        final fun fromPem(kotlin/String): io.kuicksilver.tls/TrustConfig.AnchoredCa // io.kuicksilver.tls/TrustConfig.Companion.fromPem|fromPem(kotlin.String){}[0]
+        final fun fromPemFile(kotlin/String): io.kuicksilver.tls/TrustConfig.AnchoredCa // io.kuicksilver.tls/TrustConfig.Companion.fromPemFile|fromPemFile(kotlin.String){}[0]
         final fun reloadable(io.kuicksilver.tls/TrustConfig.AnchoredCa): io.kuicksilver.tls/TrustConfig.ReloadableCa // io.kuicksilver.tls/TrustConfig.Companion.reloadable|reloadable(io.kuicksilver.tls.TrustConfig.AnchoredCa){}[0]
     }
 
@@ -455,9 +457,12 @@ sealed interface io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyR
 
     final class PinMismatch : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.PinMismatch|null[0]
         constructor <init>(kotlin.collections/List<io.kuicksilver.tls/SpkiSha256>) // io.kuicksilver.tls/VerifyReason.PinMismatch.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.SpkiSha256>){}[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/SpkiSha256>, kotlin/String?) // io.kuicksilver.tls/VerifyReason.PinMismatch.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.SpkiSha256>;kotlin.String?){}[0]
 
         final val chainPins // io.kuicksilver.tls/VerifyReason.PinMismatch.chainPins|{}chainPins[0]
             final fun <get-chainPins>(): kotlin.collections/List<io.kuicksilver.tls/SpkiSha256> // io.kuicksilver.tls/VerifyReason.PinMismatch.chainPins.<get-chainPins>|<get-chainPins>(){}[0]
+        final val host // io.kuicksilver.tls/VerifyReason.PinMismatch.host|{}host[0]
+            final fun <get-host>(): kotlin/String? // io.kuicksilver.tls/VerifyReason.PinMismatch.host.<get-host>|<get-host>(){}[0]
 
         final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.PinMismatch.toString|toString(){}[0]
     }

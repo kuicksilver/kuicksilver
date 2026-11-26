@@ -1,13 +1,15 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.server
 
 import io.ktor.util.logging.Logger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.MAX_PEM_FILE_BYTES
 import io.kuicksilver.tls.OcspStapling
+import io.kuicksilver.tls.readSecretFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlin.time.Duration

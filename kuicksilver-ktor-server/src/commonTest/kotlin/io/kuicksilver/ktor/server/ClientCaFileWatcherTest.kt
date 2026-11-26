@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+)
 
 package io.kuicksilver.ktor.server
 
@@ -8,6 +12,7 @@ import io.ktor.util.logging.KtorSimpleLogger
 import io.ktor.util.logging.Logger
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.PrivateKeyInPemFile
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
