@@ -2011,11 +2011,11 @@ rejected verifies the certificate against the `public_name`, so the server must 
 val keys = EchServerKeys(listOf(EchKey(pemText)))
 val server = tlsConfig(TlsRole.Server) {
     identity = TlsIdentity.fromPem(chainPem, keyPem)   // valid for the inner names and for the public_name
-    echKeys = keys
+    ech { this.keys = keys }
 }
 val client = tlsConfig(TlsRole.Client) {
     serverName = "inner.example"
-    echConfigList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord)
+    ech { configList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord) }
 }
 ```
 

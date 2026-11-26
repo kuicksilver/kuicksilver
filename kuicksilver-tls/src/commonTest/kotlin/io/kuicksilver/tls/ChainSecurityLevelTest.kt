@@ -269,7 +269,7 @@ class ChainSecurityLevelTest {
                 platformRefuses(VerifyReason.UnknownIssuer),
             )
         refused(k, VerifyReason.WeakKey, afterThePlatform = true)
-        val g = Fixtures.client(TrustConfig.Platform) { genericAlerts = true }
+        val g = Fixtures.client(TrustConfig.Platform) { expert { genericAlerts = true } }
         val f =
             assertIs<DriveResult.Failed>(
                 handshake(g, listOf(WeakCerts.leafMd5), WeakCerts.leafMd5Key, platformRefuses(VerifyReason.UnknownIssuer, g)).result,
@@ -302,7 +302,7 @@ class ChainSecurityLevelTest {
 
     @Test fun negative_platformPathWithGenericAlertsSendsHandshakeFailure() {
         if (!platformPauses) return
-        val config = Fixtures.client(TrustConfig.Platform) { genericAlerts = true }
+        val config = Fixtures.client(TrustConfig.Platform) { expert { genericAlerts = true } }
         val chain = listOf(WeakCerts.leafViaRsa1024, WeakCerts.midRsa1024)
         val o = handshake(config, chain, WeakCerts.leafViaRsa1024Key, platformBuilt(chain + WeakCerts.weakRoot, config))
         val f = assertIs<DriveResult.Failed>(o.result)

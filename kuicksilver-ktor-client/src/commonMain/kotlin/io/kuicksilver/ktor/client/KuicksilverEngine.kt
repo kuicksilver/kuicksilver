@@ -125,7 +125,7 @@ internal class KuicksilverEngine(
             try {
                 io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
                     config.tls(this)
-                    echConfigList = list
+                    ech { configList = list }
                 }
             } catch (e: io.kuicksilver.tls.TlsException.Config) {
                 throw IllegalArgumentException("ech.configLists[\"$host\"]: ${e.message}", e)

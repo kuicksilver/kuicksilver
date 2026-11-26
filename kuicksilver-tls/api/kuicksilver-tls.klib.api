@@ -847,15 +847,16 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
     final class Builder { // io.kuicksilver.tls/TlsConfig.Builder|null[0]
         constructor <init>(io.kuicksilver.tls/TlsRole) // io.kuicksilver.tls/TlsConfig.Builder.<init>|<init>(io.kuicksilver.tls.TlsRole){}[0]
 
+        final val ech // io.kuicksilver.tls/TlsConfig.Builder.ech|{}ech[0]
+            final fun <get-ech>(): io.kuicksilver.tls/TlsConfig.Builder.Ech // io.kuicksilver.tls/TlsConfig.Builder.ech.<get-ech>|<get-ech>(){}[0]
+        final val expert // io.kuicksilver.tls/TlsConfig.Builder.expert|{}expert[0]
+            final fun <get-expert>(): io.kuicksilver.tls/TlsConfig.Builder.Expert // io.kuicksilver.tls/TlsConfig.Builder.expert.<get-expert>|<get-expert>(){}[0]
         final val role // io.kuicksilver.tls/TlsConfig.Builder.role|{}role[0]
             final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.tls/TlsConfig.Builder.role.<get-role>|<get-role>(){}[0]
 
         final var alpn // io.kuicksilver.tls/TlsConfig.Builder.alpn|{}alpn[0]
             final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.Builder.alpn.<get-alpn>|<get-alpn>(){}[0]
             final fun <set-alpn>(kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/TlsConfig.Builder.alpn.<set-alpn>|<set-alpn>(kotlin.collections.List<kotlin.String>){}[0]
-        final var alpnFallback // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback|{}alpnFallback[0]
-            final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
-            final fun <set-alpnFallback>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<set-alpnFallback>|<set-alpnFallback>(kotlin.String?){}[0]
         final var certificateCompression // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression|{}certificateCompression[0]
             final fun <get-certificateCompression>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression.<get-certificateCompression>|<get-certificateCompression>(){}[0]
             final fun <set-certificateCompression>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression.<set-certificateCompression>|<set-certificateCompression>(kotlin.Boolean){}[0]
@@ -865,18 +866,6 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var clientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth|{}clientAuth[0]
             final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
             final fun <set-clientAuth>(io.kuicksilver.tls/ClientAuth) // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<set-clientAuth>|<set-clientAuth>(io.kuicksilver.tls.ClientAuth){}[0]
-        final var echConfigList // io.kuicksilver.tls/TlsConfig.Builder.echConfigList|{}echConfigList[0]
-            final fun <get-echConfigList>(): io.kuicksilver.tls/EchConfigList? // io.kuicksilver.tls/TlsConfig.Builder.echConfigList.<get-echConfigList>|<get-echConfigList>(){}[0]
-            final fun <set-echConfigList>(io.kuicksilver.tls/EchConfigList?) // io.kuicksilver.tls/TlsConfig.Builder.echConfigList.<set-echConfigList>|<set-echConfigList>(io.kuicksilver.tls.EchConfigList?){}[0]
-        final var echGrease // io.kuicksilver.tls/TlsConfig.Builder.echGrease|{}echGrease[0]
-            final fun <get-echGrease>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.echGrease.<get-echGrease>|<get-echGrease>(){}[0]
-            final fun <set-echGrease>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.echGrease.<set-echGrease>|<set-echGrease>(kotlin.Boolean){}[0]
-        final var echKeys // io.kuicksilver.tls/TlsConfig.Builder.echKeys|{}echKeys[0]
-            final fun <get-echKeys>(): io.kuicksilver.tls/EchServerKeys? // io.kuicksilver.tls/TlsConfig.Builder.echKeys.<get-echKeys>|<get-echKeys>(){}[0]
-            final fun <set-echKeys>(io.kuicksilver.tls/EchServerKeys?) // io.kuicksilver.tls/TlsConfig.Builder.echKeys.<set-echKeys>|<set-echKeys>(io.kuicksilver.tls.EchServerKeys?){}[0]
-        final var genericAlerts // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts|{}genericAlerts[0]
-            final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
-            final fun <set-genericAlerts>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<set-genericAlerts>|<set-genericAlerts>(kotlin.Boolean){}[0]
         final var handshakeTimeout // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout|{}handshakeTimeout[0]
             final fun <get-handshakeTimeout>(): kotlin.time/Duration // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout.<get-handshakeTimeout>|<get-handshakeTimeout>(){}[0]
             final fun <set-handshakeTimeout>(kotlin.time/Duration) // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout.<set-handshakeTimeout>|<set-handshakeTimeout>(kotlin.time.Duration){}[0]
@@ -912,6 +901,29 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
             final fun <set-versions>(io.kuicksilver.tls/TlsVersions) // io.kuicksilver.tls/TlsConfig.Builder.versions.<set-versions>|<set-versions>(io.kuicksilver.tls.TlsVersions){}[0]
 
         final fun build(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.tls/TlsConfig.Builder.build|build(){}[0]
+        final fun ech(kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder.Ech, kotlin/Unit>) // io.kuicksilver.tls/TlsConfig.Builder.ech|ech(kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder.Ech,kotlin.Unit>){}[0]
+        final fun expert(kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder.Expert, kotlin/Unit>) // io.kuicksilver.tls/TlsConfig.Builder.expert|expert(kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder.Expert,kotlin.Unit>){}[0]
+
+        final class Ech { // io.kuicksilver.tls/TlsConfig.Builder.Ech|null[0]
+            final var configList // io.kuicksilver.tls/TlsConfig.Builder.Ech.configList|{}configList[0]
+                final fun <get-configList>(): io.kuicksilver.tls/EchConfigList? // io.kuicksilver.tls/TlsConfig.Builder.Ech.configList.<get-configList>|<get-configList>(){}[0]
+                final fun <set-configList>(io.kuicksilver.tls/EchConfigList?) // io.kuicksilver.tls/TlsConfig.Builder.Ech.configList.<set-configList>|<set-configList>(io.kuicksilver.tls.EchConfigList?){}[0]
+            final var grease // io.kuicksilver.tls/TlsConfig.Builder.Ech.grease|{}grease[0]
+                final fun <get-grease>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.Ech.grease.<get-grease>|<get-grease>(){}[0]
+                final fun <set-grease>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.Ech.grease.<set-grease>|<set-grease>(kotlin.Boolean){}[0]
+            final var keys // io.kuicksilver.tls/TlsConfig.Builder.Ech.keys|{}keys[0]
+                final fun <get-keys>(): io.kuicksilver.tls/EchServerKeys? // io.kuicksilver.tls/TlsConfig.Builder.Ech.keys.<get-keys>|<get-keys>(){}[0]
+                final fun <set-keys>(io.kuicksilver.tls/EchServerKeys?) // io.kuicksilver.tls/TlsConfig.Builder.Ech.keys.<set-keys>|<set-keys>(io.kuicksilver.tls.EchServerKeys?){}[0]
+        }
+
+        final class Expert { // io.kuicksilver.tls/TlsConfig.Builder.Expert|null[0]
+            final var alpnFallback // io.kuicksilver.tls/TlsConfig.Builder.Expert.alpnFallback|{}alpnFallback[0]
+                final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.Expert.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
+                final fun <set-alpnFallback>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.Expert.alpnFallback.<set-alpnFallback>|<set-alpnFallback>(kotlin.String?){}[0]
+            final var genericAlerts // io.kuicksilver.tls/TlsConfig.Builder.Expert.genericAlerts|{}genericAlerts[0]
+                final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.Expert.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
+                final fun <set-genericAlerts>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.Expert.genericAlerts.<set-genericAlerts>|<set-genericAlerts>(kotlin.Boolean){}[0]
+        }
     }
 }
 

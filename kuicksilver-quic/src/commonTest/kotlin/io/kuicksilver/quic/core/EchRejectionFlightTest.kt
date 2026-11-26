@@ -38,12 +38,12 @@ class EchRejectionFlightTest {
         for (askForCertificate in kotlin.collections.listOf(false, true)) {
             val client =
                 CoreFixtures.client(alpn = "hq-interop") {
-                    echConfigList = listOf(EchTestKeys.A)
+                    ech { configList = listOf(EchTestKeys.A) }
                     identity = TlsIdentity.fromDer(kotlin.collections.listOf(TestCerts.client), TestCerts.clientKey.copyOf())
                 }
             val server =
                 CoreFixtures.server {
-                    echKeys = EchServerKeys(kotlin.collections.listOf(EchKey(EchTestKeys.B)))
+                    ech { keys = EchServerKeys(kotlin.collections.listOf(EchKey(EchTestKeys.B))) }
                     if (askForCertificate) {
                         clientAuth = ClientAuth.Optional
                         trust = TrustConfig.AnchoredCa(kotlin.collections.listOf(CoreFixtures.testCa))

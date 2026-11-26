@@ -574,7 +574,7 @@ class ClientEchTest {
                 KuicksilverEngineConfig().apply {
                     tls = {
                         versions = TlsVersions.Tls13
-                        echConfigList = listA
+                        ech { configList = listA }
                     }
                     ech { grease = g }
                 }

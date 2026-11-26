@@ -120,7 +120,7 @@ class ServerEchTest {
                             trust =
                                 io.kuicksilver.tls.TrustConfig
                                     .AnchoredCa(kotlin.collections.listOf(ServerFixtures.testCa))
-                            echConfigList = list
+                            ech { configList = list }
                         },
                         EmptyCoroutineContext,
                         cache,

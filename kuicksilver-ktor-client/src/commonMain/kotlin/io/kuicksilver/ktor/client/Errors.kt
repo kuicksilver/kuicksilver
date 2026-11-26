@@ -67,8 +67,11 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
         serverName = host
         // the connection decides these: one configuration per endpoint, the retry's after a rejection; ECH is TLS 1.3
         // only, and a TLS 1.2 configuration offers none (EchClientConfig.fromHttpsRecords)
-        echConfigList = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
-        echGrease = this@tlsConfigFor.ech.grease
+        val offered = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
+        ech {
+            configList = offered
+            grease = this@tlsConfigFor.ech.grease
+        }
     }
 
 /**
@@ -109,12 +112,14 @@ internal fun KuicksilverEngineConfig.proxyTlsConfigFor(
             tls()
             trust = proxyTrustOf(trust)
             identity = null
-            echConfigList = null
-            echGrease = this@proxyTlsConfigFor.ech.grease
+            ech {
+                configList = null
+                grease = this@proxyTlsConfigFor.ech.grease
+            }
         } else {
             trust = proxyTrustOf(this@proxyTlsConfigFor.trust)
             identity = null
-            echGrease = this@proxyTlsConfigFor.ech.grease
+            ech { grease = this@proxyTlsConfigFor.ech.grease }
             own()
         }
         // HTTP/1.1 to an https:// proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023), h3 to a

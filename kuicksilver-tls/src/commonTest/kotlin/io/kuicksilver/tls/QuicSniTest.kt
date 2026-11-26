@@ -196,14 +196,14 @@ class QuicSniTest {
             tlsConfig(TlsRole.Server) {
                 alpn = listOf("h3")
                 identity = a
-                alpnFallback = "http/1.1"
+                expert { alpnFallback = "http/1.1" }
             }
         val withSelector =
             tlsConfig(TlsRole.Server) {
                 alpn = listOf("h3")
                 identity = untrusted
                 sniSelector = { ServerTlsOverride(a, alpn = listOf("h3")) }
-                alpnFallback = "http/1.1"
+                expert { alpnFallback = "http/1.1" }
             }
         for (config in listOf(plain, withSelector)) {
             val p = handshake(Fixtures.client(), config)
