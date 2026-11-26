@@ -282,7 +282,7 @@ class GuideSamplesTest {
     @Test fun webTransportClientSample() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransportRoute("/echo", protocols = listOf("echo-v1")) { s ->
                             val st = s.acceptBidi()
@@ -525,11 +525,14 @@ class GuideSamplesTest {
             val serverCaPem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
             val server =
                 embeddedServer(KuicksilverServer, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
-                        clientAuth = ClientAuth.Required
-                        trust = ClientFixtures.trust
+                        tls {
+                            clientAuth = ClientAuth.Required
+                            clientTrust = ClientFixtures.trust
+                        }
                     }
                 }) {
                     routing {
@@ -559,8 +562,10 @@ class GuideSamplesTest {
                 client.use { c -> assertEquals("HTTP/1.1 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                 HttpClient(Kuicksilver) {
                     engine {
-                        tls { this.identity = identity }
-                        tls { trust = ClientFixtures.trust }
+                        tls {
+                            this.identity = identity
+                            trust = ClientFixtures.trust
+                        }
                         http3 { discovery = Http3Discovery.H3Only }
                     }
                 }.use { c -> assertEquals("HTTP/3 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }

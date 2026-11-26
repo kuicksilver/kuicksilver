@@ -39,7 +39,8 @@ class ClientH3EndpointChoiceTest {
     ): List<Pair<String, String>> {
         val server =
             io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                tlsConnector(ClientFixtures.identity()) {
+                tlsConnector {
+                    tls { identity = ClientFixtures.identity() }
                     this.host = bind
                     port = 0
                 }

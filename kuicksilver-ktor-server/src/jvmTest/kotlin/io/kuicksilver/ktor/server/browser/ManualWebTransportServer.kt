@@ -119,14 +119,17 @@ class ManualWebTransportServer {
         }
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     host = "127.0.0.1"
                     this.port = port
                 }
-                webTransport = true
-                if (lbChange) quicLoadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0])
-                qlog = qlogSink
-                connectionListener = events
+                http3 { webTransport { enabled = true } }
+                if (lbChange) http3 { endpoint { loadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0]) } }
+                observability {
+                    qlog = qlogSink
+                    connectionListener = events
+                }
             }) {
                 routing {
                     get("/wt/index.html") { call.respondText(page, ContentType.Text.Html) }

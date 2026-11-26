@@ -4,5 +4,5 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.server.engine.EngineConnectorConfig
 
-/** Ktor has no `EngineSSLConnectorConfig` outside the JVM: TLS connectors are `tlsConnector(identity)` here. */
+/** Ktor has no `EngineSSLConnectorConfig` outside the JVM: TLS connectors are `tlsConnector { }` here. */
 internal actual fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector? = null

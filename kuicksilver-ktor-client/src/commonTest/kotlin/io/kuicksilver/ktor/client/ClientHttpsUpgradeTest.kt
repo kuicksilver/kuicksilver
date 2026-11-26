@@ -66,8 +66,10 @@ class ClientHttpsUpgradeTest {
         clientTest {
             val (tls, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("secure") } } }
             try {
                 val name = "_$port._https.server.test"

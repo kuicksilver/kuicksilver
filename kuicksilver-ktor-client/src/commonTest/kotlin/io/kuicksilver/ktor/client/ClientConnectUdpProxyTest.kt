@@ -78,7 +78,7 @@ class ClientConnectUdpProxyTest {
                 }
             }
         val (proxyServer, proxyPort) =
-            testServer(configure = { connectUdp = true }) {
+            testServer(configure = { http3 { connectUdp = true } }) {
                 routing {
                     route("/") {
                         if (requireAuthorization != null) {
@@ -141,8 +141,10 @@ class ClientConnectUdpProxyTest {
                 val c =
                     testClient(Http3Discovery.Auto, engine = {
                         proxies { connectUdp = udp }
-                        observability { qlog = sink }
-                        observability { connectionListener = listener }
+                        observability {
+                            qlog = sink
+                            connectionListener = listener
+                        }
                     })
                 val job = c.engine.coroutineContext[kotlinx.coroutines.Job]!!
                 try {

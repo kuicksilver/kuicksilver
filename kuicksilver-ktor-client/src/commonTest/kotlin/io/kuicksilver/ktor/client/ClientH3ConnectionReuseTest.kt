@@ -113,7 +113,7 @@ class ClientH3ConnectionReuseTest {
         val altUsed = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
         var port = 0
         val (server, p) =
-            testServer(configure = { altSvc = false }) {
+            testServer(configure = { http3 { altSvc = false } }) {
                 routing {
                     get("/") {
                         if (call.request.httpVersion == "HTTP/3") altUsed.trySend(call.request.headers["alt-used"] ?: "")

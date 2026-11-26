@@ -14,40 +14,48 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-/** `KuicksilverTlsConnector.Builder.keyExchangeGroups` reaches the TLS configurations of TCP and HTTP/3 alike. */
+/** `tls { keyExchangeGroups }` reaches the TLS configurations of TCP and HTTP/3 alike. */
 class ServerKeyExchangeGroupsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val groups = KeyExchangeGroups(listOf(KeyExchangeGroups.SECP384R1, KeyExchangeGroups.X25519))
 
     @Test fun theConnectorsGroupsReachTcpAndQuic() {
-        val connector = KuicksilverTlsConnector.Builder(ServerFixtures.identity()).apply { keyExchangeGroups = groups }.build()
-        assertEquals(groups, connector.keyExchangeGroups)
+        val connector =
+            testConnector {
+                tls {
+                    identity = ServerFixtures.identity()
+                    keyExchangeGroups = groups
+                }
+            }
+        assertEquals(groups, connector.tls.keyExchangeGroups)
         assertEquals(groups, connector.tlsConfig(listOf("http/1.1")).keyExchangeGroups, "TCP")
         assertEquals(groups, connector.tlsConfig(listOf("h3")).keyExchangeGroups, "QUIC")
-        assertEquals(groups, connector.withPort(8443).keyExchangeGroups, "a resolved connector keeps them")
+        assertEquals(groups, connector.withPort(8443).tls.keyExchangeGroups, "a resolved connector keeps them")
         assertEquals(
             KeyExchangeGroups.Default,
-            KuicksilverTlsConnector.Builder(ServerFixtures.identity()).build().keyExchangeGroups,
+            testConnector { tls { identity = ServerFixtures.identity() } }.tls.keyExchangeGroups,
             "the default",
         )
     }
 
     @Test fun negative_keySharesOrNoTls12CurveFailWhenTheConfigurationIsMade() {
         val shares =
-            KuicksilverTlsConnector
-                .Builder(ServerFixtures.identity())
-                .apply {
+            testConnector {
+                tls {
+                    identity = ServerFixtures.identity()
                     keyExchangeGroups = KeyExchangeGroups(listOf(KeyExchangeGroups.X25519), setOf(KeyExchangeGroups.X25519))
-                }.build()
+                }
+            }
         assertFailsWith<TlsException.Config> { shares.tlsConfig(listOf("http/1.1")) }
         val hybridOnly =
-            KuicksilverTlsConnector
-                .Builder(ServerFixtures.identity())
-                .apply {
+            testConnector {
+                tls {
+                    identity = ServerFixtures.identity()
                     versions = TlsVersions.Tls12And13
                     keyExchangeGroups = KeyExchangeGroups(listOf(KeyExchangeGroups.X25519MLKEM768))
-                }.build()
+                }
+            }
         assertFailsWith<TlsException.Config>("TCP with TLS 1.2") { hybridOnly.tlsConfig(listOf("http/1.1")) }
         assertEquals(
             1,

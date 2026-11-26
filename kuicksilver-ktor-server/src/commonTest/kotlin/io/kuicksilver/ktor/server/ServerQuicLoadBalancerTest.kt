@@ -32,7 +32,7 @@ class ServerQuicLoadBalancerTest {
             val first = KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16))
             val second = KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16))
             val (server, port) =
-                tlsServer(configure = { quicLoadBalancer = QuicLbConfig(1, sid, 4, first) }) {
+                tlsServer(configure = { http3 { endpoint { loadBalancer = QuicLbConfig(1, sid, 4, first) } } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))

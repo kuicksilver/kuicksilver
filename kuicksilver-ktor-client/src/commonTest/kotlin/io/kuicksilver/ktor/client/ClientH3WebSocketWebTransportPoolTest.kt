@@ -73,7 +73,7 @@ class ClientH3WebSocketWebTransportPoolTest {
 
     private suspend fun withServer(block: suspend (HttpClient, KuicksilverEngine, Int) -> Unit) {
         val (server, port) =
-            testServer(configure = { webTransport = true }) {
+            testServer(configure = { http3 { webTransport { enabled = true } } }) {
                 install(io.ktor.server.websocket.WebSockets)
                 routing {
                     webTransport("/wt") { echo(it) }

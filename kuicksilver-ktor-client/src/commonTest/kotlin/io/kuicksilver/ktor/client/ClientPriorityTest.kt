@@ -45,7 +45,7 @@ class ClientPriorityTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private suspend fun fieldServer(http3: Boolean = true) =
-        testServer(configure = { this.http3 = http3 }) {
+        testServer(configure = { http3 { this.enabled = http3 } }) {
             routing { get("/f") { call.respondText("${call.request.headers.getAll("priority")}") } }
         }
 

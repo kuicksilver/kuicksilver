@@ -393,7 +393,7 @@ internal class MalformedRequestBody(
  * accepted), the first head's first byte is waited for until then, within the head's deadline and the stop's grace
  * period, before the connection is closed as idle (Go's `Server.Shutdown` takes a new connection for idle after 5 s).
  *
- * [allowBareLf] (the engine's `h1AllowBareLf`) lets a bare LF end a line of a request head and of a trailer section (RFC
+ * [allowBareLf] (the engine's `http1 { allowBareLf }`) lets a bare LF end a line of a request head and of a trailer section (RFC
  * 9112 section 2.2 MAY); without it such a request gets 400 and the connection closes.
  */
 @OptIn(InternalAPI::class)
@@ -1122,7 +1122,7 @@ private suspend fun readRequestHeadInTime(
 /**
  * Drops the empty lines (CRLF or LF) in front of a request line, which RFC 9112 section 2.2 lets a server ignore, and
  * returns once a byte of something else is there: true, a request has started; false when the input ended first. A bare LF
- * is skipped here whatever `h1AllowBareLf`: no line of a head ends there, and llhttp, which refuses a bare LF in a head,
+ * is skipped here whatever `http1 { allowBareLf }`: no line of a head ends there, and llhttp, which refuses a bare LF in a head,
  * skips one before it too.
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)

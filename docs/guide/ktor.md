@@ -30,7 +30,8 @@ val chainPem = File("fullchain.pem").readText()
 val keyPem = File("privkey.pem").readText()
 // guide:ktor:minimal-server
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+    tlsConnector {
+        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
         port = 8443
     }
 }) {
@@ -174,7 +175,10 @@ import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 // guide:ktor:both-engines
 val server = embeddedServer(KuicksilverServer, configure = {
-    tlsConnector(identity) { port = 8443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 8443
+    }
 }, module = Application::module)
 val client = HttpClient(KuicksilverClient)
 ```
@@ -188,13 +192,34 @@ reference](configuration.md); common failures are in [troubleshooting](troublesh
 
 ## Server
 
+The first screen: a certificate from files (renewals picked up) and one port for TCP and UDP. Every option here is
+stable.
+
+```kotlin
+// guide:ktor:first-screen-server
+val server =
+    embeddedServer(Kuicksilver, configure = {
+        tls {
+            pemFiles(
+                "/etc/letsencrypt/live/example.com/fullchain.pem", // the key must be unencrypted PKCS#8
+                "/etc/letsencrypt/live/example.com/privkey.pem", // (-----BEGIN PRIVATE KEY-----)
+            )
+            reloadInterval = 1.hours // pick up certbot renewals
+        }
+        tlsConnector { port = 443 } // TCP 443: HTTP/1.1 (and HTTP/2); UDP 443: HTTP/3, announced with Alt-Svc
+    }, module = Application::module)
+```
+
 ```kotlin
 // guide:ktor:server
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {   // the key array is zeroed after import
+    tlsConnector {
+        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }   // the key array is zeroed after import
         port = 443
-        clientAuth = ClientAuth.Optional              // ask for a client certificate without requiring one
-        trust = TrustConfig.AnchoredCa(listOf(clientCa))
+        tls {
+            clientAuth = ClientAuth.Optional              // ask for a client certificate without requiring one
+            clientTrust = TrustConfig.AnchoredCa(listOf(clientCa))
+        }
     }
 }) {
     routing {
@@ -385,9 +410,10 @@ val ech2 = File("/etc/kuicksilver/ech-2.pem")
 val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
 val server =
     embeddedServer(Kuicksilver, configure = {
-        tlsConnector(identity) {
+        tlsConnector {
+            tls { this.identity = identity }
             port = 443
-            echKeys = keys
+            tls { echKeys = keys }
         }
     }) { routing { get("/") { call.respondText("hidden") } } }
 // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
@@ -425,11 +451,14 @@ section 9.2).
 // guide:ktor:http2-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    http2 = true                                              // offer h2 before http/1.1 in ALPN
-    http2Settings = http2Settings {
-        maxConcurrentStreams = 50
-    }  // windows and flood limits are Http2Settings'
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    http2 {
+        enabled = true                                              // offer h2 before http/1.1 in ALPN
+        settings { maxConcurrentStreams = 50 }  // windows and flood limits are Http2Settings'
+    }
 }, module = Application::module)
 ```
 
@@ -561,7 +590,10 @@ endpoint, a feature flag.
 // guide:ktor:http3-advertising
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
 }, module = Application::module)
 // later, when the remote configuration says so: clients fall back to HTTP/1.1 over TLS
 server.engine.http3Advertising = Http3Advertising.Drain
@@ -709,8 +741,11 @@ through the application's log.
 // guide:ktor:webtransport-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    webTransport = true
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    http3 { webTransport { enabled = true } }
 }) {
     routing {
         webTransport("/echo", protocols = listOf("echo-v1")) { session ->
@@ -778,8 +813,11 @@ of it goes out as it is. The proxy's configuration is code (a filter, a resolver
 // guide:ktor:connect-udp-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val proxyServer = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    connectUdp = true
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    http3 { connectUdp = true }
 }) {
     routing {
         connectUdp(UdpProxy())                     // behind your authentication; public targets only by default
@@ -811,9 +849,10 @@ trusted gateway", so the connector must accept no other clients:
 
 ```kotlin
 // guide:ktor:trusted-gateway
-tlsConnector(internalIdentity) {
+tlsConnector {
+    tls { identity = internalIdentity }
     port = 8443
-    trustedGateway = true // every client of this port is the gateway
+    allowMisdirectedHosts = true // every client of this port is the gateway
 }
 ```
 
@@ -884,15 +923,16 @@ response, for it:
 
 ```kotlin
 // guide:ktor:sni-server
-tlsConnector(defaultIdentity) {
+tlsConnector {
+    tls { identity = defaultIdentity }
     port = 443
-    sniSelector = { hello ->
+    tls { sniSelector = { hello ->
         when (hello.serverName) {
             "api.example.com" -> ServerTlsOverride(apiIdentity)
             "admin.example.com" -> ServerTlsOverride(adminIdentity, clientAuth = ClientAuth.Required, trust = adminCa)
             else -> null // a name not served here: the handshake ends with unrecognized_name
         }
-    }
+    } }
 }
 ```
 
@@ -931,7 +971,10 @@ A renewed certificate can be put in place without a restart (experimental). Give
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
 }, module = Application::module)
 // later, when the renewed files are in place: new TCP and QUIC handshakes present them, open connections keep theirs
 identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
@@ -988,7 +1031,10 @@ fun reloadIfChanged(identity: TlsIdentity.Reloadable, chainFile: File, keyFile: 
 
 val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)))
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
 }) {
     launch {
         var served = chainFile.lastModified()
@@ -1034,10 +1080,13 @@ valid now ([Rotating the client CA](tls.md#rotating-the-client-ca)).
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) {
+    tlsConnector {
+        tls { this.identity = identity }
         port = 443
-        clientAuth = ClientAuth.Required
-        trust = clientCa
+        tls {
+            clientAuth = ClientAuth.Required
+            clientTrust = clientCa
+        }
     }
 }, module = Application::module)
 // later: new TCP and QUIC handshakes verify client certificates against the new bundle
@@ -2360,10 +2409,13 @@ val clientCaPem = File("client-ca.pem").readText()
 // guide:ktor:mtls-server
 val clientCa = Certificate.parsePem(clientCaPem)   // the CA that issues the client certificates
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+    tlsConnector {
+        tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
         port = 443
-        clientAuth = ClientAuth.Required           // no handshake without a client certificate that chains to clientCa
-        trust = TrustConfig.AnchoredCa(clientCa)
+        tls {
+            clientAuth = ClientAuth.Required           // no handshake without a client certificate that chains to clientCa
+            clientTrust = TrustConfig.AnchoredCa(clientCa)
+        }
     }
 }) {
     routing {
@@ -2380,8 +2432,10 @@ The client presents its certificate with `identity`, for HTTP/3, HTTP/2 and HTTP
 val identity = TlsIdentity.fromPem(clientChainPem, clientKeyPem.toCharArray())   // every target; the key array is zeroed
 val client = HttpClient(Kuicksilver) {
     engine {
-        tls { this.identity = identity }                                            // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
-        tls { trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem)) }   // or keep Platform for a public server certificate
+        tls {
+            this.identity = identity                                            // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
+            trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))   // or keep Platform for a public server certificate
+        }
     }
 }
 ```
@@ -2570,14 +2624,19 @@ and the accept queue, handshakes ([Deploying: Observability](deployment.md#obser
 // guide:ktor:server-observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    logger = KuicksilverLogger.stderr(LogLevel.Info)
-    qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
-    eventListener = object : KuicksilverServerEventListener() {
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    observability {
+        logger = KuicksilverLogger.stderr(LogLevel.Info)
+        qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
+    }
+    observability { eventListener = object : KuicksilverServerEventListener() {
         override fun requestEnded(protocol: HttpProtocolVersion, call: ApplicationCall, cause: Throwable?) {
             metrics.record(protocol, call.response.status()?.value)
         }
-    }
+    } }
 }, module = Application::module)
 ```
 
@@ -2938,9 +2997,16 @@ request can be **replayed**: an attacker who recorded the client's first flight 
 // guide:ktor:zero-rtt-server
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    quicEarlyData = true
-    http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }   // or keep the default: unsafe requests wait
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    http3 {
+        earlyData {
+            enabled = true
+            policy = Http3EarlyDataPolicy.Reject425()   // or keep the default: unsafe requests wait
+        }
+    }
 }, module = Application::module)
 // guide:ktor:zero-rtt-client
 val client = HttpClient(Kuicksilver) {
@@ -2969,9 +3035,16 @@ val policy = Http3EarlyDataPolicy.WaitForHandshake(replayable = { request ->
     request.method == "GET" && request.path.orEmpty().startsWith("/static/")   // only these may run before the handshake
 })
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    quicEarlyData = true
-    http3Settings = http3Settings { earlyData = policy }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    http3 {
+        earlyData {
+            enabled = true
+            this.policy = policy
+        }
+    }
 }) {
     routing {
         get("/feed") {

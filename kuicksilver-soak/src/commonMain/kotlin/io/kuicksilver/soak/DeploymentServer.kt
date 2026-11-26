@@ -30,7 +30,8 @@ public fun deploymentServerMain(args: Array<String>) {
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     this.host = host
                     this.port = port.toInt()
                 }

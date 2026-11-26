@@ -65,7 +65,7 @@ class ClientWebTransportTest {
     @Test fun echoAgainstKuicksilverServer() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { session ->
                             val st = session.acceptBidi()
@@ -100,7 +100,9 @@ class ClientWebTransportTest {
         h3Test {
             val seen = CompletableDeferred<WebTransportCloseInfo>()
             val (server, port) =
-                testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { seen.complete(it.closed.await()) } } }
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { seen.complete(it.closed.await()) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
@@ -121,7 +123,10 @@ class ClientWebTransportTest {
     /** RFC 9114 section 3.3: two sessions to one origin share one connection (both sides declare flow control). */
     @Test fun twoSessionsOfOneOriginShareOneConnection() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
@@ -146,7 +151,7 @@ class ClientWebTransportTest {
     @Test fun requestsShareTheSessionsConnection() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { it.closed.await() }
                         get("/") { call.respondText("ok") }
@@ -176,13 +181,12 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) =
                 testServer(configure = {
-                    webTransport = true
-                    http3Settings =
-                        http3Settings {
-                            enableConnectProtocol = true
-                            webTransport { enabled = true }
-                            webTransport { maxSessions = 1 }
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            maxSessionsPerConnection = 1
                         }
+                    }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
@@ -213,7 +217,10 @@ class ClientWebTransportTest {
      */
     @Test fun negative_racingSessionsShareTheExtraConnections() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
@@ -231,13 +238,12 @@ class ClientWebTransportTest {
         }
 
     private val oneSessionServer: io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration.() -> Unit = {
-        webTransport = true
-        http3Settings =
-            http3Settings {
-                enableConnectProtocol = true
-                webTransport { enabled = true }
-                webTransport { maxSessions = 1 }
+        http3 {
+            webTransport {
+                enabled = true
+                maxSessionsPerConnection = 1
             }
+        }
     }
 
     /**
@@ -276,7 +282,10 @@ class ClientWebTransportTest {
      */
     @Test fun negative_aConnectionClosingAsASessionJoinsIsPassedOver() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
@@ -354,15 +363,14 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) =
                 testServer(configure = {
-                    webTransport = true
-                    http3Settings =
-                        http3Settings {
-                            enableConnectProtocol = true
-                            webTransport { enabled = true }
-                            webTransport { initialMaxStreamsBidi = 0 }
-                            webTransport { initialMaxStreamsUni = 0 }
-                            webTransport { initialMaxData = 0 }
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            initialMaxStreamsBidi = 0
+                            initialMaxStreamsUni = 0
+                            initialMaxData = 0
                         }
+                    }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
@@ -383,7 +391,10 @@ class ClientWebTransportTest {
     /** The connection's loss ends every session on it, with the connection's reason. */
     @Test fun connectionLossEndsEverySession() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
+            val (server, port) =
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { it.closed.await() } } }
             testClient(Http3Discovery.Auto).use { client ->
                 val engine = client.engine as KuicksilverEngine
                 val a = client.webTransport("https://127.0.0.1:$port/wt")
@@ -405,7 +416,10 @@ class ClientWebTransportTest {
     /** The server ending the session ends it on the client too, and frees its place. */
     @Test fun serverCloseEndsTheSession() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             try {
                 testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
@@ -470,7 +484,10 @@ class ClientWebTransportTest {
 
     @Test fun proxyIgnoredWhenAsked() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             try {
                 testClient(Http3Discovery.Auto, engine = {
                     proxy = ProxyBuilder.http("http://127.0.0.1:9")
@@ -493,7 +510,10 @@ class ClientWebTransportTest {
     /** At most maxWebTransportSessions at once; one more fails at once instead of waiting. */
     @Test fun negative_sessionCapExceeded() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
+            val (server, port) =
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { it.closed.await() } } }
             try {
                 testClient(Http3Discovery.Auto, engine = { http3 { webTransport { maxSessions = 1 } } }).use { client ->
                     val first = client.webTransport("https://127.0.0.1:$port/wt")
@@ -554,7 +574,10 @@ class ClientWebTransportTest {
     /** An address whose handshake fails gives way to the next resolved one within the connect timeout. */
     @Test fun nextAddressAfterAFailedHandshake() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             val wrong =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
@@ -588,7 +611,10 @@ class ClientWebTransportTest {
     /** A WebTransport session's origin is resolved by the application resolver (`dns`), as a request's is. */
     @Test fun theApplicationDnsResolvesAWebTransportOrigin() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             val asked = kotlinx.coroutines.sync.Mutex() to ArrayList<String>()
             try {
                 testClient(Http3Discovery.Auto, engine = {

@@ -49,7 +49,7 @@ internal class H2cInteropTest {
                     port = 0
                     h2c = mode
                 }
-                http3 = false
+                http3 { enabled = false }
                 shutdownGracePeriod = 0
             }, module = module)
         server.start(wait = false)

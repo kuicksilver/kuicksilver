@@ -36,12 +36,13 @@ suspend fun startServer(
 ): Pair<KqServer, Int> {
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(TlsIdentity.fromPem(SampleCerts.serverChainPem, SampleCerts.serverKeyPem.toCharArray())) {
+            tlsConnector {
+                tls { identity = TlsIdentity.fromPem(SampleCerts.serverChainPem, SampleCerts.serverKeyPem.toCharArray()) }
                 this.host = host
                 this.port = port
             }
-            http2 = true // h2 before http/1.1 in ALPN
-            quicEarlyData = true // session tickets for QUIC, GET runs in 0-RTT
+            http2 { enabled = true } // h2 before http/1.1 in ALPN
+            http3 { earlyData { enabled = true } } // session tickets for QUIC, GET runs in 0-RTT
         }, module = Application::kqTestModule)
     server.startSuspend(false)
     return server to server.engine.resolvedConnectors().first().port

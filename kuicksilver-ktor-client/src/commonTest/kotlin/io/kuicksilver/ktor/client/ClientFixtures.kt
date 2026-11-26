@@ -59,7 +59,8 @@ internal suspend fun testServer(
                 this.port = port
             }
         } else {
-            tlsConnector(ClientFixtures.identity()) {
+            tlsConnector {
+                tls { identity = ClientFixtures.identity() }
                 this.host = host
                 this.port = port
                 tls()

@@ -98,7 +98,7 @@ class ClientHttpsRecordTest {
 
     /** h1 (TCP) and h3 (UDP) of the Kuicksilver server on one port, announcing no `Alt-Svc` unless [altSvc]. */
     private suspend fun h1h3(altSvc: Boolean = false): Pair<TestServer, Int> =
-        testServer(configure = { this.altSvc = altSvc }) { routing { get("/") { call.respondText("ok") } } }
+        testServer(configure = { http3 { this.altSvc = altSvc } }) { routing { get("/") { call.respondText("ok") } } }
 
     @Test fun httpsRecordWithH3GoesStraightToH3() =
         h3Test {
@@ -236,15 +236,18 @@ class ClientHttpsRecordTest {
             val helloBeforeLookupEnded = CompletableDeferred<Boolean>()
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
-                        sniSelector = {
-                            helloBeforeLookupEnded.complete(!lookupEnded.isCompleted)
-                            io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                        tls {
+                            sniSelector = {
+                                helloBeforeLookupEnded.complete(!lookupEnded.isCompleted)
+                                io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                            }
                         }
                     }
-                    http3 = false
+                    http3 { enabled = false }
                 }) { routing { get("/") { call.respondText("ok") } } }
             server.startSuspend(false)
             try {
@@ -274,8 +277,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val asked = CompletableDeferred<Unit>()
@@ -304,8 +309,10 @@ class ClientHttpsRecordTest {
                 val bad = h3With(TlsIdentity.fromDer(listOf(TestCerts.expired), TestCerts.expiredKey.copyOf()))
                 val (server, port) =
                     testServer(configure = {
-                        http3 = false
-                        altSvc = false
+                        http3 {
+                            enabled = false
+                            altSvc = false
+                        }
                     }) { routing { get("/") { call.respondText("h1") } } }
                 try {
                     val badPort = bad.localAddress.port
@@ -329,8 +336,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -354,8 +363,10 @@ class ClientHttpsRecordTest {
             // RFC 9460 section 12: the cache MUST be partitioned per network or flushed on network changes
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -392,8 +403,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -424,8 +437,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -461,8 +476,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -494,8 +511,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -555,8 +574,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -582,8 +603,10 @@ class ClientHttpsRecordTest {
         clientTest {
             val (server, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 val records = Records(emptyMap())

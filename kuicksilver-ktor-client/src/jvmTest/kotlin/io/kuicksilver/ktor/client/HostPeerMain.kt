@@ -43,7 +43,8 @@ fun main(args: Array<String>) {
                 listOf("127.0.0.1", "::1").map { host ->
                     val server =
                         embeddedServer(KuicksilverServer, configure = {
-                            tlsConnector(ClientFixtures.identity()) {
+                            tlsConnector {
+                                tls { identity = ClientFixtures.identity() }
                                 this.host = host
                                 port = 0
                             }

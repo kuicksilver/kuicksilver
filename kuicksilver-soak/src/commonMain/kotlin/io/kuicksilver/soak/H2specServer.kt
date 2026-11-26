@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(DelicateKuicksilverApi::class)
+
 package io.kuicksilver.soak
 
 import io.ktor.http.ContentType
@@ -9,6 +11,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.discard
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.ktor.server.Kuicksilver
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
@@ -44,18 +47,19 @@ public fun h2specServerMain(args: Array<String>) {
                     plainConnector {
                         this.host = host
                         this.port = port
-                        trustedGateway = gateway
+                        allowMisdirectedHosts = gateway
                         this.h2c = io.kuicksilver.ktor.server.H2cMode.Only
                     }
                 } else {
-                    tlsConnector(SoakPki.identity()) {
+                    tlsConnector {
+                        tls { identity = SoakPki.identity() }
                         this.host = host
                         this.port = port
-                        trustedGateway = gateway
+                        allowMisdirectedHosts = gateway
                     }
                 }
-                http2 = true
-                http3 = false
+                http2 { enabled = true }
+                http3 { enabled = false }
             }) {
                 routing {
                     route("{...}") {

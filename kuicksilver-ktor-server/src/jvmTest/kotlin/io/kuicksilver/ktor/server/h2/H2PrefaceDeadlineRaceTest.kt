@@ -40,9 +40,9 @@ class H2PrefaceDeadlineRaceTest {
                 reached = false
                 val (server, port) =
                     tlsServer(configure = {
-                        http2 = true
-                        http3 = false
-                        requestHeaderTimeoutSeconds = seconds
+                        http2 { enabled = true }
+                        http3 { enabled = false }
+                        requestHeaderTimeout = seconds.seconds
                         h2PrefaceForTest = {
                             yield() // returns through a resumption, as the wait does; throws once the deadline fired
                             reached = true

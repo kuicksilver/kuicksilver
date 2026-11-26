@@ -68,19 +68,22 @@ class ServerEchTest {
     ): Pair<Server, Int> {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(TlsIdentity.fromDer(kotlin.collections.listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())) {
+                tlsConnector {
+                    tls { identity = TlsIdentity.fromDer(kotlin.collections.listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf()) }
                     host = "127.0.0.1"
                     port = 0
-                    echKeys = keys
-                    sniSelector = { hello ->
-                        lock.withLock { names += hello.serverName }
-                        when (hello.serverName) {
-                            EchTestKeys.PUBLIC_NAME -> ServerTlsOverride(ServerFixtures.identity())
+                    tls { echKeys = keys }
+                    tls {
+                        sniSelector = { hello ->
+                            lock.withLock { names += hello.serverName }
+                            when (hello.serverName) {
+                                EchTestKeys.PUBLIC_NAME -> ServerTlsOverride(ServerFixtures.identity())
 
-                            // covers *.wild.test
-                            "server.test" -> ServerTlsOverride(innerOnly())
+                                // covers *.wild.test
+                                "server.test" -> ServerTlsOverride(innerOnly())
 
-                            else -> null
+                                else -> null
+                            }
                         }
                     }
                 }
@@ -180,10 +183,11 @@ class ServerEchTest {
         runBlocking {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    tlsConnector(innerOnly()) {
+                    tlsConnector {
+                        tls { identity = innerOnly() }
                         host = "127.0.0.1"
                         port = 0
-                        echKeys = EchServerKeys(kotlin.collections.listOf(EchKey(EchTestKeys.B)))
+                        tls { echKeys = EchServerKeys(kotlin.collections.listOf(EchKey(EchTestKeys.B))) }
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }
             server.startSuspend(false)
@@ -203,12 +207,14 @@ class ServerEchTest {
     @Test fun connectorCarriesTheKeysToBothTlsConfigurations() {
         val keys = EchServerKeys(kotlin.collections.listOf(EchKey(EchTestKeys.A)))
         val c =
-            KuicksilverTlsConnector
-                .Builder(ServerFixtures.identity())
-                .apply { echKeys = keys }
-                .build()
+            testConnector {
+                tls {
+                    identity = ServerFixtures.identity()
+                    echKeys = keys
+                }
+            }
         assertEquals(keys, c.tlsConfig(kotlin.collections.listOf("http/1.1")).echKeys)
         assertEquals(keys, c.tlsConfig(kotlin.collections.listOf("h3")).echKeys)
-        assertEquals(keys, c.withPort(1).echKeys)
+        assertEquals(keys, c.withPort(1).tls.echKeys)
     }
 }

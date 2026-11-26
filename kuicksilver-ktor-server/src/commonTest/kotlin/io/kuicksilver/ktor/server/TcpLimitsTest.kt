@@ -179,15 +179,15 @@ class TcpLimitsTest {
     }
 
     @Test fun limitsAreValidated() {
-        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().maxTcpConnections = 0 }
-        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().maxTcpConnectionsPerIp = 0 }
+        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().tcp.maxConnections = 0 }
+        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().tcp.maxConnectionsPerIp = 0 }
         val c = KuicksilverApplicationEngine.Configuration()
-        assertEquals(10_000, c.maxTcpConnections)
-        assertEquals(null, c.maxTcpConnectionsPerIp, "off by default: behind a proxy every client shares one address")
-        c.maxTcpConnectionsPerIp = 256
-        assertEquals(256, c.maxTcpConnectionsPerIp)
-        c.maxTcpConnectionsPerIp = null
-        assertEquals(null, c.maxTcpConnectionsPerIp)
+        assertEquals(10_000, c.tcp.maxConnections)
+        assertEquals(null, c.tcp.maxConnectionsPerIp, "off by default: behind a proxy every client shares one address")
+        c.tcp.maxConnectionsPerIp = 256
+        assertEquals(256, c.tcp.maxConnectionsPerIp)
+        c.tcp.maxConnectionsPerIp = null
+        assertEquals(null, c.tcp.maxConnectionsPerIp)
     }
 
     private fun kotlinx.coroutines.test.TestScope.advanceUntilServed(done: () -> Boolean) {

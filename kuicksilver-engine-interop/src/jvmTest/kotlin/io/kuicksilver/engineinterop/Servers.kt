@@ -72,7 +72,8 @@ internal fun startServer(
             ServerEngine.Kuicksilver -> {
                 embeddedServer(Kuicksilver, configure = {
                     if (tls) {
-                        tlsConnector(Pki.identity()) {
+                        tlsConnector {
+                            tls { identity = Pki.identity() }
                             host = "127.0.0.1"
                             port = 0
                         }
@@ -82,7 +83,7 @@ internal fun startServer(
                             port = 0
                         }
                     }
-                    this.http2 = http2
+                    http2 { this.enabled = http2 }
                     shutdownGracePeriod = 0
                 }) { interopModule(probe, if (deflate) ({ install(PerMessageDeflate) }) else null) }
             }

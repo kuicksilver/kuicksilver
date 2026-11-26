@@ -109,8 +109,8 @@ class ServerH2JdkClientTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) {
                     routing {
                         get("/hello") { call.respondText("hello ${call.request.httpVersion}") }
@@ -154,12 +154,9 @@ class ServerH2JdkClientTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
-                    http2Settings =
-                        http2Settings {
-                            maxFieldSectionSize = 1024
-                        }
+                    http2 { enabled = true }
+                    http3 { enabled = false }
+                    http2 { settings { maxFieldSectionSize = 1024 } }
                 }) { routing { get("/") { call.respondText("never") } } }
             try {
                 val r =

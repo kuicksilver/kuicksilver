@@ -41,7 +41,7 @@ class ClientServerWebSocketCloseTest {
     ) = clientTest {
         if (transport == Transport.H3 && !quicServerSupported()) return@clientTest
         val (server, port) =
-            testServer(plain = transport == Transport.H1Plain, configure = { if (transport == Transport.H2) http2 = true }) {
+            testServer(plain = transport == Transport.H1Plain, configure = { if (transport == Transport.H2) http2 { enabled = true } }) {
                 install(ServerWebSockets)
                 routing {
                     get("/") { call.respondText("ok") }

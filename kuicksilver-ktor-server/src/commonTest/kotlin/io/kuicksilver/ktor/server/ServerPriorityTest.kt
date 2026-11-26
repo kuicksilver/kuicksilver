@@ -154,8 +154,8 @@ class ServerPriorityTest {
             }
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) {
                     routing {
                         get("/plain") {
@@ -215,8 +215,8 @@ class ServerPriorityTest {
             val scheduled = kotlinx.coroutines.CompletableDeferred<Pair<Int, Boolean>>()
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) {
                     routing {
                         get("/u") {

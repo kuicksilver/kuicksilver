@@ -85,7 +85,8 @@ internal suspend fun tlsServer(
 ): Pair<Server, Int> {
     val server =
         kuicksilverServer(log, configure = {
-            tlsConnector(ServerFixtures.identity()) {
+            tlsConnector {
+                tls { identity = ServerFixtures.identity() }
                 host = "127.0.0.1"
                 port = 0
                 connector()
@@ -99,6 +100,14 @@ internal suspend fun tlsServer(
             .first()
             .port
 }
+
+/** A TLS connector built from [block] and resolved over an engine without TLS settings, as the engine would at its start. */
+internal fun testConnector(block: KuicksilverTlsConnector.Builder.() -> Unit): KuicksilverTlsConnector =
+    KuicksilverTlsConnector
+        .Builder()
+        .apply(block)
+        .build()
+        .resolved(ResolvedServerTls.None)
 
 /** Sends [request] over TCP (TLS when [tls] is set) and returns everything the server sent until it closed. */
 internal suspend fun rawHttp(

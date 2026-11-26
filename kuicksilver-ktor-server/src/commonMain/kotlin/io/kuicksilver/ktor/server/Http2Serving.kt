@@ -120,7 +120,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 H2ServerConnection.start(
                     reader,
                     sock.openWriteChannel(),
-                    h2SettingsWithin(configuration.http2Settings, headerTimeout),
+                    h2SettingsWithin(h2Settings, headerTimeout),
                     this,
                     closeTransport = { sock.close() },
                     clock =
@@ -129,7 +129,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                                 .markNow()
                                 .let { m -> { m.elapsedNow().inWholeNanoseconds } },
                     ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
-                    enableConnectProtocol = configuration.webSocketsOverHttp2, // RFC 8441 section 3
+                    enableConnectProtocol = configuration.webSockets.overHttp2, // RFC 8441 section 3
                     // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of
                     // type PROTOCOL_ERROR"; on a TLS 1.2 connection (versions = Tls12And13) the TLS layer refuses a client's
                     // renegotiation ClientHello and ends the input of an h2 connection at it
@@ -290,7 +290,7 @@ internal fun offenderToStrike(
 
 /**
  * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM for a flood limit): with
- * `http2RepeatOffenderPenalty`, one strike for its address ([offenderToStrike]: behind a PROXY protocol header the client it
+ * `http2 { repeatOffenderPenalty }`, one strike for its address ([offenderToStrike]: behind a PROXY protocol header the client it
  * names, or nobody). The
  * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
  * are the warning, rate-limited per connector ([RefusalReporter]).
@@ -318,7 +318,7 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
 }
 
 /**
- * GOAWAY for a connection without requests for [idle] (`connectionIdleTimeoutSeconds`); a request that arrives meanwhile
+ * GOAWAY for a connection without requests for [idle] (`http1 { idleTimeout }`); a request that arrives meanwhile
  * restarts the count. A connection that then cannot even write its GOAWAY within [sendTimeout] once its last request is
  * done (the client reads nothing) is aborted.
  */
@@ -343,7 +343,7 @@ private suspend fun closeWhenIdle(
 
 /**
  * One request stream as a Ktor call, after HTTP/3's handleHttp3: an Extended CONNECT for `websocket` (RFC 8441, with
- * `webSocketsOverHttp2`) is a WebSocket upgrade for Ktor's routes, any other CONNECT is answered 501 (the engine has no
+ * `webSockets { overHttp2 }`) is a WebSocket upgrade for Ktor's routes, any other CONNECT is answered 501 (the engine has no
  * tunnels), a request a gateway forwarded from early data and not replayable 425 (RFC 8470 section 5.1). The handler is cancelled
  * when the stream fails under it (the client's RST_STREAM, the connection), and then nothing is sent on the stream (RFC
  * 9113 section 5.4.2: no RST_STREAM in answer to one). A call that ends without a response on a live stream resets it
@@ -404,7 +404,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     webSocket,
                     engineDispatcher,
                     userDispatcher,
-                    configuration.webSocketMaxMessageSize,
+                    configuration.webSockets.maxMessageSize,
                     scheme,
                 )
             call.applyProxyHeader(proxy)

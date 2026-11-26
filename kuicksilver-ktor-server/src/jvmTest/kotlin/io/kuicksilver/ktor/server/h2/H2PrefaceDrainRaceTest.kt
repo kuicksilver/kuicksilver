@@ -116,7 +116,7 @@ class H2PrefaceDrainRaceTest {
                         port = 0
                         h2c = H2cMode.Only
                     }
-                    http3 = false
+                    http3 { enabled = false }
                     holdUntilStopping()
                 }) { routing { get("/") { call.respondText("ok") } } }
             server.startSuspend(wait = false)
@@ -140,7 +140,7 @@ class H2PrefaceDrainRaceTest {
                         port = 0
                         h2c = H2cMode.Only
                     }
-                    http3 = false
+                    http3 { enabled = false }
                     prefaceWinsThenStop(prefaceWon)
                 }) { routing { get("/") { call.respondText("ok") } } }
             server.startSuspend(wait = false)
@@ -159,8 +159,8 @@ class H2PrefaceDrainRaceTest {
             val prefaceWon = CompletableDeferred<Unit>()
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                     prefaceWinsThenStop(prefaceWon)
                 }) { routing { get("/") { call.respondText("ok") } } }
             run(server, port, tls = true) { prefaceWon.await() }
@@ -205,7 +205,7 @@ class H2PrefaceDrainRaceTest {
                     port = 0
                     h2c = H2cMode.WithHttp11
                 }
-                http3 = false
+                http3 { enabled = false }
                 h2cPrefaceCheckForTest = check
             }) { routing { get("/") { call.respondText("ok") } } }
         server.startSuspend(wait = false)
@@ -390,7 +390,7 @@ class H2PrefaceDrainRaceTest {
                         port = 0
                         h2c = H2cMode.WithHttp11
                     }
-                    http3 = false
+                    http3 { enabled = false }
                     h2cPrefaceCheckForTest = { input, _ ->
                         input.awaitContent(request.length) // the whole request is in
                         inCheck.complete(Unit)
@@ -431,8 +431,8 @@ class H2PrefaceDrainRaceTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                     holdUntilStopping()
                 }) { routing { get("/") { call.respondText("ok") } } }
             run(server, port, tls = true)

@@ -210,7 +210,7 @@ class ClientPoolTest {
         h3Test {
             val c = Concurrency(limit = 2)
             val (server, port) =
-                testServer(configure = { quic = quicConfig { maxBidiStreams = 2 } }) {
+                testServer(configure = { http3 { quic { maxBidiStreams = 2 } } }) {
                     routing {
                         get("/") {
                             c.enter(call.request.local.remotePort)
@@ -239,7 +239,7 @@ class ClientPoolTest {
             val release = CompletableDeferred<Unit>()
             val entered = CompletableDeferred<Unit>()
             val (server, port) =
-                testServer(configure = { quic = quicConfig { maxBidiStreams = 1 } }) {
+                testServer(configure = { http3 { quic { maxBidiStreams = 1 } } }) {
                     routing {
                         get("/slow") {
                             entered.complete(Unit)
@@ -415,7 +415,7 @@ class ClientPoolTest {
      */
     @Test fun negative_anIdleConnectionTakenAsTheCallerIsCancelledGoesBackToThePool() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 testClient(null).use { client ->
                     val h1 = (client.engine as KuicksilverEngine).h1

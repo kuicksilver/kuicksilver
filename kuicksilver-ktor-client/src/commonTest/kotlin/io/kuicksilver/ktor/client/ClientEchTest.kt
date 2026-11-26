@@ -103,16 +103,19 @@ class ClientEchTest {
     ): Pair<TestServer, Int> {
         val server =
             embeddedServer(KuicksilverServer, configure = {
-                quicEarlyData = earlyData
-                tlsConnector(ClientFixtures.identity()) {
+                http3 { earlyData { enabled = earlyData } }
+                tlsConnector {
+                    tls { identity = ClientFixtures.identity() }
                     host = "127.0.0.1"
                     port = 0
-                    echKeys = keys
-                    sniSelector = { hello ->
-                        names.add(hello.serverName)
-                        onHello(hello.serverName)
-                        // the one certificate covers the inner name and the public_name (RFC 9849 section 6.1.7)
-                        io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                    tls { echKeys = keys }
+                    tls {
+                        sniSelector = { hello ->
+                            names.add(hello.serverName)
+                            onHello(hello.serverName)
+                            // the one certificate covers the inner name and the public_name (RFC 9849 section 6.1.7)
+                            io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                        }
                     }
                 }
             }) {

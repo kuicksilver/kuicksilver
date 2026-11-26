@@ -342,7 +342,7 @@ class ServerH2FloodTest {
             val (server, port) =
                 bigServer(ended) {
                     sendStallTimeoutForTest = 2.seconds
-                    connectionIdleTimeoutSeconds = 600
+                    http1 { idleTimeout = 600.seconds }
                 }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -394,8 +394,8 @@ class ServerH2FloodTest {
                 }
             val (server, port) =
                 floodServer(handlers) {
-                    http2RepeatOffenderPenalty = 30.seconds
-                    eventListener = listener
+                    http2 { repeatOffenderPenalty = 30.seconds }
+                    observability { eventListener = listener }
                 }
             val clock = TestTimeSource()
             assertNotNull(server.engine.h2Offenders, "on with a positive penalty")
@@ -421,7 +421,7 @@ class ServerH2FloodTest {
         serverTest {
             val (server, port) =
                 h2TlsServer(
-                    configure = { http2RepeatOffenderPenalty = 30.seconds },
+                    configure = { http2 { repeatOffenderPenalty = 30.seconds } },
                     connector = { proxyProtocol { trust("127.0.0.1") } },
                 ) {
                     routing { get("/") { call.respondText("ok") } }
@@ -483,11 +483,10 @@ class ServerH2FloodTest {
         serverTest {
             val (server, port) =
                 floodServer(Handlers()) {
-                    http2Settings =
-                        http2Settings {
-                            maxHeaderBlockTime = 1.seconds
-                        }
-                    http2RepeatOffenderPenalty = 30.seconds
+                    http2 {
+                        settings { maxHeaderBlockTime = 1.seconds }
+                        repeatOffenderPenalty = 30.seconds
+                    }
                 }
             try {
                 RawH2Client.connect(port).use { raw ->

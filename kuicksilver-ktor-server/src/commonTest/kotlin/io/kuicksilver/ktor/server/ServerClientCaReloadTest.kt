@@ -158,11 +158,14 @@ class ServerClientCaReloadTest {
             val r = TrustConfig.reloadable(testCa)
             val server =
                 kuicksilverServer(null, configure = {
-                    tlsConnector(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())) {
+                    tlsConnector {
+                        tls { identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
                         host = "127.0.0.1"
                         port = 0
-                        clientAuth = ClientAuth.Required
-                        trust = r
+                        tls {
+                            clientAuth = ClientAuth.Required
+                            clientTrust = r
+                        }
                     }
                 }, module = { routing { get("/") { call.respondText("ok") } } })
             server.startSuspend(wait = false)

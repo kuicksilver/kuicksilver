@@ -109,35 +109,49 @@ class GuideSamplesTest {
         // guide:ktor:server-observability
         val observed =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                logger = KuicksilverLogger.stderr(LogLevel.Info)
-                qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
-                eventListener =
-                    object : KuicksilverServerEventListener() {
-                        override fun requestEnded(
-                            protocol: HttpProtocolVersion,
-                            call: ApplicationCall,
-                            cause: Throwable?,
-                        ) {
-                            metrics.record(protocol, call.response.status()?.value)
+                observability {
+                    logger = KuicksilverLogger.stderr(LogLevel.Info)
+                    qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
+                }
+                observability {
+                    eventListener =
+                        object : KuicksilverServerEventListener() {
+                            override fun requestEnded(
+                                protocol: HttpProtocolVersion,
+                                call: ApplicationCall,
+                                cause: Throwable?,
+                            ) {
+                                metrics.record(protocol, call.response.status()?.value)
+                            }
                         }
-                    }
+                }
             }, module = Application::module)
-        assertTrue(observed.engine.configuration.qlog is AsyncQlogSink)
+        assertTrue(observed.engine.configuration.observability.qlog is AsyncQlogSink)
         // guide:ktor:zero-rtt-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                quicEarlyData = true
-                http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: unsafe requests wait
+                http3 {
+                    earlyData {
+                        enabled = true
+                        policy = Http3EarlyDataPolicy.Reject425() // or keep the default: unsafe requests wait
+                    }
+                }
             }, module = Application::module)
-        assertTrue(server.engine.configuration.http3Settings.earlyData is Http3EarlyDataPolicy.Reject425)
+        assertTrue(
+            server.engine.configuration
+                .resolveHttp3Settings()
+                .earlyData is Http3EarlyDataPolicy.Reject425,
+        )
     }
 
     @Test fun webSocketDeflateSample() {
@@ -167,11 +181,12 @@ class GuideSamplesTest {
         // guide:ktor:webtransport-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                webTransport = true
+                http3 { webTransport { enabled = true } }
             }) {
                 routing {
                     webTransport("/echo", protocols = listOf("echo-v1")) { session ->
@@ -181,7 +196,7 @@ class GuideSamplesTest {
                     }
                 }
             }
-        assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
+        assertTrue(server.engine.configuration.http3.webTransport.enabled) // ServerWebTransportTest runs such a route
     }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -191,17 +206,18 @@ class GuideSamplesTest {
         // guide:ktor:connect-udp-server
         val proxyServer =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                connectUdp = true
+                http3 { connectUdp = true }
             }) {
                 routing {
                     connectUdp(UdpProxy())
                 }
             }
-        assertTrue(proxyServer.engine.configuration.connectUdp) // ServerConnectUdpTest runs such a route
+        assertTrue(proxyServer.engine.configuration.http3.connectUdp) // ServerConnectUdpTest runs such a route
     }
 
     @Test fun certificateRotationSample() {
@@ -213,7 +229,8 @@ class GuideSamplesTest {
         val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -236,11 +253,14 @@ class GuideSamplesTest {
         val clientCa = TrustConfig.reloadable(TrustConfig.AnchoredCa(Certificate.parsePem(caBundlePem)))
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
-                    clientAuth = ClientAuth.Required
-                    trust = clientCa
+                    tls {
+                        clientAuth = ClientAuth.Required
+                        clientTrust = clientCa
+                    }
                 }
             }, module = Application::module)
         // later: new TCP and QUIC handshakes verify client certificates against the new bundle
@@ -248,7 +268,7 @@ class GuideSamplesTest {
         val connector =
             server.engine.configuration.connectors
                 .single() as KuicksilverTlsConnector
-        assertTrue(connector.trust === clientCa) // ServerClientCaReloadTest serves it
+        assertTrue(connector.resolved(ResolvedServerTls.None).tls.trust === clientCa) // ServerClientCaReloadTest serves it
         assertEquals(Certificate(TestCerts.otherCa), clientCa.current.roots.single())
         identity.close()
     }
@@ -258,7 +278,8 @@ class GuideSamplesTest {
         // guide:ktor:http3-advertising
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -277,20 +298,20 @@ class GuideSamplesTest {
         // guide:ktor:http2-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                http2 = true // offer h2 before http/1.1 in ALPN
-                http2Settings =
-                    http2Settings {
-                        maxConcurrentStreams = 50
-                    } // windows and flood limits are Http2Settings'
+                http2 {
+                    enabled = true // offer h2 before http/1.1 in ALPN
+                    settings { maxConcurrentStreams = 50 } // windows and flood limits are Http2Settings'
+                }
             }, module = Application::module)
 
         val configuration = server.engine.configuration
-        assertTrue(configuration.http2, "the TLS connector offers h2") // ServerHttp2*Test serve it
-        assertEquals(50, configuration.http2Settings.maxConcurrentStreams)
+        assertTrue(configuration.http2.enabled, "the TLS connector offers h2") // ServerHttp2*Test serve it
+        assertEquals(50, configuration.resolveHttp2Settings().maxConcurrentStreams)
         identity.close()
     }
 
@@ -326,11 +347,13 @@ class GuideSamplesTest {
         // guide:deployment:quic-limits
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                quicMaxConnectionsPerIp = 4_096 // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+                // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+                http3 { endpoint { maxConnectionsPerIp = 4_096 } }
             }) {
                 routing { get("/") { call.respondText("ok") } }
             }
@@ -340,7 +363,7 @@ class GuideSamplesTest {
 
         try {
             assertEquals(0L, refusedByLimits)
-            assertEquals(4_096, server.engine.configuration.quicMaxConnectionsPerIp)
+            assertEquals(4_096, server.engine.configuration.http3.endpoint.maxConnectionsPerIp)
             assertEquals(1, server.engine.http3Stats.size, "one HTTP/3 listener")
         } finally {
             server.stop(100, 500)
@@ -355,7 +378,8 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -447,12 +471,13 @@ class GuideSamplesTest {
                 val server =
                     embeddedServer(Kuicksilver, configure = {
                         // guide:ktor:trusted-gateway
-                        tlsConnector(internalIdentity) {
+                        tlsConnector {
+                            tls { identity = internalIdentity }
                             host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                             port = 0
-                            trustedGateway = true // every client of this port is the gateway
+                            allowMisdirectedHosts = true // every client of this port is the gateway
                         }
-                        http3 = false
+                        http3 { enabled = false }
                     }) { routing { get("/") { call.respondText("ok") } } }
                 server.startSuspend(wait = false)
                 try {
@@ -485,26 +510,29 @@ class GuideSamplesTest {
                 val server =
                     embeddedServer(Kuicksilver, configure = {
                         // guide:ktor:sni-server
-                        tlsConnector(defaultIdentity) {
+                        tlsConnector {
+                            tls { identity = defaultIdentity }
                             port = 0
                             host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
-                            sniSelector = { hello ->
-                                when (hello.serverName) {
-                                    "api.example.com" -> {
-                                        ServerTlsOverride(apiIdentity)
-                                    }
+                            tls {
+                                sniSelector = { hello ->
+                                    when (hello.serverName) {
+                                        "api.example.com" -> {
+                                            ServerTlsOverride(apiIdentity)
+                                        }
 
-                                    "admin.example.com" -> {
-                                        ServerTlsOverride(
-                                            adminIdentity,
-                                            clientAuth = ClientAuth.Required,
-                                            trust = adminCa,
-                                        )
-                                    }
+                                        "admin.example.com" -> {
+                                            ServerTlsOverride(
+                                                adminIdentity,
+                                                clientAuth = ClientAuth.Required,
+                                                trust = adminCa,
+                                            )
+                                        }
 
-                                    else -> {
-                                        null
-                                    } // a name not served here: the handshake ends with unrecognized_name
+                                        else -> {
+                                            null
+                                        } // a name not served here: the handshake ends with unrecognized_name
+                                    }
                                 }
                             }
                         }
@@ -592,7 +620,8 @@ class GuideSamplesTest {
         // guide:ktor:minimal-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+                tlsConnector {
+                    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
                     host = "127.0.0.1"
                     port = 0
                 }
@@ -625,12 +654,15 @@ class GuideSamplesTest {
         // guide:ktor:server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+                tlsConnector {
+                    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
                     // the key array is zeroed after import
                     host = "127.0.0.1"
                     port = 0
-                    clientAuth = ClientAuth.Optional // ask for a client certificate without requiring one
-                    trust = TrustConfig.AnchoredCa(listOf(clientCa))
+                    tls {
+                        clientAuth = ClientAuth.Optional // ask for a client certificate without requiring one
+                        clientTrust = TrustConfig.AnchoredCa(listOf(clientCa))
+                    }
                 }
             }) {
                 routing {
@@ -663,11 +695,14 @@ class GuideSamplesTest {
         val clientCa = Certificate.parsePem(clientCaPem) // the CA that issues the client certificates
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) {
+                tlsConnector {
+                    tls { identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray()) }
                     host = "127.0.0.1"
                     port = 0
-                    clientAuth = ClientAuth.Required // no handshake without a client certificate that chains to clientCa
-                    trust = TrustConfig.AnchoredCa(clientCa)
+                    tls {
+                        clientAuth = ClientAuth.Required // no handshake without a client certificate that chains to clientCa
+                        clientTrust = TrustConfig.AnchoredCa(clientCa)
+                    }
                 }
             }) {
                 routing {
@@ -702,7 +737,8 @@ class GuideSamplesTest {
         val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -735,7 +771,8 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -790,12 +827,17 @@ class GuideSamplesTest {
             })
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
-                quicEarlyData = true
-                http3Settings = http3Settings { earlyData = policy }
+                http3 {
+                    earlyData {
+                        enabled = true
+                        this.policy = policy
+                    }
+                }
             }) {
                 routing {
                     get("/feed") {
@@ -805,7 +847,11 @@ class GuideSamplesTest {
                 }
             }
 
-        assertTrue(server.engine.configuration.http3Settings.earlyData === policy) // ServerH3Test runs early requests
+        assertTrue(
+            server.engine.configuration
+                .resolveHttp3Settings()
+                .earlyData === policy,
+        ) // ServerH3Test runs early requests
         identity.close()
     }
 
@@ -853,7 +899,8 @@ class GuideSamplesTest {
         val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)))
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                 }
@@ -900,9 +947,10 @@ class GuideSamplesTest {
             val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    tlsConnector(identity) {
+                    tlsConnector {
+                        tls { this.identity = identity }
                         port = 443
-                        echKeys = keys
+                        tls { echKeys = keys }
                     }
                 }) { routing { get("/") { call.respondText("hidden") } } }
             // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations

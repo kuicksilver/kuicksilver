@@ -274,15 +274,17 @@ class ServerWebSocketH2Test {
             val closed = CompletableDeferred<CloseReason?>()
             val (server, port) =
                 h2TlsServer(configure = {
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun connectionOpened(
-                                protocol: io.ktor.http.HttpProtocolVersion,
-                                remote: InetSocketAddress?,
-                            ) {
-                                opened.trySend(protocol)
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun connectionOpened(
+                                    protocol: io.ktor.http.HttpProtocolVersion,
+                                    remote: InetSocketAddress?,
+                                ) {
+                                    opened.trySend(protocol)
+                                }
                             }
-                        }
+                    }
                 }) {
                     install(WebSockets)
                     routing {
@@ -350,7 +352,7 @@ class ServerWebSocketH2Test {
     @Test fun settingAdvertisedOnlyWhenEnabled() =
         serverTest {
             for (enabled in listOf(true, false)) {
-                val (server, port) = h2TlsServer(configure = { webSocketsOverHttp2 = enabled }) { echo() }
+                val (server, port) = h2TlsServer(configure = { webSockets { overHttp2 = enabled } }) { echo() }
                 try {
                     h2(port) { c -> assertEquals(enabled, c.serverAllowsExtendedConnect) }
                     RawH2Client.connect(port).use { raw ->
@@ -465,7 +467,7 @@ class ServerWebSocketH2Test {
     @Test fun negative_webSocketAnswerCarriesNoAltSvc() =
         h3ServerTest {
             val (server, port) =
-                h2TlsServer(configure = { http3 = true }) {
+                h2TlsServer(configure = { http3 { enabled = true } }) {
                     echo()
                     routing { get("/") { call.respondText("ok") } }
                 }
@@ -503,7 +505,7 @@ class ServerWebSocketH2Test {
     /** With `webSocketsOverHttp2 = false` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
     @Test fun negative_extendedConnectRefusedWhenDisabled() =
         serverTest {
-            val (server, port) = h2TlsServer(configure = { webSocketsOverHttp2 = false }) { echo() }
+            val (server, port) = h2TlsServer(configure = { webSockets { overHttp2 = false } }) { echo() }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()

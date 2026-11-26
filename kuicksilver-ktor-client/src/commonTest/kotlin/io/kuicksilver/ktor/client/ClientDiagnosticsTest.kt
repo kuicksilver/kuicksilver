@@ -235,8 +235,10 @@ class ClientDiagnosticsTest {
             tlsH1WithSilentUdp(handler = serveOk) { port ->
                 testClient(Http3Discovery.Preferred, engine = {
                     quicHandshakeTimeoutForTest = 2.seconds
-                    observability { eventListener = reasons }
-                    observability { logger = log }
+                    observability {
+                        eventListener = reasons
+                        logger = log
+                    }
                 }).use { c ->
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
@@ -311,7 +313,7 @@ class ClientDiagnosticsTest {
             bindOnSamePort(
                 first = udp,
                 releaseFirst = release,
-                second = { p -> testServer(configure = { http3 = false }, port = p, module = module) },
+                second = { p -> testServer(configure = { http3 { enabled = false } }, port = p, module = module) },
                 releaseSecond = { runCatching { it.stop(0, 0) } },
             )
         return Triple(server, u, port)
@@ -487,8 +489,10 @@ class ClientDiagnosticsTest {
             val loud = DiagnosticLines(LogLevel.Debug)
             try {
                 testClient(null, engine = {
-                    observability { logger = quiet }
-                    observability { protocolChoiceLogLevel = null }
+                    observability {
+                        logger = quiet
+                        protocolChoiceLogLevel = null
+                    }
                 }).use { c -> c.get("https://127.0.0.1:$port/") }
                 assertEquals(emptyList(), quiet.lines)
                 testClient(Http3Discovery.H3Only, engine = { observability { logger = loud } }).use { c ->

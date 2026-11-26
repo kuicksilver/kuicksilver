@@ -44,7 +44,7 @@ class KuicksilverH1WebSocketTest : WebSocketEngineSuite<E, C>(Kuicksilver) {
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     override fun configure(configuration: C) {
-        configuration.webSocketMaxMessageSize = 32L shl 20
+        configuration.webSockets.maxMessageSize = 32L shl 20
     }
 
     /**

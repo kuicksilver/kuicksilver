@@ -63,7 +63,7 @@ class ServerH3UpgradeFailureTest {
     /** The same for a WebTransport CONNECT whose session is not accepted (no `:status` went out). */
     @Test fun negative_webTransportThatFailsBeforeItsAnswerResetsTheStream() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) = tlsServer({ http3 { webTransport { enabled = true } } }) { routing { webTransport("/wt") { } } }
             server.engine.beforeH3UpgradeForTest = { throw IllegalStateException("the session could not be accepted") }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             try {

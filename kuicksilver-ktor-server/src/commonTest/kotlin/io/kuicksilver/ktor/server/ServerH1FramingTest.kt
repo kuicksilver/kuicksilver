@@ -723,7 +723,7 @@ class ServerH1FramingTest {
         val server =
             embeddedServer(Kuicksilver, configure = {
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                h1AllowBareLf = allowBareLf
+                http1 { this.allowBareLf = allowBareLf }
                 connector {
                     host = "127.0.0.1"
                     port = 0

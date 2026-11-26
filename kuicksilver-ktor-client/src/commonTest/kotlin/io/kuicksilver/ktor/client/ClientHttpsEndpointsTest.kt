@@ -69,8 +69,10 @@ class ClientHttpsEndpointsTest {
         plain: Boolean = false,
     ): Pair<TestServer, Int> =
         testServer(plain = plain, configure = {
-            http3 = false
-            altSvc = false
+            http3 {
+                enabled = false
+                altSvc = false
+            }
         }) { routing { get("/") { call.respondText(body) } } }
 
     @Test fun tcpGoesToTheRecordsTarget() =
@@ -273,8 +275,10 @@ class ClientHttpsAltSvcTest {
                 val q = h3Origin()
                 val (origin, port) =
                     testServer(configure = {
-                        http3 = false
-                        altSvc = false
+                        http3 {
+                            enabled = false
+                            altSvc = false
+                        }
                     }) { routing { get("/") { call.respondText("origin") } } }
                 try {
                     // the alternative alt.server.test:<port> has no QUIC listener; its HTTPS record moves it to q's port
@@ -302,8 +306,10 @@ class ClientHttpsAltSvcTest {
             // section 9.3: no ALPN consistent with both the record and Alt-Svc: no connection to the alternative
             val (origin, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("origin") } } }
             try {
                 val alt = "_$port._https.alt.server.test"

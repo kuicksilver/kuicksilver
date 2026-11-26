@@ -60,25 +60,29 @@ fun everyServerImport(
     val identity = TlsIdentity.fromPem(File(chainFile).readText(), File(keyFile).readText().toCharArray())
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(identity) {
-                clientAuth = ClientAuth.Required
-                trust = TrustConfig.AnchoredCa(Certificate.parsePem(File(chainFile).readText()))
+            tlsConnector {
+                tls {
+                    this.identity = identity
+                    clientAuth = ClientAuth.Required
+                    clientTrust = TrustConfig.AnchoredCa(Certificate.parsePem(File(chainFile).readText()))
+                }
             }
-            http2Settings =
-                http2Settings {
-                    maxConcurrentStreams = 50
-                }
-            http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }
-            logger = KuicksilverLogger.stderr(LogLevel.Info)
-            qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
-            eventListener =
-                object : KuicksilverServerEventListener() {
-                    override fun requestEnded(
-                        protocol: HttpProtocolVersion,
-                        call: ApplicationCall,
-                        cause: Throwable?,
-                    ) {}
-                }
+            http2 { settings { maxConcurrentStreams = 50 } }
+            http3 { earlyData { policy = Http3EarlyDataPolicy.Reject425() } }
+            observability {
+                logger = KuicksilverLogger.stderr(LogLevel.Info)
+                qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
+            }
+            observability {
+                eventListener =
+                    object : KuicksilverServerEventListener() {
+                        override fun requestEnded(
+                            protocol: HttpProtocolVersion,
+                            call: ApplicationCall,
+                            cause: Throwable?,
+                        ) {}
+                    }
+            }
         }) {
             module()
             launch {

@@ -347,6 +347,151 @@ rule("client", r"\bengine\s*(?:=\s*)?\{|\bKuicksilverEngineConfig\(\)\s*\.\s*(?:
 rule("client-http3", r"\bhttp3\s*\{", HTTP3_CLIENT_MOVES, receiver="Http3ClientConfig")
 rule("client-http2", r"\bhttp2\s*\{", HTTP2_CLIENT_MOVES, receiver="Http2ClientConfig")
 
+# ---- the Ktor server engine (configure = { }) ----
+
+def _s_seconds(new, *path):
+    """`old = 30` (Int seconds) -> `new = 30.seconds` (wrapped in path)."""
+    def f(value, report, where):
+        v = value.strip()
+        out = f"{new} = {v}.seconds" if re.fullmatch(r"[\w.]+", v) else f"{new} = ({v}).seconds"
+        return "replace", _wrap(out, *path)
+    return f
+
+
+def _s_penalty(value, report, where):
+    v = value.strip()
+    if re.match(r"^(?:kotlin\.time\.)?Duration\.ZERO$", v):
+        return "replace", ""
+    return "replace", _wrap(f"repeatOffenderPenalty = {v}", "http2")
+
+
+def _s_quic(value, report, where):
+    body = _builder_body(value, "quicConfig")
+    if body is None:
+        if value.strip() in ("QuicConfig.Default", "io.kuicksilver.quic.QuicConfig.Default"):
+            return "replace", ""
+        report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
+        return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
+    return "replace", f"http3 {{ quic {{ {body} }} }}"
+
+
+def _s_h3_settings(value, report, where):
+    kind, out = _c_h3_settings(value, report, where)
+    return kind, _wrap(out, "http3") if out else out
+
+
+def _s_h2_settings(value, report, where):
+    kind, out = _c_h2_settings(value, report, where)
+    return kind, _wrap(out, "http2") if out else out
+
+
+def _s_admission(value, report, where):
+    v = value.strip()
+    if v == "null":
+        return "replace", ""
+    return "replace", _wrap(f"admission = {v}", "http3", "endpoint")
+
+
+SERVER_MOVES = {
+    "connectionIdleTimeoutSeconds": _s_seconds("idleTimeout", "http1"),
+    "requestHeaderTimeoutSeconds": _s_seconds("requestHeaderTimeout"),
+    "h1AllowBareLf": (("http1",), "allowBareLf"),
+    "maxTcpConnections": (("tcp",), "maxConnections"),
+    "maxTcpConnectionsPerIp": (("tcp",), "maxConnectionsPerIp"),
+    "identity": (("tls",), "identity"),
+    "identityReloadInterval": (("tls",), "reloadInterval"),
+    "altSvc": (("http3",), "altSvc"),
+    "http3": (("http3",), "enabled"),
+    "http2": (("http2",), "enabled"),
+    "webSocketsOverHttp2": (("webSockets",), "overHttp2"),
+    "http2Settings": _s_h2_settings,
+    "http2RepeatOffenderPenalty": _s_penalty,
+    "quic": _s_quic,
+    "quicMaxIdleTimeout": (("http3", "quic"), "maxIdleTimeout"),
+    "udpSocketCount": (("http3", "endpoint"), "loops"),
+    "quicMaxConnections": (("http3", "endpoint"), "maxConnections"),
+    "quicMaxConnectionsPerIp": (("http3", "endpoint"), "maxConnectionsPerIp"),
+    "quicAcceptQueue": (("http3", "endpoint"), "acceptQueue"),
+    "quicAdmission": _s_admission,
+    "quicLoadBalancer": (("http3", "endpoint"), "loadBalancer"),
+    "http3Settings": _s_h3_settings,
+    "webSocketsOverHttp3": (("webSockets",), "overHttp3"),
+    "webSocketMaxMessageSize": (("webSockets",), "maxMessageSize"),
+    "webTransport": (("http3", "webTransport"), "enabled"),
+    "connectUdp": (("http3",), "connectUdp"),
+    "quicEarlyData": (("http3", "earlyData"), "enabled"),
+    "logger": (("observability",), "logger"),
+    "qlog": (("observability",), "qlog"),
+    "connectionListener": (("observability",), "connectionListener"),
+    "eventListener": (("observability",), "eventListener"),
+}
+
+# a TLS connector's own TLS options moved into its tls { } (over the engine's); trustedGateway got the name that says what it does
+TLS_CONNECTOR_MOVES = {
+    "identity": (("tls",), "identity"),
+    "clientAuth": (("tls",), "clientAuth"),
+    "trust": (("tls",), "clientTrust"),
+    "cipherSuites": (("tls",), "cipherSuites"),
+    "sniSelector": (("tls",), "sniSelector"),
+    "ocspStapling": (("tls",), "ocspStapling"),
+    "versions": (("tls",), "versions"),
+    "keyExchangeGroups": (("tls",), "keyExchangeGroups"),
+    "echKeys": (("tls",), "echKeys"),
+    "trustedGateway": ((), "allowMisdirectedHosts"),
+}
+
+rule("server", r"\bconfigure\s*=\s*\{|\bConfiguration\(\)\s*\.\s*(?:apply|run|also)\s*\{|\btlsServer\s*\(\s*\{"
+     r"|\bkuicksilverServer\s*\([^(){}]*?,\s*\{", SERVER_MOVES,
+     receiver="KuicksilverApplicationEngine.Configuration")
+rule("server-tls-connector", r"\btlsConnector\s*\{|\bconnector\s*=\s*\{|\btls\s*=\s*\{"
+     r"|KuicksilverTlsConnector\.Builder\.\(\)\s*->\s*Unit\s*=\s*\{", TLS_CONNECTOR_MOVES,
+     receiver="KuicksilverTlsConnector.Builder")
+rule("server-plain-connector", r"\bplainConnector\s*\{", {"trustedGateway": ((), "allowMisdirectedHosts")},
+     receiver="KuicksilverPlainConnector.Builder")
+
+
+_TLS_CONNECTOR_CALL = re.compile(r"(?<![\w.])((?:\w+\s*\.\s*|\)\s*\.\s*)?)tlsConnector\s*\(")
+
+
+def rewrite_tls_connector_calls(text, report, where):
+    """`tlsConnector(identity) { ... }` -> `tlsConnector { tls { this.identity = identity } ... }` (the argument is gone)."""
+    pos = 0
+    while True:
+        code = kotlin_scan.blank(text)
+        m = _TLS_CONNECTOR_CALL.search(code, pos)
+        if not m:
+            return text
+        if re.search(r"\bfun\s+(?:[\w.]+\.)?$", code[max(0, m.start() - 40):m.start()]):
+            pos = m.end()
+            continue
+        end, args = _args(code, text, m.end() - 1)
+        if not args or len(args) > 2:
+            pos = m.end()
+            continue
+        identity = args[0][1]
+        block = args[1][1] if len(args) == 2 else None
+        stmt = f"tls {{ {'this.' if re.fullmatch(r'identity', identity) else ''}identity = {identity} }}"
+        rest = code[end:]
+        brace = re.match(r"\s*\{", rest)
+        start = m.start() + len(m.group(1))
+        if brace and block is None:
+            open_pos = end + brace.end() - 1
+            close = _match_brace(code, open_pos)
+            line_start = text.rfind("\n", 0, start) + 1
+            base = re.match(r"[ \t]*", text[line_start:]).group(0)
+            indent = base + "    "
+            if "\n" in text[open_pos:close]:
+                text = text[:start] + "tlsConnector {\n" + indent + stmt + text[open_pos + 1:]
+            else:  # a one-line block becomes a block of lines
+                body = text[open_pos + 1:close].strip()
+                inner = f"\n{indent}{body}" if body else ""
+                text = text[:start] + f"tlsConnector {{\n{indent}{stmt}{inner}\n{base}}}" + text[close + 1:]
+        else:
+            extra = f"; {block}()" if block else ""
+            text = text[:start] + f"tlsConnector {{ {stmt}{extra} }}" + text[end:]
+        pos = start + len("tlsConnector")
+
+
 # Calls that moved into a group: (pattern, replacement), applied everywhere.
 CALLS = {
     "http3": [(re.compile(r"(?<![.\w])enableQpackDynamicTable\(\)"), "qpack { enableDynamicTable() }")],
@@ -583,6 +728,47 @@ def _apply(text, s, e, kind, new_stmt, open_pos, close):
     return re.sub(r"\b(http3|http2|tls|pool|network|proxies)\s*\{\s*\}\s*\n?", "", new)
 
 
+_ONE_LINE_GROUP = re.compile(r"^([ \t]*)(tls|http1|http2|http3|webSockets|tcp|observability|endpoint|quic|earlyData|webTransport) "
+                             r"\{ (.+?) \}([ \t]*//[^\n]*)?$")
+
+
+def merge_groups(text):
+    """Consecutive one-line blocks of one group (`tls { a = 1 }` then `tls { b = 2 }`, as the moves write them) become one,
+    nested groups too (`http3 { endpoint { a } }` twice: one http3, then one endpoint in it)."""
+    while True:
+        merged = _merge_once(text)
+        if merged == text:
+            return text
+        text = merged
+
+
+def _merge_once(text):
+    lines = text.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        m = _ONE_LINE_GROUP.match(lines[i])
+        run = [m] if m else []
+        j = i + 1
+        while m and j < len(lines):
+            n = _ONE_LINE_GROUP.match(lines[j])
+            if not n or n.group(1) != m.group(1) or n.group(2) != m.group(2) or "{" in n.group(3).replace("{ ", "") and "}" not in n.group(3):
+                break
+            run.append(n)
+            j += 1
+        if len(run) < 2:
+            out.append(lines[i])
+            i += 1
+            continue
+        indent, name = m.group(1), m.group(2)
+        out.append(f"{indent}{name} {{")
+        for r in run:
+            out.append(f"{indent}    {r.group(3)}{r.group(4) or ''}")
+        out.append(f"{indent}}}")
+        i = j
+    return "\n".join(out)
+
+
 def rewrite_code(text, names, report, where):
     """text rewritten with the rules in names; report collects lines that need a manual decision."""
     for name in names:
@@ -590,10 +776,12 @@ def rewrite_code(text, names, report, where):
             text = pattern.sub(replacement, text)
     if "http2" in names:
         text = rewrite_h2_calls(text, report, where)
+    if "server" in names:
+        text = rewrite_tls_connector_calls(text, report, where)
     while True:
         new = _one_change(text, kotlin_scan.blank(text), names, report, where)
         if new is None:
-            return text
+            return merge_groups(text) if "server" in names else text
         text = new
 
 
@@ -757,6 +945,10 @@ def rewrite_file(path, names, report):
         new = _FENCE.sub(lambda m: m.group(1) + rewrite_code(m.group(2), names, report, path) + m.group(3), text)
     else:
         new = rewrite_code(text, names, report, path)
+        # the server's Int seconds became Durations: `.seconds` needs its import
+        if (new != text and re.search(r"\)?\.seconds\b", new) and "Duration.Companion.seconds" not in new
+                and re.search(r"(?:idleTimeout|requestHeaderTimeout) = [^\n]*\.seconds", new)):
+            new = re.sub(r"^(import )", "import kotlin.time.Duration.Companion.seconds\n\\1", new, count=1, flags=re.M)
     return text, new
 
 

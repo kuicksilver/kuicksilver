@@ -104,7 +104,7 @@ class ClientH3StallTest {
         val posts = AtomicInt(0)
         val fullSent = CompletableDeferred<Unit>()
         val (s, port) =
-            testServer(configure = { idle?.let { quic = quicConfig { maxIdleTimeout = it } } }) {
+            testServer(configure = { idle?.let { http3 { quic { maxIdleTimeout = it } } } }) {
                 install(ServerWebSockets)
                 routing {
                     // an echo WebSocket (over HTTP/3 with Extended CONNECT once a connection allows it, RFC 9220)

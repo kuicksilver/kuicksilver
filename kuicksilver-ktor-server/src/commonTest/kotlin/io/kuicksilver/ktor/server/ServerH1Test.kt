@@ -170,8 +170,7 @@ class ServerH1Test {
                         host = "127.0.0.1"
                         port = 0
                     }
-                    identity =
-                        ServerFixtures.identity()
+                    tls { identity = ServerFixtures.identity() }
                 }) { routing { get("/") { call.respondText("tls ${call.request.local.scheme}") } } }
             server.startSuspend(false)
             try {
@@ -210,9 +209,10 @@ class ServerH1Test {
         serverTest {
             val (server, port) =
                 tlsServer(connector = {
-                    clientAuth = ClientAuth.Optional
-                    trust =
-                        TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                    tls {
+                        clientAuth = ClientAuth.Optional
+                        clientTrust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                    }
                 }) {
                     routing { get("/") { call.respondText("certs=${call.request.peerCertificates.size}") } }
                 }
@@ -298,7 +298,7 @@ class ServerH1Test {
                 }
                 val (server, port) =
                     if (tls) {
-                        tlsServer(configure = { http3 = false }, module = module)
+                        tlsServer(configure = { http3 { enabled = false } }, module = module)
                     } else {
                         val s =
                             embeddedServer(Kuicksilver, configure = {
@@ -491,8 +491,8 @@ class ServerH1Test {
             val rec = Recorder()
             val (server, port) =
                 tlsServer({
-                    maxTcpConnections = 2
-                    eventListener = rec
+                    tcp { maxConnections = 2 }
+                    observability { eventListener = rec }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {
@@ -541,8 +541,8 @@ class ServerH1Test {
             val rec = Recorder()
             val (server, port) =
                 tlsServer({
-                    maxTcpConnectionsPerIp = 1
-                    eventListener = rec
+                    tcp { maxConnectionsPerIp = 1 }
+                    observability { eventListener = rec }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {

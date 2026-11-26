@@ -18,6 +18,7 @@ import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
 import io.ktor.utils.io.ByteReadChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.SecuritySensitive
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
@@ -58,7 +59,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The Kuicksilver server engine (docs/guide/ktor.md): HTTP/1.1 over TLS on TCP through the CIO connection pipeline of Ktor
- * (HTTP/2 there too when `http2` is set), and HTTP/3 on UDP on the same port. Start it with `embeddedServer(Kuicksilver, ...)`.
+ * (HTTP/2 there too with `http2 { enabled }`), and HTTP/3 on UDP on the same port. Start it with `embeddedServer(Kuicksilver, ...)`.
  */
 public class KuicksilverApplicationEngine(
     environment: ApplicationEnvironment,
@@ -68,409 +69,116 @@ public class KuicksilverApplicationEngine(
     public val configuration: Configuration,
     internal val applicationProvider: () -> Application,
 ) : BaseApplicationEngine(environment, monitor, developmentMode) {
-    /** Engine settings; HTTP/3 knobs follow the names of Ktor's Netty engine where one exists. */
+    /**
+     * The engine's configuration (docs/guide/configuration.md, "Ktor server"): [requestHeaderTimeout] at the top, everything
+     * else in blocks — [tls], connectors ([tlsConnector], [plainConnector], Ktor's own), [http1], [http2], [http3],
+     * [webSockets], [tcp], [observability]. Ktor's own `connectors`, `shutdownGracePeriod`, `shutdownTimeout` and the group
+     * sizes are inherited.
+     */
     public class Configuration : BaseApplicationEngine.Configuration() {
         /**
-         * Seconds an HTTP/1.1 connection stays open without a request: then it is closed, both directions. On a keep-alive
-         * connection [requestHeaderTimeoutSeconds] also runs from the end of the last response, so the smaller of the two
-         * closes an idle connection. A response the client reads nothing of (its socket takes nothing) ends the connection
-         * after the longer of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a time (the
-         * buffer in front of the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s. A closing
-         * connection sends what is left for as long as the client takes it, and is aborted after the same time without
-         * progress. A request body that sends no byte for this long (counted after `100 Continue` when the client asked
-         * for it) fails the handler's read; the client gets 408 when no response has started, and the connection closes.
-         * Each wait for body bytes has its own deadline, so a slow but moving upload is read in full.
-         */
-        public var connectionIdleTimeoutSeconds: Int = 45
-
-        /**
-         * Seconds a client has to send a complete HTTP/1.1 request head (request line and header fields), counted from the
-         * accepted TCP connection for the first request (the TLS handshake included) and from the end of the previous
-         * response for the next one on a keep-alive connection; bytes that trickle in do not extend it. A client that sent
-         * part of a head by then gets `408 Request Timeout` and the connection closes; one that sent nothing (an idle
-         * keep-alive connection, or a connection that never spoke) is closed without a response. It also bounds the
-         * field-block deadline `maxHeaderBlockTime` of [http2Settings] and [http3Settings]. Positive; default 30.
+         * The time a client has to send a complete request head, on every protocol: over HTTP/1.1 the request line and header
+         * fields, counted from the accepted TCP connection for the first request (the TLS handshake included) and from the end
+         * of the previous response for the next one on a keep-alive connection; bytes that trickle in do not extend it. A
+         * client that sent part of a head by then gets `408 Request Timeout` and the connection closes; one that sent nothing
+         * is closed without a response. It also bounds the field-block deadline `maxHeaderBlockTime` of `http2 { settings { } }`
+         * and `http3 { settings { } }`, and the PROXY protocol header's wait (a connector with `proxyProtocol { }` needs at
+         * least 3 s: the start fails below). 30 s by default.
          *
-         * A connector with `proxyProtocol` needs at least 3: the PROXY protocol header's wait is cut to this deadline, and the
-         * start fails below it.
-         *
-         * @throws IllegalArgumentException when set to zero or less.
+         * @throws IllegalArgumentException when set to zero, a negative duration or [Duration.INFINITE].
          */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var requestHeaderTimeoutSeconds: Int = 30
+        @SecuritySensitive
+        public var requestHeaderTimeout: Duration = 30.seconds
             set(value) {
-                require(value > 0) { "requestHeaderTimeoutSeconds must be positive" }
+                require(value.isPositive() && value.isFinite()) { "requestHeaderTimeout must be a positive, finite duration" }
                 field = value
             }
 
-        /**
-         * Whether a bare LF (one without the CR before it) ends a line of an HTTP/1.1 request head (the request line, a
-         * field line, the empty line after them) and of a chunked request's trailer section; false by default. RFC 9112
-         * section 2.2 lets a recipient take a bare LF as a line end (MAY) and warns in section 11.2 that lenient parsing
-         * "can result in request smuggling" when parsers disagree: behind a proxy that reads a bare LF as part of a line,
-         * this server would end the line there and frame the head otherwise. So by default such a request gets
-         * `400 Bad Request` and the connection closes, as llhttp (Node.js, nghttpx) answers; Go's net/http and nginx accept
-         * it. Turn it on only for hand-written clients (scripts, devices) that send LF alone, and only where no proxy in front
-         * forwards a bare LF. The chunk-size line takes CRLF alone either way, and the empty lines a client may send before
-         * a request line are skipped, a bare LF among them, either way. Not used by HTTP/2 or HTTP/3. `EngineMain` key
-         * `kuicksilver.h1AllowBareLf`.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var h1AllowBareLf: Boolean = false
+        /** The TLS of every TLS connector and of Ktor's own connectors once it has an identity; change it with [tls]. */
+        public val tls: ServerTlsConfig = ServerTlsConfig()
+
+        /** Configures [tls] in place: `tls { pemFiles("/etc/…/fullchain.pem", "/etc/…/privkey.pem") }`. */
+        public fun tls(block: ServerTlsConfig.() -> Unit) {
+            tls.block()
+        }
+
+        /** HTTP/1.1; change it with [http1]. */
+        public val http1: Http1ServerConfig = Http1ServerConfig()
+
+        /** Configures [http1] in place: `http1 { idleTimeout = 2.minutes }`. */
+        public fun http1(block: Http1ServerConfig.() -> Unit) {
+            http1.block()
+        }
+
+        /** HTTP/2 on the TLS connectors; change it with [http2]. */
+        public val http2: Http2ServerConfig = Http2ServerConfig()
+
+        /** Configures [http2] in place: `http2 { enabled = true }`. */
+        public fun http2(block: Http2ServerConfig.() -> Unit) {
+            http2.block()
+        }
+
+        /** HTTP/3 on the UDP twin of every TLS connector's port; change it with [http3]. */
+        public val http3: Http3ServerConfig = Http3ServerConfig()
+
+        /** Configures [http3] in place: `http3 { endpoint { maxConnectionsPerIp = null } }`. */
+        public fun http3(block: Http3ServerConfig.() -> Unit) {
+            http3.block()
+        }
+
+        /** WebSockets over every protocol; change it with [webSockets]. */
+        public val webSockets: ServerWebSocketsConfig = ServerWebSocketsConfig()
+
+        /** Configures [webSockets] in place. */
+        public fun webSockets(block: ServerWebSocketsConfig.() -> Unit) {
+            webSockets.block()
+        }
+
+        /** The TCP connection limits; change it with [tcp]. */
+        public val tcp: TcpLimitsConfig = TcpLimitsConfig()
+
+        /** Configures [tcp] in place: `tcp { maxConnectionsPerIp = 256 }` for a server that faces its clients directly. */
+        public fun tcp(block: TcpLimitsConfig.() -> Unit) {
+            tcp.block()
+        }
+
+        /** Logs, traces and events; change it with [observability]. */
+        public val observability: ServerObservability = ServerObservability()
+
+        /** Configures [observability] in place. */
+        public fun observability(block: ServerObservability.() -> Unit) {
+            observability.block()
+        }
 
         /**
-         * The most TCP connections each connector holds at once, HTTP/1.1 and HTTP/2 alike, counted from `accept` (TLS
-         * handshakes included) until the socket is released. At the limit the connector stops accepting: the OS backlog
-         * holds new clients (their connect succeeds, nothing is read from them) until a connection closes, and the server
-         * spends no descriptor or TLS work on them. When the backlog is full too (511 on the JVM, 50 on Kotlin/Native) the
-         * OS drops further connection attempts (Linux by default; the client's TCP retries them) or resets them. The
-         * default does not protect a process whose descriptor limit is lower (`ulimit -n`: 256 in a macOS shell, often
-         * 1024 on Linux): raise that limit or set this below it (docs/guide/ktor.md, "Connection limits"). At least 1;
-         * default 10,000. `EngineMain` key `kuicksilver.maxTcpConnections`.
+         * Adds a TLS connector: HTTP/1.1 (and HTTP/2) over TLS on TCP plus HTTP/3 on UDP on the same port, served with the
+         * engine's [tls] and the connector's own `tls { }` on top: `tlsConnector { port = 443 }`.
          *
-         * @throws IllegalArgumentException when set below 1.
+         * @throws IllegalArgumentException for a port outside 0..65535, or an invalid `proxyProtocol { }`.
          */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var maxTcpConnections: Int = 10_000
-            set(value) {
-                require(value >= 1) { "maxTcpConnections must be at least 1" }
-                field = value
-            }
+        public fun tlsConnector(block: KuicksilverTlsConnector.Builder.() -> Unit) {
+            connectors.add(KuicksilverTlsConnector.Builder().apply(block).build())
+        }
 
         /**
-         * The most TCP connections one client address holds at once on a connector, HTTP/1.1 and HTTP/2 alike; null (the
-         * default) turns the limit off. Behind a reverse proxy, a load balancer, Kubernetes source NAT or any NAT every
-         * client shares one address, and an HTTP/1.1 proxy opens an upstream connection per request in flight (and one per
-         * WebSocket or SSE stream): enable it (256, say) only when the server faces its clients directly. A connection over
-         * it is reset right after `accept`, before its TLS handshake (its address is not known earlier), which a proxy in
-         * front reports as 502 or 503, and it is reported to [KuicksilverServerEventListener.connectionRefused] with the
-         * reason `per-IP limit`. An address is its bytes, never a name: an IPv4-mapped client as its IPv4 address, an IPv6
-         * client by its whole address (as QUIC `maxConnectionsPerIp`), so a client holding a /64 gets around it. At least
-         * 1, or null. `EngineMain` key `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
+         * Adds a plain HTTP/1.1 connector, as Ktor's `connector { }`, with the PROXY protocol, `allowMisdirectedHosts` and
+         * cleartext HTTP/2 ([KuicksilverPlainConnector.Builder.h2c]) as options. Served with TLS when [tls] has an identity.
          *
-         * @throws IllegalArgumentException when set below 1.
+         * @throws IllegalArgumentException for a port outside 0..65535, or an invalid `proxyProtocol { }`.
          */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var maxTcpConnectionsPerIp: Int? = null
-            set(value) {
-                require(value == null || value >= 1) { "maxTcpConnectionsPerIp must be at least 1, or null" }
-                field = value
-            }
+        public fun plainConnector(block: KuicksilverPlainConnector.Builder.() -> Unit = {}) {
+            connectors.add(KuicksilverPlainConnector.Builder().apply(block).build())
+        }
 
-        /**
-         * When set, every plain connector (`port = ...` of embeddedServer, `connector {}`) serves TLS with this identity instead.
-         * A `TlsIdentity.Reloadable` lets the certificate be replaced while the server runs (docs/guide/ktor.md, "Certificate
-         * rotation").
-         */
-        public var identity: TlsIdentity? = null
+        /** Set by `EngineMain` (`kuicksilver.connector.allowMisdirectedHosts`): the deployment port takes every host. */
+        internal var deploymentAllowMisdirectedHosts: Boolean = false
 
-        /**
-         * How often `EngineMain` looks at the PEM files of `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey`
-         * for a renewed certificate (configuration key `kuicksilver.tls.reloadInterval`, e.g. `1h`); null (the default) reads
-         * them once at startup. A new chain is applied once two reads a second apart agree and the key matches it; a failure
-         * keeps the identity in use, is logged, and is retried after 1 s, then twice as long each time up to this interval.
-         * New handshakes get the new certificate, running connections keep theirs (docs/guide/ktor.md, "Certificate
-         * rotation"). The client CA file of `kuicksilver.tls.clientCa`, when set, is watched at the same interval and by the
-         * same rules: new handshakes verify client certificates against the new bundle. It needs those two keys: the server
-         * refuses to start with it set otherwise. At least 1 second.
-         *
-         * @throws IllegalArgumentException when set below 1 second.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var identityReloadInterval: Duration? = null
-            set(value) {
-                require(value == null || value >= 1.seconds) { "identityReloadInterval must be at least 1 second" }
-                field = value
-            }
-
-        /** The PEM files [identity] was read from, set by `EngineMain`; the files [identityReloadInterval] watches. */
-        internal var identityFiles: Pair<String, String>? = null
-
-        /** Set by `EngineMain`, which made [identity] from its files: the engine closes it when it stops. */
-        internal var closeIdentityOnStop: Boolean = false
-
-        /** Tests shorten the watcher's settle time (two equal reads of a changed chain) with this; null keeps 1 s. */
-        internal var identitySettleForTest: Duration? = null
-
-        /** Tests replace how the watcher reads the chain file (a read that never returns, say); null reads the file. */
-        internal var identityReadTextForTest: ((String) -> String)? = null
-
-        /** Set by `EngineMain` (`kuicksilver.tls.clientAuth`): whether the connectors [identity] serves ask for a client certificate. */
-        internal var clientAuth: ClientAuth = ClientAuth.None
-
-        /**
-         * Set by `EngineMain` (`kuicksilver.tls.clientCa`): verifies client certificates on the connectors [identity] serves; a
-         * `TrustConfig.ReloadableCa` when [identityReloadInterval] is set.
-         */
-        internal var clientTrust: TrustConfig? = null
-
-        /** The PEM file [clientTrust] was read from, set by `EngineMain`; watched with [identityReloadInterval]. */
-        internal var clientCaFile: String? = null
-
-        /** Set by `EngineMain` (`kuicksilver.tls.versions`): the TLS versions of the connectors [identity] serves. */
-        internal var tlsVersions: TlsVersions = TlsVersions.Tls13
-
-        /** Set by `EngineMain` (`kuicksilver.tls.keyExchangeGroups`): the key-exchange groups of the connectors [identity] serves. */
-        @OptIn(ExperimentalKuicksilverApi::class)
-        internal var tlsKeyExchangeGroups: io.kuicksilver.tls.KeyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups.Default
-
-        /** Set by `EngineMain` (`kuicksilver.tls.echKeys`): the ECH keys of the connectors [identity] serves, closed when the engine stops. */
-        @ExperimentalKuicksilverApi
-        internal var tlsEchKeys: io.kuicksilver.tls.EchServerKeys? = null
-
-        /** Set by `EngineMain` (`kuicksilver.tls.ocspStapling`): the OCSP response the connectors [identity] serves staple. */
-        @OptIn(ExperimentalKuicksilverApi::class)
-        internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
-
-        /** The file [tlsOcspStapling] was read from, set by `EngineMain`; re-read with [identityReloadInterval]. */
-        internal var tlsOcspFile: String? = null
-
-        /**
-         * Set by `EngineMain` (`kuicksilver.tls.trustedGateway`): the deployment port takes every host, served with [identity]
-         * or, without one, in cleartext behind a TLS-terminating proxy (absolute-form `https` targets, RFC 9110 section 7.4).
-         */
-        internal var tlsTrustedGateway: Boolean = false
-
-        /**
-         * Set by `EngineMain` (`kuicksilver.proxyProtocol.*`): the PROXY protocol on the deployment port (a Ktor connector,
-         * served in cleartext or with [identity]); null for none.
-         */
+        /** Set by `EngineMain` (`kuicksilver.connector.proxyProtocol.*`): the PROXY protocol on the deployment port; null for none. */
         internal var deploymentProxyProtocol: ProxyProtocolConfig? = null
 
-        /**
-         * Set by `EngineMain` (`kuicksilver.h2c`): cleartext HTTP/2 on the plain deployment port (a Ktor `connector`), as
-         * [KuicksilverPlainConnector.Builder.h2c] does for a plain connector of ours.
-         */
+        /** Set by `EngineMain` (`kuicksilver.connector.h2c`): cleartext HTTP/2 on the plain deployment port (a Ktor `connector`). */
         @OptIn(ExperimentalKuicksilverApi::class)
-        internal var h2cDeploymentPort: H2cMode = H2cMode.Off
-
-        /**
-         * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
-         * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
-         * (RFC 7838 sections 3 and 4).
-         */
-        public var altSvc: Boolean = true
-
-        /** Serve HTTP/3 on UDP on the port of every TLS connector. */
-        public var http3: Boolean = true
-
-        /**
-         * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
-         * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
-         * `http/1.1` unless this is set. Plain connectors are not affected: they serve HTTP/2 only with their own opt-in,
-         * h2c ([KuicksilverPlainConnector.Builder.h2c]); without it a client's `PRI *` preface is answered `505 HTTP Version
-         * Not Supported`, as before. Over TLS 1.3, and over TLS 1.2 on a connector that allows it
-         * (`versions = TlsVersions.Tls12And13`; RFC 9113 section 9.2).
-         * WebSockets come over HTTP/2 too (RFC 8441), unless [webSocketsOverHttp2] is turned off.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var http2: Boolean = false
-
-        /**
-         * Accept WebSockets over HTTP/2 (RFC 8441) on the connections of [http2]: their SETTINGS carry
-         * `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, and an Extended CONNECT with `:protocol = websocket` reaches Ktor's
-         * `webSocket {}` routes as an upgrade request, answered `:status 200` (docs/guide/ktor.md, "WebSockets over HTTP/2").
-         * On by default, as [webSocketsOverHttp3]; it has no effect while [http2] is off. When false the parameter is not
-         * sent, and a client keeps opening its WebSockets over HTTP/1.1. `EngineMain` key `kuicksilver.webSocketsOverHttp2`.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var webSocketsOverHttp2: Boolean = true
-
-        /**
-         * The HTTP/2 SETTINGS, windows and flood limits of every HTTP/2 connection (`Http2Settings()` until assigned). The
-         * engine bounds `maxHeaderBlockTime` by [requestHeaderTimeoutSeconds]: a field block slower than the smaller of
-         * the two ends the connection.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var http2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings.Default
-
-        /**
-         * Off ([Duration.ZERO], the default): each HTTP/2 connection that breaks a flood limit of [http2Settings] is ended
-         * with GOAWAY ENHANCE_YOUR_CALM, and that is all. Positive: a client address whose HTTP/2 connections end that way
-         * three times within a minute has its TCP connections (HTTP/1.1 too) closed at accept, before the TLS handshake,
-         * for this long (docs/guide/ktor.md, "HTTP/2 on the server"; threat model 3.23). An IPv6 client counts by its /56,
-         * an IPv4-mapped one by its IPv4 address; a slow field block is not a strike. Enable it only where the server sees
-         * the real address of each client (directly exposed, or behind a proxy that keeps client addresses, such as one
-         * that preserves the source IP): behind a NAT, a load balancer that rewrites source addresses (SNAT, Kubernetes
-         * `externalTrafficPolicy: Cluster`) or a TCP proxy, every client shares the proxy's address and one flooder locks
-         * them all out. `EngineMain` key `kuicksilver.http2RepeatOffenderPenalty` (a duration such as `30s`; `0` is off).
-         *
-         * @throws IllegalArgumentException when set to a negative duration.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var http2RepeatOffenderPenalty: Duration = Duration.ZERO
-            set(value) {
-                require(!value.isNegative()) { "http2RepeatOffenderPenalty must not be negative" }
-                field = value
-            }
-
-        /**
-         * QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. With [http3] on,
-         * `maxUniStreams` must be at least 3 (RFC 9114 section 6.2): a smaller value fails the start with
-         * IllegalArgumentException.
-         */
-        public var quic: QuicConfig = QuicConfig.Default
-            set(value) {
-                field = value
-                quicAssigned = true
-            }
-
-        /** Whether [quic] was assigned (any value, [QuicConfig.Default] included): then [quicMaxIdleTimeout] is not used. */
-        internal var quicAssigned: Boolean = false
-            private set
-
-        /**
-         * `quic.maxIdleTimeout` while [quic] is not assigned (the name follows Ktor-Netty). Once [quic] is assigned, before or
-         * after this, its own `maxIdleTimeout` applies and this is ignored, also when the assigned value is [QuicConfig.Default].
-         */
-        public var quicMaxIdleTimeout: Duration? = null
-
-        /**
-         * Endpoint loops on the UDP port, as Ktor-Netty's `udpSocketCount`, on every platform with a QUIC server: a socket per
-         * loop with kernel `SO_REUSEPORT` flow hashing on Linux and Android, one socket whose datagrams are routed to the
-         * loops by connection ID in process on macOS, iOS and Windows (docs/guide/quic.md, "Several loops on one port").
-         * One connection runs on one loop. Where the accelerated socket cannot open (a JVM on the portable socket), more
-         * than 1 cannot run: the engine logs why and serves HTTP/1.1 only on that connector.
-         */
-        public var udpSocketCount: Int = 1
-
-        /**
-         * The most QUIC connections each HTTP/3 listener holds at once, handshakes in flight included, over all its
-         * [udpSocketCount] loops together (`QuicEndpointConfig.maxConnections`): beyond it a new client's Initial is dropped silently and counted in
-         * `EndpointStats.connectionsRefusedLimits` ([KuicksilverApplicationEngine.http3Stats]). At least 1; default 10,000.
-         * `EngineMain` key `kuicksilver.quicMaxConnections`.
-         *
-         * @throws IllegalArgumentException when set below 1.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var quicMaxConnections: Int = 10_000
-            set(value) {
-                require(value >= 1) { "quicMaxConnections must be at least 1" }
-                field = value
-            }
-
-        /**
-         * The most QUIC connections one client IP holds at once on each HTTP/3 listener, over all its [udpSocketCount] loops
-         * together, ports ignored (`QuicEndpointConfig.maxConnectionsPerIp`); null turns the limit off. Beyond it a new client's Initial is dropped
-         * silently (the client fails at its handshake timeout) and counted in `EndpointStats.connectionsRefusedLimits`.
-         * Behind a NAT, Kubernetes `kube-proxy` with `externalTrafficPolicy: Cluster`, or a UDP load balancer that does not
-         * keep client addresses, every client shares one address: raise it to about [quicMaxConnections] there, or turn
-         * it off (docs/guide/deployment.md, "QUIC connection limits"). At least 1, or null; default 256. `EngineMain` key
-         * `kuicksilver.quicMaxConnectionsPerIp` (`0` is off).
-         *
-         * @throws IllegalArgumentException when set below 1.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var quicMaxConnectionsPerIp: Int? = 256
-            set(value) {
-                require(value == null || value >= 1) { "quicMaxConnectionsPerIp must be at least 1, or null" }
-                field = value
-            }
-
-        /**
-         * Handshaken QUIC connections waiting for the engine's HTTP/3 accept loop on each listener, all its loops together
-         * (`QuicEndpointConfig.acceptQueue`): while this many wait, a new client is refused at once with CONNECTION_REFUSED,
-         * counted in `EndpointStats.connectionsRefusedAcceptQueue`. At least 1; default 128. `EngineMain` key
-         * `kuicksilver.quicAcceptQueue`.
-         *
-         * @throws IllegalArgumentException when set below 1.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var quicAcceptQueue: Int = 128
-            set(value) {
-                require(value >= 1) { "quicAcceptQueue must be at least 1" }
-                field = value
-            }
-
-        /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */
-        public var quicAdmission: ConnectionAdmission? = null
-
-        /**
-         * The QUIC-LB configuration of every HTTP/3 listener's connection IDs (`QuicEndpointConfig.loadBalancer`,
-         * draft-ietf-quic-load-balancers-21; docs/guide/quic.md, "Behind a load balancer"); null (the default) for none. Its
-         * `QuicLbConfig.connectionIdLength` must equal `quic.connectionIdLength`. Change it on the running engine with
-         * [KuicksilverApplicationEngine.updateLoadBalancer].
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var quicLoadBalancer: io.kuicksilver.quic.QuicLbConfig? = null
-
-        /**
-         * HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. The engine bounds
-         * `maxHeaderBlockTime` by [requestHeaderTimeoutSeconds]: a request head slower than the smaller of the two is
-         * rejected with H3_REQUEST_REJECTED.
-         */
-        public var http3Settings: Http3Settings = Http3Settings.Default
-
-        /**
-         * Accept WebSockets over HTTP/3 (RFC 9220): advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. When false, a WebSocket
-         * Extended CONNECT is answered 501 (RFC 9220 section 3), also while [webTransport] advertises Extended CONNECT.
-         */
-        public var webSocketsOverHttp3: Boolean = true
-
-        /**
-         * The largest WebSocket message, and so frame, the server takes from a client, in bytes (RFC 6455 section 10.4: an
-         * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
-         * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its
-         * message past it, closes the connection with 1009 (message too big) before any of its payload is read; a
-         * compressed message is held to the smaller of this and the extension's limit, counted inflated. Over HTTP/1.1,
-         * HTTP/2 and HTTP/3 alike; Ktor's `WebSockets { maxFrameSize }` applies on top of it.
-         *
-         * @throws IllegalArgumentException when set below 1.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
-            set(value) {
-                require(value >= 1) { "webSocketMaxMessageSize must be at least 1" }
-                field = value
-            }
-
-        /**
-         * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-17) to `webTransport(path) { }` routes: turns on
-         * `Http3Settings.webTransport` and `enableConnectProtocol`; false by default. Needs QUIC datagrams (the default
-         * `quic` has them): the engine refuses to start otherwise.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var webTransport: Boolean = false
-
-        /**
-         * Serve CONNECT-UDP (RFC 9298) over HTTP/3 to `connectUdp(proxy)` routes: turns on `enableConnectProtocol`; false by
-         * default. Only HTTP/3 carries it (ADR-0024). The proxy's target filter, limits and template are the `UdpProxy`'s the
-         * route is given; there is no configuration-file key, since a filter or a resolver is code.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var connectUdp: Boolean = false
-
-        /**
-         * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
-         * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
-         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A
-         * request a gateway marked `Early-Data` (RFC 8470 section 5.1) is treated as early whatever this setting.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var quicEarlyData: Boolean = false
-
-        /**
-         * Where the HTTP/3 endpoints' diagnostics go (docs/guide/quic.md, "Observability"); null (the default) keeps the QUIC
-         * endpoint's default, `KuicksilverLogger.Stderr` (warnings on standard error), as the client engine's `logger` does.
-         * The engine's own messages keep going to the application's log.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var logger: KuicksilverLogger? = null
-
-        /**
-         * A qlog trace per HTTP/3 connection, added to [quic]; null (the default) keeps that configuration's own. Wrap a file
-         * sink in `AsyncQlogSink` so a slow disk never stalls the endpoint: `qlog = AsyncQlogSink(DirectoryQlogSink(dir))`.
-         */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var qlog: QlogSink? = null
-
-        /** Hears the lifecycle of every QUIC connection of the HTTP/3 listeners (`QuicEndpointConfig.listener`); null for none. */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var connectionListener: ConnectionListener? = null
-
-        /** Hears connections and requests over HTTP/1.1 and HTTP/3 (docs/guide/ktor.md, "Observability"); null for none. */
-        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var eventListener: KuicksilverServerEventListener? = null
+        internal var deploymentH2c: H2cMode = H2cMode.Off
 
         /** Tests shorten the HTTP/1.1 send-stall deadline with this; null keeps the engine's own. */
         internal var sendStallTimeoutForTest: Duration? = null
@@ -525,28 +233,129 @@ public class KuicksilverApplicationEngine(
             Http3Settings,
         ) -> Http3Endpoint = { a, c, s -> Http3Endpoint.bind(a, c, s) }
 
-        /** Adds a TLS connector (HTTP/1.1 over TLS plus HTTP/3 on the same port). */
-        public fun tlsConnector(
-            identity: TlsIdentity,
-            block: KuicksilverTlsConnector.Builder.() -> Unit = {},
-        ) {
-            connectors.add(KuicksilverTlsConnector.Builder(identity).apply(block).build())
+        /**
+         * The QUIC settings of the HTTP/3 listeners: the `http3 { quic { } }` block, its derived options refused, with
+         * `resetStreamAt` on for WebTransport (its streams keep their header when reset, draft-ietf-webtrans-http3-17
+         * section 4.4). Throws IllegalArgumentException naming a derived option that was assigned.
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun resolveQuic(): QuicConfig {
+            refuseDerived("http3 { quic { ", http3.quicBuilder.assignedOptions(), QUIC_DERIVED)
+            val built = http3.quicBuilder.build()
+            return if (http3.webTransport.enabled && !built.resetStreamAt) {
+                built.toBuilder().apply { expert { resetStreamAt = true } }.build()
+            } else {
+                built
+            }
         }
 
         /**
-         * Adds a plain HTTP/1.1 connector, as Ktor's `connector { }`, with the option of marking its clients trusted gateways
-         * ([KuicksilverPlainConnector.Builder.trustedGateway]) and of serving HTTP/2 over cleartext TCP
-         * ([KuicksilverPlainConnector.Builder.h2c]).
+         * The HTTP/3 SETTINGS of the listeners: the `http3 { settings { } }` block, its derived options refused, with
+         * `maxHeaderBlockTime` bounded by [requestHeaderTimeout], Extended CONNECT (RFC 9220) on for WebSockets,
+         * WebTransport and CONNECT-UDP, WebTransport's SETTINGS from `http3 { webTransport { } }` and the early-data policy
+         * from `http3 { earlyData { policy } }`.
          */
-        @ExperimentalKuicksilverApi
-        public fun plainConnector(block: KuicksilverPlainConnector.Builder.() -> Unit = {}) {
-            connectors.add(KuicksilverPlainConnector.Builder().apply(block).build())
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun resolveHttp3Settings(): Http3Settings {
+            refuseDerived("http3 { settings { ", http3.settingsBuilder.assignedOptions(), H3_DERIVED)
+            val wt = http3.webTransport
+            val connect = webSockets.overHttp3 || wt.enabled || http3.connectUdp
+            val b = http3.settingsBuilder.build().toBuilder()
+            if (connect) b.enableConnectProtocol = true
+            b.earlyData = http3.earlyData.policy
+            if (wt.enabled) {
+                b.webTransport {
+                    enabled = true
+                    maxSessions = wt.maxSessionsPerConnection
+                    initialMaxStreamsBidi = wt.initialMaxStreamsBidi
+                    initialMaxStreamsUni = wt.initialMaxStreamsUni
+                    initialMaxData = wt.initialMaxData
+                }
+            }
+            return h3SettingsWithin(b.build(), requestHeaderTimeout)
+        }
+
+        /** The HTTP/2 settings of every HTTP/2 connection, `maxHeaderBlockTime` bounded by [requestHeaderTimeout]. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun resolveHttp2Settings(): io.kuicksilver.http2.Http2Settings =
+            h2SettingsWithin(http2.settingsBuilder.build(), requestHeaderTimeout)
+
+        /**
+         * The endpoint settings of every HTTP/3 listener beyond the server and admission the engine adds: the
+         * `http3 { endpoint { } }` block, its connection ID length derived from the load balancer (else 8 bytes).
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun endpointBase(): QuicEndpointConfig.Builder {
+            val e = http3.endpoint
+            return e.endpointBuilder.also {
+                it.loops = e.loops
+                it.maxConnections = e.maxConnections
+                it.maxConnectionsPerIp = e.maxConnectionsPerIp
+                it.acceptQueue = e.acceptQueue
+                it.maxConnectionLifetime = e.maxConnectionLifetime
+                it.loadBalancer = e.loadBalancer
+                it.connectionIdLength = e.loadBalancer?.connectionIdLength ?: 8
+            }
+        }
+
+        internal companion object {
+            /** The QUIC options the server engine derives, and why (the refusal names both). */
+            val QUIC_DERIVED: Map<String, String> =
+                mapOf(
+                    "expert.maxUniStreams" to "RFC 9114 section 6.2: HTTP/3 needs at least 3, the engine keeps the default",
+                    "expert.resetStreamAt" to "on with http3 { webTransport { enabled } }, draft-ietf-webtrans-http3-17 section 4.4",
+                    "expert.cancelErrorCode" to "HTTP/3 resets with its own codes (RFC 9114 section 8.1)",
+                )
+
+            /** The HTTP/3 SETTINGS the server engine derives. */
+            val H3_DERIVED: Map<String, String> =
+                mapOf(
+                    "enableConnectProtocol" to "on for WebSockets, WebTransport and CONNECT-UDP (RFC 9220)",
+                    "h3Datagram" to "follows the QUIC datagrams (RFC 9297)",
+                    "webTransport" to "set with http3 { webTransport { } }",
+                    "earlyData" to "set with http3 { earlyData { policy } }",
+                )
+
+            /** Refuses the derived options a block assigned, naming the first one and its source. */
+            fun refuseDerived(
+                prefix: String,
+                assigned: Set<String>,
+                derived: Map<String, String>,
+            ) {
+                val first = derived.keys.firstOrNull { it in assigned } ?: return
+                val parts = first.split('.')
+                val path = parts.dropLast(1).joinToString("") { "$it { " } + parts.last() + " }".repeat(parts.size - 1)
+                throw IllegalArgumentException("$prefix$path } } is derived by the engine (${derived.getValue(first)}); remove it")
+            }
         }
     }
 
     /** The configuration's [KuicksilverServerEventListener], behind a guard that logs its failures. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    internal val events = ServerEvents(configuration.eventListener, environment.log)
+    internal val events = ServerEvents(configuration.observability.eventListener, environment.log)
+
+    /** The engine's `tls { }` as served, resolved when the engine starts ([ResolvedServerTls.None] before). */
+    @Volatile
+    internal var engineTls: ResolvedServerTls = ResolvedServerTls.None
+        private set
+
+    /** Every TLS the engine resolved at its start (the engine's first, then each connector's own): watched files, closed identities. */
+    private val resolvedTls = ArrayList<ResolvedServerTls>()
+
+    /** The QUIC settings of the HTTP/3 listeners ([Configuration.resolveQuic]), resolved when the engine starts. */
+    internal var h3Quic: QuicConfig = QuicConfig.Default
+        private set
+
+    /** The HTTP/3 SETTINGS of the listeners ([Configuration.resolveHttp3Settings]), resolved when the engine starts. */
+    internal var h3Settings: Http3Settings = Http3Settings.Default
+        private set
+
+    /** The HTTP/2 settings of every HTTP/2 connection ([Configuration.resolveHttp2Settings]), resolved when the engine starts. */
+    internal var h2Settings: io.kuicksilver.http2.Http2Settings = io.kuicksilver.http2.Http2Settings.Default
+        private set
+
+    /** Where the HTTP/3 endpoints log: `observability { logger }`, else the application's log. */
+    internal val quicLogger: KuicksilverLogger get() = configuration.observability.logger ?: KtorLogBridge(environment.log)
 
     /** The value of [http3Advertising], read by every HTTP/1.1 response head, the HTTP/3 accept loops and QUIC admission. */
     @Volatile
@@ -587,14 +396,16 @@ public class KuicksilverApplicationEngine(
     }
 
     /**
-     * Moves every HTTP/3 listener to another QUIC-LB configuration ([quicLoadBalancer][Configuration.quicLoadBalancer] must have
-     * been set). Waits for the start first, so every listener is there; checks [config] against every listener before it
+     * Moves every HTTP/3 listener to another QUIC-LB configuration (`http3 { endpoint { loadBalancer } }` must have been
+     * set). Waits for the start first, so every listener is there; checks [config] against every listener before it
      * changes any, so a refused configuration leaves them all as they were.
      */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public suspend fun updateLoadBalancer(config: io.kuicksilver.quic.QuicLbConfig?) {
-        check(configuration.quicLoadBalancer != null) { "updateLoadBalancer needs quicLoadBalancer in the engine configuration" }
+        check(configuration.http3.endpoint.loadBalancer != null) {
+            "updateLoadBalancer needs http3 { endpoint { loadBalancer } } in the engine configuration"
+        }
         startupJob.join()
         val endpoints = h3Endpoints.toList()
         for (e in endpoints) e.checkLoadBalancer(config)
@@ -719,7 +530,7 @@ public class KuicksilverApplicationEngine(
         } finally {
             // the ECH keys EngineMain read (`kuicksilver.tls.echKeys`) are the engine's own: their native set is freed with it
             @OptIn(ExperimentalKuicksilverApi::class)
-            configuration.tlsEchKeys?.close()
+            if (configuration.tls.closeEchKeysOnStop) configuration.tls.echKeys?.close()
         }
     }
 
@@ -733,20 +544,19 @@ public class KuicksilverApplicationEngine(
     internal class Listener(
         val config: EngineConnectorConfig,
         val tls: KuicksilverTlsConnector?,
-        /** `EngineMain`'s `kuicksilver.tls.trustedGateway` for the plain deployment port (a Ktor connector, not a plain one of ours). */
+        /** `EngineMain`'s `kuicksilver.connector.allowMisdirectedHosts` for the plain deployment port (a Ktor connector). */
         gateway: Boolean = false,
-        /** `EngineMain`'s `kuicksilver.proxyProtocol.*` for the plain deployment port. */
+        /** `EngineMain`'s `kuicksilver.connector.proxyProtocol.*` for the plain deployment port. */
         deploymentProxy: ProxyProtocolConfig? = null,
-        /** `EngineMain`'s `kuicksilver.h2c` for the plain deployment port (a Ktor connector, not a plain one of ours). */
+        /** `EngineMain`'s `kuicksilver.connector.h2c` for the plain deployment port (a Ktor connector, not a plain one of ours). */
         @OptIn(ExperimentalKuicksilverApi::class)
         deploymentH2c: H2cMode = H2cMode.Off,
     ) {
         /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
-        @OptIn(ExperimentalKuicksilverApi::class)
-        val trustedGateway: Boolean = tls?.trustedGateway ?: (((config as? KuicksilverPlainConnector)?.trustedGateway ?: false) || gateway)
+        val trustedGateway: Boolean =
+            tls?.allowMisdirectedHosts ?: (((config as? KuicksilverPlainConnector)?.allowMisdirectedHosts ?: false) || gateway)
 
         /** The PROXY protocol of the connector's TCP side, or null. */
-        @OptIn(ExperimentalKuicksilverApi::class)
         val proxyProtocol: ProxyProtocolConfig? =
             tls?.proxyProtocol ?: (config as? KuicksilverPlainConnector)?.proxyProtocol ?: deploymentProxy
 
@@ -758,100 +568,92 @@ public class KuicksilverApplicationEngine(
     private fun resolve(c: EngineConnectorConfig): Listener =
         when {
             c is KuicksilverTlsConnector -> {
-                Listener(c, c)
+                val r = c.resolved(engineTls)
+                if (r.tls !== engineTls) resolvedTls += r.tls
+                Listener(r, r)
             }
 
             c.type == ConnectorType.HTTP -> {
                 // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS"; a plain connector
                 // the identity turns into a TLS one cannot keep its h2c, and dropping it silently would hide the mistake
                 @OptIn(ExperimentalKuicksilverApi::class)
-                val h2c = (c as? KuicksilverPlainConnector)?.h2c ?: configuration.h2cDeploymentPort
+                val h2c = (c as? KuicksilverPlainConnector)?.h2c ?: configuration.deploymentH2c
+                val identity = engineTls.identity
                 @OptIn(ExperimentalKuicksilverApi::class)
-                require(configuration.identity == null || h2c == H2cMode.Off) {
-                    "h2c ($h2c) needs a plain connector, but $c serves TLS with the configuration's identity: drop the identity " +
-                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (http2 = true)"
+                require(identity == null || h2c == H2cMode.Off) {
+                    "h2c ($h2c) needs a plain connector, but $c serves TLS with the identity of tls { }: drop the identity " +
+                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (http2 { enabled = true })"
                 }
-                configuration.identity?.let { id ->
-                    KuicksilverTlsConnector
-                        .Builder(id)
-                        .apply {
-                            host = c.host
-                            port =
-                                c.port
-                            clientAuth = configuration.clientAuth
-                            trust = configuration.clientTrust
-                            @OptIn(ExperimentalKuicksilverApi::class)
-                            trustedGateway = ((c as? KuicksilverPlainConnector)?.trustedGateway ?: false) || configuration.tlsTrustedGateway
-                            @OptIn(ExperimentalKuicksilverApi::class)
-                            ocspStapling = configuration.tlsOcspStapling
-                            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                            versions = configuration.tlsVersions
-                            @OptIn(ExperimentalKuicksilverApi::class)
-                            keyExchangeGroups = configuration.tlsKeyExchangeGroups
-                            @OptIn(ExperimentalKuicksilverApi::class)
-                            echKeys = configuration.tlsEchKeys
-                            // a plain connector served with the deployment's identity keeps its PROXY protocol
-                            @OptIn(ExperimentalKuicksilverApi::class)
-                            proxyProtocol = (c as? KuicksilverPlainConnector)?.proxyProtocol ?: configuration.deploymentProxyProtocol
-                        }.build()
-                        .let { Listener(it, it) }
-                }
-                    ?: Listener(
+                if (identity != null) {
+                    val plain = c as? KuicksilverPlainConnector
+                    // a plain connector served with the engine's identity keeps its PROXY protocol and its gateway exemption
+                    val tls =
+                        KuicksilverTlsConnector(
+                            c.host,
+                            c.port,
+                            emptyList(),
+                            plain?.proxyProtocol ?: configuration.deploymentProxyProtocol,
+                            (plain?.allowMisdirectedHosts ?: false) || configuration.deploymentAllowMisdirectedHosts,
+                            null,
+                        ).resolved(engineTls)
+                    Listener(tls, tls)
+                } else {
+                    Listener(
                         c,
                         null,
-                        configuration.tlsTrustedGateway,
+                        configuration.deploymentAllowMisdirectedHosts,
                         deploymentProxy = configuration.deploymentProxyProtocol,
-                        deploymentH2c = configuration.h2cDeploymentPort,
+                        deploymentH2c = configuration.deploymentH2c,
                     )
+                }
             }
 
             else -> {
-                // Ktor's sslConnector (JVM `-sslPort`, `ktor.security.ssl.*`) takes client certificates from its own trustStore:
-                // EngineMain's client CA keys would silently not apply to it, so the combination is refused
-                if (configuration.clientTrust != null) {
+                // Ktor's sslConnector (JVM `-sslPort`, `ktor.security.ssl.*`) has its own key store, trust store and protocols:
+                // the settings of tls { } it cannot express would silently not apply to it, so the combination is refused
+                val t = configuration.tls
+                if (t.clientTrust != null || t.clientAuth != ClientAuth.None) {
                     throw TlsException.Config(
-                        "kuicksilver.tls.clientAuth and kuicksilver.tls.clientCa apply to the port of kuicksilver.tls.certificateChain, " +
-                            "not to $c: use ktor.security.ssl.trustStore there, or serve only the kuicksilver.tls port",
+                        "tls { clientAuth } and tls { clientTrust } (kuicksilver.tls.clientAuth, kuicksilver.tls.clientCa) do not " +
+                            "apply to $c: use ktor.security.ssl.trustStore there, or serve the port with tls { } (kuicksilver.tls.*)",
                     )
                 }
                 // the same for the TLS versions: Ktor's own key for that connector is ktor.security.ssl.enabledProtocols
-                if (configuration.tlsVersions != TlsVersions.Tls13) {
+                if (t.versions != TlsVersions.Tls13) {
                     throw TlsException.Config(
-                        "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain, not to $c: " +
-                            "use ktor.security.ssl.enabledProtocols there",
+                        "tls { versions } (kuicksilver.tls.versions) does not apply to $c: use ktor.security.ssl.enabledProtocols there",
                     )
                 }
                 // and the key-exchange groups and ECH keys, which Ktor's sslConnector has no setting for
                 @OptIn(ExperimentalKuicksilverApi::class)
-                if (configuration.tlsEchKeys != null) {
-                    throw TlsException.Config("kuicksilver.tls.echKeys applies to the port of kuicksilver.tls.certificateChain, not to $c")
+                if (t.echKeys != null) {
+                    throw TlsException.Config("tls { echKeys } (kuicksilver.tls.echKeys) does not apply to $c")
                 }
                 @OptIn(ExperimentalKuicksilverApi::class)
-                if (configuration.tlsKeyExchangeGroups != io.kuicksilver.tls.KeyExchangeGroups.Default) {
-                    throw TlsException.Config(
-                        "kuicksilver.tls.keyExchangeGroups applies to the port of kuicksilver.tls.certificateChain, not to $c",
-                    )
+                if (t.keyExchangeGroups != io.kuicksilver.tls.KeyExchangeGroups.Default) {
+                    throw TlsException.Config("tls { keyExchangeGroups } (kuicksilver.tls.keyExchangeGroups) does not apply to $c")
                 }
-                // Ktor's sslConnector has no stapled OCSP response and no trusted-gateway switch: tlsConnector(identity) has both.
-                // A trusted gateway for the cleartext deployment port (no identity files) is accepted next to it and stays on
-                // that port: the sslConnector still answers 421 for hosts its certificate does not name
-                if (configuration.tlsOcspStapling != null || (configuration.tlsTrustedGateway && configuration.identityFiles != null)) {
+                // Ktor's sslConnector has no stapled OCSP response and no gateway exemption: tlsConnector { } has both. A gateway
+                // exemption for the cleartext deployment port (no identity) is accepted next to it and stays on that port: the
+                // sslConnector still answers 421 for hosts its certificate does not name
+                @OptIn(ExperimentalKuicksilverApi::class)
+                if (t.ocspStapling != null || (configuration.deploymentAllowMisdirectedHosts && engineTls.identity != null)) {
                     throw TlsException.Config(
-                        "kuicksilver.tls.ocspStapling and kuicksilver.tls.trustedGateway apply to the port of " +
-                            "kuicksilver.tls.certificateChain, not to $c: Ktor's sslConnector cannot express them; serve that port " +
-                            "with the kuicksilver.tls keys, or set ocspStapling and trustedGateway on tlsConnector(identity) in code",
+                        "tls { ocspStapling } (kuicksilver.tls.ocspStapling) and kuicksilver.connector.allowMisdirectedHosts do " +
+                            "not apply to $c: Ktor's sslConnector cannot express them; serve that port with tls { } " +
+                            "(kuicksilver.tls.*), or use tlsConnector { } in code",
                     )
                 }
                 // nor the PROXY protocol, which must come before its TLS: a proxy sending headers there would be refused
                 if (configuration.deploymentProxyProtocol != null) {
                     throw TlsException.Config(
-                        "kuicksilver.proxyProtocol applies to the deployment port, not to $c: Ktor's sslConnector cannot read a " +
-                            "PROXY header; serve that port with the kuicksilver.tls keys, or set proxyProtocol on tlsConnector(identity) in code",
+                        "kuicksilver.connector.proxyProtocol applies to the deployment port, not to $c: Ktor's sslConnector cannot " +
+                            "read a PROXY header; serve that port with the kuicksilver.tls keys, or use tlsConnector { proxyProtocol { } } in code",
                     )
                 }
                 platformTlsConnector(c)?.let { Listener(it, it) }
                     ?: throw TlsException.Config(
-                        "connector $c is not supported by the Kuicksilver engine: use tlsConnector(identity) or a plain connector",
+                        "connector $c is not supported by the Kuicksilver engine: use tlsConnector { } or a plain connector",
                     )
             }
         }
@@ -870,25 +672,27 @@ public class KuicksilverApplicationEngine(
             val h3 = ArrayList<H3Listener>()
             try {
                 try {
-                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    if (configuration.identityReloadInterval != null) {
-                        require(configuration.identityFiles != null && configuration.identity is TlsIdentity.Reloadable) {
-                            "identityReloadInterval watches the PEM files of kuicksilver.tls.certificateChain and " +
-                                "kuicksilver.tls.privateKey (EngineMain); without them call TlsIdentity.Reloadable.reload yourself"
-                        }
-                    }
+                    // the derived settings are refused and the files' identities made reloadable before anything binds
+                    h3Quic = configuration.resolveQuic()
+                    h3Settings = configuration.resolveHttp3Settings()
+                    h2Settings = configuration.resolveHttp2Settings()
+                    engineTls = configuration.tls.resolve("tls").also { resolvedTls += it }
                     val listeners = configuration.connectors.map { resolve(it) }
 
                     // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
                     // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)
-                    @OptIn(ExperimentalKuicksilverApi::class)
-                    val headDeadline = configuration.requestHeaderTimeoutSeconds
-                    if (headDeadline < ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds &&
-                        listeners.any { it.proxyProtocol != null }
-                    ) {
-                        val key = if (configuration.deploymentProxyProtocol != null) "kuicksilver.proxyProtocol" else "proxyProtocol"
+                    val headDeadline = configuration.requestHeaderTimeout
+                    if (headDeadline < ProxyProtocolConfig.MIN_HEADER_TIMEOUT && listeners.any { it.proxyProtocol != null }) {
+                        val key =
+                            if (configuration.deploymentProxyProtocol !=
+                                null
+                            ) {
+                                "kuicksilver.connector.proxyProtocol"
+                            } else {
+                                "proxyProtocol { }"
+                            }
                         throw IllegalArgumentException(
-                            "$key needs requestHeaderTimeoutSeconds of at least ${ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds} " +
+                            "$key needs a requestHeaderTimeout of at least ${ProxyProtocolConfig.MIN_HEADER_TIMEOUT} " +
                                 "(it is $headDeadline): the PROXY protocol header's wait is cut to the request-head deadline",
                         )
                     }
@@ -969,64 +773,59 @@ public class KuicksilverApplicationEngine(
                         l.connections.cancel()
                     }
                     stopIdentityWatcher()
-                    // an identity EngineMain made from its files is the engine's: its native key goes with the engine (connections
-                    // still closing keep their own reference in their contexts)
-                    if (configuration.closeIdentityOnStop) (configuration.identity as? AutoCloseable)?.close()
+                    // an identity read from files (tls { pemFiles }) is the engine's: its native key goes with the engine
+                    // (connections still closing keep their own reference in their contexts)
+                    resolvedTls.forEach { t -> runCatching { t.closeOnStop?.close() } }
                 }
             }
         }
     }
 
     /**
-     * The PEM file watchers of [Configuration.identityReloadInterval] (the identity's files and the client CA file) from startup
-     * until the stop begins; null without one. It runs
-     * outside the server job: a check stuck in a read that cannot be interrupted (a hung network file system, a FIFO at the path)
-     * must not keep the server job, and so the stop, from completing.
+     * The file watchers of `tls { reloadInterval }` (the identity's files, the client CA file and the OCSP response file of
+     * every TLS the engine resolved) from startup until the stop begins; null without one. It runs outside the server job:
+     * a check stuck in a read that cannot be interrupted (a hung network file system, a FIFO at the path) must not keep the
+     * server job, and so the stop, from completing.
      */
     @Volatile
     private var identityWatcher: Job? = null
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun startIdentityWatcher() {
-        // the OCSP response file of kuicksilver.tls.ocspStapling: whether it is stapled is logged now, and again when that
-        // changes (checked every reload interval, re-reading the file, or hourly without one: a response expires)
-        val ocsp =
-            configuration.tlsOcspFile?.let { path ->
-                val stapling = configuration.tlsOcspStapling ?: return@let null
-                val id = configuration.identity ?: return@let null
-                OcspFileWatcher(path, stapling, { id.chain }, environment.log, reread = configuration.identityReloadInterval != null)
-            }
-        ocsp?.checkUsable()
-        val interval = configuration.identityReloadInterval
-        if (interval == null) {
-            if (ocsp != null) identityWatcher = CoroutineScope(engineDispatcher).launch { ocsp.run(1.hours) }
-            return
-        }
-        val settle = configuration.identitySettleForTest ?: 1.seconds
-        val readText = configuration.identityReadTextForTest
-        val identity =
-            configuration.identityFiles?.let { (chain, key) ->
-                (configuration.identity as? TlsIdentity.Reloadable)?.let { target ->
-                    if (readText == null) {
-                        IdentityFileWatcher(chain, key, target, environment.log, settle = settle)
-                    } else {
-                        IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = settle)
+        val runs = ArrayList<suspend CoroutineScope.() -> Unit>()
+        for (t in resolvedTls) {
+            val interval = t.reloadInterval
+            // the OCSP response file: whether it is stapled is logged now, and again when that changes (checked every reload
+            // interval, re-reading the file, or hourly without one: a response expires)
+            val ocsp =
+                t.ocspFile?.let { path ->
+                    val stapling = t.ocspStapling ?: return@let null
+                    val id = t.identity ?: return@let null
+                    OcspFileWatcher(path, stapling, { id.chain }, environment.log, reread = interval != null)
+                }
+            ocsp?.checkUsable()
+            if (ocsp != null) runs += { ocsp.run(interval ?: 1.hours) }
+            if (interval == null) continue
+            val readText = t.readText
+            val identity =
+                t.identityFiles?.let { (chain, key) ->
+                    t.reloadableIdentity?.let { target ->
+                        if (readText == null) {
+                            IdentityFileWatcher(chain, key, target, environment.log, settle = t.settle)
+                        } else {
+                            IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = t.settle)
+                        }
                     }
                 }
-            }
-        val clientCa =
-            configuration.clientCaFile?.let { path ->
-                (configuration.clientTrust as? TrustConfig.ReloadableCa)?.let { target ->
-                    ClientCaFileWatcher(path, target, environment.log, settle = settle)
+            val clientCa =
+                t.clientCaFile?.let { path ->
+                    t.reloadableCa?.let { target -> ClientCaFileWatcher(path, target, environment.log, settle = t.settle) }
                 }
-            }
-        if (identity == null && clientCa == null && ocsp == null) return
-        identityWatcher =
-            CoroutineScope(engineDispatcher).launch {
-                identity?.let { launch { it.run(interval) } }
-                clientCa?.let { launch { it.run(interval) } }
-                ocsp?.let { launch { it.run(interval) } }
-            }
+            if (identity != null) runs += { identity.run(interval) }
+            if (clientCa != null) runs += { clientCa.run(interval) }
+        }
+        if (runs.isEmpty()) return
+        identityWatcher = CoroutineScope(engineDispatcher).launch { runs.forEach { r -> launch { r() } } }
     }
 
     /**
@@ -1077,12 +876,11 @@ public class KuicksilverApplicationEngine(
 
     /**
      * Client addresses whose HTTP/2 connections keep ending in a flood defence, refused at accept for a while; null unless
-     * [Configuration.http2RepeatOffenderPenalty] is positive.
+     * `http2 { repeatOffenderPenalty }` is set.
      */
     @kotlin.concurrent.Volatile
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    internal var h2Offenders: RepeatOffenders? =
-        configuration.http2RepeatOffenderPenalty.takeIf { it.isPositive() }?.let { RepeatOffenders(it) }
+    internal var h2Offenders: RepeatOffenders? = configuration.http2.repeatOffenderPenalty?.let { RepeatOffenders(it) }
 
     /** Bytes the HTTP/2 layer of ended connections read from their clients, in all; for tests. */
     internal val h2BytesRead = kotlinx.coroutines.flow.MutableStateFlow(0L)
@@ -1096,7 +894,7 @@ public class KuicksilverApplicationEngine(
     /** The connection limits of every TCP connector, for [KuicksilverServerProbe]; written at startup. */
     internal val tcpLimitsForProbe = ArrayList<TcpLimits>()
 
-    /** TCP connections closed at accept because their address held `maxTcpConnectionsPerIp` ([TcpLimits]). */
+    /** TCP connections closed at accept because their address held `tcp { maxConnectionsPerIp }` ([TcpLimits]). */
     internal val refusedPerIp = kotlinx.coroutines.flow.MutableStateFlow(0L)
 }
 

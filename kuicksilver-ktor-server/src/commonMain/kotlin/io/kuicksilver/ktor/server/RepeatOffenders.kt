@@ -12,7 +12,7 @@ import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 /**
- * The opt-in backoff of `http2RepeatOffenderPenalty` (threat model 3.23): client addresses whose HTTP/2 connections keep
+ * The opt-in backoff of `http2 { repeatOffenderPenalty }` (threat model 3.23): client addresses whose HTTP/2 connections keep
  * ending in a flood defence (GOAWAY ENHANCE_YOUR_CALM from a flood limit: Rapid Reset, MadeYouReset, CONTINUATION, PING
  * or SETTINGS floods; not a slow field block). The core already ends each such connection; this makes a client that just
  * reconnects and floods again pay too: [strikes] of them within [window] refuse the address's next TCP connections for

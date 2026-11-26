@@ -81,7 +81,8 @@ class StopWithPooledClientsJvmTest {
         val server =
             kuicksilverServer(null, configure = {
                 if (tls) {
-                    tlsConnector(ServerFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ServerFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
                     }

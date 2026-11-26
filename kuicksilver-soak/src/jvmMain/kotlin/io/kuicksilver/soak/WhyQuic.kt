@@ -83,13 +83,16 @@ internal fun whyQuicServer(
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(SoakPki.identity()) {
+                tlsConnector {
+                    tls { identity = SoakPki.identity() }
                     host = "127.0.0.1"
                     this.port = port
                 }
-                http2 = true
-                http3 = true
-                quicEarlyData = true
+                http2 { enabled = true }
+                http3 {
+                    enabled = true
+                    earlyData { enabled = true }
+                }
             }) {
                 routing {
                     get("/bytes/{n}") {

@@ -277,8 +277,10 @@ internal class PublicH3Probe(
                 quicHandshakeTimeoutForTest = 15.seconds
                 quicHandshakeTimeoutForTest = 15.seconds
                 http3 { mode?.let { discovery = it } ?: run { enabled = false } }
-                observability { connectionListener = rec }
-                observability { qlog = DirectoryQlogSink(qlogDir.toString()) }
+                observability {
+                    connectionListener = rec
+                    qlog = DirectoryQlogSink(qlogDir.toString())
+                }
                 configure()
             }
         }

@@ -147,14 +147,14 @@ class OcspFileWatcherTest {
             val captured = CapturedLog()
             val server =
                 kuicksilverServer(captured, configure = {
-                    identity = ServerFixtures.identity()
+                    tls { identity = ServerFixtures.identity() }
                     connector {
                         host = "127.0.0.1"
                         port = 0
                     }
-                    http3 = false
-                    tlsOcspStapling = OcspStapling(r1) // a DER SEQUENCE, but no OCSP response for TestCerts.server
-                    tlsOcspFile = "ocsp.der"
+                    http3 { enabled = false }
+                    // a DER SEQUENCE, but no OCSP response for TestCerts.server
+                    tls { ocspStaplingFileForTest(OcspStapling(r1), "ocsp.der") }
                 }) { routing { get("/") { call.respondText("ok") } } }
             server.startSuspend(false)
             try {

@@ -41,11 +41,12 @@ fun chatServer(
     room: ChatRoom = ChatRoom(),
 ): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> =
     embeddedServer(Kuicksilver, configure = {
-        tlsConnector(identity) {
+        tlsConnector {
+            tls { this.identity = identity }
             this.host = host
             this.port = port
         }
-        webTransport = true // Extended CONNECT, HTTP datagrams and the WebTransport SETTINGS on the HTTP/3 listener
+        http3 { webTransport { enabled = true } } // Extended CONNECT, HTTP datagrams and the WebTransport SETTINGS on the HTTP/3 listener
     }) { chatModule(room) }
 
 /**

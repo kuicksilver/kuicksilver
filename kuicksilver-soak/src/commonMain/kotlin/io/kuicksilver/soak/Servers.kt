@@ -195,11 +195,12 @@ internal object HttpServer {
     suspend fun start(): Pair<SoakHttpServer, Int> {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(SoakPki.identity()) {
+                tlsConnector {
+                    tls { identity = SoakPki.identity() }
                     host = "127.0.0.1"
                     port = 0
                 }
-                SoakQlog.sink?.let { sink -> quic = quicConfig { qlog = sink } }
+                SoakQlog.sink?.let { sink -> observability { qlog = sink } }
             }) {
                 routing {
                     get("/bytes/{n}") {

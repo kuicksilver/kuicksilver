@@ -213,7 +213,7 @@ class ClientEventListenerTest {
     @Test fun aDeadAlternativeReportsAltSvcRaceAndBrokenMark() =
         clientTest {
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
@@ -301,8 +301,10 @@ class ClientEventListenerTest {
                 }
             try {
                 testClient(engine = {
-                    observability { eventListener = throwing }
-                    observability { this.logger = logger }
+                    observability {
+                        eventListener = throwing
+                        this.logger = logger
+                    }
                 }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     assertEquals(listOf("event listener failed in callStart"), warnings.all)
@@ -349,8 +351,10 @@ class ClientEventListenerTest {
             try {
                 for (mode in listOf(null, Http3Discovery.H3Only)) {
                     testClient(mode, engine = {
-                        observability { eventListener = throwing }
-                        observability { logger = KuicksilverLogger.None }
+                        observability {
+                            eventListener = throwing
+                            logger = KuicksilverLogger.None
+                        }
                     }).use { c ->
                         repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText(), "$mode") }
                     }

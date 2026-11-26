@@ -464,7 +464,7 @@ class ClientKillSwitchTest {
             val drained = CompletableDeferred<Unit>()
             val serverEnd = CompletableDeferred<WebTransportCloseInfo>()
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { session ->
                             session.drainRequested.first { it }
@@ -688,7 +688,10 @@ class ClientKillSwitchTest {
      */
     @Test fun webTransportConnectingWhenClosedFails() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
+            val (server, port) =
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { it.closed.await() } } }
             try {
                 testClient(Http3Discovery.Auto).use { c ->
                     val engine = c.engine as KuicksilverEngine
@@ -712,7 +715,7 @@ class ClientKillSwitchTest {
         h3Test {
             val drained = CompletableDeferred<Unit>()
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { session ->
                             session.drainRequested.first { it }

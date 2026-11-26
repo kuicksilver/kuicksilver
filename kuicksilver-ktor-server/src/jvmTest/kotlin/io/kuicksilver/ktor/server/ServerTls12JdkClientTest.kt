@@ -83,7 +83,7 @@ class ServerTls12JdkClientTest {
     @Test fun jdkTls12ClientOverHttp11() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("jdk ${call.request.httpVersion}") } }
                 }
             try {
@@ -146,13 +146,17 @@ class ServerTls12JdkClientTest {
                             if (withP256) listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP256R1) else emptyList(),
                     )
                 val (server, port) =
-                    tlsServer(configure = { http3 = false }, connector = {
-                        versions = TlsVersions.Tls12And13
-                        clientAuth = io.kuicksilver.tls.ClientAuth.Required
-                        trust =
-                            io.kuicksilver.tls.TrustConfig
-                                .AnchoredCa(listOf(ServerFixtures.testCa))
-                        keyExchangeGroups = groups
+                    tlsServer(configure = { http3 { enabled = false } }, connector = {
+                        tls {
+                            versions = TlsVersions.Tls12And13
+                            clientAuth = io.kuicksilver.tls.ClientAuth.Required
+                        }
+                        tls {
+                            clientTrust =
+                                io.kuicksilver.tls.TrustConfig
+                                    .AnchoredCa(listOf(ServerFixtures.testCa))
+                        }
+                        tls { keyExchangeGroups = groups }
                     }) {
                         routing { get("/") { call.respondText("ok") } }
                     }
@@ -189,7 +193,7 @@ class ServerTls12JdkClientTest {
     @Test fun tls12ServerHelloCarriesTheDowngradeSentinel() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             try {
@@ -221,10 +225,12 @@ class ServerTls12JdkClientTest {
             for ((answer, served) in listOf(listOf("h2") to false, listOf("h3") to false, listOf("h2", "http/1.1") to true)) {
                 val (server, port) =
                     tlsServer(
-                        configure = { http3 = false },
+                        configure = { http3 { enabled = false } },
                         connector = {
-                            versions = TlsVersions.Tls12And13
-                            sniSelector = { io.kuicksilver.tls.ServerTlsOverride(id, alpn = answer) }
+                            tls {
+                                versions = TlsVersions.Tls12And13
+                                sniSelector = { io.kuicksilver.tls.ServerTlsOverride(id, alpn = answer) }
+                            }
                         },
                     ) { routing { get("/") { call.respondText("jdk ${call.request.httpVersion}") } } }
                 try {
@@ -249,7 +255,7 @@ class ServerTls12JdkClientTest {
     /** The default connector refuses the JDK's TLS 1.2 client with protocol_version (RFC 9846 appendix E.2). */
     @Test fun negative_defaultConnectorRefusesJdkTls12() =
         serverTest {
-            val (server, port) = tlsServer(configure = { http3 = false }) { routing { get("/") { call.respondText("no") } } }
+            val (server, port) = tlsServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("no") } } }
             try {
                 val e = withContext(Dispatchers.IO) { assertFailsWith<SSLHandshakeException> { jdkTls12(port, "http/1.1").close() } }
                 assertContains(e.message.orEmpty(), "protocol_version")
@@ -266,7 +272,7 @@ class ServerTls12JdkClientTest {
     @Test fun negative_cbcSha1AndStaticRsaOnlyClientsRefused() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             try {
@@ -299,15 +305,17 @@ class ServerTls12JdkClientTest {
         serverTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    http3 = false
-                    http2 = true
-                    tlsConnector(
-                        io.kuicksilver.tls.TlsIdentity
-                            .fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf()),
-                    ) {
+                    http3 { enabled = false }
+                    http2 { enabled = true }
+                    tlsConnector {
+                        tls {
+                            identity =
+                                io.kuicksilver.tls.TlsIdentity
+                                    .fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf())
+                        }
                         host = "127.0.0.1"
                         port = 0
-                        versions = TlsVersions.Tls12And13
+                        tls { versions = TlsVersions.Tls12And13 }
                     }
                 }) { routing { get("/") { call.respondText("rsa") } } }
             server.startSuspend(wait = false)
@@ -358,9 +366,9 @@ class ServerTls12JdkClientTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http3 = false
-                    http2 = true
-                }, connector = { versions = TlsVersions.Tls12And13 }) {
+                    http3 { enabled = false }
+                    http2 { enabled = true }
+                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("h2 ${call.request.httpVersion}") } }
                 }
             try {
@@ -400,10 +408,10 @@ class ServerTls12JdkClientTest {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http3 = false
-                    http2 = true
-                    altSvc = false
-                }, connector = { versions = TlsVersions.Tls12And13 }) { routing { get("/") { call.respondText("h2") } } }
+                    http3 { enabled = false }
+                    http2 { enabled = true }
+                    http3 { altSvc = false }
+                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
             try {
                 val fromServer = withContext(Dispatchers.IO) { relayed(port) { relay -> renegotiateAfterSettings(relay) } }
                 val records = records(fromServer)
@@ -543,7 +551,7 @@ class ServerTls12JdkClientTest {
     @Test fun negative_jdkTls12ClientWithoutEmsRefused() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("ems") } }
                 }
             try {

@@ -85,7 +85,10 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 8443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 8443
+    }
 }) {
     intercept(ApplicationCallPipeline.Plugins) {
         // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
@@ -296,7 +299,10 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
 }) {
     routing {
         // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
@@ -597,8 +603,12 @@ answer limit (8 per second per address) still applies to everyone behind a share
 // guide:deployment:quic-limits
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    quicMaxConnectionsPerIp = 4_096   // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+    http3 { endpoint { maxConnectionsPerIp = 4_096 } }
 }) {
     routing { get("/") { call.respondText("ok") } }
 }

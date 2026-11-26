@@ -81,8 +81,8 @@ class ChromeWebTransportTest {
             var changeLoadBalancer: (suspend () -> Unit)? = null
             val (server, port) =
                 tlsServer({
-                    webTransport = true
-                    if (lbChange) quicLoadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0])
+                    http3 { webTransport { enabled = true } }
+                    if (lbChange) http3 { endpoint { loadBalancer = QuicLbConfig(1, LB_SERVER_ID, 4, lbKeys[0]) } }
                 }) {
                     routing {
                         get("/wt/index.html") { call.respondText(page, ContentType.Text.Html) }

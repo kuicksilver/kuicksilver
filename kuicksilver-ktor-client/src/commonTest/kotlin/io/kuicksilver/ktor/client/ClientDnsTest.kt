@@ -262,13 +262,16 @@ class ClientDnsTest {
             val sni = ArrayList<String?>()
             val server =
                 embeddedServer(KuicksilverServer, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
                         // the same certificate for every name: whether a name is accepted is the client's check alone
-                        sniSelector = { hello ->
-                            names.withLock { sni += hello.serverName }
-                            ServerTlsOverride(ClientFixtures.identity())
+                        tls {
+                            sniSelector = { hello ->
+                                names.withLock { sni += hello.serverName }
+                                ServerTlsOverride(ClientFixtures.identity())
+                            }
                         }
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }

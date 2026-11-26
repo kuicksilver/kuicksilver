@@ -259,7 +259,7 @@ class ServerWebSocketHandshakeTest {
 
     /** The limit is the engine's `webSocketMaxMessageSize`. */
     @Test fun negative_messageOverTheConfiguredLimitClosesWith1009() =
-        frameFails(1009, maskedText("eleven char"), configure = { webSocketMaxMessageSize = 10 })
+        frameFails(1009, maskedText("eleven char"), configure = { webSockets { maxMessageSize = 10 } })
 
     /** RFC 6455 section 8.1: text that is not UTF-8 fails the connection with 1007. */
     @Test fun negative_invalidUtf8ClosesWith1007() = frameFails(1007, masked(0x81, byteArrayOf(0xC0.toByte(), 0xAF.toByte())))

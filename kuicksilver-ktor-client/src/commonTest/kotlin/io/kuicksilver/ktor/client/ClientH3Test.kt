@@ -160,7 +160,8 @@ class ClientH3Test {
         h3Test {
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "::1"
                         port = 0
                     }
@@ -197,7 +198,8 @@ class ClientH3Test {
         h3Test {
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "::1"
                         port = 0
                     }
@@ -439,7 +441,7 @@ class ClientH3Test {
 
     @Test fun preferredFallsBackToH1WhenNoUdpServer() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 testClient(Http3Discovery.Preferred, engine = { connectTimeout = 2.seconds }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
@@ -453,7 +455,7 @@ class ClientH3Test {
 
     @Test fun h3OnlyFailsWithoutUdpServer() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("h1") } } }
             try {
                 testClient(Http3Discovery.H3Only, engine = { connectTimeout = 1.seconds }).use { c ->
                     assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }

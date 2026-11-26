@@ -82,7 +82,7 @@ internal class TcpServer(
     val draining: CompletableJob,
     /** The parent of its HTTP/1.1 connections, listed for the probe ([KuicksilverApplicationEngine.tcpConnectionsForProbe]). */
     val connections: Job,
-    /** Its `maxTcpConnections` and `maxTcpConnectionsPerIp`, listed for the probe ([KuicksilverApplicationEngine.tcpLimitsForProbe]). */
+    /** Its `tcp { maxConnections }` and `tcp { maxConnectionsPerIp }`, listed for the probe ([KuicksilverApplicationEngine.tcpLimitsForProbe]). */
     val limits: TcpLimits,
 )
 
@@ -207,27 +207,26 @@ internal fun KuicksilverApplicationEngine.startTcp(
     h3Ready: Job,
 ): TcpServer {
     val h3 = l.tls?.let { http3Binder(it) }
+    // before anything is registered or launched: a TLS configuration the TLS layer refuses fails the start with nothing to undo
+    val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
     val h3Endpoint = CompletableDeferred<Http3Endpoint?>()
     with(scope) {
         val socket = CompletableDeferred<ServerSocket>()
         val latch: CompletableJob = Job()
         val rootJob = launch(CoroutineName("kuicksilver-server-${l.config}"), start = CoroutineStart.UNDISPATCHED) { latch.join() }
         val selector = engineSelector(coroutineContext) // a socket closed on it is released at once (EngineSelector.kt)
-        val timeout = configuration.connectionIdleTimeoutSeconds.seconds
+        val timeout = configuration.http1.idleTimeout
 
-        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val headerTimeout = configuration.requestHeaderTimeoutSeconds.seconds
+        val headerTimeout = configuration.requestHeaderTimeout
         val sendTimeout = configuration.sendStallTimeoutForTest ?: sendStallTimeout(timeout)
         val connections = SupervisorJob(rootJob)
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
         val draining: CompletableJob = Job()
         tcpConnectionsForProbe += connections
 
-        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val limits = TcpLimits(configuration.maxTcpConnections, configuration.maxTcpConnectionsPerIp)
+        val limits = TcpLimits(configuration.tcp.maxConnections, configuration.tcp.maxConnectionsPerIp)
         tcpLimitsForProbe += limits
-        val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
-        l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2, environment.log) }
+        l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2.enabled, environment.log) }
         // RFC 9113 section 3.2: `h2` over TLS only where it was offered; section 3.3: h2c on a plain connector only with its opt-in
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
 
@@ -440,7 +439,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 // no Alt-Svc for a client of the family whose HTTP/3 is not served (no DF for it: RFC 9000 section 14)
                                 val familyServed = h3NoDfFamily[port]?.let { it != peerFamily(remote) } ?: true
                                 val altSvc =
-                                    if (l.tls != null && configuration.altSvc && h3ForName &&
+                                    if (l.tls != null && configuration.http3.altSvc && h3ForName &&
                                         familyServed
                                     ) {
                                         http3AltSvc(port)
@@ -535,8 +534,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         sendTimeout = sendTimeout,
                                         newConnectionUntil = accepted + NEW_CONNECTION_FIRST_BYTE,
                                         allowBareLf = @OptIn(
-                                            io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
-                                        ) configuration.h1AllowBareLf,
+                                            io.kuicksilver.annotations.DelicateKuicksilverApi::class,
+                                        ) configuration.http1.allowBareLf,
                                     ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc, proxy) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
@@ -572,20 +571,20 @@ internal const val H2_ALPN = "h2"
 internal const val HTTP11_ALPN = "http/1.1"
 
 /**
- * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
+ * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when `http2 { enabled }`
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
  * `http/1.1` alone. A connector with `versions = TlsVersions.Tls12And13` offers `h2` over TLS 1.2 too: RFC 9113 section 9.2,
  * "Implementations of HTTP/2 MUST use TLS version 1.2 \[TLS12\] or higher", and the TLS 1.2 profile meets sections 9.2.1 and
  * 9.2.2 (compression and renegotiation off, a renegotiation attempt a connection error of type PROTOCOL_ERROR in [serveH2];
  * only ECDHE suites with an AEAD, none of them on the Appendix A list; groups of 255 bits and more, no finite-field DHE; and
  * TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256 for an RSA certificate). The handshake has no deadline of its own (`TlsConfig`'s
- * 10 s): it is part of the first request's head, which [KuicksilverApplicationEngine.Configuration.requestHeaderTimeoutSeconds]
+ * 10 s): it is part of the first request's head, which [KuicksilverApplicationEngine.Configuration.requestHeaderTimeout]
  * bounds from the accepted connection on. With the 10 s of its own a client on a slow, lossy path (200 ms, 5 % loss)
  * whose Finished needed retransmissions was cut at 10 s after it had sent its request, well inside the documented 30 s.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig =
-    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, HTTP11_ALPN) else listOf(HTTP11_ALPN), Duration.INFINITE, quic = false)
+    tls.tlsConfig(if (configuration.http2.enabled) listOf(H2_ALPN, HTTP11_ALPN) else listOf(HTTP11_ALPN), Duration.INFINITE, quic = false)
 
 /**
  * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as `http3Advertising` says at
@@ -677,7 +676,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     closing,
                     endsConnection,
                     fields,
-                    configuration.webSocketMaxMessageSize,
+                    configuration.webSockets.maxMessageSize,
                     upgradeInput,
                 )
             call.applyProxyHeader(proxy)
@@ -772,9 +771,9 @@ internal val ACCEPT_BACKOFF_MAX: Duration = 1.seconds
  * does for temporary accept errors. Retrying at once spins at full CPU for as long as the condition lasts. A failure
  * while [isClosed] (the listening socket was closed) is rethrown at once; cancellation ends the loop during a pause too.
  *
- * [limits] bound what is accepted, cheapest check first: a slot of `maxTcpConnections` is taken before [accept] (none free:
+ * [limits] bound what is accepted, cheapest check first: a slot of `tcp { maxConnections }` is taken before [accept] (none free:
  * the loop waits and the OS backlog holds new clients), then right after it the client's address ([ipKeyOf]) is counted
- * against `maxTcpConnectionsPerIp`; a client over it goes to [refuse], which closes it, and is never served. A client
+ * against `tcp { maxConnectionsPerIp }`; a client over it goes to [refuse], which closes it, and is never served. A client
  * handed to [serve] comes with its [TcpLease], which [serve] releases when the client's socket is released; a failed or
  * cancelled accept, a refusal, and a [serve] that throws give the slot back here.
  */
@@ -928,10 +927,10 @@ private val CLOSE_POLL: Duration = 1.seconds
 /** How long [closeWithin] waits for an aborted socket to release its descriptor. */
 private val ABORT_WAIT: Duration = 3.seconds
 
-/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address holds `maxTcpConnectionsPerIp` connections. */
+/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address holds `tcp { maxConnectionsPerIp }` connections. */
 internal const val REFUSED_PER_IP = "per-IP limit"
 
-/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address serves an `http2RepeatOffenderPenalty`. */
+/** [KuicksilverServerEventListener.connectionRefused] reason: the client's address serves an `http2 { repeatOffenderPenalty }`. */
 internal const val REFUSED_REPEAT_OFFENDER = "HTTP/2 repeat offender"
 
 /** [KuicksilverServerEventListener.connectionRefused] reason: a peer outside a PROXY protocol connector's trusted sources. */
@@ -975,7 +974,7 @@ private suspend fun KuicksilverApplicationEngine.readProxyHeaderOrClose(
 
 /**
  * Logs the connections closed at accept for one reason (an address under an HTTP/2 penalty, [RepeatOffenders]; an address
- * at `maxTcpConnectionsPerIp`, [TcpLimits]): the first at once, then at most one line per [interval], saying how many were
+ * at `tcp { maxConnectionsPerIp }`, [TcpLimits]): the first at once, then at most one line per [interval], saying how many were
  * left out, as [AcceptFailureReporter]. A flooding client reconnects as fast as it can, and a line per refusal would flood
  * the log in its place. Used from the one accept-loop coroutine only.
  */

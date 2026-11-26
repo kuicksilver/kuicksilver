@@ -310,7 +310,7 @@ class ServerHttp3AdvertisingTest {
      */
     @Test fun altSvcOffSendsNoHeaderInAnyMode() =
         h3ServerTest {
-            val (server, port) = tlsServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = tlsServer(configure = { http3 { altSvc = false } }) { routing { get("/") { call.respondText("ok") } } }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             try {
                 for (mode in Http3Advertising.entries) {
@@ -345,7 +345,7 @@ class ServerHttp3AdvertisingTest {
                 val arrived = CompletableDeferred<Unit>()
                 val release = CompletableDeferred<Unit>()
                 val (server, port) =
-                    tlsServer(configure = { altSvc = altSvcOn }) {
+                    tlsServer(configure = { http3 { altSvc = altSvcOn } }) {
                         routing {
                             get("/") { call.respondText("ok") }
                             get("/slow") {
@@ -393,11 +393,15 @@ class ServerHttp3AdvertisingTest {
             val askedPorts = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             val (server, port) =
                 tlsServer(configure = {
-                    quicAdmission =
-                        ConnectionAdmission { attempt ->
-                            askedPorts.trySend(attempt.remote.port)
-                            AdmissionDecision.Close(TransportError.APPLICATION_ERROR)
+                    http3 {
+                        endpoint {
+                            admission =
+                                ConnectionAdmission { attempt ->
+                                    askedPorts.trySend(attempt.remote.port)
+                                    AdmissionDecision.Close(TransportError.APPLICATION_ERROR)
+                                }
                         }
+                    }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val first = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             val second = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))

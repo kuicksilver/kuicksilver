@@ -88,7 +88,8 @@ internal object ContractServer {
                     host = "127.0.0.1"
                     port = 0
                 }
-                tlsConnector(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())) {
+                tlsConnector {
+                    tls { identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
                     host = "127.0.0.1"
                     port = 0
                 }

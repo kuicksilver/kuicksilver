@@ -54,7 +54,7 @@ class ClientAltSvcTest {
     @Test fun deferredAltSvcWriteSurvivesCancellation() =
         h3Test {
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
@@ -96,7 +96,7 @@ class ClientAltSvcTest {
         clientTest {
             var served = 0
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             // only the first response of each client advertises alternatives
@@ -173,7 +173,7 @@ class ClientAltSvcTest {
         clientTest {
             var calls = 0
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             calls++
@@ -218,7 +218,7 @@ class ClientAltSvcTest {
         clientTest {
             var calls = 0
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             calls++
@@ -260,7 +260,7 @@ class ClientAltSvcTest {
      */
     @Test fun negative_brokenFirstAlternativeUsesTheNextOne() =
         h3Test {
-            val (server, port) = testServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = testServer(configure = { http3 { altSvc = false } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val origin = "https://127.0.0.1:$port"
                 val far =
@@ -288,7 +288,7 @@ class ClientAltSvcTest {
     @Test fun negative_clearAlternativeServicesRemovesOriginData() =
         clientTest {
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"; persist=1")
@@ -346,7 +346,7 @@ class ClientAltSvcTest {
 
     /** A server whose first response to each client advertises one alternative without `persist` and one with it. */
     private suspend fun advertisingOnce() =
-        testServer(configure = { http3 = false }) {
+        testServer(configure = { http3 { enabled = false } }) {
             var served = 0
             routing {
                 get("/") {
@@ -446,7 +446,7 @@ class ClientAltSvcTest {
      */
     @Test fun negative_altSvcFrameOverH2IsLearned() =
         h3Test {
-            val (server, port) = testServer(configure = { http2 = true }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = testServer(configure = { http2 { enabled = true } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val url = io.ktor.http.Url("https://127.0.0.1:$port/")
                 testClient(Http3Discovery.Auto).use { c ->

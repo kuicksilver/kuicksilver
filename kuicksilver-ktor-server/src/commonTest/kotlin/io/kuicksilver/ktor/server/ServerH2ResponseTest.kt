@@ -220,16 +220,18 @@ class ServerH2ResponseTest {
             val ended = CompletableDeferred<HttpStatusCode?>()
             val (server, port) =
                 h2TlsServer(configure = {
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun requestEnded(
-                                protocol: HttpProtocolVersion,
-                                call: io.ktor.server.application.ApplicationCall,
-                                cause: Throwable?,
-                            ) {
-                                ended.complete(call.response.status())
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun requestEnded(
+                                    protocol: HttpProtocolVersion,
+                                    call: io.ktor.server.application.ApplicationCall,
+                                    cause: Throwable?,
+                                ) {
+                                    ended.complete(call.response.status())
+                                }
                             }
-                        }
+                    }
                 }) { routing { get("/") { call.respond(HttpStatusCode.SwitchingProtocols) } } }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -278,10 +280,7 @@ class ServerH2ResponseTest {
             val started = CompletableDeferred<Unit>()
             val (server, port) =
                 h2TlsServer(configure = {
-                    http2Settings =
-                        http2Settings {
-                            maxConcurrentStreams = 1
-                        }
+                    http2 { settings { maxConcurrentStreams = 1 } }
                 }) {
                     routing {
                         get("/") {
@@ -332,7 +331,7 @@ class ServerH2ResponseTest {
     @Test fun idleConnectionGetsGoAwayAndCloses() =
         serverTest {
             val (server, port) =
-                h2TlsServer(configure = { connectionIdleTimeoutSeconds = 1 }) { routing { get("/") { call.respondText("ok") } } }
+                h2TlsServer(configure = { http1 { idleTimeout = 1.seconds } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()

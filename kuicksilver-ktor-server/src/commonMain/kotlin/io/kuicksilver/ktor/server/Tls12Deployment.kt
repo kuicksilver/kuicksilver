@@ -19,7 +19,7 @@ internal fun warnTls12H2WithoutRsa(
     log: Logger,
 ) {
     if (!http2 || tls.versions != TlsVersions.Tls12And13) return
-    val leaf = tls.identity.chain.firstOrNull() ?: return
+    val leaf = tls.identity?.chain?.firstOrNull() ?: return
     if (leaf.hasRsaKey() != false) return
     log.warn(
         "HTTP/2 over TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no rsaEncryption key (an RSA-PSS key serves " +

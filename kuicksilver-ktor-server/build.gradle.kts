@@ -36,6 +36,9 @@ kotlin {
         }
     }
 }
+// the first screen of the server (src/jvmFirstScreenTest, ADR-0026) without any opt-in: compiled before the JVM tests
+kotlin { jvm { val main = compilations.getByName("main"); compilations.create("firstScreenTest") { associateWith(main) } } }
+tasks.named("jvmTest") { dependsOn("compileFirstScreenTestKotlinJvm") }
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
     // -Pkuicksilver.browserTests=true runs ChromeWebTransportTest against an installed Chrome (docs/guide/ktor.md)

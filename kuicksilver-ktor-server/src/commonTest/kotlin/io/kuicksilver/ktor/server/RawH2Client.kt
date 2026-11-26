@@ -304,8 +304,8 @@ internal suspend fun h2TlsServer(
 ): Pair<Server, Int> =
     tlsServer(
         configure = {
-            http2 = true
-            http3 = false
+            http2 { enabled = true }
+            http3 { enabled = false }
             configure()
         },
         connector = connector,

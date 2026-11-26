@@ -106,10 +106,10 @@ class ClientCoalescingTest {
         sni: Boolean = false,
         extra: io.ktor.server.routing.Routing.() -> Unit = {},
     ) = testServer(configure = {
-        http2 = true
-        http3 = false
+        http2 { enabled = true }
+        http3 { enabled = false }
     }, tls = {
-        if (sni) sniSelector = { ServerTlsOverride(ClientFixtures.identity()) }
+        if (sni) tls { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } }
     }) {
         routing {
             get("/") { call.respondText("${call.request.host()}|${call.request.local.remotePort}") }
@@ -594,9 +594,9 @@ class ClientCoalescingTest {
                 )
             val (server, port) =
                 testServer(configure = {
-                    http2 = true
-                    http3 = false
-                }, tls = { sniSelector = { ServerTlsOverride(identity) } }) {
+                    http2 { enabled = true }
+                    http3 { enabled = false }
+                }, tls = { tls { sniSelector = { ServerTlsOverride(identity) } } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             try {
@@ -655,7 +655,7 @@ class ClientCoalescingTest {
     // ---- HTTP/3 ----
 
     private suspend fun h3Server(sni: Boolean = false) =
-        testServer(tls = { if (sni) sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } }) {
+        testServer(tls = { if (sni) tls { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } } }) {
             routing { get("/") { call.respondText("${call.request.host()}|${call.request.local.version}") } }
         }
 
@@ -875,7 +875,7 @@ class ClientCoalescingTest {
         h3Test {
             val arrived = kotlinx.coroutines.CompletableDeferred<Unit>()
             val (server, port) =
-                testServer(tls = { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } }) {
+                testServer(tls = { tls { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } } }) {
                     routing {
                         get("/") { call.respondText("${call.request.host()}|${call.request.local.version}") }
                         post("/echo") {
@@ -1053,7 +1053,7 @@ class ClientCoalescingTest {
         }
 
     private suspend fun h3EchoServer(arrived: kotlinx.coroutines.CompletableDeferred<Unit>? = null) =
-        testServer(tls = { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } }) {
+        testServer(tls = { tls { sniSelector = { ServerTlsOverride(ClientFixtures.identity()) } } }) {
             routing {
                 get("/") { call.respondText("${call.request.host()}|${call.request.local.version}") }
                 post("/echo") {
@@ -1268,7 +1268,7 @@ class ClientCoalescingTest {
     @Test fun negative_h3AZeroRttConnectionCarriesNoOtherOrigin() =
         h3Test {
             val (server, port) =
-                testServer(configure = { quicEarlyData = true }) {
+                testServer(configure = { http3 { earlyData { enabled = true } } }) {
                     routing { get("/") { call.respondText("${call.request.host()}|${call.request.local.version}") } }
                 }
             val ios = FaultyIos()
@@ -1311,7 +1311,7 @@ class ClientCoalescingTest {
     @Test fun negative_webTransportNeverCoalesces() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing { webTransport("/wt") { it.closed.await() } }
                 }
             try {

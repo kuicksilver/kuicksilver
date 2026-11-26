@@ -195,7 +195,7 @@ class ServerTls12Test {
     @Test fun tls12ClientServedWhenAllowed() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(configure = { http3 { enabled = false } }, connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("tls12 ${call.request.httpVersion}") } }
                 }
             try {
@@ -220,7 +220,7 @@ class ServerTls12Test {
     @Test fun negative_defaultConnectorRefusesTls12WithProtocolVersion() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }) { routing { get("/") { call.respondText("tls13 only") } } }
+                tlsServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("tls13 only") } } }
             try {
                 val o = tls12(port, listOf("http/1.1"))
                 assertTrue(o.failure != null, "a TLS 1.2 client must not complete a handshake with the default connector")
@@ -239,9 +239,9 @@ class ServerTls12Test {
         serverTest {
             val (server, port) =
                 tlsServer(configure = {
-                    http3 = false
-                    http2 = true
-                }, connector = { versions = TlsVersions.Tls12And13 }) { routing { get("/") { call.respondText("h2") } } }
+                    http3 { enabled = false }
+                    http2 { enabled = true }
+                }, connector = { tls { versions = TlsVersions.Tls12And13 } }) { routing { get("/") { call.respondText("h2") } } }
             try {
                 val o = tls12(port, listOf("h2", "http/1.1"), request = null)
                 assertNull(o.failure, "${o.failure}")
@@ -256,10 +256,12 @@ class ServerTls12Test {
     @Test fun tls12ClientCertificateReachesTheApplication() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = {
-                    versions = TlsVersions.Tls12And13
-                    clientAuth = ClientAuth.Required
-                    trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                tlsServer(configure = { http3 { enabled = false } }, connector = {
+                    tls {
+                        versions = TlsVersions.Tls12And13
+                        clientAuth = ClientAuth.Required
+                        clientTrust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                    }
                 }) { routing { get("/") { call.respondText("peer ${call.request.peerCertificates.size}") } } }
             try {
                 val o = tls12(port, listOf("http/1.1"), identity = TestCerts.client to TestCerts.clientKey)
@@ -276,9 +278,12 @@ class ServerTls12Test {
     @Test fun tls12WithSniSelector() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http3 = false }, connector = {
-                    versions = TlsVersions.Tls12And13
-                    sniSelector = { hello -> if (hello.serverName == "server.test") ServerTlsOverride(ServerFixtures.identity()) else null }
+                tlsServer(configure = { http3 { enabled = false } }, connector = {
+                    tls {
+                        versions = TlsVersions.Tls12And13
+                        sniSelector =
+                            { hello -> if (hello.serverName == "server.test") ServerTlsOverride(ServerFixtures.identity()) else null }
+                    }
                 }) { routing { get("/") { call.respondText("selected") } } }
             try {
                 val o = tls12(port, listOf("http/1.1"))
@@ -294,7 +299,7 @@ class ServerTls12Test {
     @Test fun tls12And13ConnectorStillServesHttp3() =
         h3ServerTest {
             val (server, port) =
-                tlsServer(connector = { versions = TlsVersions.Tls12And13 }) {
+                tlsServer(connector = { tls { versions = TlsVersions.Tls12And13 } }) {
                     routing { get("/") { call.respondText("h3 ${call.request.httpVersion}") } }
                 }
             try {
@@ -333,12 +338,13 @@ class ServerTls12Test {
                     if (rsa) TlsIdentity.fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf()) else ServerFixtures.identity()
                 val server =
                     kuicksilverServer(log, configure = {
-                        http3 = false
-                        http2 = true
-                        tlsConnector(identity) {
+                        http3 { enabled = false }
+                        http2 { enabled = true }
+                        tlsConnector {
+                            tls { this.identity = identity }
                             host = "127.0.0.1"
                             port = 0
-                            this.versions = versions
+                            tls { this.versions = versions }
                         }
                     }) { routing { get("/") { call.respondText("ok") } } }
                 server.startSuspend(wait = false)

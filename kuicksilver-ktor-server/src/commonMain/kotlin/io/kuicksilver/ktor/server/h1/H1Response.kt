@@ -58,7 +58,7 @@ internal class H1Response(
      * the body of a response of unknown length to an HTTP/1.0 request.
      */
     private val endsConnection: CompletableDeferred<Boolean>? = null,
-    /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
+    /** The engine's `webSockets { maxMessageSize }`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK

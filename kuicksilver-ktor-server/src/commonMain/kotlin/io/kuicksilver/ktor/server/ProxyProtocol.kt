@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
-import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -11,8 +10,8 @@ import kotlin.time.Duration.Companion.seconds
  * The PROXY protocol (HAProxy, "The PROXY protocol", versions 1 and 2) on one TCP connector, plain or TLS: a proxy or L4 load
  * balancer in front of the server sends a header with the client's address before anything else on the connection, and
  * the engine reports that address as the request's origin (`call.request.origin`), while `call.request.local` keeps the
- * TCP peer (the proxy). Made by `proxyProtocol { ... }` on `plainConnector { }` or `tlsConnector(identity) { }`; off by
- * default.
+ * TCP peer (the proxy). Made by `proxyProtocol { ... }` on `plainConnector { }` or `tlsConnector { }` (`EngineMain`:
+ * `kuicksilver.connector.proxyProtocol`); off by default.
  *
  * On such a connector every connection must start with a valid header, version 1 or 2, before TLS on a TLS connector: the spec says the
  * receiver "MUST not try to guess whether the protocol header is present or not". A connection whose TCP peer is not one of
@@ -23,7 +22,6 @@ import kotlin.time.Duration.Companion.seconds
  * UDP) on a TLS connector's port is not affected: the protocol is defined for connection-oriented transports in front of the server, so
  * HTTP/3 requests report their UDP peer.
  */
-@ExperimentalKuicksilverApi
 public class ProxyProtocolConfig private constructor(
     /** The addresses and CIDR blocks (`10.0.0.0/8`, `2001:db8::/32`, `192.0.2.7`) allowed to send the header, as given. */
     public val trustedSources: List<String>,
@@ -46,7 +44,7 @@ public class ProxyProtocolConfig private constructor(
 
     /**
      * How long a connection may take to send its header, with [remaining] of the request-head deadline left: [headerTimeout]
-     * cut to it. The engine starts a PROXY connector only with `requestHeaderTimeoutSeconds` of at least 3, so at accept
+     * cut to it. The engine starts a PROXY connector only with `requestHeaderTimeout` of at least 3 s, so at accept
      * this is at least the 3 s section 2 asks for.
      */
     internal fun headerWait(remaining: Duration): Duration = minOf(headerTimeout, remaining).coerceAtLeast(Duration.ZERO)
@@ -56,17 +54,16 @@ public class ProxyProtocolConfig private constructor(
 
     /** Builds a [ProxyProtocolConfig]; used by `proxyProtocol { ... }` on a connector. */
     @KuicksilverDsl
-    public class Builder {
-        /**
-         * The TCP peers allowed to send the header: IPv4 or IPv6 addresses, each alone or as a CIDR block (`10.0.0.0/8`,
-         * `2001:db8::/32`). At least one is required; a block with bits set past its prefix (`10.0.0.1/8`), a zone ID or
-         * anything else that is not a numeric address is refused at [build]. An IPv4-mapped block (`::ffff:10.0.0.0/104`)
-         * is the IPv4 block it maps; IPv4 peers match IPv4 blocks only, also where the listener reports them as IPv4-mapped
-         * IPv6 addresses.
-         */
-        public val trustedSources: MutableList<String> = mutableListOf()
+    public class Builder internal constructor() {
+        private val trustedSources = ArrayList<String>()
 
-        /** Adds [sources] to [trustedSources]. */
+        /**
+         * Adds TCP peers allowed to send the header: IPv4 or IPv6 addresses, each alone or as a CIDR block (`10.0.0.0/8`,
+         * `2001:db8::/32`); `trust("10.0.0.0/8", "2001:db8::/32")`. At least one is required; a block with bits set past its
+         * prefix (`10.0.0.1/8`), a zone ID or anything else that is not a numeric address is refused when the block ends. An
+         * IPv4-mapped block (`::ffff:10.0.0.0/104`) is the IPv4 block it maps; IPv4 peers match IPv4 blocks only, also where
+         * the listener reports them as IPv4-mapped IPv6 addresses.
+         */
         public fun trust(vararg sources: String) {
             trustedSources += sources
         }
@@ -75,9 +72,9 @@ public class ProxyProtocolConfig private constructor(
          * How long a connection may take, from accept, to deliver its whole header: 5 s by default, at least 3 s (section 2:
          * "The receiver may apply a short timeout and decide to abort the connection if the protocol header is not seen within
          * a few seconds (at least 3 seconds to cover a TCP retransmit)."). The wait is also cut to what is left of the engine's
-         * `requestHeaderTimeoutSeconds`, which goes on counting from accept through the TLS handshake and the first request
-         * head; the engine does not start a PROXY connector with `requestHeaderTimeoutSeconds` below 3. A proxy sends the header at once ("The sender must always ensure that the header is sent
-         * at once"), so a short bound cuts a peer that trickles it without hurting a proxy. Throws at [build] below 3 s.
+         * `requestHeaderTimeout`, which goes on counting from accept through the TLS handshake and the first request
+         * head; the engine does not start a PROXY connector with `requestHeaderTimeout` below 3 s. A proxy sends the header at once ("The sender must always ensure that the header is sent
+         * at once"), so a short bound cuts a peer that trickles it without hurting a proxy. Refused below 3 s.
          */
         public var headerTimeout: Duration = 5.seconds
 
@@ -89,11 +86,11 @@ public class ProxyProtocolConfig private constructor(
         public var maxHeaderSize: Int = 4096
 
         /** The configuration; throws [IllegalArgumentException] for no or an invalid trusted source, a timeout below 3 s, or a size out of range. */
-        public fun build(): ProxyProtocolConfig {
-            require(trustedSources.isNotEmpty()) { "proxyProtocol needs at least one trusted source" }
-            require(headerTimeout >= MIN_HEADER_TIMEOUT) { "proxyProtocol.headerTimeout must be at least $MIN_HEADER_TIMEOUT" }
+        internal fun build(): ProxyProtocolConfig {
+            require(trustedSources.isNotEmpty()) { "proxyProtocol { } needs at least one trusted source: trust(...)" }
+            require(headerTimeout >= MIN_HEADER_TIMEOUT) { "proxyProtocol { headerTimeout } must be at least $MIN_HEADER_TIMEOUT" }
             require(maxHeaderSize in MIN_MAX_HEADER_SIZE..ProxyProtocolCodec.V2_MAX) {
-                "proxyProtocol.maxHeaderSize must be $MIN_MAX_HEADER_SIZE..${ProxyProtocolCodec.V2_MAX}"
+                "proxyProtocol { maxHeaderSize } must be $MIN_MAX_HEADER_SIZE..${ProxyProtocolCodec.V2_MAX}"
             }
             return ProxyProtocolConfig(trustedSources.toList(), headerTimeout, maxHeaderSize)
         }

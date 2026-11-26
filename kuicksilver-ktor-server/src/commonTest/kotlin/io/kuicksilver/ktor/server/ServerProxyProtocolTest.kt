@@ -238,7 +238,7 @@ class ServerProxyProtocolTest {
     @Test fun http2CallsReportTheClient() =
         serverTest {
             val (server, port) =
-                tlsServer(configure = { http2 = true }, connector = { proxyProtocol { trust("127.0.0.1") } }) { reportOrigin() }
+                tlsServer(configure = { http2 { enabled = true } }, connector = { proxyProtocol { trust("127.0.0.1") } }) { reportOrigin() }
             val selector = SelectorManager(Dispatchers.IO)
             try {
                 val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
@@ -270,7 +270,7 @@ class ServerProxyProtocolTest {
     @Test fun negative_headerFromAnUntrustedSourceIsRefused() =
         serverTest {
             val events = Refusals()
-            val (server, port) = plainServer({ eventListener = events }) { trust("192.0.2.0/24", "::1") }
+            val (server, port) = plainServer({ observability { eventListener = events } }) { trust("192.0.2.0/24", "::1") }
             try {
                 assertEquals("<reset>", emptyIfClosed(viaProxy(port, v1)))
                 withTimeout(10.seconds) { events.reasons.first { it.isNotEmpty() } }
@@ -284,7 +284,7 @@ class ServerProxyProtocolTest {
     @Test fun negative_connectionWithoutAHeaderIsClosed() =
         serverTest {
             val events = Refusals()
-            val (server, port) = plainServer({ eventListener = events })
+            val (server, port) = plainServer({ observability { eventListener = events } })
             try {
                 assertEquals("<reset>", emptyIfClosed(viaProxy(port, ByteArray(0))))
                 withTimeout(10.seconds) { events.reasons.first { it.isNotEmpty() } }
@@ -342,8 +342,8 @@ class ServerProxyProtocolTest {
             val events = Refusals()
             val (server, port) =
                 plainServer({
-                    eventListener = events
-                    http2RepeatOffenderPenalty = 60.seconds
+                    observability { eventListener = events }
+                    http2 { repeatOffenderPenalty = 60.seconds }
                 })
             try {
                 val offenders = server.engine.h2Offenders!!
@@ -367,8 +367,8 @@ class ServerProxyProtocolTest {
             val events = Refusals()
             val (server, port) =
                 plainServer({
-                    eventListener = events
-                    http2RepeatOffenderPenalty = 60.seconds
+                    observability { eventListener = events }
+                    http2 { repeatOffenderPenalty = 60.seconds }
                 })
             try {
                 repeat(3) { server.engine.h2Offenders!!.strike(parseIpLiteral("127.0.0.1")) }
@@ -406,13 +406,13 @@ class ServerProxyProtocolTest {
                         port = 0
                         proxyProtocol { trust("127.0.0.1") }
                     }
-                    requestHeaderTimeoutSeconds = 2
+                    requestHeaderTimeout = 2.seconds
                 }) { reportOrigin() }
             val e = kotlin.test.assertFailsWith<IllegalArgumentException> { server.startSuspend(wait = false) }
-            assertTrue("proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeoutSeconds" in e.message.orEmpty(), e.message)
+            assertTrue("proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeout" in e.message.orEmpty(), e.message)
             runCatching { server.stopSuspend(0, 0) }
             // 3 s is enough
-            val (ok, port) = plainServer({ requestHeaderTimeoutSeconds = 3 })
+            val (ok, port) = plainServer({ requestHeaderTimeout = 3.seconds })
             try {
                 assertTrue(viaProxy(port, v1).startsWith("HTTP/1.1 200"))
             } finally {

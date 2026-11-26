@@ -74,7 +74,7 @@ class ClientFallbackTest {
                     }
                 }
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
@@ -112,7 +112,7 @@ class ClientFallbackTest {
         clientTest {
             val (server, port) =
                 testServer(
-                    configure = { http3 = false },
+                    configure = { http3 { enabled = false } },
                 ) { routing { get("/") { call.respondText("must not be reached") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
@@ -168,7 +168,7 @@ class ClientFallbackTest {
             bindOnSamePort(
                 first = { p -> h3(p).let { it to it.localAddress.port } },
                 releaseFirst = { it.close() },
-                second = { p -> testServer(configure = { http3 = false }, port = p, module = module) },
+                second = { p -> testServer(configure = { http3 { enabled = false } }, port = p, module = module) },
                 releaseSecond = { runCatching { it.stop(0, 0) } },
             )
         return Triple(server, ep, port)

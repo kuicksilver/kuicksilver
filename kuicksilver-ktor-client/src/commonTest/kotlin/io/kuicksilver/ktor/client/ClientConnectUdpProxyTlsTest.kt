@@ -102,8 +102,10 @@ class ClientConnectUdpProxyTlsTest {
 
     /** Asks for a client certificate, verified under the test CA. */
     private val askForClientCertificate: KuicksilverTlsConnector.Builder.() -> Unit = {
-        clientAuth = ClientAuth.Optional
-        trust = ClientFixtures.trust
+        tls {
+            clientAuth = ClientAuth.Optional
+            clientTrust = ClientFixtures.trust
+        }
     }
 
     /**
@@ -130,10 +132,12 @@ class ClientConnectUdpProxyTlsTest {
             }
         val (proxyServer, proxyPort) =
             testServer(configure = {
-                connectUdp = true
-                quicEarlyData = proxyIssuesTickets
+                http3 {
+                    connectUdp = true
+                    earlyData { enabled = proxyIssuesTickets }
+                }
             }, tls = {
-                identity = TlsIdentity.fromDer(listOf(proxyCert), proxyKey.copyOf())
+                tls { identity = TlsIdentity.fromDer(listOf(proxyCert), proxyKey.copyOf()) }
                 if (!proxyIssuesTickets) askForClientCertificate()
             }) {
                 routing {
@@ -474,8 +478,8 @@ class ClientConnectUdpProxyTlsTest {
             val (proxyServer, bad, proxyPort) =
                 bindOnSamePort(
                     { p ->
-                        testServer(port = p, configure = { connectUdp = true }, tls = {
-                            identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
+                        testServer(port = p, configure = { http3 { connectUdp = true } }, tls = {
+                            tls { identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf()) }
                         }) { routing { route("/") { connectUdp(proxy) } } }
                     },
                     { it.stop(100, 500) },

@@ -185,12 +185,10 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
                 port = 0
             }
             if (enableSsl) {
-                (this as KuicksilverApplicationEngine.Configuration).tlsConnector(
-                    TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()),
-                ) {
-                    host =
-                        "127.0.0.1"
-                    ; port = 0
+                (this as KuicksilverApplicationEngine.Configuration).tlsConnector {
+                    tls { identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
+                    host = "127.0.0.1"
+                    port = 0
                 }
             }
             configure(this)

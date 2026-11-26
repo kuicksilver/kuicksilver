@@ -68,7 +68,7 @@ class EngineMainTest {
                 )
             server.startSuspend(false)
             try {
-                assertEquals(false, server.engine.configuration.altSvc)
+                assertEquals(false, server.engine.configuration.http3.altSvc)
                 val resp =
                     rawHttp(
                         server.engine
@@ -113,8 +113,11 @@ class EngineMainTest {
             server.startSuspend(false)
             try {
                 val c = server.engine.configuration
-                assertEquals(1.hours, @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.identityReloadInterval)
-                assertEquals(4096, @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.quicMaxConnectionsPerIp)
+                assertEquals(1.hours, @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.tls.reloadInterval)
+                assertEquals(
+                    4096,
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) c.http3.endpoint.maxConnectionsPerIp,
+                )
                 val resp =
                     rawHttp(
                         server.engine
@@ -172,7 +175,7 @@ class EngineMainTest {
         fun http2(vararg extra: String): Boolean {
             val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            return server.engine.configuration.http2
+            return server.engine.configuration.http2.enabled
         }
         assertEquals(false, http2())
         assertEquals(true, http2("-P:kuicksilver.http2=true"))
@@ -189,7 +192,7 @@ class EngineMainTest {
         serverTest {
             fun mode(vararg extra: String): H2cMode {
                 val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
-                return server.engine.configuration.h2cDeploymentPort
+                return server.engine.configuration.deploymentH2c
             }
             assertEquals(H2cMode.Off, mode())
             assertEquals(H2cMode.WithHttp11, mode("-P:kuicksilver.h2c=withHttp11"))
@@ -234,7 +237,7 @@ class EngineMainTest {
         fun enabled(vararg extra: String): Boolean {
             val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            return server.engine.configuration.webSocketsOverHttp2
+            return server.engine.configuration.webSockets.overHttp2
         }
         assertEquals(true, enabled())
         assertEquals(false, enabled("-P:kuicksilver.webSocketsOverHttp2=false"))
@@ -246,7 +249,7 @@ class EngineMainTest {
         fun allowed(vararg extra: String): Boolean {
             val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            return server.engine.configuration.h1AllowBareLf
+            return server.engine.configuration.http1.allowBareLf
         }
         assertEquals(false, allowed())
         assertEquals(true, allowed("-P:kuicksilver.h1AllowBareLf=true"))
@@ -258,7 +261,7 @@ class EngineMainTest {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         fun penalty(vararg extra: String): Pair<Duration, Boolean> {
             val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
-            return server.engine.configuration.http2RepeatOffenderPenalty to (server.engine.h2Offenders != null)
+            return (server.engine.configuration.http2.repeatOffenderPenalty ?: Duration.ZERO) to (server.engine.h2Offenders != null)
         }
         assertEquals(Duration.ZERO to false, penalty(), "off by default")
         assertEquals(30.seconds to true, penalty("-P:kuicksilver.http2RepeatOffenderPenalty=30s"))
@@ -272,7 +275,7 @@ class EngineMainTest {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         fun limits(vararg extra: String): Pair<Int, Int?> {
             val c = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
-            return c.maxTcpConnections to c.maxTcpConnectionsPerIp
+            return c.tcp.maxConnections to c.tcp.maxConnectionsPerIp
         }
         assertEquals(10_000 to null, limits(), "the defaults: the per-IP limit is off")
         assertEquals(500 to 16, limits("-P:kuicksilver.maxTcpConnections=500", "-P:kuicksilver.maxTcpConnectionsPerIp=16"))
@@ -290,7 +293,7 @@ class EngineMainTest {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         fun limits(vararg extra: String): Triple<Int, Int?, Int> {
             val c = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
-            return Triple(c.quicMaxConnections, c.quicMaxConnectionsPerIp, c.quicAcceptQueue)
+            return Triple(c.http3.endpoint.maxConnections, c.http3.endpoint.maxConnectionsPerIp, c.http3.endpoint.acceptQueue)
         }
         assertEquals(Triple(10_000, 256, 128), limits(), "the defaults")
         assertEquals(
@@ -315,8 +318,7 @@ class EngineMainTest {
         fun quic(vararg extra: String): KuicksilverApplicationEngine.Configuration =
             EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra)).engine.configuration
         val none = quic()
-        assertEquals(QuicConfig.Default, none.quic, "no key: the default, unassigned")
-        assertTrue(!none.quicAssigned, "so quicMaxIdleTimeout still applies")
+        assertEquals(QuicConfig.Default.maxIdleTimeout, none.resolveQuic().maxIdleTimeout, "no key: the default")
         val cfg =
             quic(
                 "-P:kuicksilver.quic.initialUdpPayloadSize=1350",
@@ -327,10 +329,9 @@ class EngineMainTest {
                 "-P:kuicksilver.quic.handshakeTimeout=5s",
                 "-P:kuicksilver.quic.keepAlive=15s",
                 "-P:kuicksilver.quic.maxBidiStreams=500",
-                "-P:kuicksilver.quic.maxUniStreams=16",
                 "-P:kuicksilver.quic.allowMigration=false",
             )
-        val c = cfg.quic
+        val c = cfg.resolveQuic()
         assertEquals(1350, c.initialUdpPayloadSize)
         assertEquals(1380, c.maxSendUdpPayloadSize)
         assertEquals(1400, c.maxUdpPayloadSize)
@@ -339,16 +340,15 @@ class EngineMainTest {
         assertEquals(5.seconds, c.handshakeTimeout)
         assertEquals(15.seconds, c.keepAlive)
         assertEquals(500L, c.maxBidiStreams)
-        assertEquals(16L, c.maxUniStreams)
         assertEquals(false, c.allowMigration)
-        assertEquals(1350, cfg.http3Quic().initialUdpPayloadSize, "what the HTTP/3 listeners get")
+        assertEquals(1350, cfg.resolveQuic().initialUdpPayloadSize, "what the HTTP/3 listeners get")
         // the other options keep their defaults
         assertEquals(QuicConfig.Default.initialStreamWindow, c.initialStreamWindow)
         assertEquals(QuicConfig.Default.versions, c.versions)
-        val off = quic("-P:kuicksilver.quic.maxIdleTimeout=0", "-P:kuicksilver.quic.keepAlive=0").quic
+        val off = quic("-P:kuicksilver.quic.maxIdleTimeout=0", "-P:kuicksilver.quic.keepAlive=0").resolveQuic()
         assertEquals(Duration.ZERO, off.maxIdleTimeout, "0: no idle timeout of our own")
         assertNull(off.keepAlive, "0: no keep-alive")
-        assertEquals(1452, quic("-P:kuicksilver.quic.initialUdpPayloadSize=1452").quic.initialUdpPayloadSize)
+        assertEquals(1452, quic("-P:kuicksilver.quic.initialUdpPayloadSize=1452").resolveQuic().initialUdpPayloadSize)
     }
 
     @Test
@@ -381,7 +381,9 @@ class EngineMainTest {
             1500,
             EngineMain
                 .createServer(arrayOf("-host=127.0.0.1", "-port=0", "-P:kuicksilver.quic.maxUdpPayloadSize=1500"))
-                .engine.configuration.quic.maxUdpPayloadSize,
+                .engine.configuration
+                .resolveQuic()
+                .maxUdpPayloadSize,
         )
         assertEquals(
             "kuicksilver.quic.initialUdpPayloadSize: \"1350b\" is not a whole number",
@@ -403,7 +405,10 @@ class EngineMainTest {
             "kuicksilver.quic: maxBidiStreams and expert { maxUniStreams } must be 0..2^60",
             refused("-P:kuicksilver.quic.maxBidiStreams=-1"),
         )
-        assertEquals("kuicksilver.quic.maxUniStreams: \"many\" is not a whole number", refused("-P:kuicksilver.quic.maxUniStreams=many"))
+        assertEquals(
+            "kuicksilver.quic.maxUniStreams is derived by the engine (RFC 9114 section 6.2); remove it",
+            refused("-P:kuicksilver.quic.maxUniStreams=many"),
+        )
         // a misspelt key does not leave the default in place silently
         val typo = refused("-P:kuicksilver.quic.initialPacketSize=1350")
         assertTrue(
@@ -430,7 +435,8 @@ class EngineMainTest {
         val c =
             EngineMain
                 .createServer(arrayOf("-config=${file.path}"))
-                .engine.configuration.quic
+                .engine.configuration
+                .resolveQuic()
         assertEquals(1350, c.initialUdpPayloadSize)
         assertEquals(1372, c.maxSendUdpPayloadSize)
         assertEquals(true, c.pmtud)
@@ -481,10 +487,12 @@ class EngineMainTest {
                 "-P:kuicksilver.tls.certificateChain=${chain.path}",
                 "-P:kuicksilver.tls.privateKey=${key.path}",
             ) + (if (reload) arrayOf("-P:kuicksilver.tls.reloadInterval=1h") else emptyArray())
-        val e = assertFailsWith<kotlinx.io.IOException> { EngineMain.createServer(args(reload = true)).engine }
+        val refused = EngineMain.createServer(args(reload = true))
+        val e = assertFailsWith<kotlinx.io.IOException> { refused.start(false) }
+        runCatching { refused.stop(0, 0) }
         assertTrue("contains a private key" in e.message.orEmpty(), e.message)
         val plain = EngineMain.createServer(args(reload = false))
-        val id = plain.engine.configuration.identity
+        val id = plain.engine.configuration.tls.identity
         assertTrue(id is TlsIdentity.InMemory, "control: without reloading the file is served as before")
         id.close() // the server never started: nothing else closes it
     }
@@ -512,16 +520,16 @@ class EngineMainTest {
                     ),
                 )
             val config = server.engine.configuration
-            assertEquals(1.hours, config.identityReloadInterval)
-            val identity = assertIs<TlsIdentity.Reloadable>(config.identity)
-            assertEquals(Certificate(TestCerts.server), identity.current.chain[0])
-            config.identitySettleForTest = Duration.ZERO
+            assertEquals(1.hours, config.tls.reloadInterval)
+            assertEquals(Certificate(TestCerts.server), config.tls.identity!!.chain[0])
+            config.tls.settleForTest = Duration.ZERO
             // renewed after the server read them: the watcher's check at startup finds them
             chain.writeText(
                 TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate) + TestCerts.toPem("CERTIFICATE", TestCerts.intermediate),
             )
             key.writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverViaIntermediateKey))
             server.startSuspend(false)
+            val identity = assertIs<TlsIdentity.Reloadable>(server.engine.engineTls.identity)
             try {
                 val applied =
                     withTimeoutOrNull(20.seconds) {
@@ -670,7 +678,7 @@ class EngineMainTest {
             val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.ocspStapling=${file.path}"))
             assertContentEquals(
                 der,
-                server.engine.configuration.tlsOcspStapling
+                server.engine.configuration.tls.ocspStapling
                     ?.current,
             )
             server.stop(0, 0)
@@ -691,7 +699,7 @@ class EngineMainTest {
             val a = File(dir, "ech-a.pem").apply { writeText(EchTestKeys.A) }
             val b = File(dir, "ech-b.pem").apply { writeText(EchTestKeys.B) }
             val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.echKeys=${a.path},${b.path}"))
-            val keys = server.engine.configuration.tlsEchKeys
+            val keys = server.engine.configuration.tls.echKeys
             kotlin.test.assertNotNull(keys)
             server.stop(0, 0)
             // the engine made the keys, so it frees them when it stops: a closed set takes no rotation
@@ -736,7 +744,7 @@ class EngineMainTest {
                     ),
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
-            assertTrue("tlsConnector(identity)" in e.message.orEmpty(), e.message)
+            assertTrue("tlsConnector { }" in e.message.orEmpty(), e.message)
             server.stop(0, 0)
         }
 
@@ -865,10 +873,10 @@ class EngineMainTest {
                     ),
                 )
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            server.engine.configuration.requestHeaderTimeoutSeconds = 1
+            server.engine.configuration.requestHeaderTimeout = 1.seconds
             val e = assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
             assertTrue(
-                "kuicksilver.proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeoutSeconds" in e.message.orEmpty(),
+                "kuicksilver.connector.proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeout" in e.message.orEmpty(),
                 e.message,
             )
             server.stop(0, 0)
@@ -901,7 +909,7 @@ class EngineMainTest {
                     ),
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
-            assertTrue("kuicksilver.proxyProtocol" in e.message.orEmpty(), e.message)
+            assertTrue("kuicksilver.connector.proxyProtocol" in e.message.orEmpty(), e.message)
             server.stop(0, 0)
         }
 
@@ -926,7 +934,7 @@ class EngineMainTest {
     @Test fun tlsVersionsKeyServesTls12() =
         serverTest {
             val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.versions=tls12And13"))
-            assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, server.engine.configuration.tlsVersions)
+            assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, server.engine.configuration.tls.versions)
             server.startSuspend(false)
             try {
                 val port =
@@ -1027,7 +1035,7 @@ class EngineMainTest {
                 )
             assertEquals(
                 io.kuicksilver.tls.KeyExchangeGroups(listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP384R1)),
-                server.engine.configuration.tlsKeyExchangeGroups,
+                server.engine.configuration.tls.keyExchangeGroups,
             )
             server.startSuspend(false)
             try {
@@ -1061,7 +1069,7 @@ class EngineMainTest {
     @Test
     fun keyExchangeGroupsKeyTakesASeparatedString() {
         val one = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=x25519")).engine
-        assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), one.configuration.tlsKeyExchangeGroups.groups)
+        assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), one.configuration.tls.keyExchangeGroups.groups)
         val two = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=secp384r1:x25519, secp256r1")).engine
         assertEquals(
             listOf(
@@ -1069,7 +1077,7 @@ class EngineMainTest {
                 io.kuicksilver.tls.KeyExchangeGroups.X25519,
                 io.kuicksilver.tls.KeyExchangeGroups.SECP256R1,
             ),
-            two.configuration.tlsKeyExchangeGroups.groups,
+            two.configuration.tls.keyExchangeGroups.groups,
         )
         for (bad in listOf("nope", "", "x25519::secp256r1")) {
             val e =
@@ -1166,7 +1174,7 @@ class EngineMainTest {
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
             assertTrue(
-                "kuicksilver.tls.keyExchangeGroups applies to the port of kuicksilver.tls.certificateChain" in e.message.orEmpty(),
+                "(kuicksilver.tls.keyExchangeGroups) does not apply to" in e.message.orEmpty(),
                 e.message,
             )
             server.stop(0, 0)
@@ -1243,7 +1251,7 @@ class EngineMainTest {
                 EngineMain.createServer(
                     clientCaArgs("-P:kuicksilver.tls.clientAuth=required", "-P:kuicksilver.tls.clientCa=${ca.path}"),
                 )
-            assertIs<TrustConfig.AnchoredCa>(server.engine.configuration.clientTrust)
+            assertIs<TrustConfig.AnchoredCa>(server.engine.configuration.tls.clientTrust)
             server.startSuspend(false)
             try {
                 val port =
@@ -1277,11 +1285,11 @@ class EngineMainTest {
                     ),
                 )
             val config = server.engine.configuration
-            val trust = assertIs<TrustConfig.ReloadableCa>(config.clientTrust)
-            assertEquals(listOf(Certificate(TestCerts.testCa)), trust.current.roots)
-            config.identitySettleForTest = Duration.ZERO
+            assertEquals(listOf(Certificate(TestCerts.testCa)), assertIs<TrustConfig.AnchoredCa>(config.tls.clientTrust).roots)
+            config.tls.settleForTest = Duration.ZERO
             ca.writeText(TestCerts.toPem("CERTIFICATE", TestCerts.otherCa)) // renewed after the server read it
             server.startSuspend(false)
+            val trust = assertIs<TrustConfig.ReloadableCa>(server.engine.engineTls.trust)
             try {
                 val applied =
                     withTimeoutOrNull(20.seconds) {

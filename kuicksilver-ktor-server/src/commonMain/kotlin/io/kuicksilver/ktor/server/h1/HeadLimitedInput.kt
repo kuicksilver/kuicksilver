@@ -32,7 +32,7 @@ import kotlin.time.Duration
 internal class HeadLimitedInput(
     private val source: ByteReadChannel,
     private val maxHeadBytes: Int,
-    /** Whether a bare LF ends a line of a head or a trailer section (the engine's `h1AllowBareLf`, RFC 9112 section 2.2). */
+    /** Whether a bare LF ends a line of a head or a trailer section (the engine's `http1 { allowBareLf }`, RFC 9112 section 2.2). */
     val allowBareLf: Boolean = false,
     /** Test hook: runs once a wait for body bytes under the body deadline returned, still inside the deadline. */
     private val bodyContentForTest: (suspend () -> Unit)? = null,

@@ -45,7 +45,7 @@ class StopFirstRequestJvmTest {
                         host = "127.0.0.1"
                         port = 0
                     }
-                    http3 = false
+                    http3 { enabled = false }
                 }) { routing { post("/order") { call.respondText("placed") } } }
             server.startSuspend(wait = false)
             val port =

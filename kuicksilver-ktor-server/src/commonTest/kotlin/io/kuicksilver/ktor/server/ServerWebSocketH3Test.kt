@@ -168,7 +168,7 @@ class ServerWebSocketH3Test {
     @Test fun settingAdvertisedOnlyWhenEnabled() =
         h3ServerTest {
             for (enabled in listOf(true, false)) {
-                val (server, port) = tlsServer(configure = { webSocketsOverHttp3 = enabled }) { }
+                val (server, port) = tlsServer(configure = { webSockets { overHttp3 = enabled } }) { }
                 try {
                     h3(port) { c ->
                         assertEquals(
@@ -316,8 +316,8 @@ class ServerWebSocketH3Test {
         h3ServerTest {
             val (server, port) =
                 tlsServer(configure = {
-                    webSocketsOverHttp3 = false
-                    webTransport = true
+                    webSockets { overHttp3 = false }
+                    http3 { webTransport { enabled = true } }
                 }) {
                     install(WebSockets)
                     routing { webSocket("/ws") { } }

@@ -158,7 +158,8 @@ fun main(args: Array<String>) {
     val o = parseOptions(args)
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(TlsIdentity.fromPem(DemoServerCerts.chainPem, DemoServerCerts.keyPem.toCharArray())) {
+            tlsConnector {
+                tls { identity = TlsIdentity.fromPem(DemoServerCerts.chainPem, DemoServerCerts.keyPem.toCharArray()) }
                 host = o.host
                 port = o.httpsPort
             }
@@ -166,7 +167,7 @@ fun main(args: Array<String>) {
                 host = o.host
                 port = o.httpPort
             }
-            altSvc = o.altSvc
+            http3 { altSvc = o.altSvc }
         }) {
             routing {
                 get("/") { call.respondText("${call.request.httpVersion}\n$USAGE\n") }

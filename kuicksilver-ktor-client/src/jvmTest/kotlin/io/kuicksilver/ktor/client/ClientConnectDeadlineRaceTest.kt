@@ -95,7 +95,7 @@ class ClientConnectDeadlineRaceTest {
     /** HTTPS records read as the connect timeout fires are the resolution: the request goes to the endpoint they name. */
     @Test fun negative_recordsReadAsTheConnectTimeoutFiresAreTheResolution() =
         race { millis ->
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 Tripwire().use { origin ->
                     testClient(Http3Discovery.Auto, engine = {
@@ -139,8 +139,8 @@ class ClientConnectDeadlineRaceTest {
         race { millis ->
             val (server, port) =
                 testServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) {
                     install(io.ktor.server.websocket.WebSockets)
                     routing {

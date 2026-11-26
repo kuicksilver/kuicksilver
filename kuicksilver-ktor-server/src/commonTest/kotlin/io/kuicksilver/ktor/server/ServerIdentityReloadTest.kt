@@ -136,7 +136,8 @@ class ServerIdentityReloadTest {
             val r = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
             val server =
                 kuicksilverServer(null, configure = {
-                    tlsConnector(r) {
+                    tlsConnector {
+                        tls { identity = r }
                         host = "127.0.0.1"
                         port = 0
                     }
@@ -194,7 +195,8 @@ class ServerIdentityReloadTest {
             val r = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
             val server =
                 kuicksilverServer(null, configure = {
-                    tlsConnector(r) {
+                    tlsConnector {
+                        tls { identity = r }
                         host = "127.0.0.1"
                         port = 0
                     }
@@ -259,20 +261,22 @@ class ServerIdentityReloadTest {
         serverTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    identity = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
-                    identityReloadInterval = 1.seconds * 3600
+                    tls {
+                        identity = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
+                        reloadInterval = 1.seconds * 3600
+                    }
                     connector {
                         host = "127.0.0.1"
                         port = 0
                     }
                 }, module = {})
             val e = assertFailsWith<IllegalArgumentException> { server.startSuspend(wait = false) }
-            assertTrue("kuicksilver.tls.certificateChain" in e.message.orEmpty(), e.message)
+            assertTrue("tls { pemFiles(...) }" in e.message.orEmpty(), e.message)
             server.stop(0, 0)
         }
 
     @Test fun negative_reloadIntervalBelowOneSecondRefused() {
         val c = KuicksilverApplicationEngine.Configuration()
-        assertFailsWith<IllegalArgumentException> { c.identityReloadInterval = 0.5.seconds }
+        assertFailsWith<IllegalArgumentException> { c.tls.reloadInterval = 0.5.seconds }
     }
 }

@@ -88,7 +88,7 @@ class ClientHttpsProxyTest {
         block: suspend (port: Int) -> Unit,
     ) {
         val (server, port) =
-            testServer(configure = { this.http2 = http2 }) {
+            testServer(configure = { http2 { this.enabled = http2 } }) {
                 routing {
                     get("/") {
                         if (altSvc) call.response.header("Alt-Svc", "h3=\":443\"; ma=3600")

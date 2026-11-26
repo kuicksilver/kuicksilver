@@ -34,7 +34,7 @@ class ClientEarlyDataTest {
     @Test fun reconnectResumesWith0Rtt() =
         clientTest {
             val (server, port) =
-                testServer(configure = { quicEarlyData = true }) {
+                testServer(configure = { http3 { earlyData { enabled = true } } }) {
                     routing {
                         get("/") { call.respondText("get early=${call.request.receivedEarly}") }
                         post("/") { call.respondText("post early=${call.request.receivedEarly}") }
@@ -156,7 +156,7 @@ class ClientEarlyDataTest {
     @Test fun aSlowHandshakeOnA0RttConnectionIsNoStall() =
         h3Test {
             val (server, port) =
-                testServer(configure = { quicEarlyData = true }) {
+                testServer(configure = { http3 { earlyData { enabled = true } } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             val ios = FaultyIos()

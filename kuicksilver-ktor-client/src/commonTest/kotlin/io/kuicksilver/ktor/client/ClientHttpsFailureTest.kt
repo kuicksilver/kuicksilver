@@ -40,8 +40,10 @@ class ClientHttpsFailureTest {
 
     private suspend fun origin() =
         testServer(configure = {
-            http3 = false
-            altSvc = false
+            http3 {
+                enabled = false
+                altSvc = false
+            }
         }) { routing { get("/") { call.respondText("origin") } } }
 
     private val servfail: suspend (ByteArray) -> ByteArray = { q -> SvcbTestEncoder.response(questionName(q), emptyList(), rcode = 2) }

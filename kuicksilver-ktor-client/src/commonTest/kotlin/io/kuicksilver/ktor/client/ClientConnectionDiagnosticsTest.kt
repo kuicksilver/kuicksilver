@@ -679,8 +679,10 @@ class ClientConnectionDiagnosticsTest {
                 }
             try {
                 testClient(Http3Discovery.H3Only, engine = {
-                    observability { eventListener = heard }
-                    observability { connectionListener = quic }
+                    observability {
+                        eventListener = heard
+                        connectionListener = quic
+                    }
                     resolverForTest = { _, p ->
                         listOf(
                             io.kuicksilver.ktor.network

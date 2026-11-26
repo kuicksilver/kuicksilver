@@ -8,7 +8,7 @@ import kotlinx.coroutines.Job
 /**
  * The server engine's live work for the soak harness (`kuicksilver-soak`): HTTP/3 and HTTP/2 connections it tracks (with
  * the HTTP/2 requests not yet released), the TCP connections its connectors hold (`server.tcpConnections`, counted by
- * `maxTcpConnections`: from accept until the socket is released) and those refused at accept by `maxTcpConnectionsPerIp`
+ * `tcp { maxConnections }`: from accept until the socket is released) and those refused at accept by `tcp { maxConnectionsPerIp }`
  * since the start (`server.tcpRefusedPerIp`), and the
  * coroutines still running under its HTTP/3 and TCP connection supervisors (handlers, requests and what they launched). A
  * handler that never ends shows up here before it shows up in the heap. The endpoints' own tables are in `QuicResourceProbe`.
