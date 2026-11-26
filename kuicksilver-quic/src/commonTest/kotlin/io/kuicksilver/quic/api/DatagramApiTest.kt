@@ -416,16 +416,35 @@ class DatagramApiTest {
             }
         }
 
+    /**
+     * Reject never drops a datagram of its own: a sender over the 32-datagram queue waits for room, and all 33 arrive. The
+     * server's address is held, not cut, while the window is full: a datagram that leaves meanwhile waits on the path
+     * instead of vanishing (RFC 9221 section 5.2: a lost DATAGRAM is never resent), so the count tests the queue, not the
+     * network. The window does not stay shut for certain: a PTO probe leaves beyond it (RFC 9002 section 6.2.4), and an
+     * ACK the server sent before the hold, read by the client only after the 32 are queued, opens it: on a cut path the
+     * datagrams that then leave are gone and the server waits for 33 forever (linux-x64 CI). Here that comes every time:
+     * the client's address is held from before the server acknowledges the stream's first bytes until the 32 are queued,
+     * and the server's until the 33rd got in (with a cut instead, all 32 left and were lost).
+     */
     @Test fun sendDatagramUnderRejectSuspendsUntilSpace() =
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
-                    congest(p, c)
-                    // The 32 and the 33rd go from the connection's loop thread, so the loop sends nothing in between: with
-                    // the server cut, a PTO probe still leaves (RFC 9002 section 6.2.4, beyond the congestion window) and
-                    // takes queued datagrams along, which a slow scheduler let happen before the 33rd on mingwX64 CI.
-                    // UNDISPATCHED runs the 33rd up to its first suspension here, on the loop thread.
+                    // the late ACKs, for certain: the server acknowledges the stream's first packets (an ACK at least every second
+                    // ack-eliciting packet, RFC 9000 section 13.2.2) into the client's hold
+                    p.net.hold(p.clientIo.localAddress)
+                    val st = c.openBidi()
+                    val blob = ByteArray(300_000)
+                    st.output.writeFully(blob, 0, 6000)
+                    st.output.flush()
+                    p.net.awaitHeld(p.clientIo.localAddress, 2)
+                    p.net.hold(p.server.localAddress)
+                    st.output.writeFully(blob, 6000, blob.size - 6000)
+                    st.output.flush()
+                    while (c.stats.bytesInFlight < c.stats.cwnd) delay(5)
+                    // The 32 and the 33rd go from the connection's loop thread, so the loop sends nothing in between and the
+                    // 33rd finds the queue full. UNDISPATCHED runs the 33rd up to its first suspension here, on the loop thread.
                     val scope = this
                     val blocked =
                         withContext((c as ConnectionRuntime).loopDispatcherForTest) {
@@ -438,15 +457,13 @@ class DatagramApiTest {
                             assertFalse(thirtyThird.isCompleted, "the 33rd waits for room")
                             thirtyThird
                         }
-                    p.net.uncut(p.server.localAddress)
+                    // the server's ACKs reach the client while the server's address is still held: the window opens, datagrams
+                    // leave (into the hold) and the 33rd gets in
+                    p.net.release(p.clientIo.localAddress)
                     assertTrue(blocked.await(), "room came as datagrams left")
-                    assertEquals(
-                        33,
-                        s.datagrams
-                            .take(33)
-                            .toList()
-                            .size,
-                    )
+                    p.net.release(p.server.localAddress)
+                    val got = s.datagrams.take(33).toList()
+                    assertEquals((0 until 33).toSet(), got.map { key(it) }.toSet(), "every datagram, the 33rd included")
                     c.close()
                     s.close()
                 }
