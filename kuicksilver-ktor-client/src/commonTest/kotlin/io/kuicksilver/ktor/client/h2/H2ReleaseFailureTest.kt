@@ -88,7 +88,7 @@ class H2ReleaseFailureTest {
             H2ServerConnection.start(
                 toServer,
                 toClient,
-                Http2Settings(),
+                Http2Settings.Default,
                 backgroundScope,
                 close,
                 clock(),
@@ -99,7 +99,7 @@ class H2ReleaseFailureTest {
             H2ClientConnection.start(
                 toClient,
                 toServer,
-                Http2Settings(),
+                Http2Settings.Default,
                 backgroundScope,
                 Duration.INFINITE,
                 close,

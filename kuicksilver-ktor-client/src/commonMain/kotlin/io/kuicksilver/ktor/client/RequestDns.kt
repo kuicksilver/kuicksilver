@@ -376,7 +376,7 @@ internal class RequestDns private constructor(
 
 /**
  * A fresh [RequestDns] with this configuration's resolver: the system's ([Dns.System], the default: the path of 0.2, as it
- * was), the application's ([KuicksilverEngineConfig.dns], through [familyResolver]), or a test's. A test resolver of both
+ * was), the application's ([ClientNetworkConfig.dns], through [familyResolver]), or a test's. A test resolver of both
  * families ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -388,9 +388,9 @@ internal fun KuicksilverEngineConfig.newRequestDns(events: DnsObserver? = null):
             once.get(name).filter { it.isIpv6 == ipv6 }
         }
     }
-    if (dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
+    if (network.dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
     // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
-    val app = dns
+    val app = network.dns
     return RequestDns(
         nat64ForTest ?: Nat64.system,
         familyEvents = events.takeIf { app is FamilyDns },

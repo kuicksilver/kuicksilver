@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http2.core
 
+import io.kuicksilver.config.RateLimit
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
+import io.kuicksilver.http2.http2Settings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -43,7 +45,7 @@ class FloodClassesTest {
     /** A peer of [role] after the handshake (our SETTINGS acknowledged), with the preface and SETTINGS read. */
     private fun peer(
         role: Role,
-        s: Http2Settings = Http2Settings(),
+        s: Http2Settings = Http2Settings.Default,
     ) = RawH2Peer(role, s).also {
         it.handshake()
         it.events()
@@ -89,7 +91,15 @@ class FloodClassesTest {
     fun negative_pingFloodFillsTheQueueBeforeTheGlitchBudget() {
         // the queue's own bound, where it is the smaller one: the 101st unanswered PING ends the connection
         for (role in Role.entries) {
-            val p = peer(role, Http2Settings(maxControlFramesQueued = 100))
+            val p =
+                peer(
+                    role,
+                    http2Settings {
+                        floodLimits {
+                            maxControlFramesQueued = 100
+                        }
+                    },
+                )
             val h = p.flood(100_000) { FrameEncoder.ping(false, it.toLong()) }
             p.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
             assertEquals(101, h.frames, "$role")
@@ -112,7 +122,15 @@ class FloodClassesTest {
         }
         // with the queue the smaller bound, the queue ends it
         for (role in Role.entries) {
-            val p = peer(role, Http2Settings(maxControlFramesQueued = 50))
+            val p =
+                peer(
+                    role,
+                    http2Settings {
+                        floodLimits {
+                            maxControlFramesQueued = 50
+                        }
+                    },
+                )
             val h = p.flood(100_000) { FrameEncoder.settings(IntArray(0), LongArray(0)) }
             p.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
             assertEquals(51, h.frames, "$role")
@@ -220,7 +238,13 @@ class FloodClassesTest {
         assertEquals(false, again.core.isClosed)
         assertEquals(1, again.read().count { it is io.kuicksilver.http2.frame.Frame.RstStream }, "one reset per stream: $one")
         // requests past SETTINGS_MAX_CONCURRENT_STREAMS, each refused: more than 4 x the limit in a row ends it
-        val s = peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 10))
+        val s =
+            peer(
+                Role.SERVER,
+                http2Settings {
+                    maxConcurrentStreams = 10
+                },
+            )
         val refused = s.flood(100_000) { s.headers(1 + 2 * it, endStream = false) }
         println("REFUSED_STREAM flood, server core: $refused")
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
@@ -262,7 +286,16 @@ class FloodClassesTest {
         println("refused streams between finished rounds, server core: $refused refused in $rounds rounds")
         assertTrue(refused in 9_000..10_001, "refused before GOAWAY: $refused")
         // before the peer has our SETTINGS it cannot know the limit: a burst then costs nothing
-        val early = RawH2Peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 10, glitchBurst = 5))
+        val early =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    maxConcurrentStreams = 10
+                    floodLimits {
+                        glitches = RateLimit(330, 5)
+                    }
+                },
+            )
         early.send(H2.PREFACE, FrameEncoder.settings(IntArray(0), LongArray(0)))
         for (i in 0 until 20) early.send(early.headers(1 + 2 * i, endStream = true))
         assertEquals(false, early.core.isClosed)
@@ -277,7 +310,16 @@ class FloodClassesTest {
      */
     @Test
     fun negative_refusalWhileOnlyOurHandlerHoldsTheStreamIsNoGlitch() {
-        val s = RawH2Peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 1, glitchBurst = 3))
+        val s =
+            RawH2Peer(
+                Role.SERVER,
+                http2Settings {
+                    maxConcurrentStreams = 1
+                    floodLimits {
+                        glitches = RateLimit(330, 3)
+                    }
+                },
+            )
         s.handshake()
         var id = 1
         repeat(10) {
@@ -518,7 +560,13 @@ class FloodClassesTest {
     @Test
     fun negative_dataDribbleHoldsOneFramePerStream() {
         for (reads in listOf(false, true)) {
-            val p = peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 100))
+            val p =
+                peer(
+                    Role.SERVER,
+                    http2Settings {
+                        maxConcurrentStreams = 100
+                    },
+                )
             p.send(FrameEncoder.settings(intArrayOf(0x4), longArrayOf(0)))
             for (i in 0 until 100) {
                 p.send(p.headers(1 + 2 * i, endStream = true))

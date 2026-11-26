@@ -491,15 +491,14 @@ public final class io/kuicksilver/tls/TlsConfig {
 public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public fun <init> (Lio/kuicksilver/tls/TlsRole;)V
 	public final fun build ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun ech (Lkotlin/jvm/functions/Function1;)V
+	public final fun expert (Lkotlin/jvm/functions/Function1;)V
 	public final fun getAlpn ()Ljava/util/List;
-	public final fun getAlpnFallback ()Ljava/lang/String;
 	public final fun getCertificateCompression ()Z
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
-	public final fun getEchConfigList ()Lio/kuicksilver/tls/EchConfigList;
-	public final fun getEchGrease ()Z
-	public final fun getEchKeys ()Lio/kuicksilver/tls/EchServerKeys;
-	public final fun getGenericAlerts ()Z
+	public final fun getEch ()Lio/kuicksilver/tls/TlsConfig$Builder$Ech;
+	public final fun getExpert ()Lio/kuicksilver/tls/TlsConfig$Builder$Expert;
 	public final fun getHandshakeTimeout-UwyO8pc ()J
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeyExchangeGroups ()Lio/kuicksilver/tls/KeyExchangeGroups;
@@ -513,14 +512,9 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
 	public final fun setAlpn (Ljava/util/List;)V
-	public final fun setAlpnFallback (Ljava/lang/String;)V
 	public final fun setCertificateCompression (Z)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
-	public final fun setEchConfigList (Lio/kuicksilver/tls/EchConfigList;)V
-	public final fun setEchGrease (Z)V
-	public final fun setEchKeys (Lio/kuicksilver/tls/EchServerKeys;)V
-	public final fun setGenericAlerts (Z)V
 	public final fun setHandshakeTimeout-LRDsOJo (J)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setKeyExchangeGroups (Lio/kuicksilver/tls/KeyExchangeGroups;)V
@@ -532,6 +526,22 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
 	public final fun setVersions (Lio/kuicksilver/tls/TlsVersions;)V
+}
+
+public final class io/kuicksilver/tls/TlsConfig$Builder$Ech {
+	public final fun getConfigList ()Lio/kuicksilver/tls/EchConfigList;
+	public final fun getGrease ()Z
+	public final fun getKeys ()Lio/kuicksilver/tls/EchServerKeys;
+	public final fun setConfigList (Lio/kuicksilver/tls/EchConfigList;)V
+	public final fun setGrease (Z)V
+	public final fun setKeys (Lio/kuicksilver/tls/EchServerKeys;)V
+}
+
+public final class io/kuicksilver/tls/TlsConfig$Builder$Expert {
+	public final fun getAlpnFallback ()Ljava/lang/String;
+	public final fun getGenericAlerts ()Z
+	public final fun setAlpnFallback (Ljava/lang/String;)V
+	public final fun setGenericAlerts (Z)V
 }
 
 public final class io/kuicksilver/tls/TlsConfigKt {

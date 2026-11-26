@@ -29,6 +29,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.http2.runtime.Http2Exception
@@ -500,7 +501,10 @@ class ClientH2WebSocketTest {
             val failure = CompletableDeferred<Throwable>()
             val sent = CompletableDeferred<Unit>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -543,7 +547,10 @@ class ClientH2WebSocketTest {
             val failure = CompletableDeferred<Throwable>()
             val sent = CompletableDeferred<Unit>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -586,7 +593,10 @@ class ClientH2WebSocketTest {
         clientTest {
             val failure = CompletableDeferred<Throwable>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -692,7 +702,10 @@ class ClientH2WebSocketTest {
             val gate = CompletableDeferred<Unit>()
             val serverSawClose = CompletableDeferred<Unit>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -747,7 +760,10 @@ class ClientH2WebSocketTest {
             val reading = CompletableDeferred<Unit>()
             val serverSawClose = CompletableDeferred<CloseReason?>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -796,7 +812,10 @@ class ClientH2WebSocketTest {
             val reading = CompletableDeferred<Unit>()
             val serverSawClose = CompletableDeferred<CloseReason?>()
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 1_024),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 1_024
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -853,7 +872,11 @@ class ClientH2WebSocketTest {
     @Test fun negative_clientWriterIsHeldAtTheWindowAndTheLead() =
         clientTest {
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 65_536
+                        maxStreamWindow = 65_536
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -992,7 +1015,11 @@ class ClientH2WebSocketTest {
     @Test fun messagesLargerThanTheWindowsPassBothWays() =
         clientTest {
             tlsH2WithSilentUdp(
-                settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536),
+                settings =
+                    http2Settings {
+                        initialStreamWindow = 65_536
+                        maxStreamWindow = 65_536
+                    },
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
                     if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
@@ -1014,7 +1041,14 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 testClient(
-                    engine = { http2 { settings = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536) } },
+                    engine = {
+                        http2 {
+                            settings {
+                                initialStreamWindow = 65_536
+                                maxStreamWindow = 65_536
+                            }
+                        }
+                    },
                     block = { install(WebSockets) },
                 ).use { c ->
                     c.get("https://127.0.0.1:$port/")

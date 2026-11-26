@@ -140,4 +140,34 @@ class FlowControlTest {
         assertEquals(0x03L, e.code)
         assertTrue(total <= 790_000, "the 79th stream crosses 786 432 although every stream is within 524 288")
     }
+
+    // RFC 9000 sections 16, 19.9 and 19.10: MAX_DATA and MAX_STREAM_DATA are variable-length integers, at most 2^62-1; a
+    // limit of consumed + window is clamped to that, on every path that raises it
+
+    @Test fun negative_aCreditNearTheEndOfTheVarintRangeIsClamped() {
+        val big = 1L shl 60
+        val c = RecvFlowController(big, big)
+        val l = c.onConsumed(MAX_LIMIT - 100, t0, srtt)
+        assertEquals(MAX_LIMIT, l, "consumed + window would be about 2^62 + 2^60")
+        assertEquals(MAX_LIMIT, c.limit)
+        // nothing more can come, and nothing above the clamp goes out later
+        assertEquals(-1L, c.onConsumed(50, t0, srtt))
+        assertTrue(c.limit <= MAX_LIMIT)
+    }
+
+    @Test fun negative_floorAndConnectionWindowRaisesAreClampedToo() {
+        val big = 1L shl 60
+        val f = RecvFlowController(1, big)
+        f.onConsumed(MAX_LIMIT - 10, t0, srtt)
+        f.setFloor(big)
+        assertEquals(MAX_LIMIT, f.limit)
+        val w = RecvFlowController(1, big)
+        w.onConsumed(MAX_LIMIT - 10, t0, srtt)
+        w.ensureWindowAtLeast(big)
+        assertEquals(MAX_LIMIT, w.limit)
+        // an initial window beyond the range is advertised as the largest value too
+        assertEquals(MAX_LIMIT, RecvFlowController(Long.MAX_VALUE, Long.MAX_VALUE).limit)
+        assertEquals(MAX_LIMIT, advertised(MAX_LIMIT, Long.MAX_VALUE))
+        assertEquals(30L, advertised(10, 20))
+    }
 }

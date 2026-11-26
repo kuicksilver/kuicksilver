@@ -94,8 +94,8 @@ class WebTransportStreamsTest {
             val dyn =
                 http3Settings {
                     enableConnectProtocol = true
-                    webTransport = true
-                    enableQpackDynamicTable()
+                    webTransport { enabled = true }
+                    qpack { enableDynamicTable() }
                 }
             H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
                 val (client, server) = sessions(p)
@@ -283,7 +283,7 @@ class WebTransportStreamsTest {
                     serverQuic =
                         quicConfig {
                             maxBidiStreams = 1
-                            resetStreamAt = true
+                            expert { resetStreamAt = true }
                         },
                 ).useScoped { p ->
                     val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
@@ -299,7 +299,7 @@ class WebTransportStreamsTest {
      */
     @Test fun wtResetUsesResetStreamAtWhenNegotiated() =
         h3Test {
-            val reliable = quicConfig { resetStreamAt = true }
+            val reliable = quicConfig { expert { resetStreamAt = true } }
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = reliable, clientQuic = reliable).useScoped { p ->
                 val (client, server) = sessions(p)
                 val clientAddr =

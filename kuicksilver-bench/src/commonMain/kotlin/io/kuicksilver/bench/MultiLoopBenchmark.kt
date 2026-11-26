@@ -90,9 +90,9 @@ public class MultiLoopBenchmark {
         server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply {
             this.server = QuicServerConfig.Builder(serverTls).build()
             this.loops = this@MultiLoopBenchmark.loops
-            if (nullCrypto) crypto = NullCryptoProvider
+            if (nullCrypto) runtime { crypto = NullCryptoProvider }
         }.build())
-        clients = List(CLIENTS) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { if (nullCrypto) crypto = NullCryptoProvider }.build()) }
+        clients = List(CLIENTS) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { if (nullCrypto) runtime { crypto = NullCryptoProvider } }.build()) }
         acceptor = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         if (work == "handshake") {
             // the server's side of each connection ends on its own (the client closes); taking it keeps the accept queue free

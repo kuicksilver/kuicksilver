@@ -12,8 +12,8 @@ import io.ktor.network.sockets.InetSocketAddress
 internal expect fun peerAddressBytes(remote: InetSocketAddress): ByteArray?
 
 /**
- * The key of a client address for the per-address tables of the TCP accept loop (`maxTcpConnectionsPerIp`,
- * [TcpLimits]; `http2RepeatOffenderPenalty`, [RepeatOffenders]): its bytes ([peerAddressBytes], never a name lookup), an
+ * The key of a client address for the per-address tables of the TCP accept loop (`tcp { maxConnectionsPerIp }`,
+ * [TcpLimits]; `http2 { repeatOffenderPenalty }`, [RepeatOffenders]): its bytes ([peerAddressBytes], never a name lookup), an
  * IPv4-mapped IPv6 address (RFC 4291 section 2.5.5.2, as a dual-stack listener reports IPv4 peers) as its IPv4 address,
  * and an IPv6 address by its first [ipv6PrefixBytes] bytes (all 16 by default). Null when the address is not known.
  */

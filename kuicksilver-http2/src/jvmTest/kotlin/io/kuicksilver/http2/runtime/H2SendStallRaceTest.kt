@@ -6,6 +6,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readBuffer
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,9 +59,13 @@ class H2SendStallRaceTest {
                     toServer.close()
                     toClient.close()
                 }
-                val settings = Http2Settings(initialStreamWindow = WINDOW, maxStreamWindow = WINDOW)
+                val settings =
+                    http2Settings {
+                        initialStreamWindow = WINDOW.toLong()
+                        maxStreamWindow = WINDOW.toLong()
+                    }
                 val server = H2ServerConnection.start(toServer, toClient, settings, scope, close)
-                val client = H2ClientConnection.start(toClient, toServer, Http2Settings(), scope, Duration.INFINITE, close)
+                val client = H2ClientConnection.start(toClient, toServer, Http2Settings.Default, scope, Duration.INFINITE, close)
                 val received =
                     scope.async {
                         val r = server.requests.receive()

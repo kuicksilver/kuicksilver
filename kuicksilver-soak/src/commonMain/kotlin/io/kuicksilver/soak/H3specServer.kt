@@ -16,7 +16,7 @@ import kotlinx.coroutines.runBlocking
 /**
  * The server `tools/interop/h3spec.sh` runs h3spec (kazu-yamamoto/h3spec, RFC 9000, RFC 9001, RFC 9114 and RFC 9204
  * conformance of an HTTP/3 server) against: the Ktor engine with one TLS connector (the test PKI's server identity), its
- * HTTP/3 endpoint on the same UDP port, HTTP/2 off, 0-RTT accepted (`quicEarlyData`: h3spec's case of CRYPTO in 0-RTT,
+ * HTTP/3 endpoint on the same UDP port, HTTP/2 off (h3spec speaks only QUIC), 0-RTT accepted (`http3 { earlyData { enabled } }`: h3spec's case of CRYPTO in 0-RTT,
  * RFC 9001 section 8.3, needs a server that takes 0-RTT), otherwise the default QUIC settings and `Http3Settings`. Every
  * request, whatever its method and path, reads its content to the end and gets a 200 with a short text body. Arguments:
  * `[host] [port]` (default 127.0.0.1, 0). The bound port (TCP and UDP) is printed as `h3spec-server listening on <port>`
@@ -33,13 +33,16 @@ public fun h3specServerMain(args: Array<String>) {
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(SoakPki.identity()) {
+                tlsConnector {
+                    tls { identity = SoakPki.identity() }
                     this.host = host
                     this.port = port
                 }
-                http2 = false
-                http3 = true
-                quicEarlyData = true
+                http2 { enabled = false }
+                http3 {
+                    enabled = true
+                    earlyData { enabled = true }
+                }
             }) {
                 routing {
                     route("{...}") {

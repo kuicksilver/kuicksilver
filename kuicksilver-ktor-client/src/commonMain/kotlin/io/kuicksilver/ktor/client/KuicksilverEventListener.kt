@@ -101,7 +101,7 @@ public abstract class KuicksilverEventListener {
 
     /**
      * [request] connects to [alternative] (`host:port`), an endpoint of the origin's HTTPS resource record (RFC 9460,
-     * [Http3ClientConfig.httpsRecords]), over the transports the record allows; once per endpoint tried. A QUIC failure
+     * [ClientNetworkConfig.httpsRecords]), over the transports the record allows; once per endpoint tried. A QUIC failure
      * there marks it broken as for an `Alt-Svc` alternative ([altSvcMarkedBroken]).
      */
     public open fun httpsRecordUsed(
@@ -111,7 +111,11 @@ public abstract class KuicksilverEventListener {
 
     /**
      * The engine marked [alternative] of [origin] broken (RFC 7838 section 2.4): HTTP/3 failed there while HTTP/1.1 worked,
-     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stalled connection).
+     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stalled connection). Sent after the
+     * engine's Alt-Svc lock is released: when the network changed (or every mark was cleared) between the mark and this
+     * event, the mark is gone and the event is dropped, never sent late; a change that lands in the instant between that
+     * check and the call is not caught, so this event may still arrive just after a network change that already cleared
+     * the mark.
      */
     public open fun altSvcMarkedBroken(
         origin: String,
@@ -195,7 +199,7 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
-     * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.connectionMigration]):
+     * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.migration]):
      * [event] is what its [io.kuicksilver.quic.NetworkMigrator] did, a move to another network
      * ([MigrationEvent.Migrated]), a move that failed and left the connection where it was ([MigrationEvent.Failed]), a
      * lost network or a failed network source. Runs on the migrator's coroutine, not a call's.
@@ -209,7 +213,7 @@ public abstract class KuicksilverEventListener {
 /** Why the engine chose a protocol for a request ([KuicksilverEventListener.protocolSelected]). */
 @ExperimentalKuicksilverApi
 public enum class ProtocolReason {
-    /** `Http3DiscoveryMode.H1Only` or `H3Only`. */
+    /** `http3 { enabled = false }` or `Http3Discovery.H3Only`. */
     Configuration,
 
     /** `http://` (or `ws://`): HTTP/3 needs TLS. */
@@ -239,7 +243,7 @@ public enum class ProtocolReason {
     /** A proxy applies to the request: TCP through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
     Proxy,
 
-    /** `Http3ClientConfig.http3Allowed` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `H1Only`. */
+    /** `http3 { allowed }` returned false for this request: TCP (HTTP/1.1 or HTTP/2), as with `http3 { enabled = false }`. */
     Http3Disabled,
 
     /**

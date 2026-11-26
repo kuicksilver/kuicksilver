@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class, DelicateKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -10,6 +10,7 @@ import io.ktor.http.URLDecodeException
 import io.ktor.http.Url
 import io.ktor.http.decodeURLPart
 import io.ktor.http.isSecure
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.quic.KuicksilverLogger
@@ -23,7 +24,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.atomics.AtomicInt
 
 /**
- * Chooses the proxy for each request the engine's explicit `proxy` does not cover: `engine { proxyResolver = ... }`.
+ * Chooses the proxy for each request the engine's explicit `proxy` does not cover: `engine { proxies { resolver = ... } }`.
  * [proxyFor] returns null for a direct connection. It may throw (UnsupportedOperationException for a proxy the engine
  * cannot use): the request then fails rather than going around the proxy. A request through a proxy uses HTTP/1.1 only
  * (HTTP/3 is UDP, which no supported proxy carries). The engine keeps an answer for 30 seconds per scheme, host and port.
@@ -67,7 +68,7 @@ public object ProxyResolvers {
      * its answer is dropped). The script gets a `ws://` URI whole, with its resource name (RFC 6455 section 4.1); `wss`
      * and `https` as their origin only (`wss://host[:port]/`), as browsers give them, since a script from WPAD could
      * send a path's tokens out; `http` as its origin too, because the engine keeps answers per scheme, host and port
-     * (browsers keep an `http` path). `KuicksilverEngineConfig.pacFullWebSocketUrl` gives the settings' own script
+     * (browsers keep an `http` path). `proxies { pacFullWebSocketUrl }` gives the settings' own script
      * (inline, or from an `https` or local `file` URL; never WPAD's) a `wss://` URI whole. A script that cannot be fetched or run
      * in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine
      * logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not
@@ -87,7 +88,7 @@ internal interface WarningProxyResolver : ProxyResolver {
 
     /**
      * [proxyFor] where a PAC script the settings name (a PAC URL or the script, never one WPAD found) gets a `wss` URL
-     * whole when [pacFullWebSocketUrl] (`KuicksilverEngineConfig.pacFullWebSocketUrl`); see [pacTarget].
+     * whole when [pacFullWebSocketUrl] (`proxies { pacFullWebSocketUrl }`); see [pacTarget].
      */
     suspend fun proxyFor(
         url: Url,
@@ -646,7 +647,7 @@ private val resolverDispatcher = Dispatchers.IO.limitedParallelism(ProxyRouting.
 
 internal const val PAC_FAILED: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script that could not be fetched or run in " +
-        "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxyResolver to choose"
+        "time: requests use the next setting, else connect directly; set engine { proxy = ... } or proxies { resolver } to choose"
 
 /**
  * How long a lookup waits for a PAC script (WPAD's discovery, the script's download and its run): half the default
@@ -703,7 +704,7 @@ internal fun pacUrlIsPrivate(pacUrl: String?): Boolean {
  *   Chromium and Android keep the path of plain URLs too; whoever can serve the script can read them on the wire anyway.
  * - `wss` with [fullWebSocketUrl]: the whole URI too. Callers pass it only for a script the settings name (the script
  *   itself, or a PAC URL that is `https` or local `file`, [pacUrlIsPrivate]), never for one WPAD found or one fetched over
- *   plain `http` (`KuicksilverEngineConfig.pacFullWebSocketUrl`).
+ *   plain `http` (`proxies { pacFullWebSocketUrl }`).
  * - `http`: the origin only, `http://host[:port]/`. Chromium and Android keep an `http` URL's path (Firefox strips it);
  *   the engine gives the origin because it keeps answers per scheme, host and port, so a path could not change them.
  */
@@ -783,7 +784,7 @@ internal const val WPAD_NOT_FOUND: String =
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +
         "run: requests it does not cover with a fixed proxy connect directly; set engine { proxy = ... } or " +
-        "proxyResolver to choose"
+        "proxies { resolver } to choose"
 
 /** The engine's [ProxyResolver] answers, kept [TTL_MILLIS] per scheme, host and port (at most [MAX_ROUTES]). */
 internal class ProxyRouting(
@@ -807,22 +808,22 @@ internal class ProxyRouting(
         // creation, not each request
         val proxy = config.proxy
         if (proxy != null && proxy.type == ProxyType.SOCKS) {
-            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireSocks5Password(it) }
+            (proxy.platformProxyCredentials() ?: config.proxies.credentials)?.let { requireSocks5Password(it) }
         } else if (proxy != null && proxy.type == ProxyType.HTTP) {
-            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireBasicCredentials(it) }
+            (proxy.platformProxyCredentials() ?: config.proxies.credentials)?.let { requireBasicCredentials(it) }
         }
     }
 
-    /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
+    /** The engine's `proxy` with `proxies { credentials }`, converted once (one credentials instance, so one pool route). */
     private val explicitProxy: Result<ResolvedProxy?> by lazy {
-        runCatching { config.proxy?.toResolvedProxy(config.proxyCredentials) }
+        runCatching { config.proxy?.toResolvedProxy(config.proxies.credentials) }
     }
 
     /** See [explicitProxy]; a proxy the engine cannot use fails every request with the same exception. */
     fun explicit(): ResolvedProxy? = explicitProxy.getOrThrow()
 
     suspend fun lookup(url: Url): ResolvedProxy? {
-        val resolver = config.proxyResolver
+        val resolver = config.proxies.resolver
         if (resolver === ProxyResolvers.None) return null
         // a WebSocket's resource name is part of what a PAC script gets (RFC 6455 section 4.1), so of the key too
         val resource = if (url.protocol.name == "ws" || url.protocol.name == "wss") url.encodedPathAndQuery else ""
@@ -884,7 +885,7 @@ internal class ProxyRouting(
                 inFlight[key]?.takeUnless { it.isCompleted } ?: kotlinx.coroutines.GlobalScope
                     .async(resolverDispatcher) {
                         if (resolver is WarningProxyResolver) {
-                            resolver.proxyFor(url, ::warnOnce, config.pacFullWebSocketUrl)
+                            resolver.proxyFor(url, ::warnOnce, config.proxies.pacFullWebSocketUrl)
                         } else {
                             resolver.proxyFor(url)
                         }

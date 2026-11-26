@@ -36,7 +36,9 @@ input and the stack trace are not published.
 |---|---|
 | Acknowledgement of your report | within 3 business days |
 | Initial assessment (valid or not, severity, affected versions) | within 14 days |
-| Fix released for Critical and High severity | within 30 days of the assessment |
+| Fix released for Critical and High severity | a patch release within 30 days of the assessment, and no later than 60 days after it becomes publicly known |
+| Fix released for Medium severity, publicly known or whose disclosure date is within 60 days of the assessment | a patch release within 60 days of the assessment or of its becoming publicly known, whichever is earlier |
+| Fix released for other vulnerabilities | the next minor release, or a patch release when it cannot wait |
 | Public disclosure | coordinated with you; by default no later than 90 days after the report |
 
 We keep you informed while we work on the fix, agree the disclosure date with you, and credit you in the advisory
@@ -66,8 +68,12 @@ a release with a security fix is coming, without details, and the release's `CHA
 
 Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
 supported major version will receive security fixes, and a major version will be supported for at least two years
-after the next major version is released. Fixes land on `main` and ship in a patch release of the latest line, made
-from its maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
+after the next major version is released. Fixes land on `main` and ship in the next minor release; a security fix that
+cannot wait for it ships in a patch release of the latest line ([version policy](docs/roadmap.md#version-policy)). A
+Critical or High vulnerability always cannot wait: its fix ships as a patch release within 30 days of the assessment.
+Nor can a fix for a Medium vulnerability that is publicly known, or whose disclosure date is within 60 days of the
+assessment: it ships as a patch release within 60 days ([What happens next](#what-happens-next)). Patch releases are made
+from the line's maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
 
 ## OpenSSL
 
@@ -104,19 +110,19 @@ from us, so we commit to the following.
   every issue that is, we make a patch release of the supported line with the fixed OpenSSL (OpenSSL publishes the
   fixed release together with its advisory):
 
-  | OpenSSL advisory | Kuicksilver patch release with the fixed OpenSSL |
+  | OpenSSL release | Kuicksilver release with the fixed OpenSSL |
   |---|---|
-  | Critical or High, reachable through Kuicksilver | within 72 hours of the advisory |
-  | Moderate or Low, reachable through Kuicksilver | within 7 days of the advisory |
-  | Not reachable in our configuration or through our use of OpenSSL | in the next planned release, with a note saying why it does not affect us |
-  | Non-security 4.1.x patch release | within 30 days |
+  | Advisory, Critical or High, reachable through Kuicksilver | a patch release within 72 hours of the advisory |
+  | Advisory, Moderate or Low, reachable through Kuicksilver | a patch release within 7 days of the advisory |
+  | Advisory not reachable in our configuration or through our use of OpenSSL | the next minor release, with a note saying why it does not affect us |
+  | Non-security 4.1.x patch release | the next minor release ([version policy](docs/roadmap.md#version-policy)) |
 
   For a reachable issue we also publish a GitHub Security Advisory of this repository that names the OpenSSL advisory
   and CVE, the affected Kuicksilver versions and the fixed one ([Where to see the status](#where-to-see-the-status)).
   When we are not sure an issue is unreachable, we treat it as reachable.
 - **Maven Central limits.** By agreement with Sonatype, the `io.kuicksilver` namespace has a monthly file and size
-  quota that one release nearly fills, so planned releases come at most once a month ([docs/release.md, Publishing
-  limits](docs/release.md#once-accounts-keys-dns)). A security release does not wait for the next month: it is
+  quota (since 2026-11-14 about two releases of the 0.2.x size), and planned releases come at most once a month
+  ([docs/release.md, Publishing limits](docs/release.md#once-accounts-keys-dns)). A security release does not wait for the next month: it is
   uploaded to Central even when the month's quota is already used, and whether Central accepts a deployment above the
   quota is Sonatype's decision. This emergency path has not been needed yet. If Central refused such an upload, the
   advisory would say so, name the affected versions and any mitigation, and the release would follow as soon as Central

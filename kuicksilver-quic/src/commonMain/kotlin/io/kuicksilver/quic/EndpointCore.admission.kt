@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.EndpointCore.Stateless
 import io.kuicksilver.quic.core.AddressClass
@@ -93,6 +96,13 @@ internal fun EndpointCore.admitOne(
     if (fromIp < 0) {
         initialsDropped++
         refusedLimits++
+        // behind NAT or a proxy many clients share an address: say why they are refused, at most once per 5 minutes
+        if (fromIp == io.kuicksilver.quic.endpoint.ConnectionSlots.PER_IP_FULL && slots.perIpWarningDue(now.nanos)) {
+            config.logger.emit(LogLevel.Warn) {
+                "QUIC per-IP limit (${config.maxConnectionsPerIp}) reached for ${ipText(ipKey.bytes)}; behind NAT or kube-proxy set " +
+                    "http3 { endpoint { maxConnectionsPerIp = null } }"
+            }
+        }
         return false
     }
     pendingSlot = ipKey

@@ -45,7 +45,7 @@ import kotlin.time.Duration.Companion.seconds
 class AbandonedBodyTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private suspend fun abandon(discovery: Http3DiscoveryMode) {
+    private suspend fun abandon(discovery: Http3Discovery?) {
         val active = AtomicInt(0)
         val chunk = ByteArray(16 * 1024)
         val (server, port) =
@@ -93,7 +93,7 @@ class AbandonedBodyTest {
      * copier is modelled here by the same construct with a destination that stops taking bytes: deterministic.
      */
     @OptIn(InternalAPI::class)
-    private suspend fun leaveWithStuckCopier(discovery: Http3DiscoveryMode) {
+    private suspend fun leaveWithStuckCopier(discovery: Http3Discovery?) {
         val chunk = ByteArray(16 * 1024)
         val (server, port) =
             testServer {
@@ -163,11 +163,11 @@ class AbandonedBodyTest {
         override fun cancel(cause: Throwable?) {}
     }
 
-    @Test fun leftBodyWithStuckCopierEndsCallH1() = clientTest { leaveWithStuckCopier(Http3DiscoveryMode.H1Only) }
+    @Test fun leftBodyWithStuckCopierEndsCallH1() = clientTest { leaveWithStuckCopier(null) }
 
-    @Test fun leftBodyWithStuckCopierEndsCallH3() = h3Test { leaveWithStuckCopier(Http3DiscoveryMode.H3Only) }
+    @Test fun leftBodyWithStuckCopierEndsCallH3() = h3Test { leaveWithStuckCopier(Http3Discovery.H3Only) }
 
-    @Test fun abandonedBodyEndsServerHandlerH1() = clientTest { abandon(Http3DiscoveryMode.H1Only) }
+    @Test fun abandonedBodyEndsServerHandlerH1() = clientTest { abandon(null) }
 
-    @Test fun abandonedBodyEndsServerHandlerH3() = h3Test { abandon(Http3DiscoveryMode.H3Only) }
+    @Test fun abandonedBodyEndsServerHandlerH3() = h3Test { abandon(Http3Discovery.H3Only) }
 }

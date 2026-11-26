@@ -48,6 +48,13 @@ public class Certificate(
     @InternalKuicksilverApi
     public val isCa: Boolean get() = parsed.isCa
 
+    /**
+     * Whether the TLS feature extension (RFC 7633, id-pe-tlsfeature) lists `status_request` (5): the certificate is
+     * must-staple, and a connection that presents it needs a stapled OCSP response. False when the walker cannot read it
+     * (the handshake decides on OpenSSL's reading, `ksl_ocsp.c`).
+     */
+    internal val mustStaple: Boolean get() = runCatching { parsed.mustStaple }.getOrDefault(false)
+
     /** Equal when the encoded certificates are. */
     override fun equals(other: Any?): Boolean = other is Certificate && other.encoded.contentEquals(encoded)
 
@@ -105,6 +112,7 @@ internal object Der {
         val dnsNames: List<String>,
         val ipAddresses: List<ByteArray>,
         val isCa: Boolean,
+        val mustStaple: Boolean = false,
     ) // null: a time this walker cannot read
 
     private class Tlv(
@@ -158,6 +166,9 @@ internal object Der {
 
     fun fail(): Nothing = throw TlsException.Config("malformed certificate DER")
 
+    /** The content octets of the OID 1.3.6.1.5.5.7.1.24 (id-pe-tlsfeature). */
+    private val TLS_FEATURE_OID = byteArrayOf(0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x18)
+
     fun parseCertificate(b: ByteArray): CertificateFields {
         val cert = tlv(b, 0, b.size)
         if (cert.tag != 0x30) fail()
@@ -178,6 +189,7 @@ internal object Der {
         val dns = ArrayList<String>()
         val ips = ArrayList<ByteArray>()
         var isCa = false
+        var mustStaple = false
         val ext = fields.drop(i).firstOrNull { it.tag == 0xa3 }
         if (ext != null) {
             for (e in children(b, tlv(b, ext.start, ext.end))) {
@@ -195,6 +207,20 @@ internal object Der {
                         }
                     }
                 }
+                // TLS feature (1.3.6.1.5.5.7.1.24, RFC 7633 section 6): SEQUENCE OF INTEGER; 5 is status_request (must-staple)
+                if (oid.tag == 0x06 && b.copyOfRange(oid.start, oid.end).contentEquals(TLS_FEATURE_OID)) {
+                    mustStaple =
+                        runCatching {
+                            val value = parts.last()
+                            value.tag == 0x04 &&
+                                tlv(b, value.start, value.end).let { seq ->
+                                    seq.tag == 0x30 &&
+                                        children(b, seq).any { n ->
+                                            n.tag == 0x02 && n.end - n.start == 1 && b[n.start] == 5.toByte()
+                                        }
+                                }
+                        }.getOrDefault(false)
+                }
                 // basicConstraints (2.5.29.19): SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER OPTIONAL }
                 if (oid.tag == 0x06 && oid.end - oid.start == 3 && b[oid.start] == 0x55.toByte() && b[oid.start + 1] == 0x1d.toByte() &&
                     b[oid.start + 2] == 0x13.toByte()
@@ -209,7 +235,7 @@ internal object Der {
                 }
             }
         }
-        return CertificateFields(notBefore, notAfter, dns, ips, isCa)
+        return CertificateFields(notBefore, notAfter, dns, ips, isCa, mustStaple)
     }
 
     private fun timeOrNull(

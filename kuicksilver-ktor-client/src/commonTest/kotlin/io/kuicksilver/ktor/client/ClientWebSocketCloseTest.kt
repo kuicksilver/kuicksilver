@@ -241,7 +241,7 @@ class ClientWebSocketCloseTest {
                             probing(output) { readClientFrames(input, it) }
                         }
                     }
-                testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
+                testClient(engine = { observability { eventListener = events } }, block = { install(WebSockets) }).use { c ->
                     (c.engine as KuicksilverEngine).h1.webSocketCloseWaitMillis = 200
                     val port = (listener.localAddress as InetSocketAddress).port
                     val session = c.webSocketSession("ws://127.0.0.1:$port/ws")

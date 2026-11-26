@@ -60,7 +60,7 @@ class ClientSocksProxyTest {
 
     /**
      * RFC 1929 section 2 gives PASSWD 1 to 255 octets (PLEN 1..255), so a SOCKS5 proxy with an empty password is refused
-     * when it is configured: the engine's `proxy` with such `proxyCredentials` fails the engine's creation, and
+     * when it is configured: the engine's `proxy` with such `proxies { credentials }` fails the engine's creation, and
      * `ResolvedProxy.socks5` fails at once. An empty password stays allowed for an HTTP proxy (`Basic`, RFC 7617).
      */
     @Test fun negative_socks5ProxyWithAnEmptyPasswordIsAConfigurationError() {
@@ -69,7 +69,7 @@ class ClientSocksProxyTest {
                 HttpClient(Kuicksilver) {
                     engine {
                         proxy = ProxyBuilder.socks("127.0.0.1", 1080)
-                        proxyCredentials = ProxyCredentials("u", "")
+                        proxies { credentials = ProxyCredentials("u", "") }
                     }
                 }.close()
             }
@@ -81,7 +81,7 @@ class ClientSocksProxyTest {
         HttpClient(Kuicksilver) {
             engine {
                 proxy = ProxyBuilder.http(Url("http://127.0.0.1:3128"))
-                proxyCredentials = ProxyCredentials("u", "")
+                proxies { credentials = ProxyCredentials("u", "") }
             }
         }.close()
     }
@@ -191,7 +191,7 @@ class ClientSocksProxyTest {
         }
 
     /**
-     * The application resolver ([KuicksilverEngineConfig.dns]) through SOCKS5: asked for the proxy's name in both forms; for
+     * The application resolver ([ClientNetworkConfig.dns]) through SOCKS5: asked for the proxy's name in both forms; for
      * the origin's only through `socks5` (names resolved here, the proxy gets the address), never through `socks5h`, whose
      * proxy gets the name (ATYP 3, RFC 1928 section 5).
      */
@@ -209,8 +209,8 @@ class ClientSocksProxyTest {
                                 listOf(IpAddress.parse("127.0.0.1"))
                             }
                         testClient(engine = {
-                            this.dns = dns
-                            proxyResolver = ProxyResolver { ResolvedProxy.socks5("proxy.test", proxyPort, remoteDns = remoteDns) }
+                            network { this.dns = dns }
+                            proxies { resolver = ProxyResolver { ResolvedProxy.socks5("proxy.test", proxyPort, remoteDns = remoteDns) } }
                         }).use { c ->
                             assertEquals("through", c.get("https://server.test:$port/").bodyAsText())
                         }
@@ -237,7 +237,7 @@ class ClientSocksProxyTest {
                 socksProxy(port, auth = ProxyCredentials("alice", "pw")) { proxyPort, seen ->
                     testClient(engine = {
                         proxy = ProxyBuilder.socks("127.0.0.1", proxyPort)
-                        proxyCredentials = ProxyCredentials("alice", "pw")
+                        proxies { credentials = ProxyCredentials("alice", "pw") }
                     }).use { c ->
                         assertEquals("authenticated", c.get("https://127.0.0.1:$port/").bodyAsText())
                         assertEquals(listOf(0, 2), seen.methods.await())
@@ -307,7 +307,7 @@ class ClientSocksProxyTest {
                         }
                     val proxyPort = (listener.localAddress as InetSocketAddress).port
                     testClient(engine = {
-                        proxyResolver = environmentResolver(mapOf("all_proxy" to "socks5://127.0.0.1:$proxyPort"))
+                        proxies { resolver = environmentResolver(mapOf("all_proxy" to "socks5://127.0.0.1:$proxyPort")) }
                         resolverForTest = { host, p ->
                             if (host == "server.test") {
                                 listOf(
@@ -367,7 +367,7 @@ class ClientSocksProxyTest {
     @Test fun negative_socksH3OnlyFails() =
         clientTest {
             socksProxy(1) { proxyPort, seen ->
-                testClient(Http3DiscoveryMode.H3Only, engine = { proxy = ProxyBuilder.socks("127.0.0.1", proxyPort) }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { proxy = ProxyBuilder.socks("127.0.0.1", proxyPort) }).use { c ->
                     assertFailsWith<UnsupportedOperationException> { c.get("https://127.0.0.1:1/").bodyAsText() }
                     assertTrue(!seen.methods.isCompleted, "the proxy was contacted")
                 }
@@ -414,7 +414,7 @@ class ClientSocksProxyTest {
             }
         }
 
-    /** `proxyCredentials` go on the CONNECT at once as `Basic` (no 407 round trip), and never into the tunnel. */
+    /** `proxies { credentials }` go on the CONNECT at once as `Basic` (no 407 round trip), and never into the tunnel. */
     @Test fun proxyCredentialsSentPreemptivelyOnConnect() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("${call.request.headers["Proxy-Authorization"]}") } } }
@@ -422,7 +422,7 @@ class ClientSocksProxyTest {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
                     testClient(engine = {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort"))
-                        proxyCredentials = ProxyCredentials("u", "p")
+                        proxies { credentials = ProxyCredentials("u", "p") }
                     }).use { c ->
                         assertEquals("null", c.get("https://127.0.0.1:$port/").bodyAsText())
                         assertTrue("Proxy-Authorization: Basic dTpw" in head(), "${head()}")
@@ -511,7 +511,7 @@ class ClientSocksProxyTest {
                     val proxyPort = (listener.localAddress as InetSocketAddress).port
                     testClient(engine = {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort"))
-                        proxyCredentials = ProxyCredentials("u", "p")
+                        proxies { credentials = ProxyCredentials("u", "p") }
                     }).use { c ->
                         assertEquals("ok", c.get("http://origin.test:8080/x").bodyAsText())
                     }
@@ -541,9 +541,9 @@ class ClientSocksProxyTest {
                                 reasons += reason
                             }
                         }
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort"))
-                        eventListener = listener
+                        observability { eventListener = listener }
                     }).use { c ->
                         assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                         assertEquals(listOf(ProtocolReason.Proxy), reasons)

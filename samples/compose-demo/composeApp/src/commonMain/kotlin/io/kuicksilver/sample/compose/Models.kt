@@ -4,7 +4,7 @@ package io.kuicksilver.sample.compose
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.prepareGet
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.quic.MigrationEvent
@@ -251,8 +251,8 @@ data class DiagnosticsState(
 )
 
 /**
- * The Diagnostics screen's model: a GET of any URL with Kuicksilver in Auto discovery (HTTP/1.1 first, HTTP/3 once the
- * origin announced it with Alt-Svc, as an app would run it), and the kill switch [setHttp3Allowed], which the engine reads
+ * The Diagnostics screen's model: a GET of any URL with Kuicksilver in Auto discovery (HTTP/2 or HTTP/1.1 first, HTTP/3
+ * once the origin announced it with Alt-Svc, as an app would run it), and the kill switch [setHttp3Allowed], which the engine reads
  * on every request. [clientFor] builds the client for a trust and the switch.
  */
 class DiagnosticsModel(
@@ -322,7 +322,7 @@ class DemoApp(
 
     val diagnostics: DiagnosticsModel =
         DiagnosticsModel(scope) { trust, allowed ->
-            kuicksilverClient(trust, Http3DiscoveryMode.Auto, migration = null, networkId = null, http3Allowed = allowed)
+            kuicksilverClient(trust, Http3Discovery.Auto, migration = null, networkId = null, http3Allowed = allowed)
         }
 
     init {

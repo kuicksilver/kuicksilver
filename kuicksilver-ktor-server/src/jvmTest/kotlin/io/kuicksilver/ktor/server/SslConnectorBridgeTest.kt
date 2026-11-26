@@ -85,7 +85,7 @@ class SslConnectorBridgeTest {
             val servers =
                 listOf(listOf("TLSv1.2", "TLSv1.3"), null).map { protocols ->
                     embeddedServer(Kuicksilver, configure = {
-                        http3 = false
+                        http3 { enabled = false }
                         sslConnector(ks, "server", { "pw".toCharArray() }, { "pw".toCharArray() }) {
                             host = "127.0.0.1"
                             port = 0

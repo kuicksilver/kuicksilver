@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.http2.core
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder

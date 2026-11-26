@@ -41,7 +41,7 @@ class PmtudStartResumptionTest {
 
     private fun quic(block: QuicConfig.Builder.() -> Unit = {}): QuicConfig =
         quicConfig {
-            maxIdleTimeout = Duration.ZERO
+            maxIdleTimeout = null
             block()
         }
 
@@ -205,7 +205,7 @@ class PmtudStartResumptionTest {
         // every datagram coalesces an Initial (with the ticket) and a padded 0-RTT packet: no single packet above 1200
         val serverQuic = quic()
         val t = ticket(serverQuic)
-        val p = resumed(t, quic { initialUdpPayloadSize = 1300 }, serverQuic, link = 1250)
+        val p = resumed(t, quic { pathMtu { initial = 1300 } }, serverQuic, link = 1250)
         p.use { _ ->
             val sizes = clientSizes(p)
             p.step()
@@ -230,7 +230,7 @@ class PmtudStartResumptionTest {
 
     @Test fun negative_aServerStartAboveTheLinkFallsBackOnAResumedHandshake() {
         // resumption: no certificate, so the server's Initial and Handshake packets share one datagram, each below 1200
-        val serverQuic = quic { initialUdpPayloadSize = 1300 }
+        val serverQuic = quic { pathMtu { initial = 1300 } }
         val t = ticket(serverQuic)
         val p = resumed(t, quic(), serverQuic, link = 1250, zeroRtt = false)
         p.use { _ ->
@@ -259,7 +259,7 @@ class PmtudStartResumptionTest {
         // datagram this path did send larger (RFC 9000 section 14.2.1, RFC 8899 section 4.6.1), not one it never sent
         val serverQuic = quic()
         val t = ticket(serverQuic)
-        val p = resumed(t, quic { initialUdpPayloadSize = 1300 }, serverQuic, link = 1500)
+        val p = resumed(t, quic { pathMtu { initial = 1300 } }, serverQuic, link = 1500)
         p.use { _ ->
             val datagrams = ArrayList<ByteArray>()
             val keep = p.filterToServer
@@ -290,9 +290,9 @@ class PmtudStartResumptionTest {
 
     @Test fun negative_zeroRttStaysWithinTheRememberedMaxUdpPayloadSize() {
         // RFC 9000 section 7.4.1: the client uses the remembered max_udp_payload_size for 0-RTT
-        val serverQuic = quic { maxUdpPayloadSize = 1250 }
+        val serverQuic = quic { pathMtu { maxReceive = 1250 } }
         val t = ticket(serverQuic)
-        val p = resumed(t, quic { initialUdpPayloadSize = 1400 }, serverQuic, link = 1500)
+        val p = resumed(t, quic { pathMtu { initial = 1400 } }, serverQuic, link = 1500)
         p.use { _ ->
             assertEquals(1250, p.client.stats.pathMtu, "lowered as the ticket is used")
             val sizes = clientSizes(p)
@@ -317,16 +317,16 @@ class PmtudStartResumptionTest {
             val what = "round $round: client $clientStart server $serverStart link $link 0-RTT $zeroRtt pmtud $pmtud small $small"
             val serverQuic =
                 quic {
-                    initialUdpPayloadSize = serverStart
-                    this.pmtud = pmtud
+                    pathMtu { initial = serverStart }
+                    pathMtu { discovery = pmtud }
                 }
             val t = ticket(serverQuic, small)
             val p =
                 resumed(
                     t,
                     quic {
-                        initialUdpPayloadSize = clientStart
-                        this.pmtud = pmtud
+                        pathMtu { initial = clientStart }
+                        pathMtu { discovery = pmtud }
                     },
                     serverQuic,
                     link,

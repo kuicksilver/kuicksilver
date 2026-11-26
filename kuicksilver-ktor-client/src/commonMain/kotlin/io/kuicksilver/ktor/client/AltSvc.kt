@@ -14,7 +14,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * @property port the alternative's UDP port, 1..65535.
  * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: the time the response was generated plus `ma`
  *   (86400 s by default), where the generation time is the receipt time minus the response's age (RFC 7838 section 3.1).
- * @property persist `persist=1`: the entry survives a network change even with [Http3ClientConfig.clearOnNetworkChange].
+ * @property persist `persist=1`: the entry survives a network change even with `http3 { expert { clearAltSvcOnNetworkChange } }`.
  *
  * Two entries are equal when they name the same alternative ([protocol], [host], [port], [persist]); the expiry is left
  * out, so a repeated `Alt-Svc` header compares equal to the stored one.
@@ -38,8 +38,18 @@ public class AltSvcEntry(
 }
 
 /**
- * Storage of Alt-Svc records by origin (`https://host:port`); implement it to keep them across restarts. The engine calls
- * it under its own lock, so an implementation used by one engine needs no locking of its own.
+ * Storage of Alt-Svc records by origin; implement it to keep them across restarts. The engine calls it under its own lock,
+ * so an implementation used by one engine needs no locking of its own.
+ *
+ * Every `origin` the engine passes has one canonical form, the one [originOf] gives for a URL: `scheme://host:port` with
+ * the scheme in lowercase (`https`; a `wss` URL is its `https` origin, a `ws` URL its `http` one), the host with its
+ * ASCII letters in lowercase (`i;ascii-casemap`, RFC 4790) and nothing else changed, a trailing dot included
+ * (`example.com.` is another origin than `example.com`, RFC 6454 section 4), an IPv6 address in brackets in the text RFC
+ * 5952 recommends, and the port always written, the scheme's default included: `https://example.com:443`,
+ * `https://[2001:db8::1]:8443`. An internationalised name is keyed as the URL gives it, so use its A-label (`xn--...`):
+ * a Unicode spelling and its A-label are two keys. A store that looks an origin up, or seeds one, by a key it builds
+ * itself builds it with [originOf]. There is no change callback: wrap the store (the engine calls [put], [remove],
+ * [clearNonPersistent] and [clear] for every change) to observe what it learns.
  */
 public interface AltSvcStore {
     /** The entries stored for [origin], expired ones included (the engine skips those); empty when there are none. */
@@ -71,13 +81,13 @@ public interface AltSvcStore {
     public fun clear(): Unit = throw UnsupportedOperationException("this AltSvcStore does not implement clear()")
 
     /**
-     * The network ([Http3ClientConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
+     * The network ([ClientNetworkConfig.networkId]) the stored entries were learned on, as the engine last set it; null when
      * not known. A store kept across restarts keeps it with the entries: at its first request the engine compares it with
      * the current network and, when they differ, drops the entries without `persist=1` (RFC 7838 section 2.2: "clients
      * SHOULD remove from cache all alternative services that lack the "persist" flag with the value "1" when they detect
      * such a change"). The default keeps nothing and answers null, which never matches a network the engine knows: an
      * application's store that does not implement it loses its non-persistent entries at each start where the engine knows
-     * the network. Used with [Http3ClientConfig.networkId] only: the networks `connectionMigration` follows have no identity
+     * the network. Used with [ClientNetworkConfig.networkId] only: the networks `http3 { migration }` follows have no identity
      * that survives a restart ([Http3ConnectionMigration.networks]) and are never stored.
      */
     @ExperimentalKuicksilverApi
@@ -86,6 +96,17 @@ public interface AltSvcStore {
         set(value) {
             // not kept
         }
+
+    /** [originOf], the origin key of a URL. */
+    public companion object {
+        /**
+         * The origin key the engine stores [url]'s alternatives under, in the canonical form [AltSvcStore] describes:
+         * `originOf(Url("https://Example.COM/x"))` is `https://example.com:443`, `originOf(Url("wss://[2001:DB8:0::1]:8443/"))`
+         * is `https://[2001:db8::1]:8443`. The path, query and user info are not part of it.
+         */
+        @ExperimentalKuicksilverApi
+        public fun originOf(url: Url): String = originKeyOf(url)
+    }
 }
 
 /**
@@ -547,16 +568,39 @@ public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null): Boo
  * "If the port part of the origin triple is different from the default port for the protocol given by the scheme part of
  * the origin triple", ":" and the port), names the origin of [url]: RFC 7838 section 4,
  * "An association with an origin that the client does not consider authoritative for the current connection MUST be
- * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
- * Scheme and host compare case-insensitively; an explicit default port is taken too.
+ * ignored". Only the origin the connection was set up for is taken as authoritative here, also on a connection that carries
+ * other origins by coalescing (ADR-0018): those learn from their responses' `Alt-Svc` fields, and a frame on one of their
+ * request streams, which does not name its origin, is ignored by the caller (`H1Pool`).
+ * Both are compared as [canonicalOrigin] keys (scheme and host case-insensitively in ASCII, an IPv6 address in any
+ * spelling), the port of [origin] being the scheme's default when it is left out (an explicit default port is taken too).
+ * Anything but `scheme://host[:port]` with an `http` or `https` scheme (a path, user info, an empty host) matches nothing.
  */
 internal fun isAltSvcFrameOrigin(
     origin: String,
     url: Url,
 ): Boolean {
-    val base = "${url.protocol.name}://${url.host}".lowercase()
-    val o = origin.lowercase()
-    return o == "$base:${url.port}" || (url.port == url.protocol.defaultPort && o == base)
+    val sep = origin.indexOf("://")
+    if (sep <= 0) return false
+    val scheme = asciiLowercase(origin.substring(0, sep))
+    val default =
+        when (scheme) {
+            "https" -> 443
+            "http" -> 80
+            else -> return false
+        }
+    val authority = origin.substring(sep + 3)
+    if (authority.isEmpty() || authority.any { it == '/' || it == '?' || it == '#' || it == '@' }) return false
+    val portAt = if (authority.startsWith('[')) authority.indexOf("]:").let { if (it < 0) -1 else it + 1 } else authority.lastIndexOf(':')
+    val host = if (portAt < 0) authority else authority.substring(0, portAt)
+    if (host.isEmpty() || host == "[]") return false
+    val port =
+        if (portAt < 0) {
+            default
+        } else {
+            authority.substring(portAt + 1).takeIf { p -> p.isNotEmpty() && p.length <= 5 && p.all { it in '0'..'9' } }?.toInt()
+                ?: return false
+        }
+    return canonicalOrigin(scheme, host, port) == canonicalOrigin(asciiLowercase(url.protocol.name), url.host, url.port)
 }
 
 /** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */
@@ -572,17 +616,52 @@ internal fun <K, V> MutableMap<K, V>.evictEldest(max: Int) {
 }
 
 /**
- * The origin of [url] as the client's per-origin state keys it (Alt-Svc, broken marks, RTTs): `scheme://host:port` with a
- * WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the `https` origin (RFC 8441 section 5, which RFC 9220
- * applies to HTTP/3: ":scheme MUST be https for wss-schemed WebSockets"), and an alternative serves all requests to its
- * origin (RFC 7838 section 2.4), so `wss://` and `https://` to one host and port share it.
+ * The origin of [url] as the client's per-origin state keys it (Alt-Svc, broken marks, RTTs), in the canonical form of
+ * [AltSvcStore.originOf]: `scheme://host:port` with a WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the
+ * `https` origin (RFC 8441 section 5, which RFC 9220 applies to HTTP/3: ":scheme MUST be https for wss-schemed
+ * WebSockets"), and an alternative serves all requests to its origin (RFC 7838 section 2.4), so `wss://` and `https://`
+ * to one host and port share it.
  */
-internal fun originKeyOf(url: Url): String {
-    val scheme =
-        when (url.protocol.name) {
+internal fun originKeyOf(url: Url): String =
+    canonicalOrigin(
+        when (val name = asciiLowercase(url.protocol.name)) {
             "wss" -> "https"
             "ws" -> "http"
-            else -> url.protocol.name
-        }
-    return "$scheme://${url.host}:${url.port}"
+            else -> name
+        },
+        url.host,
+        url.port,
+    )
+
+/**
+ * `scheme://host:port` for [host], an IPv6 literal with or without its brackets: the host lowercased as RFC 6454 section 4
+ * does, ASCII letters only (`i;ascii-casemap`, RFC 4790 section 9.2; a non-ASCII name keeps its spelling), nothing else
+ * changed (a trailing dot stays: `example.com.` and `example.com` are two origins), and an IPv6 address in RFC 5952 text
+ * (lower-case hex, no leading zeros, the longest run of zero groups as `::`), a `%zone` kept as given, in brackets. Also
+ * the form a [FileAltSvcStore] record is read into, so a file written by an older version keys its origins the same way.
+ */
+internal fun canonicalOrigin(
+    scheme: String,
+    host: String,
+    port: Int,
+): String {
+    val raw = socketHost(host)
+    if (':' !in raw) return "$scheme://${asciiLowercase(raw)}:$port"
+    // an IPv6 literal: its zone (an interface name, `%eth0`) is split off first and kept as given, case included
+    val zoneAt = raw.indexOf('%')
+    val zone = if (zoneAt >= 0) raw.substring(zoneAt) else ""
+    var h = asciiLowercase(if (zoneAt >= 0) raw.substring(0, zoneAt) else raw)
+    val ip = parseIpLiteral(h)?.takeIf { it.size == 16 }
+    if (ip != null) {
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        h =
+            io.kuicksilver.ktor.network
+                .TcpAddress(ip, 0)
+                .hostText
+    }
+    return "$scheme://[$h$zone]:$port"
 }
+
+/** [s] with A-Z mapped to a-z and every other character as it is (`i;ascii-casemap`, RFC 4790 section 9.2). */
+internal fun asciiLowercase(s: String): String =
+    if (s.none { it in 'A'..'Z' }) s else buildString(s.length) { for (c in s) append(if (c in 'A'..'Z') c + ('a' - 'A') else c) }

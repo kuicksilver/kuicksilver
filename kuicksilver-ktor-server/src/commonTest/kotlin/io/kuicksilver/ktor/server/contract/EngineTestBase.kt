@@ -26,7 +26,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingRoot
 import io.ktor.util.logging.KtorSimpleLogger
 import io.ktor.util.logging.Logger
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 import io.kuicksilver.ktor.server.TestCerts
 import io.kuicksilver.ktor.server.quicServerSupported
@@ -185,13 +185,13 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
                 port = 0
             }
             if (enableSsl) {
-                (this as KuicksilverApplicationEngine.Configuration).tlsConnector(
-                    TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()),
-                ) {
-                    host =
-                        "127.0.0.1"
-                    ; port = 0
+                (this as KuicksilverApplicationEngine.Configuration).tlsConnector {
+                    tls { identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
+                    host = "127.0.0.1"
+                    port = 0
                 }
+                // the H1 suites drive HTTP/1.1 over TLS: HTTP/2, on by default since 0.3.0, is the H2 suites' to test
+                if (protocol == ContractProtocol.H1) (this as KuicksilverApplicationEngine.Configuration).http2 { enabled = false }
             }
             configure(this)
         }
@@ -233,14 +233,14 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
         }
     }
 
-    private fun client(discovery: Http3DiscoveryMode): HttpClient =
+    private fun client(discovery: Http3Discovery?): HttpClient =
         HttpClient(KuicksilverClient) {
             followRedirects = false
             expectSuccess = false
             install(HttpTimeout) { requestTimeoutMillis = 30_000 }
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { this.discovery = discovery }
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { discovery?.let { this.discovery = it } ?: run { enabled = false } }
             }
         }
 
@@ -253,15 +253,15 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
         if (protocol ==
             ContractProtocol.H3
         ) {
-            request(Http3DiscoveryMode.H3Only, "https://127.0.0.1:$sslPort$path", sslPort, builder, block)
+            request(Http3Discovery.H3Only, "https://127.0.0.1:$sslPort$path", sslPort, builder, block)
             return
         }
-        request(Http3DiscoveryMode.H1Only, "http://127.0.0.1:$port$path", port, builder, block)
-        if (enableSsl) request(Http3DiscoveryMode.H1Only, "https://127.0.0.1:$sslPort$path", sslPort, builder, block)
+        request(null, "http://127.0.0.1:$port$path", port, builder, block)
+        if (enableSsl) request(null, "https://127.0.0.1:$sslPort$path", sslPort, builder, block)
     }
 
     private suspend fun request(
-        mode: Http3DiscoveryMode,
+        mode: Http3Discovery?,
         url: String,
         port: Int,
         builder: suspend HttpRequestBuilder.() -> Unit,

@@ -41,7 +41,7 @@ class EchKeysRaceJvmTest {
         list: EchConfigList,
         server: TlsConfig,
     ): EchStatus {
-        val c = KslQuicCrypto.newSession(Fixtures.client { echConfigList = list })
+        val c = KslQuicCrypto.newSession(Fixtures.client { ech { configList = list } })
         val s = KslQuicCrypto.newSession(server)
         c.setTransportParameters(Fixtures.tp)
         s.setTransportParameters(Fixtures.tp)
@@ -57,7 +57,7 @@ class EchKeysRaceJvmTest {
     /** MUST-1: the keys are in the context once it is built, not given by the first session made from it. */
     @Test fun keysAreAppliedWhenTheContextIsBuilt() {
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
-        val lease = KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true)
+        val lease = KslContext.acquire(Fixtures.server { ech { this.keys = keys } }, quic = true)
         try {
             assertEquals(keys.version, lease.ctx.echAppliedVersion, "applied by build, before any session")
         } finally {
@@ -71,7 +71,7 @@ class EchKeysRaceJvmTest {
      */
     @Test fun concurrentRotationsGetDistinctVersions() {
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
-        val server = Fixtures.server { echKeys = keys }
+        val server = Fixtures.server { ech { this.keys = keys } }
         val lease = KslContext.acquire(server, quic = true)
         try {
             val reached = CountDownLatch(1)
@@ -105,7 +105,7 @@ class EchKeysRaceJvmTest {
      */
     @Test fun appliesNeverOverlap() {
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
-        val server = Fixtures.server { echKeys = keys }
+        val server = Fixtures.server { ech { this.keys = keys } }
         val lease = KslContext.acquire(server, quic = true)
         try {
             keys.rotate(listOf(EchKey(EchTestKeys.B)))
@@ -151,7 +151,7 @@ class EchKeysRaceJvmTest {
      */
     @Test fun racingAppliesNeverLeaveAnOlderSet() {
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
-        val server = Fixtures.server { echKeys = keys }
+        val server = Fixtures.server { ech { this.keys = keys } }
         val lease = KslContext.acquire(server, quic = true)
         try {
             keys.rotate(listOf(EchKey(EchTestKeys.B))) // v2

@@ -109,14 +109,14 @@ class QlogLifecycleTest {
         val client =
             quicConfig {
                 qlog = traces
-                resetStreamAt = true
-                maxDatagramFrameSize = 1200
+                expert { resetStreamAt = true }
+                datagrams { maxFrameSize = 1200 }
             }
         val server =
             quicConfig {
                 qlog = traces
-                resetStreamAt = true
-                maxDatagramFrameSize = 0
+                expert { resetStreamAt = true }
+                datagrams { maxFrameSize = null }
             }
         val p = CorePair(clientQuic = client, serverQuic = server)
         try {

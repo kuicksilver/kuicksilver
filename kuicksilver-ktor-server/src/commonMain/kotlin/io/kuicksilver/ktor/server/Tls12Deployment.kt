@@ -4,29 +4,40 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.util.logging.Logger
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.TlsVersions
 
 /**
  * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
- * \[TLS-ECDHE\] with the P-256 elliptic curve \[RFC8422\]". That suite needs an RSA certificate; a connector that serves HTTP/2
- * over TLS 1.2 with a key other than rsaEncryption (an EC key, or an RSA-PSS one, which serves that suite only to clients that offer the RSA-PSS signature schemes) is logged at startup, since TLS 1.2 clients that offer only RSA suites cannot connect to it.
- * Only the connector's own identity is looked at: identities an `sniSelector` returns are not known before their handshakes.
+ * \[TLS-ECDHE\] with the P-256 elliptic curve \[RFC8422\]". The TLS layer keeps it per handshake: a TLS 1.2 handshake
+ * whose certificate has no rsaEncryption key or whose groups lack P-256 is not offered `h2` (`h2_allowed` in `ksl_ctx.c`),
+ * so such a client gets HTTP/1.1, or `no_application_protocol` when it offers `h2` alone. Here, at the start: a connector
+ * that serves HTTP/2 over TLS 1.2 without [KeyExchangeGroups.SECP256R1] among its groups is refused (no TLS 1.2 client
+ * could get HTTP/2 from it, whatever its certificate), and one whose own certificate has no rsaEncryption key (an EC key,
+ * or an RSA-PSS one, which serves that suite only to clients that offer the RSA-PSS signature schemes) is logged at Info,
+ * since its TLS 1.2 clients get HTTP/1.1. Identities an `sniSelector` returns are not known before their handshakes: the
+ * TLS layer decides for them.
+ *
+ * @throws IllegalArgumentException for HTTP/2 over TLS 1.2 without P-256.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-internal fun warnTls12H2WithoutRsa(
+internal fun checkTls12H2(
     tls: KuicksilverTlsConnector,
     http2: Boolean,
     log: Logger,
 ) {
     if (!http2 || tls.versions != TlsVersions.Tls12And13) return
-    val leaf = tls.identity.chain.firstOrNull() ?: return
+    require(KeyExchangeGroups.SECP256R1 in tls.tls.keyExchangeGroups.groups) {
+        "HTTP/2 over TLS 1.2 on ${tls.host}:${tls.port} needs secp256r1 among tls { keyExchangeGroups } (RFC 9113 section " +
+            "9.2.2: deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with the P-256 " +
+            "curve): add it, set tls { versions = TlsVersions.Tls13 }, or http2 { enabled = false }"
+    }
+    val leaf = tls.identity?.chain?.firstOrNull() ?: return
     if (leaf.hasRsaKey() != false) return
-    log.warn(
-        "HTTP/2 over TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no rsaEncryption key (an RSA-PSS key serves " +
-            "that suite only to clients that also offer the RSA-PSS signature schemes), so the suite RFC 9113 section 9.2.2 " +
-            "requires of such deployments (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) cannot be negotiated with every client, " +
-            "and TLS 1.2 clients that offer only RSA suites may not connect; serve them with an rsaEncryption certificate " +
-            "(docs/guide/ktor.md, \"TLS 1.2 on the server\")",
+    log.info(
+        "TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no rsaEncryption key, so TLS 1.2 clients get HTTP/1.1, not " +
+            "HTTP/2 (RFC 9113 section 9.2.2 requires TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 of HTTP/2 over TLS 1.2); TLS 1.3 " +
+            "clients get HTTP/2 (docs/guide/ktor.md, \"TLS 1.2 on the server\")",
     )
 }
 

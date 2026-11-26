@@ -214,10 +214,10 @@ and range is in the [configuration reference](configuration.md).
 // guide:quic:config
 val quic = quicConfig {
     maxIdleTimeout = 30.seconds
-    initialStreamWindow = 512 * 1024L
+    flowControl { initialStreamWindow = 512 * 1024L }
     maxBidiStreams = 100
     versions = listOf(VersionProfile.V1)   // preference order; listOf(VersionProfile.V2, VersionProfile.V1) opts into v2 (RFC 9368/9369)
-    greaseQuicBit = true                    // RFC 9287
+    expert { greaseQuicBit = true }                    // RFC 9287
 }
 ```
 
@@ -237,7 +237,7 @@ validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 
 ```kotlin
 // guide:quic:initial-rtt
-val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+val lossyMobile = quicConfig { expert { initialRtt = 100.milliseconds } }
 ```
 
 Flow control: each stream starts with a receive window of `initialStreamWindow` (default 512 KiB) and the connection
@@ -254,9 +254,16 @@ acknowledged, so a connection blocked because its peer stopped reading stays ope
 packets per idle period (about 95 in 10 minutes with the default 30 s); bound such a wait in the application if it must
 not last. A report at a new limit goes out at once and starts the fast gaps again.
 
-A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
+A client that prefers v2 but must start in v1 (the widely deployed version) sets `expert { initialVersion = VersionProfile.V1 }`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
+
+Which version a connection ended up with is `QuicConnection.version` (experimental, 0.3.0): `VersionProfile.V1` or
+`VersionProfile.V2`, null until the handshake settled it. With more than one version configured it can differ from the
+one the client's first flight offered, so read it rather than `versions` or `initialVersion`. It is set before
+`awaitHandshake()` returns and before `onHandshakeCompleted` (a server's 0-RTT connection: when it accepted the early
+data), never changes afterwards and stays readable after the close; `ConnectionInfo.version` is the same value for a
+connection listener, and the Ktor client's `QuicConnectionSnapshot.version` carries it per call.
 
 ## Binding an endpoint and connecting
 
@@ -357,7 +364,7 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 // guide:quic:zero-rtt
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = QuicEndpoint.bind(addr, quicEndpointConfig {
-    this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
+    this.server = quicServerConfig(tlsServerConfig) { acceptEarlyData = true }   // tickets that allow 0-RTT
 })
 val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
 val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
@@ -380,13 +387,13 @@ after the first `connect` usually finds none and does a full handshake (`earlyDa
   `earlyDataAccepted` is false. The connection goes on with the server's new limits; send again on new streams what you
   still want. `Http3Connection.request` does that itself for its early requests. If the server chose another ALPN, or
   `EarlyDataState.Required` was asked for, the connection closes with `QuicException.ConnectionLost.ZeroRttRejected`.
-- **Server side.** With `earlyData = true`, `accept()` returns a connection as soon as its 0-RTT is accepted, so the
+- **Server side.** With `acceptEarlyData = true`, `accept()` returns a connection as soon as its 0-RTT is accepted, so the
   application can answer in 0.5-RTT. `QuicStream.receivedEarly` marks streams whose data came in 0-RTT.
   `earlyDataContext` binds application settings into tickets, and `Http3Endpoint` puts its SETTINGS there.
 - **Client certificates.** A server that asks for client certificates cannot accept 0-RTT: building a
-  `QuicServerConfig` with `earlyData = true` and a `clientAuth` other than `None` throws `IllegalArgumentException`
-  ("earlyData cannot be combined with client certificates"), and the Ktor server's `quicEarlyData` fails the start the
-  same way. A client with an identity may still ask for 0-RTT; such a server never offers it.
+  `QuicServerConfig` with `acceptEarlyData = true` and a `clientAuth` other than `None` throws `IllegalArgumentException`
+  ("acceptEarlyData cannot be combined with client certificates"), and the Ktor server's `http3 { earlyData { enabled } }`
+  fails the start the same way. A client with an identity may still ask for 0-RTT; such a server never offers it.
 - **Keys.** The client drops its 0-RTT key when the 1-RTT key arrives. The server drops its 0-RTT key 3 PTO after the
   first 1-RTT packet (RFC 9001 section 4.9.3).
 
@@ -526,15 +533,15 @@ bottleneck.
 
 ## Path MTU
 
-Datagrams start at 1200 bytes, or at `initialUdpPayloadSize` (experimental, see [Tunnels and NAT paths](#tunnels-and-nat-paths-wireguard)).
+Datagrams start at 1200 bytes, or at `pathMtu { initial }` (see [Tunnels and NAT paths](#tunnels-and-nat-paths-wireguard)).
 On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
-towards min(`maxUdpPayloadSize`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size`) (1452 by default; `QuicEndpoint` refuses a value above
+towards min(`pathMtu { maxReceive }`, `pathMtu { maxSend }`, the peer's `max_udp_payload_size`) (1452 by default; `QuicEndpoint` refuses a value above
 its 1500-byte datagram slots at `bind`/`connect`, the sans-IO core takes up to 65527), twenty bytes at a time, at most three tries per
 size; probes count in the congestion window but their loss is not a congestion signal. Three consecutive lost large
 datagrams, or two PTOs in a row while a datagram above 1200 is unanswered (one PTO while the path has acknowledged nothing yet; during the handshake too), mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling. The
+dropped (`stats.datagramsDroppedSend`). `pathMtu { discovery = false }` keeps `pathMtu { initial }` (1200 by default) as the ceiling. The
 portable socket sets DF on all its traffic
 (RFC 9000 section 14), in probe mode where the system takes it (Linux, Android, Windows; through `ksl` on the JVM), else
 in DO mode, where a forged ICMP message can make the system refuse sends to the peer: such a refusal of a datagram of at
@@ -543,7 +550,7 @@ socket that cannot set DF is not used for QUIC (`QuicException.DontFragmentUnava
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 
-ICMP helps only as a hint (`pmtudIcmpHints`, experimental, on by default; RFC 8899 section 4.6). On Linux and Android the
+ICMP helps only as a hint (`pathMtu { icmpHints }`, on by default; RFC 8899 section 4.6). On Linux and Android the
 accelerated socket reads ICMP Packet Too Big messages, and every accelerated socket reports a send the kernel refused as
 too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the connection's own packets on its active path
 and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
@@ -567,16 +574,16 @@ smaller initial window after a restore: an MTU change never raises the window in
 
 A tunnel lowers the MTU below what the search would try first, and a NAT or a firewall may drop large datagrams without an
 ICMP message. Inside WireGuard (interface MTU 1420) a UDP payload of at most 1392 bytes fits over IPv4 and 1372 over IPv6
-(1420 minus the 20- or 40-byte IP header and the 8-byte UDP header). Two options (experimental) tune the size for such a path:
+(1420 minus the 20- or 40-byte IP header and the 8-byte UDP header). Two options of `pathMtu { }` tune the size for such a path:
 
-- `initialUdpPayloadSize` (1200..65527, default 1200; less is refused, RFC 9000 section 14): the size the connection's first path
+- `initial` (1200..65527, default 1200; less is refused, RFC 9000 section 14): the size the connection's first path
   starts with, Initial packets included, which are padded to it (section 14.1: they "MAY exceed 1200 bytes if the sender
-  believes that the network path and peer both support the size"). A value above `maxSendUdpPayloadSize` or `maxUdpPayloadSize`
+  believes that the network path and peer both support the size"). A value above `maxSend` or `maxReceive`
   is lowered to it, and to the peer's `max_udp_payload_size` once its transport parameters arrive (a client's first flight goes
   before that; a server knows the client's from its first Initial). Only a socket that sets DF uses it; elsewhere the size stays 1200.
-- `maxSendUdpPayloadSize` (1200..65527, default 65527: no cap of its own): the largest datagram sent, initial size and DPLPMTUD
+- `maxSend` (1200..65527, default 65527: no cap of its own): the largest datagram sent, initial size and DPLPMTUD
   probes included (RFC 8899 section 4.4: "The MAX_PLPMTU MAY be reduced by an application that sets a maximum to the size of
-  datagrams it will send"). Unlike `maxUdpPayloadSize` it is not advertised, so the peer's datagrams to us are not limited by it.
+  datagrams it will send"). Unlike `maxReceive` it is not advertised, so the peer's datagrams to us are not limited by it.
 
 The configured size is a guess, not a fact, so a wrong one cannot break a connection for good: DPLPMTUD's black-hole detection
 watches it from the first datagram, judging the datagram's size, so a datagram that coalesces several smaller packets (an
@@ -586,33 +593,35 @@ vanish on a 1300-byte path falls back to 1200 at its first PTO (while nothing ha
 so even two misconfigured ends finish in about 2–3 s. Should the 1400-byte datagram be acknowledged after all (a slow first
 answer), the size comes back. On a path whose RTT is above about 1 s (satellite, a congested mobile link) the first answer
 may come after that PTO: the fallback is then spurious, and when the acknowledgment of the large datagram is lost too, the
-size stays at 1200 until the minute's pause ends and the search (or, with `pmtud = false`, the probe of the start) restores it.
+size stays at 1200 until the minute's pause ends and the search (or, with `discovery = false`, the probe of the start) restores it.
 A path that stops carrying the size later falls back after two PTOs or three lost large datagrams. A 0-RTT flight stays within the
 `max_udp_payload_size` the ticket remembers (RFC 9000 section 7.4.1). The kernel's EMSGSIZE for a regular datagram above its
 interface MTU (a start above a tunnel's MTU on the sending host) does not shortcut this: such a datagram counts as lost and the
 PTO rule falls back, because on some systems a forged Packet Too Big that the kernel cached can cause the same error, and only
-the probe in flight is settled by it. With `pmtud` on, the search goes on upwards from the start;
-with `pmtud = false` the start is also the ceiling, and after a fall back probes only go up to it again. A path to another IP
+the probe in flight is settled by it. With `discovery` on, the search goes on upwards from the start;
+with `discovery = false` the start is also the ceiling, and after a fall back probes only go up to it again. A path to another IP
 address (a migration) starts at 1200, since its MTU is unknown; a NAT rebinding keeps the size and its black-hole detection.
 
 ```kotlin
 // guide:quic:wireguard
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val tunnel = quicConfig {
-    initialUdpPayloadSize = 1350   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
-    maxSendUdpPayloadSize = 1372   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
+    pathMtu { initial = 1350 }   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
+    pathMtu { maxSend = 1372 }   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
 }
 ```
 
-A Ktor server started with `EngineMain` takes the same options as `application.conf` keys under `kuicksilver.quic`
-([configuration reference](configuration.md#quic-transport-keys)); the `kuicksilver-ktor-server` tests load this block as it stands:
+A Ktor server started with `EngineMain` takes the same options as `application.conf` keys under `kuicksilver.http3.quic`, the path of `http3 { quic { } }`
+([configuration reference](configuration.md#hocon-keys)); the `kuicksilver-ktor-server` tests load this block as it stands:
 
 ```hocon
-kuicksilver {
+kuicksilver.http3 {
     quic {
-        initialUdpPayloadSize = 1350
-        maxSendUdpPayloadSize = 1372
-        pmtud = true                   # false: never above initialUdpPayloadSize
+        pathMtu {
+            initial = 1350
+            maxSend = 1372
+            discovery = true           # false: never above pathMtu.initial
+        }
         maxIdleTimeout = 60s
         keepAlive = 15s                # PINGs keep a NAT's UDP mapping open while the application is quiet
     }
@@ -679,7 +688,7 @@ makes the endpoint also listen on those addresses and offer them to clients in `
 client that moves there validates the path first; the server switches its connection to the preferred socket only once it
 validated the client's address there too (until then everything non-probing leaves the original socket), reports
 `PathChangeReason.PreferredAddress` and closes the original path. Nothing else happens on a preferred socket: a new
-connection is never started there, and nothing is answered statelessly. With `allowMigration = false` a move to the
+connection is never started there, and nothing is answered statelessly. With `migration { allow = false }` a move to the
 preferred address is still taken, but only from the client's current address. With several loops every loop listens on
 the preferred addresses as on the main one: with `SO_REUSEPORT` where the kernel balances, else on one shared socket per
 address. Each preferred socket binds the literal address it
@@ -695,7 +704,7 @@ there may not receive it and ends at its idle timeout instead. Datagrams still a
 dropped (`datagramsDroppedStateless`), never answered from the main socket. The failure is logged as a warning and
 counted once in `EndpointStats.preferredAddressFailures`; everything on the main socket goes on.
 
-A client follows a server's preferred address by default (`followPreferredAddress`, experimental; RFC 9000 section 9.6):
+A client follows a server's preferred address by default (`migration { followPreferredAddress }`; RFC 9000 section 9.6):
 once the handshake is confirmed it validates a path to the address of the family it uses, with the server's
 sequence-1 connection ID, and moves there when the server answers. Only probes go there before that, and a failed
 validation leaves the connection where it was. A server reached on a public address cannot send the client to a
@@ -722,9 +731,9 @@ datagram ahead of everything else, and no PMTU probe goes to an address still un
 reports `PathEvent.Changed(old, new, reason)`, `PathEvent.Validated(path)` and `PathEvent.Failed(path)` events, and `pathState(id)`
 answers for any path (`Closed` once a path was closed or evicted, `Unknown` for an id never issued). Every migration and every 10 000 packets the connection switches to an unused connection ID of the
 peer and retires the old one; a connection ID the peer retired keeps routing for 3 × PTO so packets in flight still
-arrive (at most 32 retired IDs per connection route at once; beyond that the oldest stops early). `allowMigration = false` advertises `disable_active_migration` and drops datagrams from other addresses; a
+arrive (at most 32 retired IDs per connection route at once; beyond that the oldest stops early). `migration { allow = false }` advertises `disable_active_migration` and drops datagrams from other addresses; a
 move to a loopback or link-local address from a connection that did not start on one is refused unless
-`allowMigrationToLoopback` is set.
+`migration { allowToLoopback }` (delicate) is set.
 
 A client moves on its own with a second socket:
 
@@ -877,7 +886,7 @@ download, about a thousand times in two seconds). An empty
 bucket closes the connection with `PROTOCOL_VIOLATION` and the reason `excessive peer activity (0x10=…)`, listing the frame types that spent the tokens; `closed` then
 completes with `ConnectionLost.TransportClosed(code = 0x0a)`. Honest peers never spend: retransmitted data,
 keep-alive PINGs and real flow-control updates cost nothing, and `stats.glitchTokensSpent` stays at zero through a
-lossy transfer. Set `glitchProtection = false` in `quicConfig { }` to turn it off for a connection.
+lossy transfer. Set `expert { glitchProtection = false }` (delicate) in `quicConfig { }` to turn it off for a connection.
 
 ## Several loops on one port
 
@@ -950,7 +959,7 @@ block when they are 16 bytes together, a four-pass Feistel network otherwise), s
 server a connection is on; without one they travel in clear, and the server then hands each connection only its
 handshake ID (no NEW_CONNECTION_ID, as the draft asks, so clients cannot migrate to a new ID). The key bytes go into the
 native layer once (`newLoadBalancerKey` wipes your array); an endpoint takes its own copy when it is given the
-configuration, so you may close your handle after `bind` or `updateLoadBalancer`. `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
+configuration, so you may close your handle after `bind` or `updateLoadBalancer`. The endpoint's `connectionIdLength` must equal `1 + serverId + nonceLength` and be at least 8; a plaintext configuration
 cannot be combined with a `preferredAddress`.
 
 Nonces come from a counter, permuted with a key derived from the configuration key (in clear, a key of the process),
@@ -989,7 +998,7 @@ connection that had its full set of IDs then keeps them and gets no more; one wh
 gets exactly one plaintext ID. A
 server ID used in clear must never be used encrypted, or the other way round (the call refuses it).
 
-The Ktor server takes the configuration as `quicLoadBalancer` and changes it with `engine.updateLoadBalancer(next)`;
+The Ktor server takes the configuration as `http3 { endpoint { loadBalancer } }` (its connection ID length follows) and changes it with `engine.updateLoadBalancer(next)`;
 `Http3Endpoint.updateLoadBalancer` does the same for an HTTP/3 endpoint, and `EndpointCore.updateLoadBalancer` for a
 sans-IO endpoint driven by your own loop.
 
@@ -1020,7 +1029,7 @@ of decryptions a second, per address and in total) and hashes to that loop; unro
 
 A server decides per new client Initial whether to create a connection. `handleDatagram` runs only cheap checks on an
 unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no reflective source port such as 53 or
-123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
+123) and copies it into a bounded queue of `expert { initialAdmissionQueue }` (1024) entries; the loop then calls `processPending` once
 per receive batch. That step checks the Retry token, the accept queue, the hard limits (`maxConnections`,
 `maxConnectionsPerIp`, 256 per IP by default; both count the whole endpoint, every loop, as `acceptQueue` does) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
 `Retry`, `Drop` or `Close(code)`. `acceptQueue` (128 by default, shared by all loops) counts only the connections
@@ -1049,7 +1058,8 @@ every unvalidated client prove its address first. A `Retry` for an attempt whose
 address is a contract violation: the endpoint drops the Initial and counts it in `EndpointStats.admissionContractViolations`
 instead of sending a second Retry. An exception out of `admit` is treated as `Drop` and counted the same way. Stateless
 answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) are rate limited per address
-(`statelessPerAddressPerSecond`, 8) and in total (`statelessTotalPerSecond`, 1000). `QuicEndpoint.stats` exposes every
+(`expert { statelessPerAddressPerSecond }`, 8) and in total (`expert { statelessTotalPerSecond }`, 1000), both in
+`quicEndpointConfig { }`. `QuicEndpoint.stats` exposes every
 counter, summed over the loops (see [Observability](#observability)).
 
 **NEW_TOKEN.** Once a connection's handshake is confirmed, the server sends the client one address-validation token
@@ -1062,8 +1072,9 @@ instance), bound to the client's IP address but not its port, valid for
 `QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the tokens it
 accepted, kept for at least the lifetime, treats a second use as no token.
 
-The register holds at least `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
-token is shown; about 32 bytes per token, rounded up to a power of two). It never forgets a token early: once it is full
+The register holds at least `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default). Its memory grows with
+its load: 128 KiB when the first token is shown, doubled as stripes fill, up to about 32 bytes per token (32 MiB at the
+default, rounded up to a power of two). It never forgets a token early: once it is full
 (first in parts, as its 64 stripes fill unevenly), a returning client's token is treated as absent, not accepted
 twice, so the client gets whatever the policy gives a client without a token (a Retry under `AlwaysRetry` or under
 load). Entries age out one to two lifetimes after they were added. A server that expects more returning clients per
@@ -1088,7 +1099,7 @@ val config = quicEndpointConfig {
 
 ## Reliable stream reset (experimental)
 
-`QuicConfig.resetStreamAt = true` advertises `reset_stream_at` (draft-ietf-quic-reliable-stream-reset). When the peer
+`quicConfig { expert { resetStreamAt = true } }` advertises `reset_stream_at` (draft-ietf-quic-reliable-stream-reset). When the peer
 advertised it too, `QuicStream.resetAt(code, reliableSize)` abandons a stream like `reset` but keeps delivering its first
 `reliableSize` bytes, retransmitting them as needed; the peer reads them and then fails with the reset. Only bytes
 already flushed to the stream count (a larger size is cut to them). Without the peer's parameter `resetAt` is a plain
@@ -1120,7 +1131,7 @@ not and in order or not, and then its final size: what QUIC flow control counts 
 with limits of its own across streams can check bytes nobody has read yet.
 
 `QuicStream.sendReleased` is the sending counterpart: a `StateFlow<Long>` of the bytes of our half the connection's send
-buffer (`maxSendBuffer`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
+buffer (`flowControl { maxSendBuffer }`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
 of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
 shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
 that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
@@ -1128,11 +1139,11 @@ up to date from its first read on, which catches up with what was released befor
 
 ## Datagrams (RFC 9221)
 
-Both sides advertise `max_datagram_frame_size` (65 535 by default; `maxDatagramFrameSize = 0` turns the extension off and
+Both sides advertise `max_datagram_frame_size` (65 535 by default; `datagrams { maxFrameSize = null }` turns the extension off and
 rejects DATAGRAM frames). On the sans-IO core, `maxDatagramPayload` says how many bytes fit one frame for the current
 peer and MTU, less 32 bytes kept for a short ACK next to a full-size datagram (0 when the peer does not support datagrams); a `DatagramSender` set on the core is asked for frames while
 each 1-RTT packet is built with an open congestion window, and learns through `onAcked` / `onLost` what became of each
-id — datagrams are never retransmitted. Received payloads wait in a queue of 128 (`datagramReceiveQueue`); when it is
+id — datagrams are never retransmitted. Received payloads wait in a queue of 128 (`datagrams { receiveQueue }`); when it is
 full the oldest is dropped and counted in `stats.datagramsDropped` (which also counts received UDP datagrams the connection
 discarded unprocessed: from an unknown server address, a late Initial, a full undecryptable-packet buffer). The core raises `DatagramsReadable` and hands them out
 with `readDatagram`.
@@ -1146,9 +1157,9 @@ when (val r = connection.trySendDatagram(frame, DatagramPolicy.Reject)) { Datagr
 peer.datagrams.collect { d -> handle(d.data) }   // on the receiving end (the other connection of the pair)
 ```
 
-`sendDatagram` copies the payload into the loop's send queue of 32 datagrams / 1 MiB (`datagramSendQueue`,
-`datagramSendQueueBytes`). `DropOldest` (the default) and `LatestWins` never wait: a full queue drops its oldest entry, or
-the entry with the same key. The hand-over to the loop is bounded too (at most another `datagramSendQueue` datagrams), so
+`sendDatagram` copies the payload into the loop's send queue of 32 datagrams / 1 MiB (`datagrams { sendQueue,
+sendQueueBytes }`). `DropOldest` (the default) and `LatestWins` never wait: a full queue drops its oldest entry, or
+the entry with the same key. The hand-over to the loop is bounded too (at most another `sendQueue` datagrams), so
 a burst that outruns the loop drops its oldest datagrams even on an idle network; send a burst you cannot lose under
 `Reject`. `Reject` makes `trySendDatagram` answer `QueueFull` and `sendDatagram` suspend until room
 returns. `trySendDatagram` never enters the loop and allocates only the copy plus a small wrapper. A payload above
@@ -1179,8 +1190,8 @@ receiver's slot is dropped rather than truncated, and `open` on port 0 binds a f
 // guide:quic:memory-network
 val network = MemoryNetwork()
 val wifi = InetSocketAddress("10.0.0.1", 50000)
-val server = QuicEndpoint.bind(InetSocketAddress("10.0.0.2", 443), quicEndpointConfig { this.server = serverConfig; io = { network.open(it) } })
-val client = QuicEndpoint.bind(wifi, quicEndpointConfig { io = { network.open(it) } })
+val server = QuicEndpoint.bind(InetSocketAddress("10.0.0.2", 443), quicEndpointConfig { this.server = serverConfig; runtime { io = { network.open(it) } } })
+val client = QuicEndpoint.bind(wifi, quicEndpointConfig { runtime { io = { network.open(it) } } })
 val connection = client.connect(server.localAddress, quicClientConfig(tlsClientConfig))
 val accepted = server.accept()
 echo(connection, accepted, 1024)                                       // ... the application talks
@@ -1249,18 +1260,20 @@ println("${stats.connectionsActive} live, ${stats.handshakesCompleted} handshake
 
 `QuicConnection.stats` has the per-connection view (RTT, congestion window, losses, path MTU).
 
-**Logger.** `QuicEndpointConfig.logger` takes a `KuicksilverLogger`: two methods, `isEnabled(level)` and
-`log(level, message, cause)`, so bridging it to SLF4J, Logcat or `os_log` is a few lines and the library depends on no
-logging framework. The default, `KuicksilverLogger.Stderr`, writes warnings and errors to standard error (what the
-library did before it had a logger); `KuicksilverLogger.None` drops everything and `KuicksilverLogger.stderr(level)`
-picks another threshold. `Debug` logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
+**Logger.** `quicEndpointConfig { observability { logger } }` takes a `KuicksilverLogger`: two methods, `isEnabled(level)`
+and `log(level, message, cause)`, so bridging it to a logging framework of your own is a few lines. The default,
+`KuicksilverLogger.Default`, is the platform's logger at `Warn` (since 0.3.0; before, standard error): SLF4J on the JVM
+(logger `io.kuicksilver`; standard error when no SLF4J provider is on the classpath), Logcat on Android (tag
+`Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows. `KuicksilverLogger.platform(level)` is
+the same logger at another threshold, `KuicksilverLogger.Stderr` and `KuicksilverLogger.stderr(level)` write to standard
+error, and `KuicksilverLogger.None` drops everything. `Debug` logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
 close with its reason), `Info` the endpoint's (shutting down, closing), `Warn` degradations (a fallback to the portable
 socket, a failing listener or qlog sink), `Error` a loop that died. A logger that throws is ignored and counted in
 `listenerFailures`. A line is built only when its level is enabled. The library never
 logs secrets: keys, traffic secrets, session tickets, Retry and address-validation tokens and reset tokens stay out of
 every level; connection IDs and addresses are logged.
 
-**Connection listener.** `QuicEndpointConfig.listener` takes a `ConnectionListener` whose callbacks report
+**Connection listener.** `observability { connectionListener }` (experimental) takes a `ConnectionListener` whose callbacks report
 `onOpened`, `onHandshakeCompleted`, `onZeroRtt` (accepted or rejected), `onPathChanged` and `onClosed` with the
 `ConnectionLost` reason: who closed (`initiator`), the code and, for a transport error, the frame type. They run on the
 loop that owns the connection, in order, exactly once each for opened and closed, so they must not block; an exception
@@ -1290,12 +1303,12 @@ never logs these IDs, and `PathInfo.toString()` leaves them out.
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val observed = quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig)
-    logger = KuicksilverLogger.stderr(LogLevel.Info)
-    listener = object : ConnectionListener {
+    observability { logger = KuicksilverLogger.stderr(LogLevel.Info) }
+    observability { connectionListener = object : ConnectionListener {
         override fun onClosed(connection: ConnectionInfo, reason: QuicException.ConnectionLost) {
             println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
         }
-    }
+    } }
 }
 ```
 
@@ -1328,12 +1341,15 @@ client that reuses a CID a file of its own. qlog on a public server is a disk-ex
 ceilings besides the fixed 64 MiB per connection ([fixed limits](configuration.md#fixed-limits)): at most `maxOpenTraces` traces open at once (256) and
 `maxTotalBytes` written over its lifetime (1 GiB); beyond them connections are not traced
 (`DirectoryQlogSink(dir, maxOpenTraces, maxTotalBytes)`, *experimental*). HTTP header and trailer values are
-redacted in the trace unless the sink sets `logHeaderValues` (the constructor's fourth parameter, *experimental*).
+redacted in the trace unless the sink sets `logHeaderValues` (the constructor's fourth parameter, *experimental*). The
+sink belongs to the endpoint, `quicEndpointConfig { observability { qlog } }`, and traces each of its connections, client
+and server alike (since 0.3.0 a connection has no sink of its own: the sink gets each connection's ID and can keep
+them apart).
 
 ```kotlin
 val qlogDir = "/var/log/kuicksilver/qlog"
 // guide:quic:qlog
-val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
+val endpointWithQlog = quicEndpointConfig { observability { qlog = DirectoryQlogSink(qlogDir) } }
 ```
 
 On Android, `qlogDirectory(context, name = "kuicksilver-qlog")` (experimental, 0.3.0, in `io.kuicksilver.quic.qlog`)
@@ -1347,12 +1363,15 @@ A sink is called on the endpoint loop, so a file sink on a slow disk would slow 
 `AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
 closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is
 dropped and counted in `dropped`, so a stalled disk loses trace lines, never throughput. `sampleEvery = n` traces one
-connection in n; `flush()` waits for what is queued and `close()` stops the writer after it.
+connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
+connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
+`client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
+client](ktor.md#closing-the-client)).
 
 ```kotlin
 // guide:quic:qlog-async
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
+val endpointWithAsyncQlog = quicEndpointConfig { observability { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) } }
 ```
 
 ## The sans-IO core directly

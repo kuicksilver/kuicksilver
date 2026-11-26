@@ -16,7 +16,7 @@ work: ports, firewalls, containers, load balancers, certificates, host settings 
 - Control over the network path: you can open the same port number on TCP and on UDP.
 
 **Minimal example.** The server that this page deploys is the one in [Ktor engines: Minimal example](ktor.md#minimal-example) (a
-`tlsConnector` with an identity; it serves HTTP/1.1 on TCP and HTTP/3 on UDP, same port). What has to reach it is in
+`tlsConnector` with an identity; it serves HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP, same port). What has to reach it is in
 [Ports and Alt-Svc](#ports-and-alt-svc), and [Checking a deployment](#checking-a-deployment) shows how to test it.
 
 **Imports.** The Kotlin blocks on this page use these imports (the rest of the server's imports are in
@@ -40,7 +40,7 @@ import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 This guide is for running `embeddedServer(Kuicksilver)` in production with HTTP/3 working: what has to reach the server,
 what the host and the network in front of it need, and how to check from both ends why a client does or does not use
 HTTP/3. The engine's options are in [Ktor: Server](ktor.md#server) and the
-[configuration reference](configuration.md#ktor-server-engine); error messages are in
+[configuration reference](configuration.md#ktor-server); error messages are in
 [troubleshooting](troubleshooting.md). This page links there instead of repeating them.
 
 Statements about other products (Docker, Kubernetes, cloud load balancers, proxies) were checked against their
@@ -49,7 +49,9 @@ documentation before you rely on them.
 
 ## How a client gets to HTTP/3
 
-1. The client connects over TCP and TLS (HTTP/1.1; the TCP side's ALPN is `http/1.1`).
+1. The client connects over TCP and TLS, ALPN `h2` or `http/1.1`: HTTP/2 to a client that offers it (browsers, curl,
+   OkHttp, the JDK's and Kuicksilver's clients), HTTP/1.1 to one that does not. The server's HTTP/2 is on by default
+   since 0.3.0; `http2 { enabled = false }` (`kuicksilver.http2.enabled = false`) offers `http/1.1` alone.
 2. The response carries `Alt-Svc: h3=":<port>"; ma=86400` (RFC 7838): HTTP/3 is on UDP, on that port of the same host,
    for 24 hours.
 3. The client opens QUIC to that UDP port. The TLS handshake there uses the origin's host name (SNI) and checks the
@@ -58,13 +60,17 @@ documentation before you rely on them.
    marks the alternative broken for a while ([Ktor: Racing and fallback](ktor.md#racing-and-fallback)).
 
 So the TCP port, the UDP port, the `Alt-Svc` header and the certificate all have to work for HTTP/3. When one of them
-is missing, clients quietly stay on HTTP/1.1.
+is missing, clients quietly stay on HTTP/2 or HTTP/1.1.
 
 ## Ports and Alt-Svc
 
-Every `tlsConnector` serves HTTP/1.1 on TCP and HTTP/3 on UDP **with the same port number** and the same `host`
-(default `0.0.0.0`), and so does a plain connector when the configuration has an `identity` (with `EngineMain`, the
-`kuicksilver.tls.*` keys). The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
+Every `tlsConnector` serves HTTP/2 and HTTP/1.1 on TCP and HTTP/3 on UDP **with the same port number** and the same
+`host`, and so does a Ktor connector (`port = ...`, `connector { }`, the deployment port) when the engine's `tls { }` has an
+identity (with `EngineMain`, the `kuicksilver.tls.*` keys). A Kuicksilver connector without a `host` (the default since
+0.3.0; 0.2 bound `0.0.0.0`) binds every interface of both families: one dual-stack socket per protocol on `::`, IPv4
+clients arriving as IPv4-mapped addresses, or `0.0.0.0` on a host without IPv6, which the start logs at Info ("no IPv6 on
+this host, so every interface is every IPv4 one (0.0.0.0)"); `host = "0.0.0.0"` keeps IPv4 alone. The deployment port of
+`EngineMain` without `ktor.deployment.host` does the same; Ktor's own `connector { }` keeps Ktor's default, `0.0.0.0`. The engine binds both as a pair: a fixed port whose UDP side is taken fails the start
 ([Ktor: HTTP/3 on the server](ktor.md#http3-on-the-server)). Open, forward and publish **both** `<port>/tcp` and
 `<port>/udp` everywhere on the way.
 
@@ -76,8 +82,8 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 - Or let the application send its own `Alt-Svc`. The engine never replaces an `Alt-Svc` the application set, so the
   application then also follows the run-time switch `engine.http3Advertising` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)) itself. Use it only on
   connectors that do serve HTTP/3: not on a plain connector without TLS, and not when
-  the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
-  above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
+  the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server,
+  `http3 { endpoint { loops } }` above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
 ```kotlin
 // guide:deployment:public-alt-svc
@@ -85,7 +91,10 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 val publicPort = 443   // the UDP port clients reach (the load balancer's or the NAT's), not the one bound here
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 8443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 8443
+    }
 }) {
     intercept(ApplicationCallPipeline.Plugins) {
         // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
@@ -106,9 +115,11 @@ So for an origin on `https://host/` (port 443), HTTP/3 must also be reachable on
 `ma=86400` means clients remember the alternative for a day. To withdraw HTTP/3, use `Clear` or `Drain` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)), which
 send `Alt-Svc: clear`, rather than closing the UDP port, and keep that mode for at least 24 hours: `clear` only reaches
 clients that come back over TCP, so a client that cached the alternative and returns within its `ma` still tries QUIC.
-Clients that find the UDP port closed wait for their QUIC attempt to time out before they fall back. `altSvc = false` (`kuicksilver.altSvc` with `EngineMain`) stops the
+Clients that find the UDP port closed wait for their QUIC attempt to time out before they fall back; that is why the start
+logs, for each advertised port, "HTTP/3 advertised for udp/<port> (Alt-Svc ma=86400); make sure the port is open" at Info.
+`http3 { altSvc = false }` (`kuicksilver.http3.altSvc = false` with `EngineMain`) stops the
 engine's header entirely: then only clients that try HTTP/3 without being told (the Kuicksilver client's `Preferred`
-mode or `quicHints`, `curl --http3`) use it.
+mode or `http3 { hints }`, `curl --http3`) use it.
 
 The engine does not publish DNS HTTPS records (RFC 9460); publishing one in your DNS zone is up to you. A record such as
 `example.com. 300 IN HTTPS 1 . alpn=h3,h2` lets clients that look them up (browsers, and the Kuicksilver client with
@@ -119,7 +130,7 @@ request; for a port other than 443 the name is `_<port>._https.<host>`.
 
 - Allow inbound **UDP** on the port, next to TCP: in the host firewall (`ufw`, `firewalld`, `nftables`; Windows
   Defender Firewall, see [troubleshooting: Windows](troubleshooting.md#windows)) and in the cloud's security group or
-  network ACL. A rule for TCP 443 alone is the most common reason a server serves HTTP/1.1 but no client ever arrives over
+  network ACL. A rule for TCP 443 alone is the most common reason a server serves HTTP/2 and HTTP/1.1 but no client ever arrives over
   QUIC.
 - Answers leave from the same UDP port, and from the address the kernel's route picks (the address the client sent to
   only on a host with one address; see [Reply addresses](#reply-addresses)). A stateful firewall allows them once the
@@ -254,9 +265,9 @@ The pod spec should declare `containerPort: 443` with `protocol: TCP` and anothe
   node's address. "If you set `service.spec.externalTrafficPolicy` to the value `Local`, kube-proxy only proxies proxy
   requests to local endpoints, and does not forward traffic to other nodes. This approach preserves the original source
   IP address" ([Kubernetes: Using Source IP](https://kubernetes.io/docs/tutorials/services/source-ip/)). This matters more
-  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`quicMaxConnectionsPerIp`, 256):
+  for QUIC than for TCP. The QUIC endpoint limits connections **per client IP address** (`http3 { endpoint { maxConnectionsPerIp } }`, 256):
   behind a source NAT raise it or turn it off ([QUIC connection limits](#quic-connection-limits)); the TCP connectors'
-  per-address limit, `maxTcpConnectionsPerIp`, is off by default and should stay off behind a source NAT. Behind a source NAT, every
+  per-address limit, `tcp { maxConnectionsPerIp }`, is off by default and should stay off behind a source NAT. Behind a source NAT, every
   client counts against the node's address, and so does the stateless answer limit (8 per second per address): Retry
   packets and refusals beyond it are dropped, and those clients see a handshake timeout instead. Address validation
   tokens are also bound to the address the server sees.
@@ -282,9 +293,9 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
 - **Readiness and liveness** go to an HTTP route over TLS: `httpGet` with `scheme: HTTPS` ("the kubelet sends an HTTPS
   request skipping the certificate verification", same page), on the TLS connector's port.
 - **The HTTP/3 side** is checked by a canary outside the cluster (`curl --http3-only`, as in [Checking a
-  deployment](#checking-a-deployment), or a Kuicksilver client in `H3Only` mode) and by the endpoint counters as metrics:
+  deployment](#checking-a-deployment), or a Kuicksilver client with `discovery = Http3Discovery.H3Only`) and by the endpoint counters as metrics:
   `datagramsReceived` that stops growing while TCP traffic goes on means UDP no longer reaches the pod;
-  `connectionsRefusedLimits` growing means clients hit `quicMaxConnections` or `quicMaxConnectionsPerIp`
+  `connectionsRefusedLimits` growing means clients hit `http3 { endpoint { maxConnections } }` or `maxConnectionsPerIp`
   ([QUIC connection limits](#quic-connection-limits)); `handshakesFailedTimeout` growing means clients start handshakes
   that never finish (lost answers, [Reply addresses](#reply-addresses)).
 - **`Drain` is not unreadiness.** Under `Clear` or `Drain` the pod still serves HTTP/1.1 and HTTP/2, so keep its probes
@@ -296,7 +307,10 @@ them speaks UDP, so the probes check the TCP side and the HTTP/3 side is watched
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 lateinit var engine: KuicksilverApplicationEngine
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
 }) {
     routing {
         // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
@@ -338,7 +352,7 @@ nothing secret, but they are not for clients.
 |---|---|---|
 | Nothing (public address on the host) | yes | the simplest setup |
 | An L4 load balancer that passes UDP through (cloud network load balancer, `kube-proxy`, IPVS, nginx `stream`) | yes | per-flow routing, see [connection IDs](#connection-ids-and-several-instances); with direct server return (IPVS-DR, a VIP on `lo`) bind `host` to the VIP, see [reply addresses](#reply-addresses) |
-| An L7 proxy that terminates HTTP/3 itself (CDN, nginx `http`, other reverse proxies) | **no** | the proxy speaks HTTP/3 to clients and HTTP/1.1 (or HTTP/2) to the server; Kuicksilver then serves only that TCP side. Set `altSvc = false` (or strip the header at the proxy): the engine's `h3=":<bound port>"` would otherwise pass through and point clients at that port on the proxy's host |
+| An L7 proxy that terminates HTTP/3 itself (CDN, nginx `http`, other reverse proxies) | **no** | the proxy speaks HTTP/3 to clients and HTTP/1.1 (or HTTP/2) to the server; Kuicksilver then serves only that TCP side. Set `http3 { altSvc = false }` (or strip the header at the proxy): the engine's `h3=":<bound port>"` would otherwise pass through and point clients at that port on the proxy's host |
 
 Notes on specific products (checked 2026-11-05):
 
@@ -352,11 +366,11 @@ Notes on specific products (checked 2026-11-05):
 - **Cloudflare** (proxied hostname): HTTP/3 ends at Cloudflare's edge; "HTTP/3 connection to the origin is not yet
   supported" ([Cloudflare: HTTP/3](https://developers.cloudflare.com/speed/optimization/protocol/http3/)). Cloudflare then
   reaches a Kuicksilver origin over TCP, and the origin's UDP port only serves clients that reach it directly. Set
-  `altSvc = false` on the origin, so its `Alt-Svc` does not reach clients through Cloudflare.
+  `http3 { altSvc = false }` on the origin, so its `Alt-Svc` does not reach clients through Cloudflare.
 - **nginx** as an L7 proxy terminates HTTP/3 itself and talks to the upstream with `proxy_http_version 1.0 | 1.1 | 2`
   (HTTP/2 since 1.29.4, HTTP/1.1 the default since 1.29.7;
   [nginx: proxy_http_version](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_http_version)). A
-  Kuicksilver upstream serves HTTP/1.1; set `altSvc = false` on it, or drop the header with `proxy_hide_header Alt-Svc`.
+  Kuicksilver upstream serves both; set `http3 { altSvc = false }` on it, or drop the header with `proxy_hide_header Alt-Svc`.
   For UDP passthrough, the `stream` module's `listen ... udp`
   "configures a listening socket for working with datagrams", with `reuseport` "to handle packets from the same address
   and port in the same session"
@@ -382,13 +396,13 @@ every 30 seconds is necessary to prevent the majority of middleboxes from losing
 - The server sends next (a response the client waits for, a WebSocket message): its packets go to the forgotten mapping
   and are lost until the client sends something.
 
-`QuicConfig.keepAlive` sends a PING often enough to keep the path warm, at least every half of the effective idle
+`quicConfig { keepAlive }` sends a PING often enough to keep the path warm, at least every half of the effective idle
 timeout, at most 3/4 of `maxIdleTimeout`. Set it on the side that keeps a quiet connection it cares about, usually the
-client: on the Ktor client `engine { quic = quicConfig { keepAlive = 15.seconds } }`, on the Ktor server
-`quic = quicConfig { keepAlive = 15.seconds }` (every connection of the listener then sends a PING that often, which a
+client: on the Ktor client `engine { http3 { quic { keepAlive = 15.seconds } } }`, on the Ktor server
+`http3 { quic { keepAlive = 15.seconds } }` (`kuicksilver.http3.quic.keepAlive = 15s`; every connection of the listener then sends a PING that often, which a
 server with many idle clients pays for). The Ktor client closes HTTP/3 connections that carry no request after its own
-`idleTimeout` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`ktor.deployment.connectionIdleTimeoutSeconds`, 45 s,
-closes idle HTTP/1.1 connections first).
+`pool { idleTimeout }` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`tcp { idleTimeout }`, 45 s,
+`ktor.deployment.connectionIdleTimeoutSeconds` with `EngineMain`, closes idle HTTP/1.1 connections first).
 
 A process that was frozen (an Android app frozen in the background or in Doze, a laptop that slept, a debugger stopped
 at a breakpoint) wakes with its idle timers overdue. Before an idle timer closes a connection, the endpoint reads what
@@ -435,7 +449,7 @@ the 4-tuple does not know this:
   Retry again, at the cost of a round trip.
 
 QUIC-LB (draft-ietf-quic-load-balancers-21) lets a load balancer route by a server ID encoded in the connection ID. Since
-0.3.0 the engine offers it, experimentally: `quicLoadBalancer = QuicLbConfig(...)` with the values your load balancer's
+0.3.0 the engine offers it, experimentally: `http3 { endpoint { loadBalancer = QuicLbConfig(...) } }` with the values your load balancer's
 configuration agent assigned each instance, and `engine.updateLoadBalancer(next)` to roll out a new configuration
 ([QUIC: Behind a load balancer](quic.md#behind-a-load-balancer)). Without a QUIC-LB load balancer, put one instance behind
 each address, or accept that a client that changes address while connected to a multi-instance pool reconnects. The engine does not offer a QUIC
@@ -483,18 +497,18 @@ and UDP GRO in 5.0. The engine does not log whether they were granted; `Datagram
 (`gsoMaxSegments`, `gro`) shows it for a socket you open yourself on the same host
 ([QUIC: Binding an endpoint and connecting](quic.md#binding-an-endpoint-and-connecting)).
 
-`udpSocketCount` (`kuicksilver.udpSocketCount`, default 1) runs that many endpoint loops on the port. On Linux and
+`http3 { endpoint { loops } }` (`kuicksilver.http3.endpoint.loops`, default 1) runs that many endpoint loops on the port. On Linux and
 Android each has its own socket on `SO_REUSEPORT`, and the kernel spreads client flows over them; a connection whose
 packets the kernel hashes onto another loop's socket (after a NAT rebinding) is forwarded inside the process. On macOS,
 iOS and Windows the loops share one socket, whose receiver hands each datagram to the loop its connection ID names, so a
 rebound client needs no forwarding at all. Either way several loops have none of the load balancer problems above, and
 one connection is no faster with more loops ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
 Only a JVM that fell back to the portable socket cannot run more than one: there the start does not fail, the engine
-logs "HTTP/3 is not served on port <port>: ..." and serves HTTP/1.1 alone, without `Alt-Svc`
+logs "HTTP/3 is not served on port <port>: ..." and serves TCP alone (HTTP/2 and HTTP/1.1), without `Alt-Svc`
 ([troubleshooting](troubleshooting.md#unsupportedoperationexception-for-loops--1)).
 
 If the accelerated socket cannot open, the JVM falls back to a portable socket without these features, with a warning
-in the log; a Kotlin/Native server then serves HTTP/1.1 only
+in the log; a Kotlin/Native server then serves TCP only (HTTP/2 and HTTP/1.1)
 ([troubleshooting: The accelerated socket is not used](troubleshooting.md#the-accelerated-socket-is-not-used)).
 
 ### MTU
@@ -509,13 +523,13 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
   name clients use for the origin. The alternative in `Alt-Svc` has no host of its own, so the name is the same.
 - A `tlsConnector` with an `sniSelector` picks each name's identity on TCP and QUIC alike, so the `Alt-Svc` of a name's
   TCP responses leads to a QUIC handshake that presents that name's certificate ([Ktor: Certificate per name](ktor.md#certificate-per-name-sni)).
-- Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or with
-  `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
+- Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or `tls { pemFiles(chain, key); reloadInterval = 1.hours }`
+  in code, or with `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
   `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](ktor.md#certificate-rotation),
   [TLS: Rotating the server certificate](tls.md#rotating-the-server-certificate)). Handshakes whose ClientHello arrives
   after the reload, on TCP and QUIC, take the new certificate; open connections keep theirs.
-- The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as the
-  connector's `trust` and `reload(...)`, or with `EngineMain` the keys `kuicksilver.tls.clientAuth` and
+- The CA bundle that verifies client certificates (mTLS) rotates the same way: a `TrustConfig.ReloadableCa` as
+  `tls { clientTrust }` and `reload(...)`, `tls { clientCaFile(path) }` with `reloadInterval`, or with `EngineMain` the keys `kuicksilver.tls.clientAuth` and
   `kuicksilver.tls.clientCa`, whose file `kuicksilver.tls.reloadInterval` also watches ([TLS: Rotating the client
   CA](tls.md#rotating-the-client-ca)). Once the reload returns no handshake accepts a client certificate that only a
   dropped CA vouches for (one in progress is checked again when it completes), a session ticket does not get such a client
@@ -537,7 +551,7 @@ in `Drain` or `Clear`, so that returning clients have dropped the cached alterna
 back within that time have let it expire. The value is per engine and starts at `On`. Behind a load balancer,
 set it on every instance.
 
-On the client, an application can switch HTTP/3 off from its remote configuration with `http3 { http3Allowed }` and take
+On the client, an application can switch HTTP/3 off from its remote configuration with `http3 { allowed }` and take
 open connections out of use with `client.closeHttp3Connections()`
 ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)).
 
@@ -548,37 +562,38 @@ The HTTP/3 listener runs the QUIC endpoint's protections ([QUIC: Admission and e
 
 - **Amplification.** Before a client's address is validated, the server sends at most three times what it received
   (RFC 9000 section 8.1).
-- **Retry.** `quicAdmission` (a `ConnectionAdmission`) decides per new client. The default asks unvalidated clients for a
+- **Retry.** `http3 { endpoint { admission } }` (a `ConnectionAdmission`) decides per new client. The default asks unvalidated clients for a
   Retry under handshake load; `ConnectionAdmission.AlwaysRetry` always does. Clients that bring a valid address token skip
   it.
-- **Hard limits.** `quicMaxConnections` 10 000, `quicMaxConnectionsPerIp` 256 and `quicAcceptQueue` 128 per listener
-  ([QUIC connection limits](#quic-connection-limits)), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
-  address and 1000 in total, which the engine does not let you change. What goes beyond is dropped and such clients see
+- **Hard limits.** `http3 { endpoint { maxConnections } }` 10 000, `maxConnectionsPerIp` 256 and `acceptQueue` 128 per
+  listener ([QUIC connection limits](#quic-connection-limits)), and stateless answers (Retry, refusals, Version Negotiation, Stateless Reset) rate-limited to 8 per second per
+  address and 1000 in total (`http3 { endpoint { expert { statelessPerAddressPerSecond, statelessTotalPerSecond } } }`,
+  experimental). What goes beyond is dropped and such clients see
   a handshake timeout; a full accept queue instead refuses at once with CONNECTION_REFUSED. This is why a source NAT in front
   of the server matters ([Kubernetes](#kubernetes)): every client behind it shares both per-address limits.
-- **TCP connection limits.** `maxTcpConnections` (10 000 per connector: at the limit the connector stops accepting and
-  the OS backlog holds new clients; keep it below `ulimit -n`) and `maxTcpConnectionsPerIp` (off by default: behind a
+- **TCP connection limits.** `tcp { maxConnections }` (10 000 per connector: at the limit the connector stops accepting and
+  the OS backlog holds new clients; keep it below `ulimit -n`) and `tcp { maxConnectionsPerIp }` (off by default: behind a
   proxy, load balancer, SNAT or NAT every client shares one address; enable it, e.g. 256, only when the server faces
   clients directly; one more from that address is reset at accept, which a proxy reports as 502/503), HTTP/1.1 and
   HTTP/2 alike ([Connection limits](ktor.md#connection-limits)).
-- **Transport and HTTP/3 settings.** `quic` (a `QuicConfig`: idle timeout, windows, congestion control), `http3Settings`,
-  and on TCP `requestHeaderTimeoutSeconds` and `connectionIdleTimeoutSeconds` against slow clients
+- **Transport and HTTP/3 settings.** `http3 { quic { } }` (idle timeout, windows, congestion control), `http3 { settings { } }`,
+  `http2 { settings { } }`, and `requestHeaderTimeout` (every protocol) and `tcp { idleTimeout }` against slow clients
   ([Ktor: Server](ktor.md#server)).
 
 ### QUIC connection limits
 
-Three engine options (*experimental*, 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener. Each bounds the
-listener as a whole, over all its `udpSocketCount` loops, whatever loop a connection lands on
-([configuration](configuration.md#ktor-server-engine); with `EngineMain` the keys `kuicksilver.quicMaxConnections`,
-`kuicksilver.quicMaxConnectionsPerIp`, `0` for off, and `kuicksilver.quicAcceptQueue`):
+Three options of `http3 { endpoint { } }` (stable since 0.3.0) set the QUIC endpoint limits of every HTTP/3 listener.
+Each bounds the listener as a whole, over all its `loops`, whatever loop a connection lands on
+([configuration](configuration.md#ktor-server); with `EngineMain` the keys `kuicksilver.http3.endpoint.maxConnections`,
+`kuicksilver.http3.endpoint.maxConnectionsPerIp`, `off` for no limit, and `kuicksilver.http3.endpoint.acceptQueue`):
 
 | Option | Default | Over the limit |
 |---|---|---|
-| `quicMaxConnections` | 10 000 | a new client's Initial is dropped silently; counted in `connectionsRefusedLimits` |
-| `quicMaxConnectionsPerIp` | 256 (`null` is off) | the same, per client IP address (ports ignored) |
-| `quicAcceptQueue` | 128 | handshaken connections the accept loop has not taken yet; a new client is refused with CONNECTION_REFUSED (`connectionsRefusedAcceptQueue`) |
+| `maxConnections` | 10 000 | a new client's Initial is dropped silently; counted in `connectionsRefusedLimits` |
+| `maxConnectionsPerIp` | 256 (`null` is off) | the same, per client IP address (ports ignored) |
+| `acceptQueue` | 128 | handshaken connections the accept loop has not taken yet; a new client is refused with CONNECTION_REFUSED (`connectionsRefusedAcceptQueue`) |
 
-The per-address limit counts the address the server sees. Raise it (up to `quicMaxConnections`) or set it to `null`
+The per-address limit counts the address the server sees. Raise it (up to `maxConnections`) or set it to `null` (`kuicksilver.http3.endpoint.maxConnectionsPerIp = off`)
 when many clients reach the server from one address:
 
 - a NAT or carrier-grade NAT in front of many users (an office, a campus, a mobile network);
@@ -589,7 +604,9 @@ when many clients reach the server from one address:
   pass the client's address on.
 
 A client over the per-address limit gets no answer and fails at its handshake timeout; a Kuicksilver client then falls
-back to TCP and marks the alternative broken. Keep `quicMaxConnections` as the overall bound, and keep the limit where
+back to TCP and marks the alternative broken. The first such refusal, and then at most one every 5 minutes per endpoint,
+logs a warning: "QUIC per-IP limit (256) reached for <address>; behind NAT or kube-proxy set http3 { endpoint {
+maxConnectionsPerIp = null } }". Keep `maxConnections` as the overall bound, and keep the limit where
 the server sees real client addresses: it is what stops one address from taking every connection slot. The stateless
 answer limit (8 per second per address) still applies to everyone behind a shared address.
 
@@ -597,30 +614,44 @@ answer limit (8 per second per address) still applies to everyone behind a share
 // guide:deployment:quic-limits
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = embeddedServer(Kuicksilver, configure = {
-    tlsConnector(identity) { port = 443 }
-    quicMaxConnectionsPerIp = 4_096   // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+    tlsConnector {
+        tls { this.identity = identity }
+        port = 443
+    }
+    // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
+    http3 { endpoint { maxConnectionsPerIp = 4_096 } }
 }) {
     routing { get("/") { call.respondText("ok") } }
 }
 server.start(wait = false)
-// for a metrics gauge: clients dropped by quicMaxConnections or quicMaxConnectionsPerIp since the start
+// for a metrics gauge: clients dropped by maxConnections or maxConnectionsPerIp since the start
 val refusedByLimits = server.engine.http3Stats.sumOf { it.connectionsRefusedLimits }
+```
+
+With `EngineMain` the same limit is a key of `application.conf` ([HOCON keys](configuration.md#hocon-keys)), where
+`off` turns it off and `0` is refused ("use off instead of 0"):
+
+```hocon
+kuicksilver.http3.endpoint {
+    maxConnectionsPerIp = off      # or a number, e.g. 4096, behind kube-proxy (externalTrafficPolicy: Cluster)
+}
 ```
 
 ## Observability
 
-- The application's log gets the engine's own messages, such as "HTTP/3 is not served on port ...". The `logger`
-  (warnings on standard error by default) gets the QUIC endpoints' diagnostics, such as the fallback to the portable
-  socket; `logger = KuicksilverLogger.stderr(LogLevel.Debug)` adds each QUIC connection's lifecycle.
-- `eventListener` (`KuicksilverServerEventListener`) hears connections per protocol (`connectionOpened` with
-  `HTTP/3.0`), failed TLS handshakes and requests, which you can count; `connectionListener` hears every QUIC connection with its close reason.
-- `qlog = AsyncQlogSink(DirectoryQlogSink(dir), sampleEvery = 100)` writes a trace per sampled connection, for
+- The application's log (`environment.log`) gets the engine's own messages, such as "HTTP/3 is not served on port ...",
+  and the QUIC endpoints' diagnostics, such as the fallback to the portable socket, unless `observability { logger }`
+  names another logger (since 0.3.0), which then takes all of them; `observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }` adds
+  each QUIC connection's lifecycle.
+- `observability { eventListener }` (`KuicksilverServerEventListener`, experimental) hears connections per protocol (`connectionOpened` with
+  `HTTP/3.0`), failed TLS handshakes and requests, which you can count; `observability { connectionListener }` hears every QUIC connection with its close reason.
+- `observability { qlog = AsyncQlogSink(DirectoryQlogSink(dir), sampleEvery = 100) }` writes a trace per sampled connection, for
   [qvis](https://qvis.quictools.info/).
 
 - `engine.http3Stats` (*experimental*, 0.3.0) returns the QUIC endpoint counters (`EndpointStats`) of every HTTP/3
   listener, one per connector serving HTTP/3; each read is a fresh snapshot, safe from any thread, for a metrics gauge.
   `datagramsReceived` answers "does any QUIC arrive at all?"; `connectionsRefusedLimits` growing means clients hit
-  `quicMaxConnections` or `quicMaxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
+  `maxConnections` or `maxConnectionsPerIp` ([QUIC connection limits](#quic-connection-limits)),
   `connectionsRefusedAcceptQueue` the accept queue, `connectionsRefusedAdmission` the admission policy.
 
 See [Ktor: Observability](ktor.md#observability-experimental) for a sample of the listeners. A debug log or a packet
@@ -650,16 +681,16 @@ chose TCP ([curl: HTTP/3](https://curl.se/docs/http3.html)). The repository runs
 engine in a container (`tools/check/deployment-guide.sh`), so the commands stay current.
 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
-`response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { logger = KuicksilverLogger.stderr(LogLevel.Info) }`
+`response.kuicksilverDiagnostics?.fallback`, or one log line per call with `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
 ([Ktor: Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)). Keep in mind that in `Auto`
-mode the first call to an origin goes over HTTP/1.1 (`NoAlternative`) unless a `FileAltSvcStore` remembers the
+mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a `FileAltSvcStore` remembers the
 alternative from an earlier run; HTTP/3 starts from the next call.
 
 ## Troubleshooting checklist
 
 | Symptom | Check |
 |---|---|
-| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-but-no-http3)) |
+| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `http3 { endpoint { loops } }` above 1 without the accelerated socket); `http3 { enabled }` and `altSvc` on; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-or-http2-but-no-http3)) |
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |

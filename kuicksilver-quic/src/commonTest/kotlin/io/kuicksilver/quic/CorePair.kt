@@ -48,7 +48,7 @@ internal object CoreFixtures {
             this.trust = trust
             // the core tests measure the client's first datagrams and replay fuzz traces byte for byte: GREASE ECH (on by
             // default, RFC 9849 section 6.2.1) adds an extension of OpenSSL's choosing to every ClientHello; kuicksilver-tls tests it
-            echGrease = false
+            ech { grease = false }
             block()
         }
 

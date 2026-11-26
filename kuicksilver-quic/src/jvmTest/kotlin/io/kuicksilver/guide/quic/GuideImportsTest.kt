@@ -86,7 +86,7 @@ suspend fun everyQuicImport(dir: String) {
     val quic =
         quicConfig {
             maxIdleTimeout = 30.seconds
-            initialRtt = 100.milliseconds
+            expert { initialRtt = 100.milliseconds }
             versions = listOf(VersionProfile.V1)
             qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
         }
@@ -95,16 +95,18 @@ suspend fun everyQuicImport(dir: String) {
             server = quicServerConfig(serverTls) { this.quic = quic }
             admission = ConnectionAdmission.AlwaysRetry
             maxConnectionLifetime = 12.hours
-            logger = KuicksilverLogger.stderr(LogLevel.Debug)
+            observability { logger = KuicksilverLogger.stderr(LogLevel.Debug) }
             loadBalancer =
                 QuicLbConfig(configId = 1, serverId = byteArrayOf(1, 2, 3), nonceLength = 4, key = KslQuicCrypto.newLoadBalancerKey(null))
-            listener =
-                object : ConnectionListener {
-                    override fun onClosed(
-                        connection: ConnectionInfo,
-                        reason: QuicException.ConnectionLost,
-                    ) {}
-                }
+            observability {
+                connectionListener =
+                    object : ConnectionListener {
+                        override fun onClosed(
+                            connection: ConnectionInfo,
+                            reason: QuicException.ConnectionLost,
+                        ) {}
+                    }
+            }
         }
     val endpoint = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 4433), config)
     supervisorScope {

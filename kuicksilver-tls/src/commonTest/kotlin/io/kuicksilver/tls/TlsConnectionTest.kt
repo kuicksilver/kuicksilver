@@ -921,7 +921,7 @@ class TlsServerTest {
             val server =
                 TcpFixtures.server {
                     alpn = base
-                    alpnFallback = fb
+                    expert { alpnFallback = fb }
                     if (selector) sniSelector = { ServerTlsOverride(serverIdentity, alpn = answer) }
                 }
             val (cd, sd) = connect(TcpFixtures.client { alpn = offer }, server)
@@ -983,10 +983,10 @@ class TlsServerTest {
     @OptIn(ExperimentalKuicksilverApi::class)
     @Test
     fun negative_alpnFallbackIsForServersAndANameOfOneToTwoHundredFiftyFiveBytes() {
-        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "h3" } }
-        assertFailsWith<TlsException.Config> { TcpFixtures.client { alpnFallback = "http/1.1" } }
-        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "" } }
-        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "x".repeat(256) } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { expert { alpnFallback = "h3" } } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.client { expert { alpnFallback = "http/1.1" } } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { expert { alpnFallback = "" } } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { expert { alpnFallback = "x".repeat(256) } } }
     }
 
     /** An empty override list keeps meaning "no ALPN" over TCP, as an empty [TlsConfig.alpn] does. */

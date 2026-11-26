@@ -72,6 +72,8 @@ class EarlyDataTest {
         private val clientSettings: Http3Settings = Http3Settings.Default,
         /** Handles the server's CONNECT requests instead of the echo (which reads the body first). */
         private val onConnect: (suspend (io.kuicksilver.http3.Http3ServerRequest, Http3Connection) -> Unit)? = null,
+        /** The client endpoint's qlog sink: it traces every client connection, the warm-up's included. */
+        private val clientQlog: io.kuicksilver.quic.QlogSink? = null,
         settings: Http3Settings.Builder.() -> Unit = {},
     ) : AutoCloseable {
         val net = MemoryNet()
@@ -105,9 +107,11 @@ class EarlyDataTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            this.server = QuicServerConfig.Builder(H3Fixtures.server()).apply { earlyData = true }.build()
-                            crypto = KslQuicCrypto
-                            io = { b }
+                            this.server = QuicServerConfig.Builder(H3Fixtures.server()).apply { acceptEarlyData = true }.build()
+                            runtime {
+                                crypto = KslQuicCrypto
+                                io = { b }
+                            }
                         }.build(),
                     serverSettings,
                 )
@@ -117,8 +121,11 @@ class EarlyDataTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
+                            runtime {
+                                crypto = KslQuicCrypto
+                                io = { a }
+                            }
+                            observability { qlog = clientQlog }
                         }.build(),
                 )
             scope.launch {
@@ -289,11 +296,11 @@ class EarlyDataTest {
                         QuicServerConfig
                             .Builder(tls)
                             .apply {
-                                earlyData = true
+                                acceptEarlyData = true
                                 quicConfig?.let { quic = it }
                             }.build()
-                    crypto = KslQuicCrypto
-                    this.io = { io }
+                    runtime { crypto = KslQuicCrypto }
+                    runtime { this.io = { io } }
                 }.build(),
             settings,
         )
@@ -311,8 +318,8 @@ class EarlyDataTest {
                 QuicEndpointConfig
                     .Builder()
                     .apply {
-                        crypto = KslQuicCrypto
-                        io = { a }
+                        runtime { crypto = KslQuicCrypto }
+                        runtime { io = { a } }
                     }.build(),
             )
         val resumed = kotlin.concurrent.atomics.AtomicReference<List<Http3Connection>>(emptyList())
@@ -444,7 +451,7 @@ class EarlyDataTest {
                             earlyAcceptedAfterResuming(
                                 issuer = http3Settings {},
                                 resumer = http3Settings {},
-                                resumerQuic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 },
+                                resumerQuic = io.kuicksilver.quic.quicConfig { expert { maxUniStreams = 2 } },
                                 clientHold = AtomicInt(0), // the server's answer is not held back
                                 sendRequest = false,
                                 clientSession = { session ->
@@ -480,7 +487,7 @@ class EarlyDataTest {
                             earlyAcceptedAfterResuming(
                                 issuer = http3Settings {},
                                 resumer = http3Settings {},
-                                resumerQuic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 },
+                                resumerQuic = io.kuicksilver.quic.quicConfig { expert { maxUniStreams = 2 } },
                                 clientHold = AtomicInt(0),
                                 sendRequest = false,
                                 clientSession = { session ->
@@ -560,14 +567,14 @@ class EarlyDataTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val seen = AtomicInt(0)
-                val dynamic = http3Settings { enableQpackDynamicTable() }
+                val dynamic = http3Settings { qpack { enableDynamicTable() } }
                 val headers = Http3Headers.of("x-session-detail" to "a value worth putting into the dynamic table")
                 val accepted =
                     earlyAcceptedAfterResuming(
-                        issuer = http3Settings { enableQpackDynamicTable() },
+                        issuer = http3Settings { qpack { enableDynamicTable() } },
                         resumer =
                             http3Settings {
-                                enableQpackDynamicTable()
+                                qpack { enableDynamicTable() }
                                 h3Datagram = false
                             },
                         earlyRequest = true,
@@ -810,21 +817,12 @@ class EarlyDataTest {
      */
     @Test fun storedSettingsAreLoggedAsRestored(): Unit =
         runBlocking {
-            Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { maxFieldSectionSize = 1_000 }.use { f ->
+            val sink = MemoryQlogSink()
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), clientQlog = sink) { maxFieldSectionSize = 1_000 }.use { f ->
                 withTimeout(20.seconds) {
                     f.start()
                     f.warmUp()
-                    val sink = MemoryQlogSink()
-                    val c =
-                        f.client.connectEarly(
-                            f.server.localAddress,
-                            H3Fixtures.client(),
-                            quic =
-                                io.kuicksilver.quic.quicConfig {
-                                    qlog =
-                                        sink
-                                },
-                        )
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
                     assertEquals(
                         "GET ok",
                         c
@@ -833,13 +831,11 @@ class EarlyDataTest {
                             .readAllBytes()
                             .decodeToString(),
                     )
-                    awaitCondition("parameters_restored written") {
-                        sink.traces
-                            .singleOrNull()
-                            ?.records
-                            ?.any { "\"name\":\"http:parameters_restored\"" in it } == true
-                    }
-                    val e = QlogSchema.check(sink.traces.single().records).filter { it["name"] == "http:parameters_restored" }
+                    // the endpoint's sink traces the warm-up connection too, which restored nothing
+                    val restored = "\"name\":\"http:parameters_restored\""
+                    awaitCondition("parameters_restored written") { sink.traces.any { t -> t.records.any { restored in it } } }
+                    val trace = sink.traces.single { t -> t.records.any { restored in it } }
+                    val e = QlogSchema.check(trace.records).filter { it["name"] == "http:parameters_restored" }
                     assertEquals(1_000.0, (e.single()["data"] as Map<*, *>)["max_field_section_size"])
                     c.close()
                 }
@@ -950,7 +946,7 @@ class EarlyDataTest {
                     { l -> l.filter { it.first != capacity } },
                 )
             for (change in changes) {
-                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { enableQpackDynamicTable() }.use { f ->
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { qpack { enableDynamicTable() } }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
                         f.warmUp()
@@ -1004,7 +1000,7 @@ class EarlyDataTest {
             for (change in changes) {
                 Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
                     enableConnectProtocol = true
-                    webTransport = true
+                    webTransport { enabled = true }
                 }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
@@ -1054,7 +1050,7 @@ class EarlyDataTest {
             for ((change, expected) in changes) {
                 Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
                     enableConnectProtocol = true
-                    webTransport = true
+                    webTransport { enabled = true }
                 }.use { f ->
                     withTimeout(20.seconds) {
                         f.start()
@@ -1091,10 +1087,10 @@ class EarlyDataTest {
                 val issuer = io.kuicksilver.http3.webtransport.wtOn
                 val changed =
                     listOf<Http3Settings.Builder.() -> Unit>(
-                        { webTransportInitialMaxData = 1000 },
-                        { webTransportInitialMaxStreamsBidi = 3 },
-                        { webTransportInitialMaxStreamsUni = 3 },
-                        { webTransportMaxSessions = 2 },
+                        { webTransport { initialMaxData = 1000 } },
+                        { webTransport { initialMaxStreamsBidi = 3 } },
+                        { webTransport { initialMaxStreamsUni = 3 } },
+                        { webTransport { maxSessions = 2 } },
                     )
                 for (change in changed) {
                     assertEquals(false, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer.toBuilder().apply(change).build()))
@@ -1315,13 +1311,15 @@ class EarlyDataTest {
 
     private val wtServer: Http3Settings.Builder.() -> Unit = {
         enableConnectProtocol = true
-        webTransport = true
-        webTransportMaxSessions = 1
+        webTransport {
+            enabled = true
+            maxSessions = 1
+        }
     }
     private val wtClient =
         io.kuicksilver.http3.http3Settings {
             enableConnectProtocol = true
-            webTransport = true
+            webTransport { enabled = true }
         }
 
     /** The server's WebTransport sessions are all gone and nothing waits in its fair queues. */
@@ -1341,7 +1339,7 @@ class EarlyDataTest {
                 ranAfterHandshake.complete(c.quic.isHandshakeComplete)
                 r.acceptWebTransport()
             }
-            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, wtServer).use { f ->
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, settings = wtServer).use { f ->
                 withTimeout(20.seconds) {
                     f.start()
                     f.warmUp()
@@ -1377,7 +1375,7 @@ class EarlyDataTest {
                 seen.incrementAndFetch()
                 r.acceptWebTransport()
             }
-            Fixture(Http3EarlyDataPolicy.Reject425(), wtClient, onConnect, wtServer).use { f ->
+            Fixture(Http3EarlyDataPolicy.Reject425(), wtClient, onConnect, settings = wtServer).use { f ->
                 withTimeout(20.seconds) {
                     f.start()
                     f.warmUp()
@@ -1412,7 +1410,7 @@ class EarlyDataTest {
                 seen.incrementAndFetch()
                 r.acceptWebTransport()
             }
-            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, wtServer).use { f ->
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, settings = wtServer).use { f ->
                 withTimeout(20.seconds) {
                     f.start()
                     f.warmUp()
@@ -1447,13 +1445,13 @@ class EarlyDataTest {
                         issuer =
                             io.kuicksilver.http3.http3Settings {
                                 enableConnectProtocol = true
-                                webTransport = true
+                                webTransport { enabled = true }
                             },
                         resumer =
                             io.kuicksilver.http3.http3Settings {
                                 enableConnectProtocol = true
-                                webTransport = true
-                                webTransportInitialMaxData = 2_000_000
+                                webTransport { enabled = true }
+                                webTransport { initialMaxData = 2_000_000 }
                             },
                         resumerRequests = seen,
                         clientSettings = wtClient,

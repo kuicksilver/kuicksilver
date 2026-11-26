@@ -335,7 +335,7 @@ class ReceivePathTest {
     }
 
     @Test fun datagramFrameWithoutSupportIsProtocolViolation() {
-        val p = CorePair(serverQuic = io.kuicksilver.quic.quicConfig { maxDatagramFrameSize = 0 })
+        val p = CorePair(serverQuic = io.kuicksilver.quic.quicConfig { datagrams { maxFrameSize = null } })
         p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectDatagramFrame =
@@ -365,7 +365,7 @@ class ReceivePathTest {
             }
         }
         val cleared = ArrayList<Boolean>()
-        val p = CorePair(crypto = ksl, serverQuic = quicConfig { greaseQuicBit = false })
+        val p = CorePair(crypto = ksl, serverQuic = quicConfig { expert { greaseQuicBit = false } })
         p.filterToServer =
             { _, b ->
                 if (!isLong(b)) cleared += (b[0].toInt() and 0x40 == 0)
@@ -937,7 +937,7 @@ class ReceivePathTest {
 
     /** RFC 9000 section 17.2: a long-header packet with the fixed bit cleared is discarded unless we allowed it with grease_quic_bit. */
     @Test fun negative_longHeaderWithoutFixedBit() {
-        val p = CorePair(clientQuic = quicConfig { greaseQuicBit = false })
+        val p = CorePair(clientQuic = quicConfig { expert { greaseQuicBit = false } })
         p.use { _ ->
             var tampered: ByteArray? = null
             p.filterToClient =

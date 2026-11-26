@@ -53,7 +53,7 @@ class ServerH1BodyTest {
         val server =
             kuicksilverServer(log, configure = {
                 configure()
-                connectionIdleTimeoutSeconds = idleSeconds
+                tcp { idleTimeout = idleSeconds.seconds }
                 connector {
                     host = "127.0.0.1"
                     port = 0
@@ -167,7 +167,7 @@ class ServerH1BodyTest {
                 idleSeconds = 30,
                 configure = {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    eventListener = events
+                    observability { eventListener = events }
                 },
                 module = { routing { post("/ignore") { call.respondText("ignored") } } },
             ) { port ->

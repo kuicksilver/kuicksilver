@@ -24,13 +24,14 @@ internal class RaceResult<T>(
 )
 
 /**
- * Racing HTTP/3 against HTTP/1.1 connection setup (RFC 8305 section 5, as in Chromium): HTTP/3 starts at once;
- * HTTP/1.1 starts when HTTP/3 fails, or after the head start — [hardDelay] when set, else 1.5 x the host's smoothed RTT,
- * or 250 ms without history, clamped to 100 ms..2 s — and after [MIN_HEAD_START] on a network where QUIC was never seen
- * working (RFC 8305 section 5: "a subsequent connection MUST NOT be started within 10 milliseconds of the previous
- * attempt"; the attempts are not simultaneous either, which the section says they SHOULD NOT be). [hardDelay] must keep
- * the same bounds as `connectionAttemptDelay`: 10 ms..2 s, or [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed,
- * on every network (the 10 ms head start of an unconfirmed network does not apply to it).
+ * Racing HTTP/3 against TCP (HTTP/1.1 or HTTP/2) connection setup (RFC 8305 section 5, as in Chromium): HTTP/3 starts at
+ * once; TCP starts when HTTP/3 fails, or after the head start, `http3 { expert { raceHeadStart } }` ([headStart]): a
+ * [RaceHeadStart.Fixed] delay, else 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s
+ * ([RaceHeadStart.Adaptive]); and after [MIN_HEAD_START] on a network where QUIC was never seen working (RFC 8305 section
+ * 5: "a subsequent connection MUST NOT be started within 10 milliseconds of the previous attempt"; the attempts are not
+ * simultaneous either, which the section says they SHOULD NOT be). A [RaceHeadStart.Fixed] delay keeps the bounds of
+ * `network { happyEyeballsDelay }`, 10 ms..2 s; [RaceHeadStart.NoRace] is TCP only after HTTP/3 failed, on every network
+ * (the 10 ms head start of an unconfirmed network does not apply to it).
  * An HTTP/3 setup succeeds when its connection is usable: with 0-RTT that is before the handshake only on a network where
  * QUIC was confirmed (the caller's `h3` decides). The first success wins. A losing h1 setup is cancelled, and one that
  * completed just as h3 won is handed to `onLoser` so the caller can close it (a connection must not be leaked, RFC 8305
@@ -40,23 +41,39 @@ internal class RaceResult<T>(
  * section 5's "SHOULD be canceled" the compliance row documents. When both fail, the h1 failure is thrown with the h3
  * one suppressed in it.
  */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal class ProtocolRace(
-    private val hardDelay: Duration?,
+    headStart: RaceHeadStart,
 ) {
-    init {
-        require(hardDelay == null || hardDelay.isInfinite() || hardDelay in MIN_HEAD_START..MAX_HEAD_START) {
-            "hardDelay must be 10 ms..2 s or Duration.INFINITE (RFC 8305 section 5), was $hardDelay"
+    /** The fixed head start, [Duration.INFINITE] for [RaceHeadStart.NoRace], null for [RaceHeadStart.Adaptive]. */
+    private val fixedHeadStart: Duration? =
+        when (headStart) {
+            RaceHeadStart.Adaptive -> {
+                null
+            }
+
+            RaceHeadStart.NoRace -> {
+                Duration.INFINITE
+            }
+
+            is RaceHeadStart.Fixed -> {
+                // Fixed(Duration.INFINITE) is no way to say NoRace: one name for one thing
+                require(headStart.delay in MIN_HEAD_START..MAX_HEAD_START) {
+                    "http3 { expert { raceHeadStart = RaceHeadStart.Fixed(d) } } must be 10 ms..2 s (RFC 8305 section 5), " +
+                        "was ${headStart.delay}; RaceHeadStart.NoRace is TCP only after HTTP/3 failed"
+                }
+                headStart.delay
+            }
         }
-    }
 
     fun headStart(
         srtt: Duration?,
         quicConfirmed: Boolean,
     ): Duration {
-        // INFINITE is "HTTP/1.1 only after HTTP/3 failed" on any network: never two attempts at once
-        if (hardDelay?.isInfinite() == true) return hardDelay
+        // NoRace is "TCP only after HTTP/3 failed" on any network: never two attempts at once
+        if (fixedHeadStart?.isInfinite() == true) return fixedHeadStart
         if (!quicConfirmed) return MIN_HEAD_START
-        return hardDelay ?: (srtt?.times(1.5) ?: 250.milliseconds).coerceIn(100.milliseconds, 2.seconds)
+        return fixedHeadStart ?: (srtt?.times(1.5) ?: 250.milliseconds).coerceIn(100.milliseconds, 2.seconds)
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -68,7 +68,7 @@ class SendReleasedTest {
      */
     @Test fun negative_bytesAnUnreadStreamHoldsAreReleasedByItsReset() =
         runBlocking {
-            ApiPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
@@ -89,7 +89,7 @@ class SendReleasedTest {
     /** The peer's STOP_SENDING drops what was buffered too. */
     @Test fun negative_stopSendingReleasesTheBuffer() =
         runBlocking {
-            ApiPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
@@ -107,7 +107,7 @@ class SendReleasedTest {
     /** The connection's end lets go of everything it held. */
     @Test fun negative_aLostConnectionReleasesEverything() =
         runBlocking {
-            ApiPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     val st = c.openBidi()

@@ -50,14 +50,16 @@ class ServerSniHttp3Test {
         val proxy = proxyIdentity()
         val server = ServerFixtures.identity()
         return tlsServer(
-            configure = { http3 = true },
+            configure = { http3 { enabled = true } },
             connector = {
-                sniSelector = { hello ->
-                    when (hello.serverName) {
-                        "proxy.internal" -> ServerTlsOverride(proxy, alpn = listOf("h3", "http/1.1"))
-                        "server.test" -> ServerTlsOverride(server)
-                        "a.wild.test" -> ServerTlsOverride(server, alpn = listOf("http/1.1"))
-                        else -> null
+                tls {
+                    sniSelector = { hello ->
+                        when (hello.serverName) {
+                            "proxy.internal" -> ServerTlsOverride(proxy, alpn = listOf("h3", "http/1.1"))
+                            "server.test" -> ServerTlsOverride(server)
+                            "a.wild.test" -> ServerTlsOverride(server, alpn = listOf("http/1.1"))
+                            else -> null
+                        }
                     }
                 }
             },
@@ -141,10 +143,17 @@ class ServerSniHttp3Test {
             val (server, port) =
                 tlsServer(
                     configure = {
-                        http3 = true
-                        quicEarlyData = true
+                        http3 {
+                            enabled = true
+                            earlyData { enabled = true }
+                        }
                     },
-                    connector = { sniSelector = { hello -> if (hello.serverName == "server.test") ServerTlsOverride(identity) else null } },
+                    connector = {
+                        tls {
+                            sniSelector =
+                                { hello -> if (hello.serverName == "server.test") ServerTlsOverride(identity) else null }
+                        }
+                    },
                 ) { routing { get("/") { call.respondText("early=${call.request.receivedEarly}") } } }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             val target = InetSocketAddress("127.0.0.1", port)

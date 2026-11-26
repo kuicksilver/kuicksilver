@@ -1,7 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic.wire
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.tls.TlsRole
 

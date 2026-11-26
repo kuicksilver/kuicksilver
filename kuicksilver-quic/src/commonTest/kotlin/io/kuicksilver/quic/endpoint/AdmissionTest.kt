@@ -37,6 +37,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** `ConnectionAdmission`, the bounded Initial queue and the endpoint limits (threat-model 3.2, 5 items 4, 5, 7). */
@@ -338,8 +339,8 @@ class AdmissionTest {
         val p =
             EndpointPair {
                 acceptQueue = 1
-                statelessPerAddressPerSecond = 2
-                statelessTotalPerSecond = 3
+                expert { statelessPerAddressPerSecond = 2 }
+                expert { statelessTotalPerSecond = 3 }
             }
         p.use { _ ->
             p.server.acceptBacklog = { 1 }
@@ -389,6 +390,49 @@ class AdmissionTest {
         }
     }
 
+    /**
+     * The per-address limit says why it refuses (ADR-0026): one Warn line, at most once per 5 minutes, naming the address and
+     * the option to change behind NAT; the limit of the whole endpoint says nothing of the kind.
+     */
+    @Test fun perIpLimitWarnsAtMostOncePerFiveMinutes() {
+        val lines = mutableListOf<String>()
+        val capture =
+            object : io.kuicksilver.quic.KuicksilverLogger {
+                override fun isEnabled(level: io.kuicksilver.quic.LogLevel): Boolean = true
+
+                override fun log(
+                    level: io.kuicksilver.quic.LogLevel,
+                    message: String,
+                    cause: Throwable?,
+                ) {
+                    if ("per-IP" in message) lines += "$level $message"
+                }
+            }
+        val p =
+            EndpointPair {
+                maxConnectionsPerIp = 1
+                observability { logger = capture }
+            }
+        p.use { _ ->
+            assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 1)))
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 2)))
+            assertEquals(
+                listOf(
+                    "Warn QUIC per-IP limit (1) reached for 10.9.9.9; behind NAT or kube-proxy set " +
+                        "http3 { endpoint { maxConnectionsPerIp = null } }",
+                ),
+                lines,
+            )
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 3)))
+            p.now += 4.minutes
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 4)))
+            assertEquals(1, lines.size, "once per 5 minutes")
+            p.now += 1.minutes
+            assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.9", 5)))
+            assertEquals(2, lines.size, "again after 5 minutes")
+        }
+    }
+
     @Test fun maxConnectionLifetimeClosesWithNoError() {
         val p = EndpointPair(crypto = KslQuicCrypto) { maxConnectionLifetime = 3.seconds }
         p.use { _ ->
@@ -418,7 +462,7 @@ class AdmissionTest {
                 assertEquals(1L, p.server.stats.initialsDropped)
             }
         }
-        val p = EndpointPair { rejectInitialFromReflectivePorts = false }
+        val p = EndpointPair { expert { rejectInitialFromReflectivePorts = false } }
         p.use { _ ->
             assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.0.0.5", 53)), "the option opens the ports")
         }
@@ -472,7 +516,7 @@ class AdmissionTest {
     }
 
     @Test fun statsSnapshotCountsStatelessAnswers() {
-        val p = EndpointPair { statelessPerAddressPerSecond = 1 }
+        val p = EndpointPair { expert { statelessPerAddressPerSecond = 1 } }
         p.use { _ ->
             val initial = firstInitial(p)
             val vn = initial.copyOf()

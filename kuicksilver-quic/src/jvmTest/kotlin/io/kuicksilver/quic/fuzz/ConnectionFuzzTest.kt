@@ -621,20 +621,20 @@ internal class ConnectionFuzz(
         QuicConfig
             .Builder()
             .apply {
-                resetStreamAt = true // so the fuzzer reaches RESET_STREAM_AT handling too
+                expert { resetStreamAt = true } // so the fuzzer reaches RESET_STREAM_AT handling too
                 if (small) {
                     maxBidiStreams = 4
-                    maxUniStreams = 4
-                    initialStreamWindow = 1024
-                    maxStreamWindow = 8192
-                    initialConnectionWindow = 4096
-                    maxConnectionWindow = 16384
-                    activeConnectionIdLimit = 2
-                    datagramReceiveQueue = 4
-                    maxSendBuffer = 65_536
+                    expert { maxUniStreams = 4 }
+                    flowControl { initialStreamWindow = 1024 }
+                    flowControl { maxStreamWindow = 8192 }
+                    flowControl { initialConnectionWindow = 4096 }
+                    flowControl { maxConnectionWindow = 16384 }
+                    expert { activeConnectionIdLimit = 2 }
+                    datagrams { receiveQueue = 4 }
+                    flowControl { maxSendBuffer = 65_536 }
                 }
-                if (flags and ConnProgram.NO_PMTUD != 0) pmtud = false
-                if (setup and ConnProgram.NO_ICMP_HINTS != 0) pmtudIcmpHints = false
+                if (flags and ConnProgram.NO_PMTUD != 0) pathMtu { discovery = false }
+                if (setup and ConnProgram.NO_ICMP_HINTS != 0) pathMtu { icmpHints = false }
                 if (vn) {
                     versions =
                         when {

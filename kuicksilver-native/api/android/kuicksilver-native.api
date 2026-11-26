@@ -10,6 +10,31 @@ public abstract interface annotation class io/kuicksilver/annotations/InternalKu
 public abstract interface annotation class io/kuicksilver/annotations/KuicksilverDsl : java/lang/annotation/Annotation {
 }
 
+public abstract interface annotation class io/kuicksilver/annotations/SecuritySensitive : java/lang/annotation/Annotation {
+}
+
+public final class io/kuicksilver/config/RateLimit {
+	public fun <init> (II)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBurst ()I
+	public final fun getPerSecond ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract class io/kuicksilver/io/ConnectionEndedException : java/io/IOException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/io/ConnectionEndedException$LocalClose : io/kuicksilver/io/ConnectionEndedException {
+}
+
+public final class io/kuicksilver/io/ConnectionEndedException$PeerClosed : io/kuicksilver/io/ConnectionEndedException {
+}
+
+public final class io/kuicksilver/io/ConnectionEndedException$PeerUnresponsive : io/kuicksilver/io/ConnectionEndedException {
+}
+
 public abstract class io/kuicksilver/native/KslException : java/lang/RuntimeException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }

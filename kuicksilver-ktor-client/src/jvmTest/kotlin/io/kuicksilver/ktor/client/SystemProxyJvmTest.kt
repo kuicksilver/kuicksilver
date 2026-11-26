@@ -45,7 +45,7 @@ class SystemProxyJvmTest {
                             ) {}
                         },
                     )
-                    testClient(Http3DiscoveryMode.Auto).use { c ->
+                    testClient(Http3Discovery.Auto).use { c ->
                         // the default proxyResolver
                         assertEquals("via the selector", c.get("https://server.test:$port/").bodyAsText())
                         assertEquals("CONNECT server.test:$port HTTP/1.1", head().first())

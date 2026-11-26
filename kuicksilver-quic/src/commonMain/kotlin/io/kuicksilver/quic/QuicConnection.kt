@@ -52,6 +52,19 @@ public interface QuicConnection : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val keyExchangeGroup: String? get() = null
 
+    /**
+     * The QUIC version the connection speaks, [VersionProfile.V1] or [VersionProfile.V2] (RFC 9369); null until the handshake
+     * settled it. With more than one version in `QuicConfig.versions` it can differ from the one the client's first flight
+     * offered: a server that prefers another version both support switches to it (compatible version negotiation, RFC 9368
+     * section 2.3), and a Version Negotiation packet makes the client start over in another one (RFC 9000 section 6). Set
+     * on the endpoint loop when the handshake completed (a server's 0-RTT connection: when it accepted the early data, the
+     * version being chosen by then), before [awaitHandshake] returns and before `ConnectionListener.onHandshakeCompleted`;
+     * it never changes afterwards and stays readable after the connection closed. Readable from any thread.
+     * Implementations outside this library need not override it: the default is null.
+     */
+    @ExperimentalKuicksilverApi
+    public val version: VersionProfile? get() = null
+
     /** The connection's paths; the first is the one it was established on (RFC 9000 section 9). */
     public val paths: List<QuicPath>
 
@@ -87,7 +100,7 @@ public interface QuicConnection : AutoCloseable {
     /**
      * Queues a datagram (RFC 9221). Under [DatagramPolicy.Reject] it suspends while the send queue is full; under
      * DropOldest / LatestWins it never suspends, and what is buffered for the loop is bounded too (at most twice
-     * `QuicConfig.datagramSendQueue`): a burst that outruns the loop loses its oldest datagrams even on an idle network, so
+     * `quicConfig { datagrams { sendQueue } }`): a burst that outruns the loop loses its oldest datagrams even on an idle network, so
      * send a burst you cannot lose under Reject. Throws [QuicException.DatagramTooLarge] above [maxDatagramSize] and
      * [QuicException.DatagramUnsupported] when either side has datagrams off.
      */
@@ -224,6 +237,20 @@ public interface QuicConnection : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val isHandshakeComplete: Boolean get() = true
 }
+
+/** Client: the Encrypted Client Hello outcome of the handshake once it completed ([io.kuicksilver.tls.EchStatus.None] before). */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicConnection.handshakeEchStatus: io.kuicksilver.tls.EchStatus
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.handshakeEchStatus ?: io.kuicksilver.tls.EchStatus.None
+
+/**
+ * Client: until when the OCSP response the server stapled in the handshake is fresh (epoch seconds), 0 when none was checked
+ * or the handshake has not completed; a resumed connection keeps its full handshake's. Coalescing holds another origin to it
+ * (`verifyForReuse`).
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicConnection.handshakeStapleUntil: Long
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.handshakeStapleUntil ?: 0L
 
 /**
  * Server: the server_name of the ClientHello the configuration's `sniSelector` chose this connection's identity and settings

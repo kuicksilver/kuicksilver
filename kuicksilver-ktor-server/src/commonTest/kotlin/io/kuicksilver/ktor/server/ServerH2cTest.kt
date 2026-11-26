@@ -51,9 +51,9 @@ class ServerH2cTest {
                     host = "127.0.0.1"
                     port = 0
                     h2c = mode
-                    trustedGateway = gateway
+                    allowMisdirectedHosts = gateway
                 }
-                http3 = false
+                http3 { enabled = false }
                 configure()
             }, module)
         server.startSuspend(wait = false)
@@ -133,7 +133,7 @@ class ServerH2cTest {
      */
     @Test fun negative_shortHttp11RequestIsNotHeldForThePreface() =
         serverTest {
-            val (server, port) = h2cServer(H2cMode.WithHttp11, configure = { requestHeaderTimeoutSeconds = 60 })
+            val (server, port) = h2cServer(H2cMode.WithHttp11, configure = { requestHeaderTimeout = 60.seconds })
             try {
                 val r = withTimeout(10.seconds) { rawHttp(port, "GET / HTTP/1.0\r\n\r\n", tls = null) }
                 assertTrue(r.startsWith("HTTP/1.1 200 "), r)
@@ -212,7 +212,7 @@ class ServerH2cTest {
     @Test fun negative_slowPrefaceIsCutAtTheHeaderDeadline() =
         serverTest {
             for (mode in listOf(H2cMode.Only, H2cMode.WithHttp11)) {
-                val (server, port) = h2cServer(mode, configure = { requestHeaderTimeoutSeconds = 1 })
+                val (server, port) = h2cServer(mode, configure = { requestHeaderTimeout = 1.seconds })
                 try {
                     RawH2Client.connectPlain(port).use { raw ->
                         raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
@@ -234,7 +234,7 @@ class ServerH2cTest {
      */
     @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
         serverTest {
-            val (server, port) = h2cServer(H2cMode.Only, configure = { requestHeaderTimeoutSeconds = 60 })
+            val (server, port) = h2cServer(H2cMode.Only, configure = { requestHeaderTimeout = 60.seconds })
             RawH2Client.connectPlain(port).use { raw ->
                 raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
                 // the HTTP/2 connection is waiting for the rest of the preface
@@ -266,7 +266,7 @@ class ServerH2cTest {
             val seen = kotlinx.coroutines.CompletableDeferred<Unit>()
             val (server, port) =
                 h2cServer(H2cMode.WithHttp11, configure = {
-                    requestHeaderTimeoutSeconds = 2
+                    requestHeaderTimeout = 2.seconds
                     h2cPrefaceCheckForTest = { input, _ ->
                         input.awaitContent(8) // the check starts with the octets in: a preface that started
                         seen.complete(Unit)
@@ -441,13 +441,13 @@ class ServerH2cTest {
         serverTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    identity = ServerFixtures.identity()
+                    tls { identity = ServerFixtures.identity() }
                     plainConnector {
                         host = "127.0.0.1"
                         port = 0
                         h2c = H2cMode.Only
                     }
-                    http3 = false
+                    http3 { enabled = false }
                 }) {}
             try {
                 assertFailsWith<IllegalArgumentException> { server.startSuspend(wait = false) }

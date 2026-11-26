@@ -224,7 +224,7 @@ class PathGapsTest {
 
     /** `allowMigrationToLoopback` lets a peer move to a loopback address (the configuration's exception to the loopback rule). */
     @Test fun negative_loopbackMigrationAllowedWhenConfigured() {
-        val (p, c) = connected(clientQuic = io.kuicksilver.quic.quicConfig { allowMigrationToLoopback = true })
+        val (p, c) = connected(clientQuic = io.kuicksilver.quic.quicConfig { migration { allowToLoopback = true } })
         p.use { _ ->
             assertTrue(c.migrationAllowedFrom(InetSocketAddress("127.0.0.1", 4433)))
         }

@@ -115,7 +115,7 @@ val server = tlsConfig(TlsRole.Server) {
 ```
 
 A TLS-over-TCP client that sends no ALPN extension completes the handshake without ALPN by default, as with OpenSSL and
-Go's `crypto/tls`. A server whose protocols imply one for such a client sets `alpnFallback` (experimental), e.g.
+Go's `crypto/tls`. A server whose protocols imply one for such a client sets `expert { alpnFallback }` (experimental), e.g.
 `http/1.1`: RFC 9113 section 3.3 says "HTTP/2 connections over TLS MUST use protocol negotiation in TLS", so a client
 without ALPN speaks HTTP/1.1. Such a client then completes the handshake only where the protocols in effect for its
 connection (`alpn`, or the `sniSelector` answer's) name the fallback; elsewhere the handshake ends with
@@ -207,8 +207,8 @@ val mtlsServer = tlsConfig(TlsRole.Server) {
 clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 ```
 
-The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
-`kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
+The Ktor server engine can watch the CA file too: `tls { clientCaFile(path); reloadInterval = ... }` in code, or
+`EngineMain`'s `kuicksilver.tls.clientCa` with `kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
 
 ### Certificate per name (SNI)
 
@@ -368,7 +368,7 @@ experimental in 0.3.0:
   name the server's certificate and the issuer the verifier trusted, be signed by that issuer or by a responder the
   issuer delegated (id-kp-OCSPSigning), and be inside its validity interval (5 minutes of clock skew). A response saying
   revoked fails with `VerifyReason.Revoked`; one that fails a check fails with `VerifyReason.InvalidStatusResponse`; both
-  send `bad_certificate_status_response` (113), also with `genericAlerts` (OpenSSL chooses that alert). A delegated
+  send `bad_certificate_status_response` (113), also with `expert { genericAlerts }` (OpenSSL chooses that alert). A delegated
   responder must also carry no unknown critical extension, meet the security level, and not be listed on a configured CRL
   of the issuer. A server that staples nothing, or a response saying "unknown", passes under
   `StapledIfPresent` (OCSP clients "typically 'soft-fail'", RFC 9325 section 7.5) and fails under `RequireStapled`
@@ -579,13 +579,13 @@ Through `TlsConfig` it works over QUIC and TCP; the Ktor engines use it too, the
 per host ([Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)) and the server with its keys
 ([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)).
 
-A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
+A client offers a list with `ech { configList }` (experimental, like the whole `ech { }` block; `EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
 extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one. A list with none
-usable is refused by `build()` (`TlsException.Config`, "no ECHConfig of echConfigList is usable"), and so is any list in a
+usable is refused by `build()` (`TlsException.Config`, "no ECHConfig of ech { configList } is usable"), and so is any list in a
 build without ECH (a system OpenSSL; "this build has no Encrypted Client Hello"): a configured list never silently becomes a
-connection that sends the name in the clear. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
-stand out. ECH is TLS 1.3 only: `echConfigList` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
+connection that sends the name in the clear. Without a list, `ech { grease }` (default true) sends a GREASE extension so that clients with ECH do not
+stand out. ECH is TLS 1.3 only: `ech { configList }` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
 
 When the server rejects ECH (its key changed, or it no longer has one), the client checks the certificate against the
 `public_name` (also through a platform or custom verifier, which is asked for that name), ends the handshake with
@@ -614,11 +614,11 @@ rejected verifies the certificate against the `public_name`, so the server must 
 val keys = EchServerKeys(listOf(EchKey(pemText)))
 val server = tlsConfig(TlsRole.Server) {
     identity = TlsIdentity.fromPem(chainPem, keyPem)   // valid for the inner names and for the public_name
-    echKeys = keys
+    ech { this.keys = keys }
 }
 val client = tlsConfig(TlsRole.Client) {
     serverName = "inner.example"
-    echConfigList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord)
+    ech { configList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord) }
 }
 ```
 
@@ -666,7 +666,7 @@ WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes
   handshake with `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47).
 - `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell which
   algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).
-- `certificateCompression = false` (experimental) turns it off for a configuration: no offer, and a compressed
+- `certificateCompression = false` (stable since 0.3.0) turns it off for a configuration: no offer, and a compressed
   certificate from the peer is an `unexpected_message` (10).
 
 The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli

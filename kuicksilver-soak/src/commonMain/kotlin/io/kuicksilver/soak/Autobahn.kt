@@ -21,9 +21,9 @@ import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 
 /**
  * The WebSocket server `tools/interop/autobahn.sh` runs the Autobahn|Testsuite's fuzzing client against (RFC 6455 and RFC
- * 7692 conformance): the Ktor engine on one plain connector (HTTP/1.1, the upgrade of RFC 6455 section 4), Ktor's
- * `WebSockets` plugin with this library's `PerMessageDeflate`, the engine's default limits (`webSocketMaxMessageSize`,
- * 16 MiB). Every path is an echo: each Text and Binary frame goes back as it came (its FIN bit kept, so a fragmented
+ * 7692 conformance): the Ktor engine on one plain connector (HTTP/1.1, the upgrade of RFC 6455 section 4; HTTP/2 and
+ * HTTP/3 off explicitly, so the run tests that upgrade whatever the engine's defaults), Ktor's `WebSockets` plugin with
+ * this library's `PerMessageDeflate`, the engine's default limits (`webSockets { maxMessageSize }`, 16 MiB). Every path is an echo: each Text and Binary frame goes back as it came (its FIN bit kept, so a fragmented
  * message is echoed fragment by fragment); the engine answers each Ping as soon as it reads it (`WebSocketPongs`, the
  * session's own Pong for it dropped), Ktor's session answers the Close. Arguments: `[host] [port]` (default 127.0.0.1, 0); the bound port is printed as
  * `autobahn-server listening on <port>` once the server accepts connections. Runs until the process is killed.
@@ -39,8 +39,8 @@ public fun autobahnServerMain(args: Array<String>) {
                     this.host = host
                     this.port = port
                 }
-                http2 = false
-                http3 = false
+                http2 { enabled = false }
+                http3 { enabled = false }
             }) {
                 install(ServerWebSockets) { extensions { install(PerMessageDeflate) } }
                 routing { webSocket("{...}") { echo() } }

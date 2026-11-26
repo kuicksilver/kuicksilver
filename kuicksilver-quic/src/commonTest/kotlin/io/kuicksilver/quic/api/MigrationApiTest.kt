@@ -132,8 +132,8 @@ class MigrationApiTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { preferredAddress = PreferredAddress(pref, null) }
                                     .build()
-                            crypto = KslQuicCrypto
-                            io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b } }
                         }.build(),
                 )
             val client =
@@ -142,8 +142,8 @@ class MigrationApiTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { a } }
                         }.build(),
                 )
             try {
@@ -192,7 +192,7 @@ class MigrationApiTest {
                                 .apply {
                                     server =
                                         QuicServerConfig.Builder(CoreFixtures.server()).apply { preferredAddress = case.second }.build()
-                                    io = { at -> if (at == main.localAddress) main else net.open(at) }
+                                    runtime { io = { at -> if (at == main.localAddress) main else net.open(at) } }
                                 }.build(),
                         )
                     }
@@ -232,20 +232,22 @@ class MigrationApiTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { preferredAddress = PreferredAddress(pref, null) }
                                     .build()
-                            crypto = KslQuicCrypto
-                            io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b }
-                            logger =
-                                object : KuicksilverLogger {
-                                    override fun isEnabled(level: LogLevel) = level >= LogLevel.Warn
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b } }
+                            observability {
+                                logger =
+                                    object : KuicksilverLogger {
+                                        override fun isEnabled(level: LogLevel) = level >= LogLevel.Warn
 
-                                    override fun log(
-                                        level: LogLevel,
-                                        message: String,
-                                        cause: Throwable?,
-                                    ) {
-                                        warnings.trySend(message)
+                                        override fun log(
+                                            level: LogLevel,
+                                            message: String,
+                                            cause: Throwable?,
+                                        ) {
+                                            warnings.trySend(message)
+                                        }
                                     }
-                                }
+                            }
                         }.build(),
                 )
             val client =
@@ -254,8 +256,8 @@ class MigrationApiTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { a } }
                         }.build(),
                 )
             try {
@@ -450,7 +452,7 @@ class MigrationApiTest {
 
     @Test fun migrateWhenPeerDisabledMigrationThrows() =
         runBlocking {
-            ApiPair.open(serverQuic = quicConfig { allowMigration = false }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { migration { allow = false } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     val e = assertFailsWith<IllegalStateException> { c.migrate(p.net.open(newAddr)) }

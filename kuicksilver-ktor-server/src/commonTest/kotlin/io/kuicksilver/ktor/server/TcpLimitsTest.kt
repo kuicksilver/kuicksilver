@@ -20,7 +20,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * `maxTcpConnections` and `maxTcpConnectionsPerIp` in the TCP accept loop ([acceptLoop], [TcpLimits]), with a fake accept
+ * `tcp { maxConnections }` and `tcp { maxConnectionsPerIp }` in the TCP accept loop ([acceptLoop], [TcpLimits]), with a fake accept
  * source on virtual time: what reaches `accept()` and what is handed on to the TLS handshake.
  */
 class TcpLimitsTest {
@@ -56,7 +56,7 @@ class TcpLimitsTest {
     }
 
     /**
-     * At `maxTcpConnections` the loop stops calling accept() (the slot is taken before it, as Go's `netutil.LimitListener`,
+     * At `tcp { maxConnections }` the loop stops calling accept() (the slot is taken before it, as Go's `netutil.LimitListener`,
      * Jetty's `ConnectionLimit` and nginx `worker_connections` do), so the kernel backlog holds the next client and the server
      * spends nothing on it; a closed connection lets the next one in.
      */
@@ -80,7 +80,7 @@ class TcpLimitsTest {
         }
 
     /**
-     * Over `maxTcpConnectionsPerIp` a client is refused right after accept (its address is not known before), before it is
+     * Over `tcp { maxConnectionsPerIp }` a client is refused right after accept (its address is not known before), before it is
      * handed on to the TLS handshake (`serve`); a client from another address is served. The refused one does not hold a
      * slot, and the address may connect again once one of its connections closed.
      */
@@ -114,7 +114,7 @@ class TcpLimitsTest {
         }
 
     /**
-     * A failed accept() gives its slot back: with `maxTcpConnections = 1`, a slot kept by each failure would stop the
+     * A failed accept() gives its slot back: with `tcp { maxConnections = 1 }`, a slot kept by each failure would stop the
      * loop for good after the first EMFILE. The failures still back off (5 ms, doubling: [AcceptLoopTest]).
      */
     @Test fun negative_failedAcceptReturnsItsSlot() =
@@ -179,15 +179,15 @@ class TcpLimitsTest {
     }
 
     @Test fun limitsAreValidated() {
-        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().maxTcpConnections = 0 }
-        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().maxTcpConnectionsPerIp = 0 }
+        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().tcp.maxConnections = 0 }
+        assertFailsWith<IllegalArgumentException> { KuicksilverApplicationEngine.Configuration().tcp.maxConnectionsPerIp = 0 }
         val c = KuicksilverApplicationEngine.Configuration()
-        assertEquals(10_000, c.maxTcpConnections)
-        assertEquals(null, c.maxTcpConnectionsPerIp, "off by default: behind a proxy every client shares one address")
-        c.maxTcpConnectionsPerIp = 256
-        assertEquals(256, c.maxTcpConnectionsPerIp)
-        c.maxTcpConnectionsPerIp = null
-        assertEquals(null, c.maxTcpConnectionsPerIp)
+        assertEquals(10_000, c.tcp.maxConnections)
+        assertEquals(null, c.tcp.maxConnectionsPerIp, "off by default: behind a proxy every client shares one address")
+        c.tcp.maxConnectionsPerIp = 256
+        assertEquals(256, c.tcp.maxConnectionsPerIp)
+        c.tcp.maxConnectionsPerIp = null
+        assertEquals(null, c.tcp.maxConnectionsPerIp)
     }
 
     private fun kotlinx.coroutines.test.TestScope.advanceUntilServed(done: () -> Boolean) {

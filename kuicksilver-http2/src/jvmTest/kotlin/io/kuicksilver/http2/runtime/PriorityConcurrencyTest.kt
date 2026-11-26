@@ -33,12 +33,12 @@ class PriorityConcurrencyTest {
                 repeat(20) { round ->
                     val toServer = ByteChannel()
                     val toClient = ByteChannel()
-                    val server = H2ServerConnection.start(toServer, toClient, Http2Settings(), scope, { toServer.close() })
+                    val server = H2ServerConnection.start(toServer, toClient, Http2Settings.Default, scope, { toServer.close() })
                     val client =
                         H2ClientConnection.start(
                             toClient,
                             toServer,
-                            Http2Settings(),
+                            Http2Settings.Default,
                             scope,
                             kotlin.time.Duration.INFINITE,
                             { toClient.close() },

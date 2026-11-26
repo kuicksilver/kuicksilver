@@ -33,6 +33,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -77,7 +78,7 @@ class ClientConnectUdpProxyTest {
                 }
             }
         val (proxyServer, proxyPort) =
-            testServer(configure = { connectUdp = true }) {
+            testServer(configure = { http3 { connectUdp = true } }) {
                 routing {
                     route("/") {
                         if (requireAuthorization != null) {
@@ -105,7 +106,7 @@ class ClientConnectUdpProxyTest {
             val proxy = loopbackProxy()
             withProxyAndTarget(proxy) { proxyPort, targetPort, served ->
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
-                testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { proxies { connectUdp = udp } }).use { c ->
                     val r = c.get("https://127.0.0.1:$targetPort/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("hello over HTTP/3", r.bodyAsText())
@@ -120,19 +121,66 @@ class ClientConnectUdpProxyTest {
             }
         }
 
+    @Test fun joiningTheEngineJobWaitsForTheTunnelledConnectionsTrace() =
+        h3Test {
+            val proxy = loopbackProxy()
+            withProxyAndTarget(proxy) { proxyPort, targetPort, _ ->
+                val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
+                // the trace of the connection through the tunnel (the one to the target's port; the other goes to the proxy)
+                // closes only on release: the engine's job must not complete before it
+                val tunnelled = kotlin.concurrent.atomics.AtomicReference<String?>(null)
+                val sink = CountingQlogSink(hold = { it == tunnelled.load() })
+                val listener =
+                    object : io.kuicksilver.quic.ConnectionListener {
+                        override fun onOpened(connection: io.kuicksilver.quic.ConnectionInfo) {
+                            if (connection.remoteAddress.port == targetPort) tunnelled.store(connection.id)
+                        }
+                    }
+
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                val c =
+                    testClient(Http3Discovery.Auto, engine = {
+                        proxies { connectUdp = udp }
+                        observability {
+                            qlog = sink
+                            connectionListener = listener
+                        }
+                    })
+                val job = c.engine.coroutineContext[kotlinx.coroutines.Job]!!
+                try {
+                    assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
+                    assertEquals(2, sink.opened.load())
+                    assertTrue(tunnelled.load() != null, "the tunnelled connection was seen")
+                    assertEquals(2, (c.engine as KuicksilverEngine).h3.endpointCountForTest, "the proxy hop's endpoint and the tunnel's")
+                    c.close()
+                    assertEquals(
+                        null,
+                        kotlinx.coroutines.withTimeoutOrNull(500.milliseconds) { job.join() },
+                        "the join returned while the tunnelled connection's trace was still being closed",
+                    )
+                } finally {
+                    sink.release()
+                    c.close()
+                }
+                kotlinx.coroutines.withTimeout(10.seconds) { job.join() }
+                assertEquals(2, sink.closed.load(), "every trace closed by the time join() returned")
+                assertEquals(0, (c.engine as KuicksilverEngine).h3.endpointCountForTest, "every endpoint joined and forgotten")
+            }
+        }
+
     @Test fun credentialsGoToTheProxy() =
         h3Test {
             val proxy = loopbackProxy()
             val creds = ProxyCredentials("user", "secret")
             withProxyAndTarget(proxy, requireAuthorization = "Basic dXNlcjpzZWNyZXQ=") { proxyPort, targetPort, _ ->
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"), creds)
-                testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { proxies { connectUdp = udp } }).use { c ->
                     assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
                 }
                 // the credentials went on the tunnel's CONNECT to the proxy, never inside the tunnel to the origin
                 assertEquals(null, targetSawAuthorization)
                 val noCreds = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
-                testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = noCreds }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { proxies { connectUdp = noCreds } }).use { c ->
                     val e = assertFailsWith<Http3Exception.ConnectRejected> { c.get("https://127.0.0.1:$targetPort/") }
                     assertEquals(407, e.status)
                 }
@@ -145,7 +193,7 @@ class ClientConnectUdpProxyTest {
             val proxy = UdpProxy() // PublicOnly: refuses the loopback target
             withProxyAndTarget(proxy) { proxyPort, targetPort, served ->
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
-                testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { proxies { connectUdp = udp } }).use { c ->
                     val e = assertFailsWith<Http3Exception.ConnectRejected> { c.get("https://127.0.0.1:$targetPort/") }
                     assertEquals(403, e.status)
                     assertEquals("proxy; error=destination_ip_prohibited", e.headers["proxy-status"])
@@ -154,13 +202,16 @@ class ClientConnectUdpProxyTest {
             }
         }
 
-    /** HTTP/3 off (H1Only) cannot carry a request that must go through the CONNECT-UDP proxy: refused, never sent over TCP. */
+    /**
+     * HTTP/3 off (`http3 { enabled = false }`) cannot carry a request that must go through the CONNECT-UDP proxy: refused,
+     * never sent over TCP.
+     */
     @Test fun negative_h1OnlyWithAConnectUdpProxyIsRefused() =
         h3Test {
             val proxy = loopbackProxy()
             withProxyAndTarget(proxy) { proxyPort, targetPort, served ->
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
-                testClient(Http3DiscoveryMode.H1Only, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(null, engine = { proxies { connectUdp = udp } }).use { c ->
                     assertFailsWith<UnsupportedOperationException> { c.get("https://127.0.0.1:$targetPort/") }
                 }
                 assertEquals(0, served.load())
@@ -177,7 +228,7 @@ class ClientConnectUdpProxyTest {
             withProxyAndTarget(proxy) { proxyPort, targetPort, _ ->
                 var tunnel = false
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort")) { tunnel }
-                testClient(Http3DiscoveryMode.H3Only, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { proxies { connectUdp = udp } }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText()) // direct
                     assertEquals(null, engine.h3.tunnelTicketsForTest(udp.routeKey), "no tunnel yet")
@@ -195,18 +246,18 @@ class ClientConnectUdpProxyTest {
     @Test fun negative_webTransportIsRefusedWhereTheConnectUdpProxyApplies() =
         h3Test {
             val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:9"))
-            testClient(Http3DiscoveryMode.Auto, engine = {
-                connectUdpProxy = udp
-                proxyResolver = ProxyResolvers.None
+            testClient(Http3Discovery.Auto, engine = {
+                proxies { connectUdp = udp }
+                proxies { resolver = ProxyResolvers.None }
             }).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:9/wt") }
-                assertTrue("webTransportIgnoresConnectUdpProxy" in (e.message ?: ""), e.message)
+                assertTrue("WebTransportProxyPolicy.BypassConnectUdpProxy" in (e.message ?: ""), e.message)
             }
             // the switch for HTTP and SOCKS proxies does not open the way past this one
-            testClient(Http3DiscoveryMode.Auto, engine = {
-                connectUdpProxy = udp
-                proxyResolver = ProxyResolvers.None
-                http3 { webTransportIgnoresProxy = true }
+            testClient(Http3Discovery.Auto, engine = {
+                proxies { connectUdp = udp }
+                proxies { resolver = ProxyResolvers.None }
+                http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassHttpProxy } }
             }).use { c -> assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:9/wt") } }
         }
 
@@ -216,7 +267,7 @@ class ClientConnectUdpProxyTest {
             val proxy = loopbackProxy()
             withProxyAndTarget(proxy) { proxyPort, targetPort, served ->
                 val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort")) { it.port != targetPort }
-                testClient(Http3DiscoveryMode.H3Only, engine = { connectUdpProxy = udp }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { proxies { connectUdp = udp } }).use { c ->
                     assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
                 }
                 assertEquals(1, served.load())

@@ -148,7 +148,15 @@ private suspend fun H3Session.handleArmedRequestStream(
                 return
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                // reset before its first frame type: the only WebTransport session may own a WebTransport code
+                // (draft-ietf-webtrans-http3-02 section 4.3); settled as a WebTransport stream, never a request (GOAWAY's
+                // request ids leave it out, as they leave out WT_STREAM)
+                if (wt.headerless(st, bidi = true, 0, e)) {
+                    bidiSettled(st.id)
+                    headSettled()
+                    return
+                }
                 null // a reset or a lost connection: the request path below meets it again and handles it as before
             }
         } else {

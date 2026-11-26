@@ -17,7 +17,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.ktor.client.HostPort
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.server.H2cMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -49,7 +49,7 @@ internal class H2cInteropTest {
                     port = 0
                     h2c = mode
                 }
-                http3 = false
+                http3 { enabled = false }
                 shutdownGracePeriod = 0
             }, module = module)
         server.start(wait = false)
@@ -66,7 +66,7 @@ internal class H2cInteropTest {
     private fun ourClient(port: Int) =
         HttpClient(KuicksilverClient) {
             engine {
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                http3 { enabled = false }
                 http2 { priorKnowledge = setOf(HostPort("127.0.0.1", port)) }
             }
         }

@@ -57,11 +57,11 @@ internal object HqInteropClient {
         if (requests.isEmpty()) return false
         val first = Url.parse(requests[0])
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf("hq-interop"); serverName = first.host.takeUnless { it.contains(':') };   /* an IPv6 literal is no SNI name: the trust config names what to verify */ this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
-        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
+        val quic = quicConfig { versions = plan.quic.versions; expert { initialVersion = plan.quic.initialVersion }; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController }
         val client = QuicClientConfig.Builder(tls).apply { this.quic = quic; earlyData = plan.earlyData }.build()
         val remote = InetSocketAddress(first.host, first.port)
         /* `server6` resolves to an IPv6 address: the local socket must be of that family; a loopback server, from loopback */
-        val endpoint = QuicEndpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().build())
+        val endpoint = QuicEndpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().apply { observability { this.qlog = qlog } }.build())
         try {
             return withTimeout(600.seconds) {
                 if (plan.earlyData != EarlyDataState.Disabled) {

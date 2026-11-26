@@ -108,7 +108,7 @@ class ClientH1Test {
             var served = 0
             val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok").also { served++ } } } }
             try {
-                testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                testClient(engine = { proxies { resolver = ProxyResolvers.None } }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val asked = mutableListOf<String>()
                     engine.h1.cleartextPermitted = { host ->
@@ -131,7 +131,7 @@ class ClientH1Test {
     /** The policy is asked about an IPv6 literal in RFC 5952's text, so a rule for `::1` holds for every spelling of it. */
     @Test fun negative_aRuleForAnIpv6AddressHoldsForEverySpellingOfIt() =
         clientTest {
-            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+            testClient(engine = { proxies { resolver = ProxyResolvers.None } }).use { client ->
                 val engine = client.engine as KuicksilverEngine
                 val asked = mutableListOf<String>()
                 engine.h1.cleartextPermitted = { host ->
@@ -155,7 +155,7 @@ class ClientH1Test {
             var served = 0
             val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok").also { served++ } } } }
             try {
-                testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                testClient(engine = { proxies { resolver = ProxyResolvers.None } }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val asked = mutableListOf<String>()
                     engine.h1.cleartextPermitted = { host ->
@@ -175,7 +175,7 @@ class ClientH1Test {
     /** A name in Unicode is refused before the policy is asked: the engine does not map it to the A-label the rules name. */
     @Test fun negative_aNonAsciiHostIsRefusedBeforeThePolicyIsAsked() =
         clientTest {
-            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+            testClient(engine = { proxies { resolver = ProxyResolvers.None } }).use { client ->
                 val engine = client.engine as KuicksilverEngine
                 var asked = 0
                 engine.h1.cleartextPermitted = {
@@ -194,7 +194,7 @@ class ClientH1Test {
      */
     @Test fun negative_anAmbiguousNumericHostIsRefusedBeforeThePolicyIsAsked() =
         clientTest {
-            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+            testClient(engine = { proxies { resolver = ProxyResolvers.None } }).use { client ->
                 val engine = client.engine as KuicksilverEngine
                 var asked = 0
                 engine.h1.cleartextPermitted = {
@@ -384,7 +384,7 @@ class ClientH1Test {
      */
     @Test fun negative_h3OnlyRefusesHttpUrls() =
         clientTest {
-            testClient(Http3DiscoveryMode.H3Only).use { c ->
+            testClient(Http3Discovery.H3Only).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.get("http://127.0.0.1:1/") }
                 assertTrue(e.message!!.contains("https"), e.message)
             }
@@ -513,7 +513,7 @@ class ClientH1Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(engine = { trust = pinned }).use { c ->
+                testClient(engine = { tls { trust = pinned } }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     assertTrue(generateSequence(e) { it.cause }.any { it is TlsException }, "$e")
                 }
@@ -853,16 +853,18 @@ class ClientH1Test {
                         asked += host to p
                         listOf(TcpAddress(ByteArray(16).also { it[15] = 1 }, 0), TcpAddress(byteArrayOf(127, 0, 0, 1), p))
                     }
-                    eventListener =
-                        object : KuicksilverEventListener() {
-                            override fun connectionAcquired(
-                                request: io.ktor.client.request.HttpRequestData,
-                                protocol: HttpProtocolVersion,
-                                reused: Boolean,
-                            ) {
-                                acquired++
+                    observability {
+                        eventListener =
+                            object : KuicksilverEventListener() {
+                                override fun connectionAcquired(
+                                    request: io.ktor.client.request.HttpRequestData,
+                                    protocol: HttpProtocolVersion,
+                                    reused: Boolean,
+                                ) {
+                                    acquired++
+                                }
                             }
-                        }
+                    }
                 }).use { c ->
                     val r = c.get("http://origin.test:$port/")
                     assertEquals(200, r.status.value)
@@ -878,14 +880,23 @@ class ClientH1Test {
     /**
      * RFC 8305 section 8: the connection attempt delay is at least the Minimum Connection Attempt Delay ("Recommended to be
      * 100 milliseconds. MUST NOT be less than 10 milliseconds.") and at most the Maximum ("Recommended to be 2 seconds."),
-     * or infinite for one address after another.
+     * or null for one address after another (Duration.INFINITE, the 0.2 spelling of it, is refused).
      */
     @Test fun negative_connectionAttemptDelayOutOfRangeRefused() {
-        for (bad in listOf(kotlin.time.Duration.ZERO, 9.milliseconds, 10.milliseconds, 99.milliseconds, 2001.milliseconds)) {
-            assertFailsWith<IllegalArgumentException>("$bad") { testClient(engine = { connectionAttemptDelay = bad }).close() }
+        val bads =
+            listOf(
+                kotlin.time.Duration.ZERO,
+                9.milliseconds,
+                10.milliseconds,
+                99.milliseconds,
+                2001.milliseconds,
+                kotlin.time.Duration.INFINITE,
+            )
+        for (bad in bads) {
+            assertFailsWith<IllegalArgumentException>("$bad") { testClient(engine = { network { happyEyeballsDelay = bad } }).close() }
         }
-        for (good in listOf(100.milliseconds, 2.seconds, kotlin.time.Duration.INFINITE)) {
-            testClient(engine = { connectionAttemptDelay = good }).close()
+        for (good in listOf(100.milliseconds, 2.seconds, null)) {
+            testClient(engine = { network { happyEyeballsDelay = good } }).close()
         }
     }
 
@@ -917,7 +928,7 @@ class ClientH1Test {
                     }
                 }
             try {
-                val client = testClient(engine = { maxConnectionsPerRoute = 1 })
+                val client = testClient(engine = { pool { maxConnectionsPerRoute = 1 } })
                 val engine = client.engine as KuicksilverEngine
                 coroutineScope {
                     val slow = async { client.get("http://127.0.0.1:$port/slow").bodyAsText() }
@@ -932,7 +943,7 @@ class ClientH1Test {
                     assertEquals("ok", queued.await().getOrThrow(), "a request queued before close() is served")
                     withTimeout(5.seconds) { engine.cleanup.join() }
                 }
-                val shared = Kuicksilver.create { trust = ClientFixtures.trust }
+                val shared = Kuicksilver.create { tls { trust = ClientFixtures.trust } }
                 val other = io.ktor.client.HttpClient(shared)
                 shared.close()
                 assertFailsWith<io.ktor.client.engine.ClientEngineClosedException> { other.get("http://127.0.0.1:$port/") }

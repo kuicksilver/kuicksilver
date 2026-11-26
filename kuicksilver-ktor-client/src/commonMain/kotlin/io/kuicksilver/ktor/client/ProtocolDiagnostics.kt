@@ -54,7 +54,7 @@ public class ProtocolDiagnostics internal constructor() {
      * The transport the response (or, for a failed call, the thrown failure) came over: [Transport.Quic] for HTTP/3,
      * [Transport.Tcp] for HTTP/1.1 and HTTP/2. A failed call over TCP after HTTP/3 had failed has [h3Failure] too. Null only
      * for a call that failed before it tried either (a configuration the request cannot use, such as an `http://` URL in
-     * `Http3DiscoveryMode.H3Only`). While the call runs it follows the attempt in progress.
+     * `Http3Discovery.H3Only`). While the call runs it follows the attempt in progress.
      */
     @kotlin.concurrent.Volatile
     public var transport: Transport? = null
@@ -213,7 +213,7 @@ public class ProtocolDiagnostics internal constructor() {
 
                 Long.MAX_VALUE -> Duration.INFINITE
 
-                // `hardDelay = Duration.INFINITE`: HTTP/1.1 only once HTTP/3 failed
+                // `raceHeadStart = RaceHeadStart.NoRace`: TCP only once HTTP/3 failed
                 else -> headStartNanos.nanoseconds
             }
 
@@ -350,9 +350,9 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | Value | Meaning | What to check |
  * |---|---|---|
  * | [NotSecure] | an `http://` or `ws://` URL | HTTP/3 needs `https` (RFC 9114 section 3.1) |
- * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxyResolver`; `ProxyResolvers.None` connects directly |
- * | [Configuration] | `Http3DiscoveryMode.H1Only` | the discovery mode |
- * | [Http3Disabled] | `http3 { http3Allowed }` said false | your remote configuration |
+ * | [Proxy] | a proxy applies to the request (HTTP/1.1 or HTTP/2 through it) | `proxy`, `proxies { resolver }`; `ProxyResolvers.None` connects directly |
+ * | [Configuration] | `http3 { enabled = false }` | the configuration |
+ * | [Http3Disabled] | `http3 { allowed }` said false | your remote configuration |
  * | [NoAlternative] | `Auto` and the origin announced no `Alt-Svc` (yet) | the server's `Alt-Svc` header |
  * | [MisdirectedRequest] | the alternative answered 421 and was dropped; the origin served the request over HTTP/1.1 | the alternative's certificate and virtual hosts |
  * | [BrokenAlternative] | HTTP/3 to this alternative failed recently on this network | the log line's `broken since:` |
@@ -368,7 +368,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [GoAway] | the server kept refusing the request with GOAWAY | the server is shutting down |
  * | [StreamFailed] | one request stream failed and the request was repeated over HTTP/1.1 | `h3Failure` |
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
- * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
+ * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stall { enabled } }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
  * | [ServerConnectionIdChanged] | the server switched its Source Connection ID during the QUIC handshake (msquic with a ClientHello of 3+ datagrams, a resumption's) | nothing on the client: the server's QUIC stack (msquic#4905); this call went over TCP, the next ones use HTTP/3 without resumption for a while |
  *
@@ -382,10 +382,10 @@ public enum class FallbackReason {
     /** A proxy applies to the request: through it only TCP (HTTP/1.1, or HTTP/2 inside the tunnel). */
     Proxy,
 
-    /** `Http3DiscoveryMode.H1Only`. */
+    /** `http3 { enabled = false }`. */
     Configuration,
 
-    /** `Http3ClientConfig.http3Allowed` returned false for this request. */
+    /** `http3 { allowed }` returned false for this request. */
     Http3Disabled,
 
     /** `Auto` mode without a known HTTP/3 alternative for the origin (no `Alt-Svc` yet, or it was dropped). */
@@ -452,7 +452,7 @@ public enum class FallbackReason {
     Other,
 
     /**
-     * The HTTP/3 connection stalled under the request (`http3 { stallDetection }`): probe timeouts in a row went unanswered
+     * The HTTP/3 connection stalled under the request (`http3 { stall { enabled } }`): probe timeouts in a row went unanswered
      * and nothing came back from the server (or, on a 0-RTT connection, nothing at all), as on a network that cuts UDP
      * flows. The connection was drained, the alternative marked broken (RFC 7838 section 2.4), and the request, which could
      * be repeated (RFC 9110 section 9.2.2), went over TCP; one that could not failed with `QuicStalledException`. Since 0.3.0.
@@ -482,19 +482,19 @@ public enum class FallbackReason {
 /** Where the HTTP/3 endpoint of a call came from ([ProtocolDiagnostics.alternativeSource]). */
 @ExperimentalKuicksilverApi
 public enum class AlternativeSource {
-    /** An `Alt-Svc` header of the origin (RFC 7838), in `Http3DiscoveryMode.Auto`. */
+    /** An `Alt-Svc` header of the origin (RFC 7838), in `Http3Discovery.Auto`. */
     AltSvc,
 
-    /** The origin is in `Http3ClientConfig.quicHints`. */
+    /** The origin is in `http3 { hints }`. */
     QuicHint,
 
-    /** `Http3DiscoveryMode.Preferred`: the origin itself, by prior knowledge. */
+    /** `Http3Discovery.Preferred`: the origin itself, by prior knowledge. */
     Preferred,
 
-    /** `Http3DiscoveryMode.H3Only`: the origin itself, without a fallback. */
+    /** `Http3Discovery.H3Only`: the origin itself, without a fallback. */
     H3Only,
 
-    /** An HTTPS resource record of the origin (RFC 9460, `Http3ClientConfig.httpsRecords`), in `Http3DiscoveryMode.Auto`. */
+    /** An HTTPS resource record of the origin (RFC 9460, `Http3ClientConfig.httpsRecords`), in `Http3Discovery.Auto`. */
     HttpsRecord,
 }
 

@@ -88,7 +88,7 @@ class HostInteropTest {
         withPeer { ports ->
             for (host in hosts) {
                 val port = ports.getValue(if (host.contains(':')) "http6" else "http4")
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get(url(host, port))
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, host)
                     assertEquals("hello over HTTP/3", r.bodyAsText(), host)
@@ -100,7 +100,7 @@ class HostInteropTest {
         withPeer { ports ->
             for (host in hosts) {
                 val port = ports.getValue(if (host.contains(':')) "http6" else "http4")
-                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                testClient(null).use { c ->
                     val r = c.get(url(host, port))
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, host)
                     assertEquals("hello over HTTP/1.1", r.bodyAsText(), host)

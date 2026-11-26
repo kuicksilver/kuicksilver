@@ -7,6 +7,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.PathInfo
+import io.kuicksilver.quic.VersionProfile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 
@@ -65,6 +66,10 @@ public sealed class ConnectionSnapshot {
  * @property pathChanges How many times the connection moved to another path between the moment this call took it and the
  *   snapshot: migrations, NAT rebindings, a move to the server's preferred address ([ConnectionInfo.pathChanges]). With
  *   requests sharing the connection, a move counts for every call running at the time.
+ * @property version The QUIC version the connection speaks ([io.kuicksilver.quic.QuicConnection.version]): `V1` or `V2`
+ *   (RFC 9369), which can differ from the one the client offered first when both sides allow both (compatible version
+ *   negotiation, RFC 9368). Null only before the handshake settled it (a snapshot of a failed setup) and for a connection
+ *   outside this library.
  */
 @ExperimentalKuicksilverApi
 public class QuicConnectionSnapshot internal constructor(
@@ -76,6 +81,7 @@ public class QuicConnectionSnapshot internal constructor(
     public val minRtt: Duration,
     public val rttVariation: Duration,
     public val pathChanges: Int,
+    public val version: VersionProfile?,
 ) : ConnectionSnapshot() {
     override val transport: Transport get() = Transport.Quic
     override val protocol: HttpProtocolVersion get() = HttpProtocolVersion.HTTP_3_0
@@ -123,7 +129,7 @@ public enum class ConnectStage {
     /** The name lookup of the host (or of the proxy) had not given an address to try yet. */
     NameLookup,
 
-    /** A connection slot of the route (`maxConnectionsPerRoute`): every one was in use, and none came free in time. */
+    /** A connection slot of the route (`pool { maxConnectionsPerRoute }`): every one was in use, and none came free in time. */
     PoolWait,
 
     /**
@@ -306,6 +312,7 @@ internal fun quicSnapshot(
         stats.minRtt,
         stats.rttVar,
         ((info?.pathChanges ?: 0) - startChanges).coerceAtLeast(0),
+        conn.version,
     )
 }
 

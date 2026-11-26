@@ -376,7 +376,7 @@ class RequestDnsTest {
     @Test fun anApplicationResolversAnswersAreSynthesizedOnAnIpv6OnlyNetwork() =
         runTest {
             val config = KuicksilverEngineConfig()
-            config.dns = Dns { listOf(IpAddress.parse("93.184.216.34")) }
+            config.network.dns = Dns { listOf(IpAddress.parse("93.184.216.34")) }
             config.nat64ForTest = nat64()
             val r = config.newRequestDns().resolution("a.example", 443)
             assertTrue(r.ipv6Only)

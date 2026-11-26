@@ -103,16 +103,19 @@ class ClientEchTest {
     ): Pair<TestServer, Int> {
         val server =
             embeddedServer(KuicksilverServer, configure = {
-                quicEarlyData = earlyData
-                tlsConnector(ClientFixtures.identity()) {
+                http3 { earlyData { enabled = earlyData } }
+                tlsConnector {
+                    tls { identity = ClientFixtures.identity() }
                     host = "127.0.0.1"
                     port = 0
-                    echKeys = keys
-                    sniSelector = { hello ->
-                        names.add(hello.serverName)
-                        onHello(hello.serverName)
-                        // the one certificate covers the inner name and the public_name (RFC 9849 section 6.1.7)
-                        io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                    tls { echKeys = keys }
+                    tls {
+                        sniSelector = { hello ->
+                            names.add(hello.serverName)
+                            onHello(hello.serverName)
+                            // the one certificate covers the inner name and the public_name (RFC 9849 section 6.1.7)
+                            io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                        }
                     }
                 }
             }) {
@@ -132,7 +135,7 @@ class ClientEchTest {
     }
 
     private fun client(
-        discovery: Http3DiscoveryMode = Http3DiscoveryMode.H1Only,
+        discovery: Http3Discovery? = null,
         more: KuicksilverEngineConfig.() -> Unit = {},
     ) = testClient(discovery, engine = {
         resolverForTest = loopback
@@ -146,7 +149,7 @@ class ClientEchTest {
             val (server, port) = echServer(EchServerKeys(listOf(keyA)), names)
             try {
                 helloRelay(port) { relayPort, hellos ->
-                    client(more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                    client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                         assertEquals("ok", c.get("https://server.test:$relayPort/").bodyAsText())
                     }
                     val hello = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
@@ -170,7 +173,7 @@ class ClientEchTest {
             val (server, port) = echServer(EchServerKeys(listOf(keyA)), names)
             try {
                 helloRelay(port) { relayPort, hellos ->
-                    client(more = { ech { configLists = mapOf("Server.TEST." to listA) } }).use { c ->
+                    client(more = { tls { ech { configLists = mapOf("Server.TEST." to listA) } } }).use { c ->
                         assertEquals("ok", c.get("https://server.test:$relayPort/").bodyAsText())
                     }
                     val hello = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
@@ -182,7 +185,7 @@ class ClientEchTest {
             }
             val e =
                 assertFailsWith<IllegalArgumentException> {
-                    client(more = { ech { configLists = mapOf("server.test" to listA, "SERVER.test." to listA) } }).close()
+                    client(more = { tls { ech { configLists = mapOf("server.test" to listA, "SERVER.test." to listA) } } }).close()
                 }
             assertTrue("server.test" in e.message!!, e.message)
         }
@@ -198,7 +201,7 @@ class ClientEchTest {
                     val greased = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
                     assertEquals("server.test", greased.serverName)
                     assertTrue(ECH_EXTENSION in greased.extensions, "GREASE encrypted_client_hello")
-                    client(more = { ech { grease = false } }).use { c ->
+                    client(more = { tls { ech { grease = false } } }).use { c ->
                         assertEquals("ok", c.get("https://server.test:$relayPort/").bodyAsText())
                     }
                     val plain = ClientHelloView.parse(withTimeout(10.seconds) { hellos.receive() })
@@ -219,7 +222,7 @@ class ClientEchTest {
             val hits = AtomicInt(0)
             val (server, port) = echServer(EchServerKeys(listOf(keyB)), names, hits)
             try {
-                client(more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
                 assertEquals(listOf<String?>(EchTestKeys.PUBLIC_NAME, "server.test"), names.all())
@@ -235,7 +238,7 @@ class ClientEchTest {
             val names = Names()
             val (server, port) = echServer(null, names)
             try {
-                client(more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
                 assertEquals(listOf<String?>(EchTestKeys.PUBLIC_NAME, "server.test"), names.all())
@@ -257,7 +260,7 @@ class ClientEchTest {
             val (server, port) =
                 echServer(keys, names, onHello = { if (rotated.incrementAndFetch() == 1) keys.rotate(listOf(keyA)) })
             try {
-                client(more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://server.test:$port/") }
                     assertNotNull(echRejectionIn(e), "$e")
                 }
@@ -271,8 +274,10 @@ class ClientEchTest {
     @Test fun negative_hostConfigurationNeedsTls13Only() {
         assertFailsWith<IllegalArgumentException> {
             client(more = {
-                tls = { versions = TlsVersions.Tls12And13 }
-                ech { configLists = mapOf("server.test" to listA) }
+                tls {
+                    versions = TlsVersions.Tls12And13
+                    ech { configLists = mapOf("server.test" to listA) }
+                }
             }).close()
         }
     }
@@ -286,42 +291,10 @@ class ClientEchTest {
         val unusable = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
         val e =
             assertFailsWith<IllegalArgumentException> {
-                client(more = { ech { configLists = mapOf("server.test" to unusable) } }).close()
+                client(more = { tls { ech { configLists = mapOf("server.test" to unusable) } } }).close()
             }
         assertTrue("server.test" in e.message!! && "no ECHConfig" in e.message!!, e.message)
-        client(more = { ech { configLists = mapOf("server.test" to listA) } }).close()
-    }
-
-    /**
-     * The engine runs the `tls` block when it is created: to read its TLS versions, and once more per `configLists` entry, whose
-     * client configuration it builds to check the entry (and again for every connection). A [TlsException.Config] that
-     * build leads to is the entry's IllegalArgumentException; any other exception of the block reaches the caller as it was
-     * thrown.
-     */
-    @Test fun tlsBlockRunsOncePerConfigListsEntryAtCreation() {
-        fun runsAtCreation(entries: Map<String, io.kuicksilver.tls.EchConfigList>): Int {
-            val runs = AtomicInt(0)
-            client(more = {
-                val before = tls
-                tls = {
-                    before()
-                    runs.addAndFetch(1)
-                }
-                ech { configLists = entries }
-            }).close()
-            return runs.load()
-        }
-        val one = runsAtCreation(mapOf("server.test" to listA))
-        val two = runsAtCreation(mapOf("server.test" to listA, "other.test" to listA))
-        assertEquals(one + 1, two, "one more run per configLists entry, no connection made")
-        val thrown =
-            assertFailsWith<IllegalStateException> {
-                client(more = {
-                    tls = { throw IllegalStateException("from the tls block") }
-                    ech { configLists = mapOf("server.test" to listA) }
-                }).close()
-            }
-        assertEquals("from the tls block", thrown.message, "not wrapped")
+        client(more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).close()
     }
 
     /**
@@ -336,7 +309,7 @@ class ClientEchTest {
                 capturingTunnel(port) { proxyPort, connectLine, hello ->
                     testClient(engine = {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort"))
-                        ech { configLists = mapOf("server.test" to listA) }
+                        tls { ech { configLists = mapOf("server.test" to listA) } }
                     }).use { c -> assertEquals("ok", c.get("https://server.test:$port/").bodyAsText()) }
                     assertEquals("CONNECT server.test:$port HTTP/1.1", connectLine())
                     val h = ClientHelloView.parse(withTimeout(10.seconds) { hello.receive() })
@@ -354,7 +327,7 @@ class ClientEchTest {
             val names = Names()
             val (server, port) = echServer(EchServerKeys(listOf(keyA)), names)
             try {
-                client(Http3DiscoveryMode.H3Only, more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                client(Http3Discovery.H3Only, more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                     val r = c.get("https://server.test:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                 }
@@ -370,7 +343,7 @@ class ClientEchTest {
             val hits = AtomicInt(0)
             val (server, port) = echServer(EchServerKeys(listOf(keyB)), names, hits)
             try {
-                client(Http3DiscoveryMode.H3Only, more = { ech { configLists = mapOf("server.test" to listA) } }).use { c ->
+                client(Http3Discovery.H3Only, more = { tls { ech { configLists = mapOf("server.test" to listA) } } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://server.test:$port/").version)
                 }
                 assertEquals(listOf<String?>(EchTestKeys.PUBLIC_NAME, "server.test"), names.all())
@@ -417,10 +390,10 @@ class ClientEchTest {
                     }
                 })
             try {
-                client(Http3DiscoveryMode.H3Only, more = {
-                    http3 { earlyData = true }
-                    ech { configLists = mapOf("server.test" to listA) }
-                    eventListener = listener
+                client(Http3Discovery.H3Only, more = {
+                    http3 { earlyData { enabled = true } }
+                    tls { ech { configLists = mapOf("server.test" to listA) } }
+                    observability { eventListener = listener }
                 }).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
@@ -474,7 +447,7 @@ class ClientEchTest {
                             emptyList()
                         }
                     }
-                client(Http3DiscoveryMode.Auto, more = { http3 { httpsRecords = source } }).use { c ->
+                client(Http3Discovery.Auto, more = { network { httpsRecords = source } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://server.test:$port/").version)
                 }
                 assertEquals(listOf<String?>("server.test"), names.all())
@@ -507,10 +480,10 @@ class ClientEchTest {
                                 emptyList()
                             }
                         }
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         resolverForTest = resolver
                         connectTimeout = 20.seconds
-                        http3 { httpsRecords = source }
+                        network { httpsRecords = source }
                     }).use { c ->
                         if (ech != null) {
                             assertFailsWith<Throwable> { c.get("https://server.test:$port/") }
@@ -565,18 +538,20 @@ class ClientEchTest {
     }
 
     /**
-     * The hop to an `https://` proxy has its own ClientHello: it never offers a configuration of the `tls` block (the
-     * guide: the ECH values of that block are not used), and it sends GREASE as [EchClientConfig.grease] says.
+     * The hop to an `https://` proxy has its own ClientHello: it never offers the origins' configurations of the `tls` block,
+     * not even one for the proxy's own name, and it sends GREASE as [EchClientConfig.grease] says.
      */
     @Test fun negative_proxyHopOffersNoEchConfiguration() {
         for (g in kotlin.collections.listOf(true, false)) {
             val config =
                 KuicksilverEngineConfig().apply {
-                    tls = {
+                    tls {
                         versions = TlsVersions.Tls13
-                        echConfigList = listA
+                        ech {
+                            configLists = mapOf("proxy.internal" to listA)
+                            grease = g
+                        }
                     }
-                    ech { grease = g }
                 }
             val built = config.proxyTlsConfigFor("proxy.internal")
             assertNull(built.echConfigList, "the tls block's ECH configuration went to the proxy")

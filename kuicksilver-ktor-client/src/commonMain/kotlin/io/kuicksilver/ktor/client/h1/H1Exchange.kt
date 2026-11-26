@@ -49,6 +49,8 @@ import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.checkWebSocketUpgrade
+import io.kuicksilver.ktor.client.h3.KeptRequestBody
+import io.kuicksilver.ktor.client.h3.KeptRequestBodyKey
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
@@ -65,7 +67,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.io.EOFException
 import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -183,14 +184,14 @@ internal suspend fun writeBody(
         // request's bytes as them, one that gives more puts its excess where the next request goes. Neither is sent as
         // complete: the request fails (an IllegalStateException, never retried) and the connection is closed
         val declared = declaredContentLength(request)?.toLongOrNull()
-        val written = processOutgoingContent(body, output, declared)
+        val written = processOutgoingContent(body, output, declared, request.attributes.getOrNull(KeptRequestBodyKey))
         output.flush()
         if (declared != null && written < declared) throw bodyLengthMismatch(longer = false, declared)
         return
     }
     val encoder = encodeChunked(output, callContext)
     try {
-        processOutgoingContent(body, encoder.channel)
+        processOutgoingContent(body, encoder.channel, kept = request.attributes.getOrNull(KeptRequestBodyKey))
     } catch (e: Throwable) {
         // a body that failed is not complete: closing the encoder's channel would send the last chunk, and the server
         // would take the cut body for the whole; failed, the encoder ends the connection's output with the failure instead
@@ -263,7 +264,9 @@ internal suspend fun prepareFirstContact(
     // deadline fires is kept (it was consumed, and a streamed body cannot be read again)
     val buffered =
         completedWithin(withinMillis.coerceAtLeast(1).milliseconds) {
-            listOf(bufferBody(body, FIRST_CONTACT_BODY_LIMIT)).also { firstContactBufferedForTest?.invoke() }
+            listOf(bufferBody(body, FIRST_CONTACT_BODY_LIMIT, request.attributes.getOrNull(KeptRequestBodyKey))).also {
+                firstContactBufferedForTest?.invoke()
+            }
         } ?: throw IllegalStateException(
             "the request body has no length and did not end within $withinMillis ms, but $server answered as an " +
                 "HTTP/1.0 server (no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids " +
@@ -295,6 +298,7 @@ internal fun needsTransferEncoding(request: HttpRequestData): Boolean {
 private suspend fun bufferBody(
     body: OutgoingContent,
     limit: Int,
+    kept: KeptRequestBody? = null,
 ): ByteArray? =
     coroutineScope {
         val channel = ByteChannel()
@@ -302,7 +306,7 @@ private suspend fun bufferBody(
         val writer =
             launch {
                 try {
-                    processOutgoingContent(body, channel)
+                    processOutgoingContent(body, channel, kept = kept)
                     channel.flushAndClose()
                 } catch (e: Throwable) {
                     // the reader waits on [channel]: it ends with the failure, whoever failed or cancelled (the body, or
@@ -367,6 +371,8 @@ private suspend fun processOutgoingContent(
     body: OutgoingContent,
     channel: ByteWriteChannel,
     limit: Long? = null,
+    // the application's channel a 421 over HTTP/3 kept for the repeat: taken instead of opening the content again
+    kept: KeptRequestBody? = null,
 ): Long {
     /** Copies [source], up to [limit]: fails when [source] has bytes past it. */
     suspend fun copy(source: ByteReadChannel): Long {
@@ -390,7 +396,7 @@ private suspend fun processOutgoingContent(
 
         is OutgoingContent.ReadChannelContent -> {
             // ktor's copyTo ends on a source that failed as on one that ended: only a clean end is the body's end
-            val source = body.readFrom()
+            val source = kept?.take() ?: body.readFrom()
             val n = copy(source)
             source.closedCause?.let { throw it }
             n
@@ -417,7 +423,7 @@ private suspend fun processOutgoingContent(
         }
 
         is OutgoingContent.ContentWrapper -> {
-            processOutgoingContent(body.delegate(), channel, limit)
+            processOutgoingContent(body.delegate(), channel, limit, kept)
         }
 
         is OutgoingContent.ProtocolUpgrade, is OutgoingContent.NoContent -> {
@@ -537,7 +543,7 @@ internal suspend fun readResponse(
             val read =
                 readResponseHead(input, head)
                     ?: throw ClosedReadChannelException(
-                        EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
+                        PeerTruncation("Failed to parse HTTP response: the server prematurely closed the connection"),
                     )
             val bytes = read.bytes
             kept = read.keptValues
@@ -766,7 +772,7 @@ internal suspend fun startTunnel(
         while (true) {
             val bytes =
                 readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.bytes
-                    ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+                    ?: throw ClosedReadChannelException(PeerTruncation("Failed to parse CONNECT response: unexpected EOF"))
             rawResponse = parseResponse(ByteReadChannel(bytes))
                 ?: throw ParserException("Failed to parse CONNECT response")
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
@@ -780,7 +786,11 @@ internal suspend fun startTunnel(
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 throw io.kuicksilver.ktor.client.ProxyException(
                     "the proxy refused the CONNECT to $hostWithPort: ${rawResponse.status}" +
-                        if (rawResponse.status == 407) " (it wants credentials: proxyCredentials or a Proxy-Authorization header)" else "",
+                        if (rawResponse.status == 407) {
+                            " (it wants credentials: proxies { credentials } or a Proxy-Authorization header)"
+                        } else {
+                            ""
+                        },
                     rawResponse.status,
                 )
             }
@@ -831,7 +841,7 @@ internal class ResponseFraming private constructor(
             transferEncoding == null && contentLength >= 0 -> {
                 val copied = input.copyTo(out, contentLength)
                 if (copied < contentLength) {
-                    throw EOFException("The connection closed after $copied of $contentLength body bytes")
+                    throw PeerTruncation("The connection closed after $copied of $contentLength body bytes")
                 }
             }
 

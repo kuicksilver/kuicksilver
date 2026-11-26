@@ -65,7 +65,7 @@ class ClientWebTransportTest {
     @Test fun echoAgainstKuicksilverServer() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { session ->
                             val st = session.acceptBidi()
@@ -77,7 +77,7 @@ class ClientWebTransportTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val session = client.webTransport("https://127.0.0.1:$port/wt")
                     val st = session.openBidi()
                     st.output.writeFully("ping".encodeToByteArray())
@@ -100,9 +100,11 @@ class ClientWebTransportTest {
         h3Test {
             val seen = CompletableDeferred<WebTransportCloseInfo>()
             val (server, port) =
-                testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { seen.complete(it.closed.await()) } } }
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { seen.complete(it.closed.await()) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val session = client.webTransport("https://127.0.0.1:$port/wt")
                     assertEquals(1, engine.sessions().value)
@@ -121,9 +123,12 @@ class ClientWebTransportTest {
     /** RFC 9114 section 3.3: two sessions to one origin share one connection (both sides declare flow control). */
     @Test fun twoSessionsOfOneOriginShareOneConnection() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val a = client.webTransport("https://127.0.0.1:$port/wt")
                     val b = client.webTransport("https://127.0.0.1:$port/wt")
@@ -146,14 +151,14 @@ class ClientWebTransportTest {
     @Test fun requestsShareTheSessionsConnection() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { it.closed.await() }
                         get("/") { call.respondText("ok") }
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                     val session = client.webTransport("https://127.0.0.1:$port/wt")
@@ -176,16 +181,15 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) =
                 testServer(configure = {
-                    webTransport = true
-                    http3Settings =
-                        http3Settings {
-                            enableConnectProtocol = true
-                            webTransport = true
-                            webTransportMaxSessions = 1
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            maxSessionsPerConnection = 1
                         }
+                    }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val a = client.webTransport("https://127.0.0.1:$port/wt")
                     val b = client.webTransport("https://127.0.0.1:$port/wt")
@@ -213,9 +217,12 @@ class ClientWebTransportTest {
      */
     @Test fun negative_racingSessionsShareTheExtraConnections() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val sessions =
                         coroutineScope { List(10) { async { client.webTransport("https://127.0.0.1:$port/wt") } }.map { it.await() } }
@@ -231,13 +238,12 @@ class ClientWebTransportTest {
         }
 
     private val oneSessionServer: io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration.() -> Unit = {
-        webTransport = true
-        http3Settings =
-            http3Settings {
-                enableConnectProtocol = true
-                webTransport = true
-                webTransportMaxSessions = 1
+        http3 {
+            webTransport {
+                enabled = true
+                maxSessionsPerConnection = 1
             }
+        }
     }
 
     /**
@@ -249,7 +255,7 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) = testServer(configure = oneSessionServer) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = { connectTimeout = 4.seconds }).use { client ->
+                testClient(Http3Discovery.Auto, engine = { connectTimeout = 4.seconds }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val a = client.webTransport("https://127.0.0.1:$port/wt")
                     engine.h3.extraConnectForTest = { kotlinx.coroutines.awaitCancellation() } // the server takes no new connection
@@ -276,9 +282,12 @@ class ClientWebTransportTest {
      */
     @Test fun negative_aConnectionClosingAsASessionJoinsIsPassedOver() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     var first = true
                     engine.h3.webTransportStepForTest = { step ->
@@ -319,7 +328,7 @@ class ClientWebTransportTest {
                         }.build(),
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     },
                 )
             val accepted = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -337,7 +346,7 @@ class ClientWebTransportTest {
                 }
             }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     assertFailsWith<Http3Exception.RequestNotProcessed> {
                         client.webTransport("https://127.0.0.1:${ep.localAddress.port}/wt")
                     }
@@ -354,18 +363,17 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) =
                 testServer(configure = {
-                    webTransport = true
-                    http3Settings =
-                        http3Settings {
-                            enableConnectProtocol = true
-                            webTransport = true
-                            webTransportInitialMaxStreamsBidi = 0
-                            webTransportInitialMaxStreamsUni = 0
-                            webTransportInitialMaxData = 0
+                    http3 {
+                        webTransport {
+                            enabled = true
+                            initialMaxStreamsBidi = 0
+                            initialMaxStreamsUni = 0
+                            initialMaxData = 0
                         }
+                    }
                 }) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val a = client.webTransport("https://127.0.0.1:$port/wt")
                     val b = client.webTransport("https://127.0.0.1:$port/wt")
@@ -383,8 +391,11 @@ class ClientWebTransportTest {
     /** The connection's loss ends every session on it, with the connection's reason. */
     @Test fun connectionLossEndsEverySession() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
-            testClient(Http3DiscoveryMode.Auto).use { client ->
+            val (server, port) =
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { it.closed.await() } } }
+            testClient(Http3Discovery.Auto).use { client ->
                 val engine = client.engine as KuicksilverEngine
                 val a = client.webTransport("https://127.0.0.1:$port/wt")
                 val b = client.webTransport("https://127.0.0.1:$port/wt")
@@ -405,9 +416,12 @@ class ClientWebTransportTest {
     /** The server ending the session ends it on the client too, and frees its place. */
     @Test fun serverCloseEndsTheSession() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val session = client.webTransport("https://127.0.0.1:$port/wt")
                     assertEquals(0L, withTimeout(10.seconds) { session.closed.await() }.code)
@@ -422,7 +436,7 @@ class ClientWebTransportTest {
         h3Test {
             val (server, port) = testServer { routing { } }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     assertFailsWith<Http3Exception.Settings> { client.webTransport("https://127.0.0.1:$port/wt") }
                     withTimeout(10.seconds) { engine.sessions().first { it == 0 } } // no session stays counted
@@ -441,7 +455,7 @@ class ClientWebTransportTest {
 
     @Test fun negative_plainHttpRefused() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto).use { client ->
+            testClient(Http3Discovery.Auto).use { client ->
                 assertFailsWith<IllegalArgumentException> { client.webTransport("http://127.0.0.1:1/wt") }
             }
         }
@@ -449,7 +463,7 @@ class ClientWebTransportTest {
     /** After HttpClient.close() no endpoint is bound again: the call fails and leaves nothing behind. */
     @Test fun negative_afterCloseFails() =
         clientTest {
-            val client = testClient(Http3DiscoveryMode.Auto)
+            val client = testClient(Http3Discovery.Auto)
             val engine = client.engine as KuicksilverEngine
             client.close() // refuses at once, before the engine's asynchronous cleanup
             val e = assertFailsWith<IllegalStateException> { client.webTransport("https://127.0.0.1:1/wt") }
@@ -461,20 +475,23 @@ class ClientWebTransportTest {
     /** WebTransport runs over UDP: a proxy that applies to the URL refuses it, with how to get around that. */
     @Test fun negative_proxyRefused() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto, engine = { proxy = ProxyBuilder.http("http://127.0.0.1:9") }).use { client ->
+            testClient(Http3Discovery.Auto, engine = { proxy = ProxyBuilder.http("http://127.0.0.1:9") }).use { client ->
                 val e = assertFailsWith<UnsupportedOperationException> { client.webTransport("https://127.0.0.1:1/wt") }
-                assertTrue("webTransportIgnoresProxy" in e.message.orEmpty(), e.message)
+                assertTrue("proxyPolicy = WebTransportProxyPolicy.BypassHttpProxy" in e.message.orEmpty(), e.message)
                 assertEquals(0, (client.engine as KuicksilverEngine).sessions().value)
             }
         }
 
     @Test fun proxyIgnoredWhenAsked() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     proxy = ProxyBuilder.http("http://127.0.0.1:9")
-                    http3 { webTransportIgnoresProxy = true }
+                    http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassHttpProxy } }
                 }).use { client ->
                     assertEquals(0L, withTimeout(10.seconds) { client.webTransport("https://127.0.0.1:$port/wt").closed.await() }.code)
                 }
@@ -485,20 +502,23 @@ class ClientWebTransportTest {
 
     @Test fun negative_h1OnlyRefused() =
         clientTest {
-            testClient(Http3DiscoveryMode.H1Only).use { client ->
+            testClient(null).use { client ->
                 assertFailsWith<UnsupportedOperationException> { client.webTransport("https://127.0.0.1:1/wt") }
             }
         }
 
-    /** At most maxWebTransportSessions at once; one more fails at once instead of waiting. */
+    /** At most `http3 { webTransport { maxSessions } }` at once; one more fails at once instead of waiting. */
     @Test fun negative_sessionCapExceeded() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { it.closed.await() } } }
+            val (server, port) =
+                testServer(configure = {
+                    http3 { webTransport { enabled = true } }
+                }) { routing { webTransport("/wt") { it.closed.await() } } }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = { http3 { maxWebTransportSessions = 1 } }).use { client ->
+                testClient(Http3Discovery.Auto, engine = { http3 { webTransport { maxSessions = 1 } } }).use { client ->
                     val first = client.webTransport("https://127.0.0.1:$port/wt")
                     val e = assertFailsWith<IllegalStateException> { client.webTransport("https://127.0.0.1:$port/wt") }
-                    assertTrue("maxWebTransportSessions" in e.message.orEmpty(), e.message)
+                    assertTrue("http3 { webTransport { maxSessions } }" in e.message.orEmpty(), e.message)
                     assertEquals(1, (client.engine as KuicksilverEngine).sessions().value)
                     first.close()
                 }
@@ -527,7 +547,7 @@ class ClientWebTransportTest {
                         }.build(),
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     },
                 )
             try {
@@ -538,7 +558,7 @@ class ClientWebTransportTest {
                         conn.acceptRequest() // and never answered
                         got.complete(Unit)
                     }
-                    testClient(Http3DiscoveryMode.Auto).use { client ->
+                    testClient(Http3Discovery.Auto).use { client ->
                         val engine = client.engine as KuicksilverEngine
                         val call = async { client.webTransport("https://127.0.0.1:${ep.localAddress.port}/wt") }
                         withTimeout(10.seconds) { got.await() }
@@ -554,7 +574,10 @@ class ClientWebTransportTest {
     /** An address whose handshake fails gives way to the next resolved one within the connect timeout. */
     @Test fun nextAddressAfterAFailedHandshake() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             val wrong =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
@@ -572,7 +595,7 @@ class ClientWebTransportTest {
                         }.build(),
                 )
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     resolverForTest = { _, p ->
                         listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), wrong.localAddress.port), TcpAddress(byteArrayOf(127, 0, 0, 1), p))
                     }
@@ -588,15 +611,20 @@ class ClientWebTransportTest {
     /** A WebTransport session's origin is resolved by the application resolver (`dns`), as a request's is. */
     @Test fun theApplicationDnsResolvesAWebTransportOrigin() =
         h3Test {
-            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) =
+                testServer(
+                    configure = { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { } } }
             val asked = kotlinx.coroutines.sync.Mutex() to ArrayList<String>()
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    dns =
-                        Dns { host ->
-                            asked.first.withLock { asked.second += host }
-                            listOf(IpAddress.parse("127.0.0.1"))
-                        }
+                testClient(Http3Discovery.Auto, engine = {
+                    network {
+                        dns =
+                            Dns { host ->
+                                asked.first.withLock { asked.second += host }
+                                listOf(IpAddress.parse("127.0.0.1"))
+                            }
+                    }
                 }).use { client ->
                     assertEquals(0L, withTimeout(10.seconds) { client.webTransport("https://server.test:$port/wt").closed.await() }.code)
                 }

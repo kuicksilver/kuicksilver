@@ -41,7 +41,7 @@ class SessionStartTest {
     @Test fun negative_serverStartDoesNotWaitForUniStreamCredit() =
         h3Test {
             QuicPair.open().use { q ->
-                val (c, s) = q.connect(clientQuic = quicConfig { maxUniStreams = 2 })
+                val (c, s) = q.connect(clientQuic = quicConfig { expert { maxUniStreams = 2 } })
                 val server =
                     withTimeout(10.seconds) {
                         Http3Connection.start(s, Http3Role.Server, Http3Settings.Default, criticalStreamsDeadline = 100.milliseconds)
@@ -60,8 +60,8 @@ class SessionStartTest {
      */
     @Test fun negative_healthyPeerIsNotHeldToTheDeadline() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 3 }).use { q ->
-                val (c, s) = q.connect(clientQuic = quicConfig { maxUniStreams = 3 }) // exactly the three RFC 9114 asks for
+            QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 3 } }).use { q ->
+                val (c, s) = q.connect(clientQuic = quicConfig { expert { maxUniStreams = 3 } }) // exactly the three RFC 9114 asks for
                 val server = Http3Connection.start(s, Http3Role.Server, Http3Settings.Default, criticalStreamsDeadline = Duration.ZERO)
                 val client =
                     withTimeout(10.seconds) {
@@ -77,7 +77,7 @@ class SessionStartTest {
     /** The negative control: with a zero deadline a peer that allows two streams still fails the start at once. */
     @Test fun negative_zeroDeadlineStillEndsAPeerWithoutUniStreamCredit() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+            QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                 val (c, _) = q.connect()
                 val e =
                     assertFailsWith<Http3Exception.Protocol> {
@@ -92,7 +92,7 @@ class SessionStartTest {
     /** The client side fails with the connection's error instead of hanging the caller of `connect`. */
     @Test fun negative_clientStartFailsWithoutUniStreamCredit() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+            QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                 val (c, s) = q.connect()
                 val e =
                     assertFailsWith<Http3Exception.Protocol> {
@@ -113,7 +113,7 @@ class SessionStartTest {
      */
     @Test fun goAwayBeforeTheClientSettingsLeaveRefusesRequestsAsNotProcessed() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+            QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                 val (c, s) = q.connect()
                 val raw = RawPeer(s)
                 raw.openControl()
@@ -135,7 +135,7 @@ class SessionStartTest {
         h3Test {
             val idleCloseDue = CompletableDeferred<Unit>()
             try {
-                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                     val (c, s) = q.connect()
                     // only this test's client: a session of another test still closing never runs the JVM-wide hook
                     H3Session.beforeIdleCloseForTest = {
@@ -175,7 +175,7 @@ class SessionStartTest {
             val goAwayReached = CompletableDeferred<Unit>()
             val startEnded = CompletableDeferred<Unit>()
             try {
-                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                     val (c, s) = q.connect()
                     H3Session.startEndedForTest = { if (it.quic === c) startEnded.complete(Unit) }
                     H3Session.beforeControlFrameForTest = { session, type ->
@@ -209,7 +209,7 @@ class SessionStartTest {
      */
     @Test fun negative_protocolErrorAfterGoAwayFailsTheStart() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+            QuicPair.open(serverQuic = quicConfig { expert { maxUniStreams = 2 } }).use { q ->
                 val (c, s) = q.connect()
                 val raw = RawPeer(s)
                 raw.openControl()
@@ -231,7 +231,7 @@ class SessionStartTest {
     @Test fun threeUniStreamsAreEnough() =
         h3Test {
             QuicPair.open().use { q ->
-                val (c, s) = q.connect(clientQuic = quicConfig { maxUniStreams = 3 })
+                val (c, s) = q.connect(clientQuic = quicConfig { expert { maxUniStreams = 3 } })
                 val client = Http3Connection.client(c)
                 val server = withTimeout(10.seconds) { Http3Connection.server(s) }
                 withTimeout(10.seconds) { client.session.awaitPeerSettings() }

@@ -21,6 +21,7 @@ import io.kuicksilver.http2.core.Role
 import io.kuicksilver.http2.message.H2Fields
 import io.kuicksilver.http2.message.H2Messages
 import io.kuicksilver.http2.message.MalformedMessage
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.LeakRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -35,7 +36,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
@@ -748,7 +748,7 @@ internal class H2Runtime(
                 val n = input.readAvailable(buf, 0, buf.size)
                 if (n < 0) {
                     // a channel closed with a cause answers -1 too: the cause says it failed, not ended
-                    transportFailed(input.closedCause ?: IOException("the peer closed the connection"))
+                    transportFailed(input.closedCause ?: ConnectionEndedException.PeerClosed("the peer closed the connection"))
                     return
                 }
                 if (n == 0) continue
@@ -829,7 +829,10 @@ internal class H2Runtime(
                 if (unanswered) {
                     // OkHttp's pingInterval: a PING still unanswered when the next one is due ends the connection; the
                     // transport is sound as far as we know, so its GOAWAY goes out first (RFC 9113 section 5.4.1)
-                    lost(IOException("no PING acknowledgement within ${pingIntervalNanos / 1_000_000} ms"), inOrder = true)
+                    lost(
+                        ConnectionEndedException.PeerUnresponsive("no PING acknowledgement within ${pingIntervalNanos / 1_000_000} ms"),
+                        inOrder = true,
+                    )
                     return
                 }
                 withCore { awaitingPong = ping(now) }

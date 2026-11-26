@@ -17,11 +17,32 @@ internal object WtErrorCodes {
         return FIRST + n + n / 0x1e
     }
 
-    /** The application code [h] carries, or null when it is outside the range or a GREASE codepoint. */
-    fun fromHttp3(h: Long): Long? {
+    /**
+     * The application code [h] carries, or null when it is outside the range, a GREASE codepoint or above [max] (the
+     * session's limit, [WtVersion.maxStreamErrorCode]).
+     */
+    fun fromHttp3(
+        h: Long,
+        max: Long = MAX_APPLICATION_CODE,
+    ): Long? {
         if (h !in FIRST..LAST || (h - 0x21) % 0x1f == 0L) return null
         val s = h - FIRST
-        return s - s / 0x1f
+        return (s - s / 0x1f).takeIf { it <= max }
+    }
+
+    /** [toHttp3] for a stream of a session whose codes go up to [max]: IllegalArgumentException above it. */
+    fun toHttp3(
+        n: Long,
+        max: Long,
+    ): Long {
+        require(n in 0..max) {
+            if (max == MAX_APPLICATION_CODE) {
+                "WebTransport error code $n is not in 0..2^32-1"
+            } else {
+                "WebTransport error code $n is not in 0..$max (a draft-02 session's stream codes are 8-bit, draft-02 section 4.3)"
+            }
+        }
+        return toHttp3(n)
     }
 }
 

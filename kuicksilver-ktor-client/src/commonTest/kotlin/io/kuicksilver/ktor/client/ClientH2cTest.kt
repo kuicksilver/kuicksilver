@@ -68,23 +68,25 @@ class ClientH2cTest {
         mode: H2cMode = H2cMode.Only,
         extendedConnect: Boolean = true,
     ) = testServer(plain = true, configure = {
-        webSocketsOverHttp2 = extendedConnect
+        webSockets { overHttp2 = extendedConnect }
         connectors.clear()
         plainConnector {
             host = "127.0.0.1"
             port = 0
             h2c = mode
         }
-        http3 = false
-        eventListener =
-            object : KuicksilverServerEventListener() {
-                override fun connectionOpened(
-                    protocol: HttpProtocolVersion,
-                    remote: io.ktor.network.sockets.InetSocketAddress?,
-                ) {
-                    if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 } else h1Opened.update { it + 1 }
+        http3 { enabled = false }
+        observability {
+            eventListener =
+                object : KuicksilverServerEventListener() {
+                    override fun connectionOpened(
+                        protocol: HttpProtocolVersion,
+                        remote: io.ktor.network.sockets.InetSocketAddress?,
+                    ) {
+                        if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 } else h1Opened.update { it + 1 }
+                    }
                 }
-            }
+        }
     }) {
         install(ServerWebSockets)
         routing {
@@ -154,7 +156,7 @@ class ClientH2cTest {
     /** Section 3.3: over TLS, HTTP/2 only by ALPN. A listed host:port reached by `https://` negotiates (here: `http/1.1`). */
     @Test fun negative_httpsNeverUsesPriorKnowledge() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("tls") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("tls") } } }
             try {
                 h2cClient(port).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
@@ -186,7 +188,7 @@ class ClientH2cTest {
     /** h2c to a TLS port: the preface is no ClientHello, the server's TLS handshake fails, and so does the call. */
     @Test fun negative_h2cToATlsPortFails() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { calls.update { it + 1 } } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { calls.update { it + 1 } } } }
             try {
                 h2cClient(port).use { c ->
                     assertFailsWith<Exception> { withTimeout(20.seconds) { c.get("http://127.0.0.1:$port/").bodyAsText() } }
@@ -216,7 +218,7 @@ class ClientH2cTest {
                                         H2ServerConnection.start(
                                             s.openReadChannel(),
                                             output,
-                                            Http2Settings(),
+                                            Http2Settings.Default,
                                             this,
                                             closeTransport = { s.close() },
                                         )
@@ -229,7 +231,7 @@ class ClientH2cTest {
                                 }
                             }
                         }
-                    h2cClient(port, engine = { http3 { discovery = Http3DiscoveryMode.Auto } }).use { c ->
+                    h2cClient(port, engine = { http3 { discovery = Http3Discovery.Auto } }).use { c ->
                         val r = c.get("http://127.0.0.1:$port/")
                         assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
                         assertEquals("ok", r.bodyAsText())
@@ -277,8 +279,8 @@ class ClientH2cTest {
             val (h2c, h2cPort) = h2cServer()
             val (tls, tlsPort) =
                 testServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) { routing { get("/pa") { call.respondText(call.request.headers["Proxy-Authorization"] ?: "none") } } }
             try {
                 for ((scheme, port) in listOf("http" to h2cPort, "https" to tlsPort)) {

@@ -22,17 +22,20 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.atomics.update
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -497,7 +500,7 @@ class ClientOrderlyCloseTest {
                 h2Server(input, output, end, violate = false)
             }) { port ->
                 // 1 ms (the least the pool takes): the engine's reaper evicts the connection soon after the response
-                testClient(engine = { idleTimeout = 1.milliseconds }).use { c ->
+                testClient(engine = { pool { idleTimeout = 1.milliseconds } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     end.assertOneGoAwayThenCleanEnd(Http2ErrorCode.NO_ERROR)
                 }
@@ -529,6 +532,81 @@ class ClientOrderlyCloseTest {
             }
         }
 
+    /** The causes the input of the call's HTTP/1.1 connections was cut with, as [inputCutForTest][io.kuicksilver.ktor.client.h1.H1Pool.inputCutForTest] saw them. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private class Cuts {
+        val all = kotlin.concurrent.atomics.AtomicReference(emptyList<Throwable>())
+    }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun watchCuts(c: io.ktor.client.HttpClient): Cuts {
+        val cuts = Cuts()
+        engine(c).h1.inputCutForTest = { t -> cuts.all.update { it + t } }
+        return cuts
+    }
+
+    /**
+     * The whole request went out and the server says nothing: the socket timeout cuts the input as the peer's silence
+     * (PeerUnresponsive), then the orderly close of the connection drops what is left as our own close (LocalClose).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aSilentServerIsPeerUnresponsiveAndTheCloseIsLocal() =
+        clientTest {
+            tlsWithSilentUdp(listOf("http/1.1"), silentUdp = false, handler = { _, _, input, _ ->
+                readRequest(input)
+                runCatching { input.readByteArray(1) } // nothing comes until the client closes
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    val cuts = watchCuts(c)
+                    assertFailsWith<io.ktor.client.network.sockets.SocketTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    withTimeout(10.seconds) { while (cuts.all.load().size < 2) kotlinx.coroutines.yield() }
+                    val (timeout, close) = cuts.all.load()
+                    assertIs<ConnectionEndedException.PeerUnresponsive>(timeout)
+                    assertEquals("the socket timeout expired", timeout.message)
+                    assertIs<ConnectionEndedException.LocalClose>(close)
+                    assertEquals("the connection is closing", close.message)
+                }
+            }
+        }
+
+    /**
+     * The application's request body stalls (it never ends) while the server reads: the socket timeout is no peer's silence,
+     * so the input is cut with a plain IOException.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aStalledRequestBodyIsNotThePeersSilence() =
+        clientTest {
+            tlsWithSilentUdp(listOf("http/1.1"), silentUdp = false, handler = { _, _, input, _ ->
+                runCatching {
+                    val b = ByteArray(4096)
+                    while (input.readAvailable(b) >= 0) {
+                        // reads on, so only the client's own body is what stalls
+                    }
+                }
+            }) { port ->
+                testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
+                    val cuts = watchCuts(c)
+                    val body =
+                        object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                            override val contentLength: Long get() = 10
+
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeFully(byteArrayOf(1))
+                                channel.flush()
+                                kotlinx.coroutines.awaitCancellation()
+                            }
+                        }
+                    assertTrue(runCatching { c.post("https://127.0.0.1:$port/") { setBody(body) } }.isFailure)
+                    withTimeout(10.seconds) { while (cuts.all.load().isEmpty()) kotlinx.coroutines.yield() }
+                    val cut = cuts.all.load().first()
+                    assertEquals("the socket timeout expired", cut.message)
+                    assertFalse(cut is ConnectionEndedException, "the request body stalled, not the peer: $cut")
+                }
+            }
+        }
+
     /**
      * A server that stops answering PINGs (this one never does) has not lost the transport: the connection that fails its
      * health PING ends in order, GOAWAY (INTERNAL_ERROR, RFC 9113 sections 5.4.1 and 6.8) then close_notify (RFC 9846
@@ -545,9 +623,18 @@ class ClientOrderlyCloseTest {
                 // and the new connection the remaining ~1.5 s of the same budget, as in ClientH2Test's health tests
                 testClient(engine = { connectTimeout = 3.seconds }).use { c ->
                     engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
+                    val started = mutableListOf<io.kuicksilver.http2.runtime.H2ClientConnection>()
+                    engine(c).h1.afterH2StartForTest = { client, _ -> started += client }
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     first.assertOneGoAwayThenCleanEnd(Http2ErrorCode.INTERNAL_ERROR)
+                    // the first connection ended for the peer's silence, by type, its message as before
+                    val end =
+                        generateSequence(started.first().closeCause) { it.cause }
+                            .filterIsInstance<ConnectionEndedException>()
+                            .firstOrNull()
+                    assertIs<ConnectionEndedException.PeerUnresponsive>(end, "${started.first().closeCause}")
+                    assertEquals("the HTTP/2 connection did not answer a health PING", end.message)
                 }
             }
         }

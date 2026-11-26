@@ -3,6 +3,7 @@
 package io.kuicksilver.http2.fuzz
 
 import com.code_intelligence.jazzer.junit.FuzzTest
+import io.kuicksilver.config.RateLimit
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.core.H2ConnectionCore
@@ -13,6 +14,7 @@ import io.kuicksilver.http2.core.H2StreamLimit
 import io.kuicksilver.http2.core.Role
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http2.message.H2Messages
 import io.kuicksilver.http2.message.MalformedMessage
 import org.junit.jupiter.api.BeforeEach
@@ -58,45 +60,56 @@ internal class Mode(
         fun settings(preset: Int): Http2Settings =
             when (preset) {
                 0 -> {
-                    Http2Settings(maxConcurrentStreams = 8, maxHeaderListSize = 4_096, maxControlFramesQueued = 64)
+                    http2Settings {
+                        maxConcurrentStreams = 8
+                        maxFieldSectionSize = 4_096
+                        floodLimits {
+                            maxControlFramesQueued = 64
+                        }
+                    }
                 }
 
                 // every flood limit small enough to be reached by a short input
                 1 -> {
-                    Http2Settings(
-                        maxConcurrentStreams = 2,
-                        maxHeaderListSize = 256,
-                        maxControlFramesQueued = 6,
-                        maxContinuationFrames = 2,
-                        maxEmptyFrames = 3,
-                        resetBurst = 4,
-                        resetsPerSecond = 1,
-                        glitchBurst = 16,
-                        glitchesPerSecond = 1,
-                        initialStreamWindow = 100,
-                        maxStreamWindow = 400,
-                        settingsAckTimeout = 3.seconds,
-                        maxHeaderBlockTime = 2.seconds,
-                    )
+                    http2Settings {
+                        maxConcurrentStreams = 2
+                        maxFieldSectionSize = 256
+                        initialStreamWindow = 100
+                        maxStreamWindow = 400
+                        settingsAckTimeout = 3.seconds
+                        maxHeaderBlockTime = 2.seconds
+                        floodLimits {
+                            maxControlFramesQueued = 6
+                            maxContinuationFrames = 2
+                            maxEmptyFrames = 3
+                            resets = RateLimit(1, 4)
+                            glitches = RateLimit(1, 16)
+                        }
+                    }
                 }
 
                 // small receive windows (FLOW_CONTROL_ERROR within reach) and no dynamic table towards us
                 2 -> {
-                    Http2Settings(
-                        maxConcurrentStreams = 8,
-                        headerTableSize = 0,
-                        maxHeaderListSize = 1_024,
-                        maxControlFramesQueued = 64,
-                        initialStreamWindow = 16,
-                        maxStreamWindow = 64,
-                        initialConnectionWindow = 65_535,
-                        maxConnectionWindow = 65_535,
-                    )
+                    http2Settings {
+                        maxConcurrentStreams = 8
+                        headerTableSize = 0
+                        maxFieldSectionSize = 1_024
+                        initialStreamWindow = 16
+                        maxStreamWindow = 64
+                        initialConnectionWindow = 65_535
+                        maxConnectionWindow = 65_535
+                        floodLimits {
+                            maxControlFramesQueued = 64
+                        }
+                    }
                 }
 
                 // large frames and table, the default limits otherwise
                 else -> {
-                    Http2Settings(maxFrameSize = 65_536, headerTableSize = 65_536)
+                    http2Settings {
+                        maxFrameSize = 65_536
+                        headerTableSize = 65_536
+                    }
                 }
             }
     }

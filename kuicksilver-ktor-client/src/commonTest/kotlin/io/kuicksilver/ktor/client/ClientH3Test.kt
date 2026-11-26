@@ -72,7 +72,7 @@ class ClientH3Test {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("v=HTTP/3", r.bodyAsText())
@@ -91,7 +91,7 @@ class ClientH3Test {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.beforeCallAttachForTest = {
                         c.close() // the client's job ends, then the engine's close(): no call is attached yet
@@ -112,7 +112,7 @@ class ClientH3Test {
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText(call.request.uri) } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get("https://127.0.0.1:$port?a=1")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("/?a=1", r.bodyAsText())
@@ -123,21 +123,15 @@ class ClientH3Test {
         }
 
     /**
-     * `quic { connectionIdLength }` alone sets the length of the engine's endpoint too, as the server engine does; the endpoint
-     * kept its default of 8 and every HTTP/3 connect failed its check (docs review before 0.2.0). An endpoint-only change is
-     * followed by the connections in the same way.
+     * The endpoint's connection ID length is the one place for it: the engine's connections follow it (with another length the
+     * endpoint parsed their short headers wrongly, and every HTTP/3 connect failed: docs review before 0.2.0).
      */
     @Test fun h3WithAnotherConnectionIdLength() =
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    quic = io.kuicksilver.quic.quicConfig { connectionIdLength = 12 }
-                }).use { c ->
-                    assertEquals("v=HTTP/3", c.get("https://127.0.0.1:$port/").bodyAsText())
-                }
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    http3 { endpoint = io.kuicksilver.quic.quicEndpointConfig { connectionIdLength = 16 } }
+                testClient(Http3Discovery.H3Only, engine = {
+                    http3 { expert { connectionIdLength = 16 } }
                 }).use { c ->
                     assertEquals("v=HTTP/3", c.get("https://127.0.0.1:$port/").bodyAsText())
                 }
@@ -146,32 +140,19 @@ class ClientH3Test {
             }
         }
 
-    /** Two different explicit lengths cannot both hold: the engine refuses them when it is created, naming both. */
-    @Test fun conflictingConnectionIdLengthsAreRefused() {
-        val e =
-            assertFailsWith<IllegalArgumentException> {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    quic = io.kuicksilver.quic.quicConfig { connectionIdLength = 12 }
-                    http3 { endpoint = io.kuicksilver.quic.quicEndpointConfig { connectionIdLength = 16 } }
-                }).close()
-            }
-        assertEquals(
-            "quic.connectionIdLength (12) and http3.endpoint.connectionIdLength (16) differ: set one of them, the other follows",
-            e.message,
-        )
-    }
-
     /**
      * HTTP/3 needs the server to be able to open three unidirectional streams (RFC 9114 section 6.2): an engine whose QUIC
      * settings grant fewer is refused when it is created, unless it never speaks HTTP/3.
      */
     @Test fun negative_fewerThanThreeUniStreamsAreRefused() {
-        val e =
-            assertFailsWith<IllegalArgumentException> {
-                testClient(Http3DiscoveryMode.Preferred, engine = { quic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 } }).close()
-            }
-        assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
-        testClient(Http3DiscoveryMode.H1Only, engine = { quic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 } }).close()
+        // the block is checked whether HTTP/3 is on or off
+        for (discovery in listOf(Http3Discovery.Preferred, null)) {
+            val e =
+                assertFailsWith<IllegalArgumentException> {
+                    testClient(discovery, engine = { http3 { quic { expert { maxUniStreams = 2 } } } }).close()
+                }
+            assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
+        }
     }
 
     /** An IPv6 server is reachable over h3: a loopback one from the client's endpoint on ::1, any other from its dual-stack wildcard one. */
@@ -179,10 +160,12 @@ class ClientH3Test {
         h3Test {
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "::1"
                         port = 0
                     }
+                    http2 { enabled = false }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             val started = runCatching { server.startSuspend(false) }
             if (started.isFailure) {
@@ -195,7 +178,7 @@ class ClientH3Test {
                         .resolvedConnectors()
                         .first()
                         .port
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get("https://[::1]:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("v=HTTP/3", r.bodyAsText())
@@ -216,10 +199,12 @@ class ClientH3Test {
         h3Test {
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "::1"
                         port = 0
                     }
+                    http2 { enabled = false }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             if (runCatching { server.startSuspend(false) }.isFailure) {
                 println("h1ToIpv6Loopback skipped: needs an IPv6 loopback")
@@ -231,7 +216,7 @@ class ClientH3Test {
                         .resolvedConnectors()
                         .first()
                         .port
-                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                testClient(null).use { c ->
                     val r = c.get("https://[::1]:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("v=HTTP/1.1", r.bodyAsText())
@@ -248,7 +233,7 @@ class ClientH3Test {
                     routing { get("/big") { call.respondBytesWriter { repeat(100) { writeFully(ByteArray(30_000) { 1 }) } } } }
                 }
             try {
-                for (mode in listOf(Http3DiscoveryMode.H3Only, Http3DiscoveryMode.H1Only)) {
+                for (mode in listOf(Http3Discovery.H3Only, null)) {
                     testClient(mode).use { c ->
                         assertEquals(3_000_000, c.get("https://127.0.0.1:$port/big").bodyAsBytes().size, "$mode")
                     }
@@ -281,7 +266,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val body =
                         object : OutgoingContent.WriteChannelContent() {
                             override suspend fun writeTo(channel: ByteWriteChannel) {
@@ -310,7 +295,7 @@ class ClientH3Test {
                     routing { post("/upload") { call.respondText("too large", status = io.ktor.http.HttpStatusCode.PayloadTooLarge) } }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val body =
                         object : OutgoingContent.WriteChannelContent() {
                             override suspend fun writeTo(channel: ByteWriteChannel) {
@@ -341,7 +326,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val r = c.get("https://127.0.0.1:$port/") { header("X-Test", "v") }
                     assertEquals("v", r.bodyAsText())
                     assertEquals("r", r.headers["X-Reply"])
@@ -376,7 +361,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     c.prepareGet("https://127.0.0.1:$port/endless").execute { r ->
                         val ch = r.bodyAsChannel()
                         ch.discard(100_000)
@@ -433,7 +418,7 @@ class ClientH3Test {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val bodies =
                             (0 until 3)
                                 .map {
@@ -458,9 +443,9 @@ class ClientH3Test {
 
     @Test fun preferredFallsBackToH1WhenNoUdpServer() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("h1") } } }
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = { connectTimeout = 2.seconds }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { connectTimeout = 2.seconds }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("h1", r.bodyAsText())
@@ -472,9 +457,9 @@ class ClientH3Test {
 
     @Test fun h3OnlyFailsWithoutUdpServer() =
         clientTest {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("h1") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 1.seconds }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { connectTimeout = 1.seconds }).use { c ->
                     assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                 }
             } finally {
@@ -500,7 +485,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                     c.webSocket("wss://127.0.0.1:$port/ws") {
                         send(Frame.Text("hi"))
                         assertEquals("h3:hi", (incoming.receive() as Frame.Text).readText())
@@ -549,7 +534,7 @@ class ClientH3Test {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                    testClient(Http3Discovery.H3Only, block = { install(WebSockets) }).use { c ->
                         c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) continue }
                         clientDone.complete(Unit)
                         val got = withTimeout(5.seconds) { served.await() }
@@ -567,7 +552,7 @@ class ClientH3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.H3Only, engine = { trust = pinned }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { tls { trust = pinned } }).use { c ->
                     assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                 }
             } finally {
@@ -592,7 +577,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, block = { install(HttpTimeout) { requestTimeoutMillis = 500 } }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(HttpTimeout) { requestTimeoutMillis = 500 } }).use { c ->
                     val e =
                         assertFailsWith<Throwable> {
                             c
@@ -606,7 +591,7 @@ class ClientH3Test {
                         "got $e",
                     )
                 }
-                testClient(Http3DiscoveryMode.H3Only, block = { install(HttpTimeout) { socketTimeoutMillis = 500 } }).use { c ->
+                testClient(Http3Discovery.H3Only, block = { install(HttpTimeout) { socketTimeoutMillis = 500 } }).use { c ->
                     assertFailsWith<kotlinx.io.IOException> { c.get("https://127.0.0.1:$port/slow").bodyAsBytes() }
                 }
             } finally {
@@ -626,7 +611,7 @@ class ClientH3Test {
                     }
                 }
             try {
-                for (mode in listOf(Http3DiscoveryMode.H3Only, Http3DiscoveryMode.H1Only)) {
+                for (mode in listOf(Http3Discovery.H3Only, null)) {
                     testClient(mode).use { c ->
                         assertEquals("/?auto|", c.get("https://127.0.0.1:$port/?auto").bodyAsText(), "$mode")
                     }
@@ -676,7 +661,7 @@ class ClientH3Test {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val url = "https://127.0.0.1:${ep.localAddress.port}/"
                         val gate1 = CompletableDeferred<Unit>().also { gates.send(it) }
                         var readFailed = false

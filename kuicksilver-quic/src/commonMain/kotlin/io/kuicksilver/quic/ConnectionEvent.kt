@@ -153,7 +153,7 @@ public sealed interface ConnectionEvent {
 
     /**
      * DPLPMTUD changed the datagram size of [path][ConnectionEvent.MtuUpdated.path] to [mtu][ConnectionEvent.MtuUpdated.mtu] bytes of UDP payload (RFC 8899); after
-     * a black hole it drops back to 1200. Also raised once at the start when the first path starts at [QuicConfig.initialUdpPayloadSize].
+     * a black hole it drops back to 1200. Also raised once at the start when the first path starts at `pathMtu { initial }`.
      */
     public class MtuUpdated internal constructor(
         /** The path whose datagram size changed. */

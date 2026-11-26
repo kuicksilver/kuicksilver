@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration.Companion.seconds
 
-/** `quicLoadBalancer` and `engine.updateLoadBalancer` (QUIC-LB, draft-ietf-quic-load-balancers-21) reach the HTTP/3 listeners. */
+/** `http3 { endpoint { loadBalancer } }` and `engine.updateLoadBalancer` (QUIC-LB, draft-ietf-quic-load-balancers-21) reach the HTTP/3 listeners. */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ServerQuicLoadBalancerTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -32,7 +32,7 @@ class ServerQuicLoadBalancerTest {
             val first = KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16))
             val second = KslQuicCrypto.newLoadBalancerKey(KslCrypto.randomBytes(16))
             val (server, port) =
-                tlsServer(configure = { quicLoadBalancer = QuicLbConfig(1, sid, 4, first) }) {
+                tlsServer(configure = { http3 { endpoint { loadBalancer = QuicLbConfig(1, sid, 4, first) } } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))

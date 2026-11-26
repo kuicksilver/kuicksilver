@@ -26,7 +26,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class ProtocolRaceTest {
-    private val race = ProtocolRace(hardDelay = null)
+    private val race = ProtocolRace(RaceHeadStart.Adaptive)
 
     @Test fun h3WinsWithoutStartingH1() =
         runTest {
@@ -57,12 +57,12 @@ class ProtocolRaceTest {
             assertEquals(250L, startedAt)
         }
 
-    @Test fun hardDelayFromSrttClamped() {
+    @Test fun headStartFromSrttClamped() {
         assertEquals(100.milliseconds, race.headStart(10.milliseconds, true))
         assertEquals(2.seconds, race.headStart(5.seconds, true))
         assertEquals(600.milliseconds, race.headStart(400.milliseconds, true))
         assertEquals(250.milliseconds, race.headStart(null, true))
-        assertEquals(700.milliseconds, ProtocolRace(700.milliseconds).headStart(10.milliseconds, true))
+        assertEquals(700.milliseconds, ProtocolRace(RaceHeadStart.Fixed(700.milliseconds)).headStart(10.milliseconds, true))
     }
 
     @Test fun h1StartsImmediatelyOnH3Failure() =
@@ -99,29 +99,33 @@ class ProtocolRaceTest {
             }, srtt = null, quicConfirmed = false)
             assertEquals(10L, startedAt)
             assertEquals(10.milliseconds, race.headStart(null, false))
-            assertEquals(10.milliseconds, ProtocolRace(700.milliseconds).headStart(null, false))
+            assertEquals(10.milliseconds, ProtocolRace(RaceHeadStart.Fixed(700.milliseconds)).headStart(null, false))
         }
 
     /**
-     * An explicit `hardDelay` keeps the bounds of RFC 8305 section 5 (at least 10 ms, MUST; at most 2 s, SHOULD), as
-     * `connectionAttemptDelay` does; `Duration.INFINITE` (HTTP/1.1 only after HTTP/3 failed) stays allowed. Before, any
-     * value was used as is, zero included.
+     * A `RaceHeadStart.Fixed` head start keeps the bounds of RFC 8305 section 5 (at least 10 ms, MUST; at most 2 s,
+     * SHOULD), as `network { happyEyeballsDelay }` does, and the refusal names the option. `Fixed(Duration.INFINITE)` is
+     * refused too: `RaceHeadStart.NoRace` is the one name for TCP only after HTTP/3 failed.
      */
-    @Test fun negative_hardDelayOutsideRfc8305BoundsIsRefused() {
-        for (d in listOf(Duration.ZERO, 9.milliseconds, 2001.milliseconds)) {
-            assertFailsWith<IllegalArgumentException>("$d") { ProtocolRace(d) }
+    @Test fun negative_fixedHeadStartOutsideRfc8305BoundsIsRefused() {
+        for (d in listOf(Duration.ZERO, 9.milliseconds, 2001.milliseconds, Duration.INFINITE, (-1).milliseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("$d") { ProtocolRace(RaceHeadStart.Fixed(d)) }
+            assertTrue("http3 { expert { raceHeadStart = RaceHeadStart.Fixed(d) } }" in e.message.orEmpty(), e.message)
+            assertTrue("hardDelay" !in e.message.orEmpty(), e.message)
         }
-        for (d in listOf(10.milliseconds, 2.seconds, Duration.INFINITE)) ProtocolRace(d)
+        for (d in listOf(10.milliseconds, 2.seconds)) ProtocolRace(RaceHeadStart.Fixed(d))
+        ProtocolRace(RaceHeadStart.NoRace)
+        ProtocolRace(RaceHeadStart.Adaptive)
     }
 
     /**
-     * `hardDelay = Duration.INFINITE` is "HTTP/1.1 only after HTTP/3 failed" on every network, also one where QUIC was
+     * `RaceHeadStart.NoRace` is "TCP only after HTTP/3 failed" on every network, also one where QUIC was
      * never confirmed: no second attempt runs at the same time, which RFC 8305 section 5 allows (it bounds how soon the
      * next attempt starts, not how late). Before, such a network got the 10 ms head start anyway.
      */
-    @Test fun infiniteHardDelayWaitsForHttp3OnAnUnconfirmedNetwork() =
+    @Test fun noRaceWaitsForHttp3OnAnUnconfirmedNetwork() =
         runTest {
-            val race = ProtocolRace(Duration.INFINITE)
+            val race = ProtocolRace(RaceHeadStart.NoRace)
             assertEquals(Duration.INFINITE, race.headStart(null, false))
             var h1Started = false
             val result =

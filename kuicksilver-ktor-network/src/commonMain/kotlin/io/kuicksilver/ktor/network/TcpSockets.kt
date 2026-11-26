@@ -45,6 +45,15 @@ public expect suspend fun bindTcp(
 ): ServerSocket
 
 /**
+ * Whether a TCP socket can be bound to the IPv6 unspecified address `::` here: false on a host without IPv6 (a kernel with it
+ * disabled) or a JVM told to use IPv4 alone (`java.net.preferIPv4Stack`). [bindTcp] on `::` binds a dual-stack socket
+ * (`IPV6_V6ONLY` off: the JVM's default on every platform, set explicitly on Kotlin/Native, where Windows defaults to on), so
+ * the engines bind a connector without a host there, and `0.0.0.0` where this is false.
+ */
+@InternalKuicksilverApi
+public expect fun ipv6Bindable(): Boolean
+
+/**
  * Sets how long [Socket.close] may let what is queued drain to the peer before it drops the rest and closes the socket; null:
  * as long as the peer takes. For the engines, which own the bound of the sockets they open: [connectTcp]'s sockets and
  * [Socket.tls] start at 3 s, [bindTcp]'s accepted sockets and [Socket.tlsServer] with none, so a server's close does not cut a

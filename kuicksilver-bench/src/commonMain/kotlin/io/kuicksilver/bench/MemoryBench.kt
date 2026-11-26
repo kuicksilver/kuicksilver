@@ -120,9 +120,9 @@ public object MemoryBench {
         val clientIo = net.open(InetSocketAddress("10.0.0.1", 40000))
         val serverTls = tlsConfig(TlsRole.Server) { this.alpn = listOf(alpn); this.identity = identity }
         val server = QuicEndpoint.bind(serverIo.localAddress, QuicEndpointConfig.Builder().apply {
-            this.server = QuicServerConfig.Builder(serverTls).apply { this.quic = quic }.build(); io = { serverIo }; maxConnectionsPerIp = null; maxConnections = n + 10
+            this.server = QuicServerConfig.Builder(serverTls).apply { this.quic = quic }.build(); runtime { io = { serverIo } }; maxConnectionsPerIp = null; maxConnections = n + 10
         }.build())
-        var client: QuicEndpoint? = QuicEndpoint.bind(clientIo.localAddress, QuicEndpointConfig.Builder().apply { io = { clientIo }; maxConnections = n + 10 }.build())
+        var client: QuicEndpoint? = QuicEndpoint.bind(clientIo.localAddress, QuicEndpointConfig.Builder().apply { runtime { io = { clientIo } }; maxConnections = n + 10 }.build())
         val clientConfig = QuicClientConfig.Builder(tlsConfig(TlsRole.Client) { this.alpn = listOf(alpn); serverName = "server.test"; trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) } })
             .apply { this.quic = quic }.build()
         val serving = CoroutineScope(SupervisorJob() + Dispatchers.Default)

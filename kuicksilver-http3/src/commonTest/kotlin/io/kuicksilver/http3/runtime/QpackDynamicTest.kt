@@ -62,7 +62,7 @@ import kotlin.time.Duration.Companion.seconds
 class QpackDynamicTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private val dyn = http3Settings { enableQpackDynamicTable() }
+    private val dyn = http3Settings { qpack { enableDynamicTable() } }
     private val headers =
         Http3Headers.of(
             "user-agent" to "kuicksilver-test/1.0 (dynamic table)",
@@ -166,8 +166,8 @@ class QpackDynamicTest {
     @Test
     fun qpackCancellationsDoNotWaitForDecoderStreamCredit() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 64 }).use { q ->
-                val (c, s) = q.connect(quicConfig { maxSendBuffer = 1024 })
+            QuicPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 64 } }).use { q ->
+                val (c, s) = q.connect(quicConfig { flowControl { maxSendBuffer = 1024 } })
                 RawPeer(s).openControl() // and never reads the client's streams
                 val client = Http3Connection.client(c, dyn)
                 // outside the test's scope: a regression that blocks in a NonCancellable section cannot be cancelled, and the
@@ -189,8 +189,8 @@ class QpackDynamicTest {
     /** Decoder-stream bytes the peer does not take pile up only to a bound: past it the connection ends with H3_EXCESSIVE_LOAD. */
     @Test fun negative_decoderStreamBytesThePeerDoesNotTakeAreBounded() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 64 }).use { q ->
-                val (c, s) = q.connect(quicConfig { maxSendBuffer = 1024 })
+            QuicPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 64 } }).use { q ->
+                val (c, s) = q.connect(quicConfig { flowControl { maxSendBuffer = 1024 } })
                 RawPeer(s).openControl()
                 val client = Http3Connection.client(c, dyn)
                 client.session.decoderQueueLimit = 512
@@ -430,7 +430,7 @@ class QpackDynamicTest {
     @Test
     fun blockedSectionStaysInTheStreamWindow() =
         h3Test {
-            QuicPair.open(serverQuic = quicConfig { initialStreamWindow = 16_384 }).use { q ->
+            QuicPair.open(serverQuic = quicConfig { flowControl { initialStreamWindow = 16_384 } }).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, dyn)
                 val raw = RawPeer(c)
@@ -542,9 +542,9 @@ class QpackDynamicTest {
                     Http3Connection.server(
                         s,
                         http3Settings {
-                            enableQpackDynamicTable()
+                            qpack { enableDynamicTable() }
                             enableConnectProtocol = true
-                            webTransport = true
+                            webTransport { enabled = true }
                         },
                     )
                 val dc = DynClient(c)

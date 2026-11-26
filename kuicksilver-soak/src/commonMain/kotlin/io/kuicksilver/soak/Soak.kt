@@ -4,7 +4,7 @@ package io.kuicksilver.soak
 
 import io.ktor.client.HttpClient
 import io.ktor.network.sockets.InetSocketAddress
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverClientProbe
 import io.kuicksilver.ktor.server.KuicksilverServerProbe
 import io.kuicksilver.native.Ksl
@@ -141,8 +141,8 @@ internal class Soak(
         val local = InetSocketAddress("127.0.0.1", 0)
         val quic = QuicEndpoint.bind(local, quicEndpointConfig { })
         val zeroRtt = QuicEndpoint.bind(local, quicEndpointConfig { })
-        val h1 = soakHttpClient(Http3DiscoveryMode.H1Only)
-        val h3 = soakHttpClient(Http3DiscoveryMode.H3Only)
+        val h1 = soakHttpClient(null)
+        val h3 = soakHttpClient(Http3Discovery.H3Only)
         sampler.clients = listOf(h1, h3)
         val work = Workload(httpPort, raw, refuser, quic, zeroRtt, h1, h3)
         val stats = Scenario.entries.associateWith { ScenarioStats() }
@@ -227,8 +227,8 @@ internal class Soak(
         val local = InetSocketAddress("127.0.0.1", 0)
         val quic = QuicEndpoint.bind(local, quicEndpointConfig { })
         val zeroRtt = QuicEndpoint.bind(local, quicEndpointConfig { })
-        val h1 = soakHttpClient(Http3DiscoveryMode.H1Only)
-        val h3 = soakHttpClient(Http3DiscoveryMode.H3Only)
+        val h1 = soakHttpClient(null)
+        val h3 = soakHttpClient(Http3Discovery.H3Only)
         val work = Workload(httpPort, raw, refuser, quic, zeroRtt, h1, h3)
         val r = Random(config.seed)
         val out = LinkedHashMap<Scenario, Map<String, Long>>()
@@ -318,6 +318,7 @@ internal class Soak(
                 "ksl.session" to 0,
                 "ksl.udp" to 0,
                 "ksl.wake" to 0,
+                "ksl.echKeys" to 0,
                 "quic.loops" to 0,
                 "quic.connections" to 0,
                 "quic.runtimes" to 0,
@@ -390,6 +391,6 @@ internal class Sampler(
 
     companion object {
         val LIVE_NAMES: List<String> =
-            listOf("ctx", "ssl", "key", "pkey", "session", "udp", "wake").also { check(it.size == KslConst.LIVE_COUNT) }
+            listOf("ctx", "ssl", "key", "pkey", "session", "udp", "wake", "echKeys").also { check(it.size == KslConst.LIVE_COUNT) }
     }
 }

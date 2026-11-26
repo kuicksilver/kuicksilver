@@ -225,7 +225,7 @@ class StreamBridgeTest {
     /** `resetStreamAtEnabled` tells the application that both sides advertised `reset_stream_at` (WebTransport needs it). */
     @Test fun resetStreamAtEnabledWhenBothSidesAdvertiseIt() =
         runBlocking {
-            val on = quicConfig { resetStreamAt = true }
+            val on = quicConfig { expert { resetStreamAt = true } }
             ApiPair.open(serverQuic = on).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect(on)
@@ -239,7 +239,7 @@ class StreamBridgeTest {
 
     @Test fun negative_resetStreamAtNotEnabledWithOneSideOnly() =
         runBlocking {
-            ApiPair.open(serverQuic = quicConfig { resetStreamAt = true }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { expert { resetStreamAt = true } }).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
                     assertFalse(c.resetStreamAtEnabled)
@@ -255,7 +255,7 @@ class StreamBridgeTest {
     @Test
     fun resetAtDeliversThePrefixThenTheReset() =
         runBlocking {
-            val on = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+            val on = io.kuicksilver.quic.quicConfig { expert { resetStreamAt = true } }
             ApiPair.open(serverQuic = on).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect(on)
@@ -451,7 +451,7 @@ class StreamBridgeTest {
      */
     @Test fun waitingReaderFailsOnResetAtOfWhatItRead() =
         runBlocking {
-            val on = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+            val on = io.kuicksilver.quic.quicConfig { expert { resetStreamAt = true } }
             ApiPair.open(serverQuic = on).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect(on)

@@ -22,6 +22,10 @@ open annotation class io.kuicksilver.annotations/KuicksilverDsl : kotlin/Annotat
     constructor <init>() // io.kuicksilver.annotations/KuicksilverDsl.<init>|<init>(){}[0]
 }
 
+open annotation class io.kuicksilver.annotations/SecuritySensitive : kotlin/Annotation { // io.kuicksilver.annotations/SecuritySensitive|null[0]
+    constructor <init>() // io.kuicksilver.annotations/SecuritySensitive.<init>|<init>(){}[0]
+}
+
 final enum class io.kuicksilver.native/NativeUnavailableReason : kotlin/Enum<io.kuicksilver.native/NativeUnavailableReason> { // io.kuicksilver.native/NativeUnavailableReason|null[0]
     enum entry AbiMismatch // io.kuicksilver.native/NativeUnavailableReason.AbiMismatch|null[0]
     enum entry IntegrityMismatch // io.kuicksilver.native/NativeUnavailableReason.IntegrityMismatch|null[0]
@@ -56,6 +60,19 @@ sealed interface io.kuicksilver.native/NativeAvailability { // io.kuicksilver.na
     }
 }
 
+final class io.kuicksilver.config/RateLimit { // io.kuicksilver.config/RateLimit|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int) // io.kuicksilver.config/RateLimit.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val burst // io.kuicksilver.config/RateLimit.burst|{}burst[0]
+        final fun <get-burst>(): kotlin/Int // io.kuicksilver.config/RateLimit.burst.<get-burst>|<get-burst>(){}[0]
+    final val perSecond // io.kuicksilver.config/RateLimit.perSecond|{}perSecond[0]
+        final fun <get-perSecond>(): kotlin/Int // io.kuicksilver.config/RateLimit.perSecond.<get-perSecond>|<get-perSecond>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.config/RateLimit.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.config/RateLimit.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.config/RateLimit.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.native/PacketBuffer : kotlin/AutoCloseable { // io.kuicksilver.native/PacketBuffer|null[0]
     final val capacity // io.kuicksilver.native/PacketBuffer.capacity|{}capacity[0]
         final fun <get-capacity>(): kotlin/Int // io.kuicksilver.native/PacketBuffer.capacity.<get-capacity>|<get-capacity>(){}[0]
@@ -69,6 +86,14 @@ final class io.kuicksilver.native/PacketBuffer : kotlin/AutoCloseable { // io.ku
     final object Companion { // io.kuicksilver.native/PacketBuffer.Companion|null[0]
         final fun allocate(kotlin/Int): io.kuicksilver.native/PacketBuffer // io.kuicksilver.native/PacketBuffer.Companion.allocate|allocate(kotlin.Int){}[0]
     }
+}
+
+sealed class io.kuicksilver.io/ConnectionEndedException : kotlinx.io/IOException { // io.kuicksilver.io/ConnectionEndedException|null[0]
+    final class LocalClose : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.LocalClose|null[0]
+
+    final class PeerClosed : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.PeerClosed|null[0]
+
+    final class PeerUnresponsive : io.kuicksilver.io/ConnectionEndedException // io.kuicksilver.io/ConnectionEndedException.PeerUnresponsive|null[0]
 }
 
 sealed class io.kuicksilver.native/KslException : kotlin/RuntimeException { // io.kuicksilver.native/KslException|null[0]

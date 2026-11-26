@@ -28,6 +28,7 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.io.ConnectionEndedException
 import io.kuicksilver.ktor.client.h1.FIRST_CONTACT_BODY_LIMIT
 import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
@@ -309,6 +310,7 @@ class ClientH1FramingTest {
                 testClient().use { c ->
                     val r = runCatching { c.get("http://127.0.0.1:$port/").bodyAsText() }
                     assertTrue(r.isFailure, "a truncated chunked body was delivered as complete: ${r.getOrNull()}")
+                    assertPeerClosed(r.exceptionOrNull()!!)
                 }
             }
         }
@@ -323,9 +325,32 @@ class ClientH1FramingTest {
                 testClient().use { c ->
                     val r = runCatching { c.get("http://127.0.0.1:$port/").bodyAsText() }
                     assertTrue(r.isFailure, "a truncated body was delivered as complete: ${r.getOrNull()}")
+                    assertPeerClosed(r.exceptionOrNull()!!)
                 }
             }
         }
+
+    /** A server that closes without any response: the peer's end, typed (the stale-connection retry is for reused ones). */
+    @Test fun negative_aServerClosingBeforeItsResponseIsAPeerClose() =
+        clientTest {
+            rawServerPerConnection({ _, input, _ -> readHead(input) }) { port ->
+                testClient().use { c ->
+                    val r = runCatching { c.get("http://127.0.0.1:$port/").bodyAsText() }
+                    assertTrue(r.isFailure, "no response, yet the call succeeded: ${r.getOrNull()}")
+                    assertPeerClosed(r.exceptionOrNull()!!)
+                }
+            }
+        }
+
+    /**
+     * The peer's end of a truncated response is a [ConnectionEndedException.PeerClosed] among [e]'s causes, under the
+     * EOFException it always was (RFC 9112 section 8: an incomplete message).
+     */
+    private fun assertPeerClosed(e: Throwable) {
+        val causes = generateSequence(e) { it.cause }.take(16).toList()
+        assertTrue(causes.any { it is ConnectionEndedException.PeerClosed }, "no PeerClosed among the causes of $e: $causes")
+        assertTrue(causes.any { it is kotlinx.io.EOFException }, "no EOFException among the causes of $e: $causes")
+    }
 
     /**
      * A request that says `Connection: close` is the last one on its connection (RFC 9112 section 9.6), even when the
@@ -584,16 +609,16 @@ class ClientH1FramingTest {
         }
 
     /**
-     * RFC 9112 section 6.1, "specific user configuration": a server in `http11Hints`, or any server with `assumeHttp11`,
-     * gets a body of unknown length chunked at once, without the first-contact OPTIONS.
+     * RFC 9112 section 6.1, "specific user configuration": a server in `http1 { knownServers = KnownServers.Listed(...) }`,
+     * or any server with `KnownServers.All`, gets a body of unknown length chunked at once, without the first-contact OPTIONS.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun negative_configuredHttp11ServerGetsNoProbe() =
         clientTest {
             for (configure in listOf<KuicksilverEngineConfig.(Int) -> Unit>(
-                { port -> http11Hints = setOf(HostPort("127.0.0.1", port)) },
-                { _ -> assumeHttp11 = true },
+                { port -> http1 { knownServers = KnownServers.Listed(setOf(HostPort("127.0.0.1", port))) } },
+                { _ -> http1 { knownServers = KnownServers.All } },
             )) {
                 val heads = ArrayList<List<String>>()
                 rawServerPerConnection({ _, input, output ->
@@ -634,7 +659,7 @@ class ClientH1FramingTest {
                     )
                 }
             }) { port ->
-                testClient(engine = { http11Hints = setOf(HostPort("127.0.0.1", port + 1)) }).use { c ->
+                testClient(engine = { http1 { knownServers = KnownServers.Listed(setOf(HostPort("127.0.0.1", port + 1))) } }).use { c ->
                     assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText())
                 }
             }

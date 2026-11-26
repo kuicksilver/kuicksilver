@@ -20,7 +20,7 @@ import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 
 /**
  * The host side of `androidMigrationDeviceTest` (the Gradle task starts it before `ClientMigrationAndroidTest` and stops it
- * after): a Kuicksilver Ktor server (HTTP/1.1 and HTTP/3) on the host's 127.0.0.1, which an emulator reaches as 10.0.2.2
+ * after): a Kuicksilver Ktor server (HTTP/1.1, HTTP/2 and HTTP/3) on the host's 127.0.0.1, which an emulator reaches as 10.0.2.2
  * through its own network (Wi-Fi or mobile), unlike a server inside the device, whose loopback never leaves the device.
  * The port goes to `args[0]` once it listens.
  *
@@ -35,12 +35,13 @@ fun main(args: Array<String>) {
     runBlocking {
         val server =
             embeddedServer(KuicksilverServer, configure = {
-                tlsConnector(ClientFixtures.identity()) {
+                tlsConnector {
+                    tls { identity = ClientFixtures.identity() }
                     host = "127.0.0.1"
                     port = 0
                     // the emulator reaches this peer as 10.0.2.2, a host its test certificate (server.test) does not name:
                     // without this, every request is a misdirected one (421, RFC 9110 section 7.4)
-                    trustedGateway = true
+                    allowMisdirectedHosts = true
                 }
             }) {
                 routing {

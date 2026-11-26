@@ -49,6 +49,7 @@ import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
+import io.kuicksilver.tls.stapleUntil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -146,6 +147,13 @@ internal class ConnectionRuntime(
 
     @Volatile private var certificates: List<Certificate> = emptyList()
 
+    /** The handshake's ECH outcome and its staple's freshness bound (client), read once on the loop at completion. */
+    @Volatile internal var handshakeEchStatus: io.kuicksilver.tls.EchStatus = io.kuicksilver.tls.EchStatus.None
+        private set
+
+    @Volatile internal var handshakeStapleUntil: Long = 0L
+        private set
+
     // known from the start (the identity snapshot a server's session took), replaced once by an sniSelector's choice (selectSni),
     // before any request: a server serves 0-RTT requests before its handshake completes; read here, there and at HandshakeCompleted
     @Volatile private var ownCertificates: List<Certificate> = core.localCertificates
@@ -180,6 +188,7 @@ internal class ConnectionRuntime(
             { core.remoteAddress },
             { pathInfos },
             { pathChangeCount },
+            { negotiatedVersion },
         )
 
     // ---- path diagnostics (ConnectionInfo.paths) ----
@@ -806,9 +815,12 @@ internal class ConnectionRuntime(
             val e = core.nextEvent() ?: break
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
+                    negotiatedVersion = core.version // settled: no switch after the handshake (RFC 9368 section 2)
                     earlyAccepted = core.earlyDataAccepted
                     certificateCompression = core.peerCertificateCompression // read once, on the loop, like the certificates
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
+                    handshakeEchStatus = core.handshake.session.echStatus
+                    handshakeStapleUntil = core.handshake.session.stapleUntil
                     ownCertificates = core.localCertificates
                     group = core.keyExchangeGroup
                     // a Tofu first contact is remembered before the application gets the connection (the store may suspend: off
@@ -837,6 +849,8 @@ internal class ConnectionRuntime(
                 }
 
                 ConnectionEvent.EarlyDataAccepted -> {
+                    // a server chose the version with the ClientHello's transport parameters, before it accepted the early data
+                    if (serverSide) negotiatedVersion = core.version
                     earlyAccepted = true
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Accepted)
                     alpn = core.negotiatedAlpn // read on the loop: an early-accepted connection reaches accept() before completion
@@ -1299,6 +1313,9 @@ internal class ConnectionRuntime(
 
     @Volatile private var group: String? = null // read on the loop when the handshake completes, as the certificates
     override val keyExchangeGroup: String? get() = group
+
+    @Volatile private var negotiatedVersion: io.kuicksilver.quic.VersionProfile? = null // written on the loop, as the group
+    override val version: io.kuicksilver.quic.VersionProfile? get() = negotiatedVersion
 
     @ExperimentalKuicksilverApi
     override suspend fun ping(): Boolean =

@@ -83,7 +83,7 @@ internal suspend fun h2WebSocket(
     callContext: CoroutineContext,
     events: EngineEvents,
     closeWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
-    /** The engine's `webSocketMaxMessageSize` (RFC 6455 section 10.4). */
+    /** The engine's `webSockets { maxMessageSize }` (RFC 6455 section 10.4). */
     maxMessageSize: Long = io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     /** Tests: the session's output, once it exists. */
     onOutput: (H2StreamOutput) -> Unit = {},

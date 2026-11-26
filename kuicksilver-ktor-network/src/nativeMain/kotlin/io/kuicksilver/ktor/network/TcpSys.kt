@@ -75,6 +75,9 @@ internal expect fun tcpConnectedNow(fd: Int): Boolean
 /** Whether [error] means "not yet" (EAGAIN, EWOULDBLOCK, EINPROGRESS; their WSA twins). */
 internal expect fun tcpWouldBlock(error: Int): Boolean
 
+/** Turns `IPV6_V6ONLY` off on the IPv6 socket [fd], before its bind: IPv4 peers reach it as IPv4-mapped addresses. */
+internal expect fun tcpDualStack(fd: Int)
+
 /** Binds [fd] to [to] and listens with [backlog]. */
 internal expect fun tcpBindListen(
     fd: Int,

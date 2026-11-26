@@ -5,9 +5,11 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.annotations.SecuritySensitive
 import io.kuicksilver.quic.core.ServerEarlyData
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.EarlyDataState
@@ -25,21 +27,32 @@ import kotlin.time.Duration.Companion.hours
 
 /**
  * Client side of a connection: TLS plus transport settings. [Builder.build] throws `TlsException.Config` for a TLS config QUIC cannot use
- * (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`.
+ * (TLS 1.2, empty ALPN, a cipher suite other than AES-GCM or ChaCha20-Poly1305; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`
+ * and copy one with [toBuilder]. Its readers are internal API (ADR-0026, principle 10).
  *
  * @property tls The client's TLS settings: the server name to verify, trust, ALPN.
  * @property quic The transport settings of the connection.
  */
 public class QuicClientConfig private constructor(
+    @property:InternalKuicksilverApi
     public val tls: TlsConfig,
+    @property:InternalKuicksilverApi
     public val quic: QuicConfig,
     /** Whether this client resumes and sends 0-RTT (ADR-0015); see [Builder.earlyData]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val earlyData: EarlyDataState,
     /** Where the endpoint keeps NEW_TOKEN tokens for this client's next connections, or null; see [Builder.tokenStore]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val tokenStore: QuicTokenStore?,
 ) {
+    /** A builder pre-filled with these values, to change some of them: `config.toBuilder().apply { quic = other }.build()`. */
+    public fun toBuilder(): Builder =
+        Builder(tls).also {
+            it.quic = quic
+            it.earlyData = earlyData
+            it.tokenStore = tokenStore
+        }
+
     /**
      * The mutable side of [QuicClientConfig].
      *
@@ -58,6 +71,7 @@ public class QuicClientConfig private constructor(
          * 0-RTT data can be replayed by an attacker (RFC 9846 section 8): send early only what is safe to execute twice.
          */
         @ExperimentalKuicksilverApi
+        @SecuritySensitive
         public var earlyData: EarlyDataState = EarlyDataState.Disabled
 
         /**
@@ -68,6 +82,7 @@ public class QuicClientConfig private constructor(
          * came from, across networks (see [QuicTokenStore] on privacy). [MemoryTokenStore] keeps them in memory.
          */
         @ExperimentalKuicksilverApi
+        @SecuritySensitive
         public var tokenStore: QuicTokenStore? = null
 
         /** A [QuicClientConfig]; IllegalArgumentException for a server [tls][QuicClientConfig.Builder.tls], `TlsException.Config` for one QUIC cannot use. */
@@ -77,32 +92,56 @@ public class QuicClientConfig private constructor(
             return QuicClientConfig(tls, quic, earlyData, tokenStore)
         }
     }
+
+    /** This configuration with [quic] replaced (the endpoint applying its connection ID length and qlog sink). */
+    internal fun withQuic(quic: QuicConfig): QuicClientConfig =
+        if (quic ===
+            this.quic
+        ) {
+            this
+        } else {
+            QuicClientConfig(tls, quic, earlyData, tokenStore)
+        }
 }
 
 /**
  * Server side of an endpoint: TLS identity plus transport settings. [Builder.build] rejects a TLS config QUIC cannot use, like
- * [QuicClientConfig]; build one with `quicServerConfig(tls) { }`.
+ * [QuicClientConfig]; build one with `quicServerConfig(tls) { }` and copy one with [toBuilder]. Its readers are internal API
+ * (ADR-0026, principle 10).
  *
  * @property tls The server's TLS identity (certificate chain and key), ALPN and client authentication.
  * @property quic The transport settings of every connection the server accepts.
  */
 public class QuicServerConfig private constructor(
+    @property:InternalKuicksilverApi
     public val tls: TlsConfig,
+    @property:InternalKuicksilverApi
     public val quic: QuicConfig,
-    /** Whether the server accepts 0-RTT (ADR-0015); see [Builder.earlyData]. */
-    @property:ExperimentalKuicksilverApi
-    public val earlyData: Boolean,
+    /** Whether the server accepts 0-RTT (ADR-0015); see [Builder.acceptEarlyData]. */
+    @property:InternalKuicksilverApi
+    public val acceptEarlyData: Boolean,
     private val earlyDataContext: ByteArray?,
     /** How long a NEW_TOKEN token this server issues stays valid, or null when it issues none; see [Builder.newTokenLifetime]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val newTokenLifetime: Duration?,
     /** NEW_TOKEN tokens the server's replay register holds per lifetime; see [Builder.newTokenReplayCapacity]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val newTokenReplayCapacity: Int,
     /** Where this server asks clients to move after the handshake, or null; see [Builder.preferredAddress]. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val preferredAddress: PreferredAddress?,
 ) {
+    /** A builder pre-filled with these values, to change some of them: `config.toBuilder().apply { quic = other }.build()`. */
+    public fun toBuilder(): Builder =
+        Builder(tls).also {
+            it.quic = quic
+            it.acceptEarlyData = acceptEarlyData
+            it.earlyDataContext = earlyDataContext?.copyOf()
+            it.newTokenLifetime = newTokenLifetime
+            it.newTokenReplayCapacity = newTokenReplayCapacity
+            it.preferredAddress = preferredAddress
+        }
+
     private val early = AtomicReference<ServerEarlyData?>(null)
 
     /**
@@ -111,7 +150,7 @@ public class QuicServerConfig private constructor(
      * first loop that asks, a CSPRNG in production).
      */
     internal fun earlySetup(random: Random): ServerEarlyData? {
-        if (!earlyData) return null
+        if (!acceptEarlyData) return null
         early.load()?.let { return it }
         val made =
             ServerEarlyData.of(
@@ -134,7 +173,7 @@ public class QuicServerConfig private constructor(
     public class Builder(
         public val tls: TlsConfig,
     ) {
-        /** Default [QuicConfig.Default]; its `connectionIdLength` must equal the endpoint's. */
+        /** Default [QuicConfig.Default]; the endpoint applies its own connection ID length and qlog sink to it. */
         public var quic: QuicConfig = QuicConfig.Default
 
         /**
@@ -142,14 +181,17 @@ public class QuicServerConfig private constructor(
          * (OpenSSL's ±10 s ticket-age check), once per ticket (the server's replay register) and only for the configuration
          * that issued the ticket. A connection then reaches `accept()` as soon as its 0-RTT is accepted, before the handshake
          * completes: early data can still be a replay, so the application acts on anything not safe to repeat only after
-         * `QuicConnection.awaitHandshake()`. Not with client certificates.
+         * `QuicConnection.awaitHandshake()`. Not with client certificates. A Ktor server sets it from
+         * `http3 { earlyData { enabled } }`.
          */
         @ExperimentalKuicksilverApi
-        public var earlyData: Boolean = false
+        @SecuritySensitive
+        public var acceptEarlyData: Boolean = false
 
         /**
          * Application settings a 0-RTT client relies on (HTTP/3 SETTINGS, RFC 9114 section 7.2.4.2), bound into tickets with
-         * the ALPN and the transport limits: a ticket from another configuration gets no early data. At most 256 bytes.
+         * the ALPN and the transport limits: a ticket from another configuration gets no early data. At most 256 bytes. For
+         * an application protocol of one's own over QUIC; `Http3Endpoint` sets it from its SETTINGS itself.
          */
         @ExperimentalKuicksilverApi
         public var earlyDataContext: ByteArray? = null
@@ -163,12 +205,14 @@ public class QuicServerConfig private constructor(
          * Tokens are sealed with keys that live only in this process (rotated hourly); at most 7 days.
          */
         @ExperimentalKuicksilverApi
+        @SecuritySensitive
         public var newTokenLifetime: Duration? = 24.hours
 
         /**
          * Default 1,048,576 (1..16,777,216). A NEW_TOKEN token validates one connection: the server remembers each one it accepted
-         * for at least [newTokenLifetime] in a register sized for this many per lifetime, made when the first token is shown
-         * (32 MiB at the default; about 32 bytes per token, rounded up to a power of two per stripe). Past that, a returning
+         * for at least [newTokenLifetime] in a register that holds up to this many per lifetime: it starts at 128 KiB with the
+         * first token shown and doubles as it fills, up to about 32 bytes per token (32 MiB at the default, rounded up to a power
+         * of two per stripe). Past that, a returning
          * client's token is treated as absent (it may get a Retry) until older entries age out: never a second use. All loops of
          * the endpoint share it.
          */
@@ -178,10 +222,10 @@ public class QuicServerConfig private constructor(
         /**
          * Default null. Otherwise the endpoint also listens on these addresses (a socket per family; every loop of a group shares the
          * port, as for the main one) and advertises them in `preferred_address` with its sequence-1 connection ID (RFC 9000 sections 9.6
-         * and 18.2). A client that follows (`QuicConfig.followPreferredAddress`) validates the new path after the handshake and moves
+         * and 18.2). A client that follows (`migration { followPreferredAddress }` of its QuicConfig) validates the new path after the handshake and moves
          * there; the server moves too once the client's address is validated on the preferred socket, and the original path closes.
          * Only connections live there: a new Initial on a preferred socket is dropped. A move to it is taken even with
-         * `allowMigration = false`, from the client's current address only.
+         * `migration { allow = false }`, from the client's current address only.
          */
         @ExperimentalKuicksilverApi
         public var preferredAddress: PreferredAddress? = null
@@ -190,7 +234,7 @@ public class QuicServerConfig private constructor(
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
             tls.checkQuicCompatible()
-            require(!earlyData || tls.clientAuth == ClientAuth.None) { "earlyData cannot be combined with client certificates" }
+            require(!acceptEarlyData || tls.clientAuth == ClientAuth.None) { "acceptEarlyData cannot be combined with client certificates" }
             require((earlyDataContext?.size ?: 0) <= 256) { "earlyDataContext is at most 256 bytes" }
             newTokenLifetime?.let {
                 require(
@@ -201,7 +245,7 @@ public class QuicServerConfig private constructor(
             return QuicServerConfig(
                 tls,
                 quic,
-                earlyData,
+                acceptEarlyData,
                 earlyDataContext?.copyOf(),
                 newTokenLifetime,
                 newTokenReplayCapacity,
@@ -209,21 +253,32 @@ public class QuicServerConfig private constructor(
             )
         }
     }
+
+    /** This configuration with [quic] replaced (the endpoint applying its connection ID length and qlog sink); 0-RTT state is not shared with this one. */
+    internal fun withQuic(quic: QuicConfig): QuicServerConfig =
+        if (quic === this.quic) {
+            this
+        } else {
+            QuicServerConfig(tls, quic, acceptEarlyData, earlyDataContext, newTokenLifetime, newTokenReplayCapacity, preferredAddress)
+        }
 }
 
 /** An endpoint: optionally a server, the crypto provider, and the admission limits (docs/guide/quic.md, "Admission and endpoint limits"). */
 public class QuicEndpointConfig private constructor(
     /** The server side; null makes a client-only endpoint, which admits no incoming connection. */
+    @property:InternalKuicksilverApi
     public val server: QuicServerConfig?,
     /**
      * The TLS and packet-protection provider of every connection and of the endpoint's Retry and reset keys; [KslQuicCrypto] (OpenSSL) by
      * default.
      */
+    @property:InternalKuicksilverApi
     public val crypto: QuicCrypto,
     /**
      * New Initial packets are dropped silently beyond this many connections, counted over the whole endpoint: every one of its
      * [loops][QuicEndpointConfig.loops], client connections included.
      */
+    @property:InternalKuicksilverApi
     public val maxConnections: Int,
     /**
      * Handshaken connections waiting for `accept()` (shared by all [loops][QuicEndpointConfig.loops]), never more. While this many wait, a new client
@@ -233,6 +288,7 @@ public class QuicEndpointConfig private constructor(
      * joining the queue. Handshakes in flight are not counted (unvalidated, possibly spoofed Initials must not lock real
      * clients out); they are bounded by [maxConnections][QuicEndpointConfig.maxConnections], [maxConnectionsPerIp][QuicEndpointConfig.maxConnectionsPerIp] and the [ConnectionAdmission] policy.
      */
+    @property:InternalKuicksilverApi
     public val acceptQueue: Int,
     /**
      * The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. While
@@ -241,27 +297,37 @@ public class QuicEndpointConfig private constructor(
      * on Windows); on a dispatcher supplied here it never waits, as other work shares the thread (a UI, or a second endpoint
      * whose datagram it would be waiting for).
      */
+    @property:InternalKuicksilverApi
     public val dispatcher: CoroutineDispatcher?,
     /** How the loop opens its socket; null means [DatagramIo.open]. */
+    @property:InternalKuicksilverApi
     public val io: (suspend (InetSocketAddress) -> DatagramIo)?,
-    /** Length of every connection ID this endpoint issues; short headers are parsed with it, so every connection's `QuicConfig.connectionIdLength` must match. */
+    /** Length of every connection ID this endpoint issues; short headers are parsed with it, and every connection's QuicConfig gets it. */
+    @property:InternalKuicksilverApi
     public val connectionIdLength: Int,
     /** Decides per new client Initial: create, Retry, drop or refuse; the default asks for a Retry above 256 handshakes in flight or 8 MiB of handshake buffers. */
+    @property:InternalKuicksilverApi
     public val admission: ConnectionAdmission,
     /** Initials waiting for [admission][QuicEndpointConfig.admission] after one receive batch; more are dropped (1024 by default). */
+    @property:InternalKuicksilverApi
     public val initialQueueCap: Int,
     /**
      * Connections one client IP may hold at once on the whole endpoint (over all [loops][QuicEndpointConfig.loops], wherever a connection lives), ports
      * ignored; null disables the limit. The excess is dropped silently.
      */
+    @property:InternalKuicksilverApi
     public val maxConnectionsPerIp: Int?,
     /** A server connection older than this is closed with NO_ERROR, whatever its activity; null means no limit. */
+    @property:InternalKuicksilverApi
     public val maxConnectionLifetime: Duration?,
     /** Drop Initials whose source port is 53, 123, 1900, 5353 or 11211: a reflection attempt, never a real client (threat-model 3.1). */
+    @property:InternalKuicksilverApi
     public val rejectInitialFromReflectivePorts: Boolean,
     /** Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) per client address per second (RFC 9000 section 8: amplification). */
+    @property:InternalKuicksilverApi
     public val statelessPerAddressPerSecond: Int,
     /** Stateless answers per second over all addresses (like msquic `MaxBindingStatelessOperations`). */
+    @property:InternalKuicksilverApi
     public val statelessTotalPerSecond: Int,
     /**
      * Endpoint loops sharing the port, each on its own thread (docs/guide/quic.md, "Several loops on one port"); more than one
@@ -270,19 +336,23 @@ public class QuicEndpointConfig private constructor(
      * hands each datagram to the loop its connection ID names. One connection lives on one loop either way. Without the
      * accelerated transport (and no [io]) `bind` throws `UnsupportedOperationException`.
      */
+    @property:InternalKuicksilverApi
     public val loops: Int,
-    /** Where the endpoint's diagnostics go (docs/guide/quic.md, "Observability"); [KuicksilverLogger.Stderr] (warnings on standard error) by default. */
-    @property:ExperimentalKuicksilverApi
+    /** Where the endpoint's diagnostics go (docs/guide/quic.md, "Observability"); see [Builder.Observability.logger]. */
+    @property:InternalKuicksilverApi
     public val logger: KuicksilverLogger,
     /** Hears every connection's lifecycle on the endpoint loop; null (the default) for none. */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val listener: ConnectionListener?,
+    /** Receives a qlog trace per connection of the endpoint; see [Builder.Observability.qlog]. */
+    @property:InternalKuicksilverApi
+    public val qlog: QlogSink?,
     /**
      * The QUIC-LB configuration of the server's connection IDs (draft-ietf-quic-load-balancers-21, experimental; docs/guide/quic.md,
      * "Behind a load balancer"), or null for the endpoint's own format. Change it on a running endpoint with
      * [QuicEndpoint.updateLoadBalancer].
      */
-    @property:ExperimentalKuicksilverApi
+    @property:InternalKuicksilverApi
     public val loadBalancer: QuicLbConfig?,
     /**
      * The client session tickets (0-RTT, resumption) this endpoint takes and stores, owned by the caller: several endpoints
@@ -292,103 +362,200 @@ public class QuicEndpointConfig private constructor(
     @property:InternalKuicksilverApi
     public val sessionCache: io.kuicksilver.tls.SessionCache?,
 ) {
-    /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */
+    /**
+     * The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`: the server, the connection ID length, the
+     * loops and the admission limits at the top, [observability], [runtime] and [expert] (experimental) in blocks. [build]
+     * validates the values together.
+     */
     @KuicksilverDsl
     public class Builder {
-        /** Default null: a client-only endpoint. See [QuicEndpointConfig.server]. */
+        /** Default null: a client-only endpoint, which admits no incoming connection. */
         public var server: QuicServerConfig? = null
 
-        /** Default [KslQuicCrypto]; see [QuicEndpointConfig.crypto]. */
-        public var crypto: QuicCrypto = KslQuicCrypto
-
-        /** Default 10 000, at least 1; see [QuicEndpointConfig.maxConnections]. */
-        public var maxConnections: Int = 10_000
-
-        /** Default 128, at least 1; see [QuicEndpointConfig.acceptQueue]. */
-        public var acceptQueue: Int = 128
-
         /**
-         * Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. The loop
-         * never waits in a socket on a dispatcher set here; see [QuicEndpointConfig.dispatcher].
-         */
-        public var dispatcher: CoroutineDispatcher? = null
-
-        /** Default null ([DatagramIo.open]); `kuicksilver-testing`'s `MemoryNetwork.open` runs the endpoint in memory. */
-        public var io: (suspend (InetSocketAddress) -> DatagramIo)? = null
-
-        /**
-         * Default 8 bytes (4..20); must equal the server's `QuicConfig.connectionIdLength`. See [QuicEndpointConfig.connectionIdLength].
+         * Default 8 bytes (4..20): the length of every connection ID this endpoint issues, the one place for it. Short headers
+         * are parsed with it, and every connection's QuicConfig gets it; with a [loadBalancer] it must equal the QUIC-LB
+         * configuration's.
          */
         public var connectionIdLength: Int = 8
 
         /**
-         * Default `ConnectionAdmission.default()` (Retry above 256 handshakes in flight or 8 MiB of their buffers); see
-         * [QuicEndpointConfig.admission].
+         * Default 1 (1..255): endpoint loops sharing the port, each on its own thread (docs/guide/quic.md, "Several loops on
+         * one port"); more than one needs a [server] and no `runtime { dispatcher }`. Where the accelerated socket is granted
+         * SO_REUSEPORT (Linux, Android) each loop has its own socket and the kernel balances the flows; elsewhere (Apple,
+         * Windows, a caller-supplied `runtime { io }`) the loops share one socket, whose receiver hands each datagram to the
+         * loop its connection ID names. One connection lives on one loop either way. Without the accelerated transport (and
+         * no `io`) `bind` throws `UnsupportedOperationException`.
          */
-        public var admission: ConnectionAdmission = ConnectionAdmission.default()
-
-        /** Default 1024, at least 1; see [QuicEndpointConfig.initialQueueCap]. */
-        public var initialQueueCap: Int = 1024
-
-        /** Default 256; null disables the limit. See [QuicEndpointConfig.maxConnectionsPerIp]. */
-        public var maxConnectionsPerIp: Int? = 256
-
-        /** Default null (no limit); positive otherwise. See [QuicEndpointConfig.maxConnectionLifetime]. */
-        public var maxConnectionLifetime: Duration? = null
-
-        /** Default true; see [QuicEndpointConfig.rejectInitialFromReflectivePorts]. */
-        public var rejectInitialFromReflectivePorts: Boolean = true
-
-        /** Default 8 per second, at least 1; see [QuicEndpointConfig.statelessPerAddressPerSecond]. */
-        public var statelessPerAddressPerSecond: Int = 8
-
-        /** Default 1000 per second, at least 1; see [QuicEndpointConfig.statelessTotalPerSecond]. */
-        public var statelessTotalPerSecond: Int = 1000
-
-        /** Default 1 (1..255); more needs a [server] and no [dispatcher]. See [QuicEndpointConfig.loops]. */
         public var loops: Int = 1
 
-        /** Default [KuicksilverLogger.Stderr]; see [QuicEndpointConfig.logger]. */
-        @ExperimentalKuicksilverApi
-        public var logger: KuicksilverLogger = KuicksilverLogger.Stderr
-
-        /** Default null; see [QuicEndpointConfig.listener]. */
-        @ExperimentalKuicksilverApi
-        public var listener: ConnectionListener? = null
+        /**
+         * Default 10 000, at least 1: new Initial packets are dropped silently beyond this many connections, counted over
+         * the whole endpoint: every one of its [loops], client connections included.
+         */
+        @SecuritySensitive
+        public var maxConnections: Int = 10_000
 
         /**
-         * Default null. A QUIC-LB configuration needs a [server], a [connectionIdLength] equal to its
-         * [QuicLbConfig.connectionIdLength] and at least 8 (unroutable IDs "SHOULD be of at least length 8", draft section 3.2),
-         * and a key when the server also has a `preferredAddress` (section 9: plaintext IDs only in the server's Initial).
-         * See [QuicEndpointConfig.loadBalancer].
+         * Default 256, at least 1; null disables the limit: connections one client IP may hold at once on the whole endpoint
+         * (over all [loops], wherever a connection lives), ports ignored. The excess is dropped silently. Behind NAT or
+         * kube-proxy many clients share one address: set null there. A TCP server's own limit defaults to none, since a
+         * proxy usually stands in front of TCP; QUIC Initials come unvalidated and cost more state, so this one is on.
+         */
+        @SecuritySensitive
+        public var maxConnectionsPerIp: Int? = 256
+
+        /**
+         * Default 128, at least 1: handshaken connections waiting for `accept()` (shared by all [loops]), never more. While
+         * this many wait, a new client Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying
+         * CONNECTION_REFUSED (0x02), under the stateless rate limits, so the client fails at once instead of at its
+         * handshake timeout and no TLS handshake is spent on it; a handshake admitted earlier that completes while this many
+         * wait is closed with CONNECTION_REFUSED instead of joining the queue. Handshakes in flight are not counted
+         * (unvalidated, possibly spoofed Initials must not lock real clients out); they are bounded by [maxConnections],
+         * [maxConnectionsPerIp] and the [admission] policy.
+         */
+        public var acceptQueue: Int = 128
+
+        /** Default null (no limit); positive otherwise: a server connection older than this is closed with NO_ERROR, whatever its activity. */
+        public var maxConnectionLifetime: Duration? = null
+
+        /**
+         * Default `ConnectionAdmission.default()`: decides per new client Initial whether to create, Retry, drop or refuse;
+         * the default asks for a Retry above 256 handshakes in flight or 8 MiB of their buffers.
+         */
+        @SecuritySensitive
+        public var admission: ConnectionAdmission = ConnectionAdmission.default()
+
+        /**
+         * Default null: the endpoint's own connection ID format. Otherwise the QUIC-LB configuration of the server's
+         * connection IDs (draft-ietf-quic-load-balancers-21, experimental; docs/guide/quic.md, "Behind a load balancer"),
+         * changed on a running endpoint with [QuicEndpoint.updateLoadBalancer]. It needs a [server], a [connectionIdLength]
+         * equal to its [QuicLbConfig.connectionIdLength] and at least 8 (unroutable IDs "SHOULD be of at least length 8",
+         * draft section 3.2), and a key when the server also has a `preferredAddress` (section 9: plaintext IDs only in the
+         * server's Initial).
          */
         @ExperimentalKuicksilverApi
         public var loadBalancer: QuicLbConfig? = null
+
+        /** Where the endpoint's diagnostics, qlog traces and connection events go. */
+        public val observability: Observability = Observability()
+
+        /** Sets the [observability] options. */
+        public fun observability(block: Observability.() -> Unit) {
+            observability.block()
+        }
+
+        /** The dispatcher of the endpoint loop, and the socket and crypto providers tests and ports replace. */
+        public val runtime: Runtime = Runtime()
+
+        /** Sets the [runtime] options. */
+        public fun runtime(block: Runtime.() -> Unit) {
+            runtime.block()
+        }
+
+        /** Admission internals few servers need; experimental. */
+        @ExperimentalKuicksilverApi
+        public val expert: Expert = Expert()
+
+        /** Sets the [expert] options. */
+        @ExperimentalKuicksilverApi
+        public fun expert(block: Expert.() -> Unit) {
+            expert.block()
+        }
 
         /** Default null: the endpoint's own tickets. See `QuicEndpointConfig.sessionCache`. */
         @InternalKuicksilverApi
         public var sessionCache: io.kuicksilver.tls.SessionCache? = null
 
+        /** The observability options of a [Builder]: one place for the logger, qlog and the connection listener. */
+        @KuicksilverDsl
+        public class Observability internal constructor() {
+            /**
+             * Default [KuicksilverLogger.Default] (the platform's logger, warnings and up): where the endpoint's diagnostics go
+             * (docs/guide/quic.md, "Observability").
+             */
+            public var logger: KuicksilverLogger = KuicksilverLogger.Default
+
+            /**
+             * Default null (no qlog): receives a qlog trace per connection of the endpoint (docs/guide/quic.md, "qlog"). A
+             * failing sink disables tracing for that connection only; the sink gets each connection's ID and can keep them apart.
+             */
+            public var qlog: QlogSink? = null
+
+            /** Default null: hears every connection's lifecycle on the endpoint loop. */
+            @ExperimentalKuicksilverApi
+            public var connectionListener: ConnectionListener? = null
+        }
+
+        /** The runtime options of a [Builder]. */
+        @KuicksilverDsl
+        public class Runtime internal constructor() {
+            /**
+             * Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of `loops`: the
+             * single-threaded dispatcher of the endpoint loop. While datagrams keep coming, the loop reads the ones already
+             * queued at the socket on this dispatcher's thread. On its own dispatcher (null here) it also waits there for the
+             * next ones, at most 1 ms at a time and never past its next timer (not on Windows); on a dispatcher supplied here it
+             * never waits, as other work shares the thread (a UI, or a second endpoint whose datagram it would be waiting for).
+             */
+            public var dispatcher: CoroutineDispatcher? = null
+
+            /** Default null ([DatagramIo.open]): how the loop opens its socket; `kuicksilver-testing`'s `MemoryNetwork.open` runs the endpoint in memory. */
+            @ExperimentalKuicksilverApi
+            public var io: (suspend (InetSocketAddress) -> DatagramIo)? = null
+
+            /**
+             * Default [KslQuicCrypto] (OpenSSL): the TLS and packet-protection provider of every connection and of the
+             * endpoint's Retry and reset keys.
+             */
+            @ExperimentalKuicksilverApi
+            public var crypto: QuicCrypto = KslQuicCrypto
+        }
+
+        /** The expert options of a [Builder]: admission internals; experimental. */
+        @ExperimentalKuicksilverApi
+        @KuicksilverDsl
+        public class Expert internal constructor() {
+            /** Default 1024, at least 1: Initials waiting for `admission` after one receive batch; more are dropped. */
+            public var initialAdmissionQueue: Int = 1024
+
+            /**
+             * Default true: drop Initials whose source port is 53, 123, 1900, 5353 or 11211: a reflection attempt, never a real
+             * client (threat-model 3.1). False only weakens the default.
+             */
+            @DelicateKuicksilverApi
+            @SecuritySensitive
+            public var rejectInitialFromReflectivePorts: Boolean = true
+
+            /**
+             * Default 8 per second, at least 1: stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN
+             * close) per client address per second (RFC 9000 section 8: amplification).
+             */
+            @SecuritySensitive
+            public var statelessPerAddressPerSecond: Int = 8
+
+            /** Default 1000 per second, at least 1: stateless answers per second over all addresses (like msquic `MaxBindingStatelessOperations`). */
+            @SecuritySensitive
+            public var statelessTotalPerSecond: Int = 1000
+        }
+
         /**
          * An immutable [QuicEndpointConfig]; IllegalArgumentException for a value out of range or a combination that cannot work
-         * (connection ID lengths that differ, loops without a server).
+         * (a load balancer whose connection ID length differs, loops without a server).
          */
+        @OptIn(DelicateKuicksilverApi::class)
         public fun build(): QuicEndpointConfig {
             require(maxConnections >= 1) { "maxConnections must be positive" }
             require(acceptQueue >= 1) { "acceptQueue must be positive" }
             require(connectionIdLength in 4..20) { "connectionIdLength must be 4..20" }
-            require(initialQueueCap >= 1) { "initialQueueCap must be positive" }
-            require((maxConnectionsPerIp ?: 1) >= 1) { "maxConnectionsPerIp must be positive or null" }
+            require(expert.initialAdmissionQueue >= 1) { "expert { initialAdmissionQueue } must be positive" }
+            require((maxConnectionsPerIp ?: 1) >= 1) { "maxConnectionsPerIp must be positive or null (off)" }
             require(maxConnectionLifetime?.isPositive() != false) { "maxConnectionLifetime must be positive or null" }
-            require(statelessPerAddressPerSecond >= 1 && statelessTotalPerSecond >= 1) { "stateless rate limits must be positive" }
-            server?.let {
-                require(it.quic.connectionIdLength == connectionIdLength) {
-                    "server QuicConfig.connectionIdLength (${it.quic.connectionIdLength}) must equal the endpoint's connectionIdLength ($connectionIdLength): short headers are parsed with one length"
-                }
+            require(expert.statelessPerAddressPerSecond >= 1 && expert.statelessTotalPerSecond >= 1) {
+                "expert { statelessPerAddressPerSecond } and { statelessTotalPerSecond } must be positive"
             }
             require(loops in 1..255) { "loops must be 1..255 (the routing byte)" }
             require(loops == 1 || server != null) { "loops > 1 needs a server" }
-            require(loops == 1 || dispatcher == null) { "loops > 1 cannot share one dispatcher" }
+            require(loops == 1 || runtime.dispatcher == null) { "loops > 1 cannot share one runtime { dispatcher }" }
             loadBalancer?.let { lb ->
                 require(server != null) { "loadBalancer needs a server" }
                 require(lb.connectionIdLength == connectionIdLength) {
@@ -401,52 +568,58 @@ public class QuicEndpointConfig private constructor(
                     "a preferredAddress needs an encrypted loadBalancer configuration (draft-ietf-quic-load-balancers-21 section 9)"
                 }
             }
+            val qlog = observability.qlog
             return QuicEndpointConfig(
-                server,
-                crypto,
+                server?.let { it.withQuic(it.quic.withEndpoint(connectionIdLength, qlog)) },
+                runtime.crypto,
                 maxConnections,
                 acceptQueue,
-                dispatcher,
-                io,
+                runtime.dispatcher,
+                runtime.io,
                 connectionIdLength,
                 admission,
-                initialQueueCap,
+                expert.initialAdmissionQueue,
                 maxConnectionsPerIp,
                 maxConnectionLifetime,
-                rejectInitialFromReflectivePorts,
-                statelessPerAddressPerSecond,
-                statelessTotalPerSecond,
+                expert.rejectInitialFromReflectivePorts,
+                expert.statelessPerAddressPerSecond,
+                expert.statelessTotalPerSecond,
                 loops,
-                logger,
-                listener,
+                observability.logger,
+                observability.connectionListener,
+                qlog,
                 loadBalancer,
                 sessionCache,
             )
         }
     }
 
-    /** A builder pre-filled with these values (for a layer above that adjusts one setting, such as `Http3Endpoint` binding SETTINGS into 0-RTT tickets). */
-    @ExperimentalKuicksilverApi
+    /**
+     * A builder pre-filled with these values, to change some of them (as `Http3Endpoint` does, binding its SETTINGS into
+     * 0-RTT tickets): `config.toBuilder().apply { maxConnections = 50_000 }.build()`.
+     */
+    @OptIn(DelicateKuicksilverApi::class)
     public fun toBuilder(): Builder =
         Builder().also {
             it.server = server
-            it.crypto = crypto
-            it.maxConnections = maxConnections
-            it.acceptQueue = acceptQueue
-            it.dispatcher = dispatcher
-            it.io = io
             it.connectionIdLength = connectionIdLength
-            it.admission = admission
-            it.initialQueueCap = initialQueueCap
-            it.maxConnectionsPerIp = maxConnectionsPerIp
-            it.maxConnectionLifetime = maxConnectionLifetime
-            it.rejectInitialFromReflectivePorts = rejectInitialFromReflectivePorts
-            it.statelessPerAddressPerSecond = statelessPerAddressPerSecond
-            it.statelessTotalPerSecond = statelessTotalPerSecond
             it.loops = loops
-            it.logger = logger
-            it.listener = listener
+            it.maxConnections = maxConnections
+            it.maxConnectionsPerIp = maxConnectionsPerIp
+            it.acceptQueue = acceptQueue
+            it.maxConnectionLifetime = maxConnectionLifetime
+            it.admission = admission
             it.loadBalancer = loadBalancer
+            it.observability.logger = logger
+            it.observability.qlog = qlog
+            it.observability.connectionListener = listener
+            it.runtime.dispatcher = dispatcher
+            it.runtime.io = io
+            it.runtime.crypto = crypto
+            it.expert.initialAdmissionQueue = initialQueueCap
+            it.expert.rejectInitialFromReflectivePorts = rejectInitialFromReflectivePorts
+            it.expert.statelessPerAddressPerSecond = statelessPerAddressPerSecond
+            it.expert.statelessTotalPerSecond = statelessTotalPerSecond
             it.sessionCache = sessionCache
         }
 

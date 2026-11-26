@@ -45,14 +45,14 @@ class ProxyBasicCredentialsTest {
         }
     }
 
-    /** The engine's own `proxy` with `proxyCredentials`: the engine's creation fails, as for a SOCKS5 empty password. */
+    /** The engine's own `proxy` with `proxies { credentials }`: the engine's creation fails, as for a SOCKS5 empty password. */
     @Test fun negative_engineWithAnInvalidBasicUserIdFailsAtCreation() {
         val e =
             assertFailsWith<IllegalArgumentException> {
                 HttpClient(Kuicksilver) {
                     engine {
                         proxy = ProxyBuilder.http(Url("http://127.0.0.1:3128"))
-                        proxyCredentials = ProxyCredentials("a:b", "p")
+                        proxies { credentials = ProxyCredentials("a:b", "p") }
                     }
                 }.close()
             }

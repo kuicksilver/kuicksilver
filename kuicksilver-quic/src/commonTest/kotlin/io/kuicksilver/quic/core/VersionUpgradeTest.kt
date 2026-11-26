@@ -64,7 +64,7 @@ class VersionUpgradeTest {
         val prefersV2 =
             quicConfig {
                 versions = listOf(VersionProfile.V2, VersionProfile.V1)
-                initialVersion = VersionProfile.V1
+                expert { initialVersion = VersionProfile.V1 }
             }
         val clientVersions = ArrayList<Int>()
         val p = CorePair(clientQuic = prefersV2, serverQuic = v2v1, crypto = ksl)

@@ -27,7 +27,7 @@ import kotlin.time.Duration.Companion.seconds
 class ResetStreamAtTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private val on = quicConfig { resetStreamAt = true }
+    private val on = quicConfig { expert { resetStreamAt = true } }
 
     private class Received(
         val bytes: ByteArray,
@@ -228,8 +228,8 @@ class ResetStreamAtTest {
                 clientQuic = on,
                 serverQuic =
                     quicConfig {
-                        resetStreamAt = true
-                        initialStreamWindow = 16_384
+                        expert { resetStreamAt = true }
+                        flowControl { initialStreamWindow = 16_384 }
                     },
             )
         p.use { _ ->

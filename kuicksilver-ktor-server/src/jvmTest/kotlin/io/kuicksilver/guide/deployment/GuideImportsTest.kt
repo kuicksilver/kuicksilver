@@ -25,7 +25,10 @@ fun everyDeploymentImport(identity: io.kuicksilver.tls.TlsIdentity) {
     lateinit var engine: KuicksilverApplicationEngine
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(identity) { port = 0 }
+            tlsConnector {
+                tls { this.identity = identity }
+                port = 0
+            }
         }) {
             intercept(ApplicationCallPipeline.Plugins) {
                 call.response.header("Alt-Svc", if (engine.http3Advertising == Http3Advertising.On) "h3=\":443\"" else "clear")

@@ -328,9 +328,9 @@ class BatchReceiverTest {
                 QuicEndpointConfig
                     .Builder()
                     .apply {
-                        crypto = NullCryptoProvider
-                        io = { net.open(it) }
-                        dispatcher = on
+                        runtime { crypto = NullCryptoProvider }
+                        runtime { io = { net.open(it) } }
+                        runtime { dispatcher = on }
                     }.build(),
             ) as EndpointLoop
             val own = bind(1, null)

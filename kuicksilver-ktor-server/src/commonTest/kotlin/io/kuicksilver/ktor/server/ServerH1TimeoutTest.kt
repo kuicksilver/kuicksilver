@@ -43,7 +43,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The engine's request-head deadline on real sockets (`requestHeaderTimeoutSeconds`); the timing itself is covered on
+ * The engine's request-head deadline on real sockets (`requestHeaderTimeout`); the timing itself is covered on
  * virtual time by `h1.H1PipelineTimeoutTest`. Each test waits for the server to close, about one second.
  */
 class ServerH1TimeoutTest {
@@ -54,7 +54,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val (server, port) =
                 tlsServer(
-                    configure = { requestHeaderTimeoutSeconds = 1 },
+                    configure = { requestHeaderTimeout = 1.seconds },
                 ) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val received = withTimeout(10.seconds) { rawHttp(port, "", tls = null) }
@@ -92,7 +92,7 @@ class ServerH1TimeoutTest {
 
     /**
      * A client that sends its ClientHello and then neither reads nor answers fails the handshake at the request-head
-     * deadline, and its socket is released, so its `maxTcpConnections` slot comes back: with the limit at 1, the next
+     * deadline, and its socket is released, so its `tcp { maxConnections }` slot comes back: with the limit at 1, the next
      * client is served. (On loopback the handshake's output fits the send buffer, so this does not tell the bounded close
      * from a plain one; `CloseWithinTest` covers the bound.)
      */
@@ -101,8 +101,8 @@ class ServerH1TimeoutTest {
             val (server, port) =
                 tlsServer(
                     configure = {
-                        requestHeaderTimeoutSeconds = 1
-                        maxTcpConnections = 1
+                        requestHeaderTimeout = 1.seconds
+                        tcp { maxConnections = 1 }
                     },
                 ) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
@@ -128,7 +128,7 @@ class ServerH1TimeoutTest {
         }
 
     /**
-     * The TLS handshake is part of the first request's head: `requestHeaderTimeoutSeconds` bounds it, not a shorter deadline
+     * The TLS handshake is part of the first request's head: `requestHeaderTimeout` bounds it, not a shorter deadline
      * of the TLS layer (`TlsConfig.handshakeTimeout`, 10 s). Before, a client whose handshake took longer than 10 s (its
      * Finished retransmitted on a lossy 200 ms path) was cut after it had sent its request, which it saw as the connection
      * closed before any response. Here a client sends its ClientHello and stalls, with a 20 s head deadline: the connection
@@ -139,7 +139,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val (server, port) =
                 tlsServer(
-                    configure = { requestHeaderTimeoutSeconds = 20 },
+                    configure = { requestHeaderTimeout = 20.seconds },
                 ) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {
@@ -169,7 +169,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    requestHeaderTimeoutSeconds = 1
+                    requestHeaderTimeout = 1.seconds
                     connector {
                         host = "127.0.0.1"
                         port = 0
@@ -220,9 +220,9 @@ class ServerH1TimeoutTest {
                     }
                 }
                 val configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {
-                    connectionIdleTimeoutSeconds = 1
+                    tcp { idleTimeout = 1.seconds }
                     sendStallTimeoutForTest = 1.seconds
-                    eventListener = events
+                    observability { eventListener = events }
                 }
                 val (server, port) =
                     if (tls) {
@@ -292,9 +292,9 @@ class ServerH1TimeoutTest {
                     }
                 val (server, port) =
                     largeResponseServer(tls) {
-                        connectionIdleTimeoutSeconds = 1
+                        tcp { idleTimeout = 1.seconds }
                         sendStallTimeoutForTest = 1.seconds
-                        eventListener = events
+                        observability { eventListener = events }
                     }
                 val selector = SelectorManager(Dispatchers.IO)
                 val sockets = ArrayList<Socket>()
@@ -306,7 +306,7 @@ class ServerH1TimeoutTest {
                         // the client waits for its handshake as long as the server allows one (the request-head deadline):
                         // with the client's own 10 s, a loaded host (a Windows VM, the earlier connections' responses being
                         // written meanwhile) failed the test with "TLS handshake timed out after 10s" before any abort
-                        val handshake = server.engine.configuration.requestHeaderTimeoutSeconds.seconds
+                        val handshake = server.engine.configuration.requestHeaderTimeout
                         val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls(handshakeTimeout = handshake)) else tcp
                         sockets += socket
                         val w = socket.openWriteChannel(autoFlush = true)
@@ -341,7 +341,7 @@ class ServerH1TimeoutTest {
         }
         if (tls) {
             return tlsServer({
-                http3 = false
+                http3 { enabled = false }
                 configure()
             }, module = large)
         }
@@ -379,7 +379,7 @@ class ServerH1TimeoutTest {
                 val mib = if (tls) 8 else 4
                 val (server, port) =
                     largeResponseServer(tls) {
-                        connectionIdleTimeoutSeconds = 1
+                        tcp { idleTimeout = 1.seconds }
                         sendStallTimeoutForTest = 15.seconds
                     }
                 try {
@@ -407,7 +407,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    connectionIdleTimeoutSeconds = 1
+                    tcp { idleTimeout = 1.seconds }
                     connector {
                         host = "127.0.0.1"
                         port = 0
@@ -439,7 +439,7 @@ class ServerH1TimeoutTest {
         serverTest {
             val server =
                 embeddedServer(Kuicksilver, configure = {
-                    connectionIdleTimeoutSeconds = 1
+                    tcp { idleTimeout = 1.seconds }
                     connector {
                         host = "127.0.0.1"
                         port = 0
@@ -468,10 +468,10 @@ class ServerH1TimeoutTest {
 
     @Test fun requestHeaderTimeoutMustBePositive() {
         val c = KuicksilverApplicationEngine.Configuration()
-        assertEquals(30, c.requestHeaderTimeoutSeconds)
-        for (bad in listOf(0, -1)) {
-            val e = assertFailsWith<IllegalArgumentException> { c.requestHeaderTimeoutSeconds = bad }
-            assertEquals("requestHeaderTimeoutSeconds must be positive", e.message)
+        assertEquals(30.seconds, c.requestHeaderTimeout)
+        for (bad in listOf(kotlin.time.Duration.ZERO, (-1).seconds, kotlin.time.Duration.INFINITE)) {
+            val e = assertFailsWith<IllegalArgumentException> { c.requestHeaderTimeout = bad }
+            assertEquals("requestHeaderTimeout must be a positive, finite duration", e.message)
         }
     }
 }

@@ -40,11 +40,11 @@ Quoted: "MUST NOT change the Application Error Code".
 
 **Peer interop notes.**
 
-- `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) and picoquic do the same, quic-go naming the old one draft-07's. Google QUICHE (Chromium's QUIC stack) knows only the old codepoint, so it stays until QUICHE announces 0x1d (Cloudflare quiche 4ebd213 and ngtcp2 implement neither; Chrome's setting was not checked) ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
+- `quicConfig { expert { resetStreamAt } }` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) and picoquic do the same, quic-go naming the old one draft-07's. Google QUICHE (Chromium's QUIC stack) knows only the old codepoint, so it stays until QUICHE announces 0x1d (Cloudflare quiche 4ebd213 and ngtcp2 implement neither; Chrome's setting was not checked) ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
 
 **Scope.**
 
-- Experimental and off by default (`QuicConfig.resetStreamAt`), as the draft can still change; off by default is not a
+- Experimental and off by default (`quicConfig { expert { resetStreamAt } }`), as the draft can still change; off by default is not a
   subset of the draft, which is an optional extension negotiated by the transport parameter (section 3).
 - The section 5.2 MAY of lowering the Reliable Size with a later RESET_STREAM_AT is not offered: a second `resetAt` on
   the stream is ignored (`StreamManager.resetAt`), so the Reliable Size never increases ("MUST NOT increase the

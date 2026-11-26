@@ -1,9 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
 
 package io.kuicksilver.quic.stream
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.QuicConfig

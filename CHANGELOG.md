@@ -23,7 +23,56 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   image by digest, both checked by `tools/check/pins.sh`), records the number of cases, and fails on any case that
   does not pass except the ones it lists with the RFC text that allows them; the verification pages show their counts.
   Their server and client are one executable of `kuicksilver-soak` (`conformanceMain`). Results in
-  `docs/spec/interop.md`. The local gate has two more steps (79 by default, 84 for a release).
+  `docs/spec/interop.md`. The local gate has two more steps (82 by default, 87 for a release).
+- WebTransport (experimental): `WebTransportSession.maxStreamErrorCode`, the highest application code of the session's
+  stream resets and STOP_SENDING: 255 on a draft-02 session (draft-02 section 4.3), which browsers negotiate, 2^32-1 on
+  later drafts.
+- `kq` (`samples/kq-cli`, not published): a curl-like command line on the Ktor client engine, built as a native
+  executable for macOS arm64, Linux x64 and arm64 and Windows x64. `kq get|head <url>` with `--http3`, `--http3-only`,
+  `--http2`, `--http1.1`, `-i`, `-H`, `-o`, `--repeat`, `--0rtt`, `--qlog <dir>`, `--cacert`, `--alt-svc <file>` and
+  `--connect-timeout`; `-v` prints for each response the protocol and why (`ProtocolDiagnostics`), the QUIC connection
+  (handshake time, RTT, ALPN, the 0-RTT outcome, the QUIC version offered), the race and the `Alt-Svc` fields received,
+  and a failed call's connect failures. Public API only. Its tests run kq against an in-process server over loopback on
+  the JVM and macOS; the local gate runs them and builds every executable in a new step, `sample: kq-cli (tests, the kq
+  executables)`, and hosted CI in the `apple`, `apple-native` and `linux-native` jobs.
+- README: a "Features" section right after the status note (HTTP/3, HTTP/2 and HTTP/1.1; Alt-Svc, the protocol race and
+  fallback; WebTransport and its drafts; QUIC and HTTP datagrams; ECH; CONNECT-UDP; 0-RTT; connection migration; RFC
+  compliance; interop; qlog), each linked to the page behind it, and the samples; the same list as keywords in
+  `llms.txt` and in the summary of `llms-full.txt` (`tools/check/llms-full.sh`).
+- Ktor client: connection coalescing across origins, opt-in and off by default (experimental;
+  `pool { coalescing = true }`, ADR-0018, `docs/guide/ktor.md`, "Connection coalescing"). An `https` request may go on
+  another origin's HTTP/2 or HTTP/3 connection when both conditions of RFC 9110 section 4.3.3 hold. Before, every
+  origin had connections of its own.
+  - The address: the request's host resolves, at each request, to the address and port the connection is connected to
+    (over HTTP/3 the name of the request's own HTTP/3 endpoint).
+  - The certificate: the chain the server presented passes every check a new connection to the host would make (RFC
+    9113 section 9.1.1, RFC 9114 section 3.3): trust, pins, name, validity and a fresh staple where one is required, once
+    per connection and host. A failure that holds for the connection's own origin too (expired, revoked) retires the
+    connection and is logged at Warn.
+  - A 421 to a coalesced request sends it once more on a connection of its own origin (RFC 9110 section 15.5.20); a
+    streamed body already consumed fails the call with `H3BodyConsumed`.
+  - Never through a proxy, for a WebSocket or WebTransport session, over h2c, under `TrustConfig.Tofu` or
+    `TrustConfig.ExpectedName`, or on a 0-RTT connection. An ALTSVC frame on a request stream of a connection that carried
+    another origin is ignored, and on an HTTP/2 connection other origins may share `cookie` is never indexed by HPACK.
+- Ktor client, HTTP/2 and the TLS socket (experimental): `ConnectionEndedException` (package `io.kuicksilver.io`, in
+  `kuicksilver-native`) says who ended a TCP connection under a call, so callers no longer match message strings.
+  `PeerClosed` is the peer's FIN where more was expected, an HTTP/1.1 response cut short included (the cause of the
+  `EOFException` it always was); `PeerUnresponsive` is an HTTP/2 PING unanswered (keepalive or health check), or the
+  socket or WebSocket connect timeout while only the server's answer was awaited; `LocalClose` is this client closing
+  the connection or reading after its close. The sites that threw a plain `IOException` for these throw them now, the
+  TCP socket's own `Socket closed` and `The connection was aborted` included; the messages are unchanged and the types
+  are still `IOException`s. A reset stays the platform's exception (`SocketException` on the JVM and Android, the
+  receive error on Kotlin/Native). An HTTP/2 call sees one as the cause of `Http2Exception.ConnectionClosed`
+  (`docs/guide/ktor.md`, "Who ended the connection"). `kuicksilver-native` now depends on `kotlinx-io-core`, which every
+  other module already used.
+- Ktor client (experimental): `AltSvcStore.originOf(url)` gives the origin key the engine stores a URL's alternatives
+  under, in the one canonical form the `AltSvcStore` KDoc now states: `scheme://host:port` with the host's ASCII letters
+  in lowercase (a trailing dot kept, an internationalised name as given), an IPv6 address in brackets in RFC 5952 text
+  and the port always written. A store that seeds or looks up an origin no longer has to rebuild the engine's format.
+- QUIC (experimental): `QuicConnection.version` and `ConnectionInfo.version` say which QUIC version the handshake settled,
+  `VersionProfile.V1` or `V2` (RFC 9369); null until then. With both versions configured it can differ from the one the
+  client's first flight offered (compatible version negotiation, RFC 9368). The Ktor client's `QuicConnectionSnapshot`
+  carries it as `version`.
 - HTTP/3 qlog: `http:capsule_created` and `http:capsule_parsed` (draft-ietf-quic-qlog-h3-events-14 section 6) for every
   capsule on an Extended CONNECT stream. Each event carries the capsule's type and lengths, never its value, so a trace
   shows a WebTransport WT_CLOSE_SESSION (0x2843) without its reason.
@@ -42,31 +91,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - A stream reset by the peer now reads the bytes the transport delivered before the reset, then fails with
     `StreamReset`. Before, a reset that arrived before the application read them dropped them.
 - QUIC: a configurable datagram size for tunnels such as WireGuard and NAT paths (experimental; `docs/guide/quic.md`,
-  "Tunnels and NAT paths"): `QuicConfig.initialUdpPayloadSize` (1200 by default; less is refused, RFC 9000 section 14) is the
+  "Tunnels and NAT paths"): `quicConfig { pathMtu { initial } }` (1200 by default; less is refused, RFC 9000 section 14) is the
   size a connection's first path starts with on a socket that sets DF, Initial padding included, and
-  `QuicConfig.maxSendUdpPayloadSize` (no cap by default) the largest datagram sent, DPLPMTUD probes included (RFC 8899
-  section 4.4). The start is lowered to both limits, `maxUdpPayloadSize` and the peer's `max_udp_payload_size`; black-hole
+  `pathMtu { maxSend }` (no cap by default) the largest datagram sent, DPLPMTUD probes included (RFC 8899
+  section 4.4). The start is lowered to both limits, `pathMtu { maxReceive }` and the peer's `max_udp_payload_size`; black-hole
   detection watches it from the first datagram, judging datagram sizes (coalesced packets included), so a size the path does
   not carry falls back to 1200 at the first PTO while nothing was acknowledged (two PTOs afterwards), during the handshake
   too, and comes back if the large datagram is acknowledged after all. A 0-RTT flight keeps to the remembered
   `max_udp_payload_size` (RFC 9000 section 7.4.1). DPLPMTUD searches on from the
-  start; with `pmtud = false` the start is the ceiling (before, `pmtud = false` meant 1200; it still does by default). A
+  start; with `pathMtu { discovery = false }` the start is the ceiling (before, turning discovery off meant 1200; it still does by default). A
   path to a new IP address starts at 1200.
-- Ktor server engine: `EngineMain` reads the QUIC transport of the HTTP/3 listeners from `kuicksilver.quic.*`:
-  `initialUdpPayloadSize`, `maxSendUdpPayloadSize`, `maxUdpPayloadSize`, `pmtud`, `maxIdleTimeout`, `handshakeTimeout`,
-  `keepAlive`, `maxBidiStreams`, `maxUniStreams` and `allowMigration` (`docs/guide/configuration.md`, "QUIC transport
-  keys"). An unknown key under `kuicksilver.quic`, a value that does not parse and one out of range fail the start with an
+- Ktor server engine: `EngineMain` reads the QUIC transport of the HTTP/3 listeners from `kuicksilver.http3.quic.*`:
+  `pathMtu.initial`, `pathMtu.maxSend`, `pathMtu.maxReceive`, `pathMtu.discovery`, `maxIdleTimeout`, `handshakeTimeout`,
+  `keepAlive`, `maxBidiStreams` and `migration.allow` (`docs/guide/configuration.md`, "HOCON keys"). An unknown key
+  under `kuicksilver.`, a value that does not parse and one out of range fail the start with an
   error naming the key.
-- Ktor client: stall detection on HTTP/3 connections (experimental `http3 { stallDetection }`, on by default, with
-  `stallProbeTimeouts`, 3, `stallMinSilence`, 2 s, and `stallAbandonAfter`, 10 s; `docs/guide/ktor.md`, "Stalled HTTP/3
+- Ktor client: stall detection on HTTP/3 connections (experimental `http3 { stall { enabled } }`, on by default, with
+  `probeTimeouts`, 3, `minSilence`, 2 s, and `abandonAfter`, 10 s; `docs/guide/ktor.md`, "Stalled HTTP/3
   connections"), after a field report from a network that cuts UDP flows: a request on an HTTP/3 connection the engine
-  chose over TCP (`Auto`, `Preferred`, `quicHints`) waited for the QUIC idle timeout (30 s) when the flow was cut after
+  chose over TCP (`Auto`, `Preferred`, `http3 { hints }`) waited for the QUIC idle timeout (30 s) when the flow was cut after
   the handshake, and a 0-RTT request into a path that drops UDP waited for the connect timeout (10 s). Now a connection
   whose probe timeouts go unanswered (3 in a row, RFC 9002 section 6.2) with no packet from the server for 2 s, or,
   before the handshake, with no answer at all for 2 s and two probe timeouts, is drained: it takes no new request, its
   alternative is marked broken (RFC 7838 section 2.4), and a request that may be repeated (idempotent, RFC 9110
   section 9.2.2, a replayable body, no response yet, or never sent) goes over TCP at once
-  (`FallbackReason.QuicStalled`). Other work (a POST, a response body being read) waits up to `stallAbandonAfter` for
+  (`FallbackReason.QuicStalled`). Other work (a POST, a response body being read) waits up to `stall { abandonAfter }` for
   the path to come back (a handover, Wi-Fi roaming) and then fails with `QuicStalledException`; a response that arrived
   whole is never touched. A quiet watched connection sends a PING now and then (RFC 9000 section 10.1.2; at most every
   half of the idle timeout in force) so that a slow server or an idle long-lived response (which acknowledge it) is never
@@ -110,9 +159,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   addresses, the CONNECT-UDP request (`ProxyHandshake`) and the origin's handshake through the tunnel. Ktor's
   `HttpRequestTimeoutException` carries the diagnostics like any other failure.
 - TLS: Encrypted Client Hello (RFC 9849; experimental; in the Ktor engines too, see below).
-  Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
+  Clients: `tlsConfig(role) { ech { configList } }` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
   RFC 9848; unusable ECHConfigs are ignored one by one, and `build()` refuses a list with none usable, or any list in a
-  build without ECH, each with its own message), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
+  build without ECH, each with its own message), GREASE ECH by default (`ech { grease }`), `TlsException.EchRejected`
   with the server's retry configurations after an authenticated rejection, the certificate checked against the
   `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
   `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory; given as a `ByteArray` or
@@ -135,7 +184,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`TlsException.EchRejected` in its causes). A 0-RTT request on a rejected connection is sent again on the retry (a `retry` event and one more
   `ProtocolDiagnostics.attempts`). With the
   records' ECH no ClientHello goes out before the records resolved (the request waits up to the connect timeout instead of
-  `httpsRecordExtraWait`), and a request whose endpoints all have `ech` never falls back to a connection without it. The
+  `network { httpsRecordWait }`), and a request whose endpoints all have `ech` never falls back to a connection without it. The
   SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible when the value has a usable ECHConfig) and an ECH
   rejection no longer marks an HTTP/3 alternative broken.
 - Ktor server: `KuicksilverTlsConnector.Builder.echKeys` (experimental) for TCP and HTTP/3, rotated with
@@ -149,7 +198,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and the other variables (port 443 by default), an `https://` entry of Windows' Internet settings and a PAC answer's
   `HTTPS host:port` (Chromium's extension), where 0.2 failed the request. The CONNECT or absolute-form request, its
   `Proxy-Authorization` and the origin's name travel only inside TLS with the proxy; the proxy's certificate is verified
-  against the proxy's host (RFC 9525, SNI per RFC 6066 section 3), with the new `proxyTls` block, or by default the
+  against the proxy's host (RFC 9525, SNI per RFC 6066 section 3), with the new `proxies { tls { } }` block, or by default the
   origin's trust without its `ExpectedName` and pins and without the client certificate; ALPN offers `http/1.1` only (no
   CONNECT over HTTP/2). The origin's TLS runs inside the tunnel unchanged (TLS in TLS, `h2` included). A failed handshake
   with the proxy is the new `ProxyTlsException` (a `ProxyException`, which is now open and takes a cause); an origin
@@ -187,15 +236,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `FamilyDns`, once for both with a plain `Dns`); `dnsEnd` carries the addresses the engine may connect to, or the
   failure (a cancellation included). An address literal is no lookup and has no events.
 - Ktor server engine: the PROXY protocol (HAProxy, versions 1 and 2) on TCP connectors, experimental and off by default:
-  `proxyProtocol { trust("10.0.0.0/8") }` on `plainConnector { }` and `tlsConnector(identity) { }`, and
-  `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` for `EngineMain`'s deployment port.
+  `proxyProtocol { trust("10.0.0.0/8") }` on `plainConnector { }` and `tlsConnector { }`, and
+  `kuicksilver.connector.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` for `EngineMain`'s deployment port.
   Every connection of such a connector must start with a header from one of the trusted sources, before the TLS
   handshake on a TLS connector; any other peer is closed at accept, and a missing, malformed, oversized (version 1: 107
   bytes; version 2: `maxHeaderSize`, 4096 by default) or late (`headerTimeout`, 5 s, at least 3 s) header resets the
   connection (`connectionRefused` reasons `PROXY protocol untrusted source` and `PROXY protocol header`). A LOCAL header
   (a health check) is accepted with any length and family. Version 2 TLVs are checked to fit their block, a CRC32c TLV is
   verified, and the header is `call.request.proxyHeader`. The client it names becomes `call.request.origin` on HTTP/1.1
-  and HTTP/2 while `call.request.local` keeps the TCP peer, and `http2RepeatOffenderPenalty` counts that client, never
+  and HTTP/2 while `call.request.local` keeps the TCP peer, and `http2 { repeatOffenderPenalty }` counts that client, never
   the proxy. HTTP/3 takes no header. A fuzz target (`server.proxyHeader`) covers the parser. ADR-0022; threat model 3.27.
 - `kuicksilver-ktor-network`: `Socket.tlsServer(config, input)` (internal API) runs a TLS server on a socket whose read
   channel the caller already opened and read a prefix from.
@@ -239,7 +288,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   of an `http` origin is learned. Server: `plainConnector { h2c = H2cMode.WithHttp11 }` serves HTTP/1.1 and h2c on one
   port, told apart by the 24-octet client preface (looked at as it arrives, nothing consumed, a request shorter than the
   preface never held back, the wait within the request-head deadline), `H2cMode.Only` h2c alone (anything else is a
-  PROTOCOL_ERROR); `EngineMain` key `kuicksilver.h2c` (`off`, `withHttp11`, `only`), refused with the TLS identity
+  PROTOCOL_ERROR); `EngineMain` key `kuicksilver.connector.h2c` (`off`, `withHttp11`, `only`), refused with the TLS identity
   files, as h2c is on a connector the configuration's identity turns into TLS. Every HTTP/2 setting, limit, deadline,
   flood defence, RFC 9218 priority and RFC 8441 WebSocket applies as over TLS; the call's scheme is `http`, and
   `:scheme https` over h2c gets 421 unless the connector's clients are trusted gateways. A `ws://` WebSocket to a listed
@@ -283,9 +332,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   link MTU whole and closes a tunnel on an ICMP port unreachable for its target that quotes a payload it sent (Linux and
   Android; RFC 8085 section 5.2). The Ktor client keeps
   tunnelled connections' session tickets apart from direct ones and has its own WebTransport switch for the CONNECT-UDP
-  proxy (`webTransportIgnoresConnectUdpProxy`); the Ktor
-  engines use it: the client's `connectUdpProxy = ConnectUdpProxy(template)` sends the `https` requests it applies to
-  over HTTP/3 through a tunnel (never over TCP or directly, no Alt-Svc), and the server's `connectUdp = true` with a
+  proxy (`http3 { webTransport { proxyPolicy } }`); the Ktor
+  engines use it: the client's `proxies { connectUdp = ConnectUdpProxy(template) }` sends the `https` requests it applies to
+  over HTTP/3 through a tunnel (never over TCP or directly, no Alt-Svc), and the server's `http3 { connectUdp = true }` with a
   `connectUdp(proxy)` route serves CONNECT-UDP through Ktor's pipeline, behind the application's authentication. Template
   and datagram parsing are fuzzed (`http3.udpTemplate`, `http3.udpDatagrams`).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
@@ -387,10 +436,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   also raised when data beyond a gap raises it.
 - WebTransport flow control and session pooling (draft-ietf-webtrans-http3-16 sections 5 and 8), experimental. Both
   sides send `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI`/`_UNI` and `SETTINGS_WT_INITIAL_MAX_DATA` from the new
-  `Http3Settings.webTransportInitialMaxStreamsBidi` / `Uni` / `MaxData` (24, 24, 3 932 160 bytes per session) and keep
+  `http3Settings { webTransport { initialMaxStreamsBidi / Uni / Data } }` (24, 24, 3 932 160 bytes per session) and keep
   to the peer's limits (WT_MAX_STREAMS, WT_MAX_DATA, the blocked capsules), and a peer that breaks them gets its
   session closed with WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). With flow control on both sides a
-  connection carries up to `Http3Settings.webTransportMaxSessions` (4) sessions: a server refuses one more, or one
+  connection carries up to `http3Settings { webTransport { maxSessions } }` (4) sessions: a server refuses one more, or one
   above its rate (a burst of 32 a connection, then 8 a second; section 5.2), with H3_REQUEST_REJECTED before the
   application, and draft-14 clients are told the limit by `SETTINGS_WT_MAX_SESSIONS`. Sessions sharing a connection
   take weighted turns for its stream credit and send buffer (section 8; urgency weighs, never starves) and each holds at
@@ -410,9 +459,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   whose count is followed also raises `StreamWritable` when acknowledgements release its bytes.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
-  warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
-  cleartext port behind a TLS-terminating proxy) set what `tlsConnector`'s `ocspStapling` and `trustedGateway` (and
-  `plainConnector`'s) set in code; the stapling needs the identity files. Ktor's `-sslPort` connector cannot express
+  warning) and `kuicksilver.connector.allowMisdirectedHosts` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
+  cleartext port behind a TLS-terminating proxy) set what `tls { ocspStaplingFile(…) }` and the connectors' `allowMisdirectedHosts`
+  set in code; the stapling needs the identity files. Ktor's `-sslPort` connector cannot express
   either: next to it the stapling is refused, and so is the gateway with the identity files; without them the gateway
   is accepted and exempts only the cleartext port.
 - Certificate revocation (RFC 9325 section 7.5), experimental. Clients ask for a stapled OCSP response and check it
@@ -429,15 +478,29 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   revocation; `Custom` and `Tofu` decide alone. Delta, indirect and reason-partitioned CRLs are refused. `ksl` gains
   `ksl_ctx_set_crls` and `ksl_ocsp_check` (ABI 7, additive). Docs: `docs/guide/tls.md`, "Certificate revocation".
 - Compose Multiplatform demo (`samples/compose-demo`, not published): an Android and iOS app that downloads over
-  Kuicksilver HTTP/3 with `connectionMigration = followDefaultNetwork(...)` next to OkHttp (Android) or CIO and Darwin
+  Kuicksilver HTTP/3 with `http3 { migration = followDefaultNetwork(...) }` next to OkHttp (Android) or CIO and Darwin
   (iOS) while the network switches, with the `connectionMigrated` events and an optional `Range` resume of the TCP
   download; a lossy-network screen against its server behind `tc netem` (`server/netem.sh`); and a diagnostics screen
-  for any URL with the `http3Allowed` switch. Its JVM server (`server/`) serves `/bytes/{n}` with `Range` and `/stream`.
+  for any URL with the `http3 { allowed }` switch. Its JVM server (`server/`) serves `/bytes/{n}` with `Range` and `/stream`.
   The Kuicksilver lane asks for HTTP/3 only (`H3Only`), so a fallback can never be shown as HTTP/3. `DemoLogicTest`
   covers the screen models and the server's tests its `Range` parsing; `MigrationDemoAndroidTest` is the emulator check
   of the release gate, run by `:androidApp:migrationDemoDeviceTest` against the server on the host. Its
   build verifies every plugin and dependency against `gradle/verification-metadata.xml`, which now also covers Compose
   Multiplatform, the AndroidX libraries it brings, OkHttp 5.5.1 and Ktor's CIO, Darwin and mock engines.
+- Two samples for adopting the Ktor engines (not published; each a Gradle build of its own that takes
+  `io.kuicksilver:*` by coordinates, verified against `gradle/verification-metadata.xml`). `samples/http3-server` is
+  an HTTP/3 Ktor server in about twenty lines: `EngineMain` and an `application.conf` with TLS from PEM files
+  (reloaded hourly), HTTP/2 and HTTP/1.1 on the same port, `Alt-Svc`, and the PROXY protocol switched on by
+  `PROXY_TRUSTED_SOURCES`; its README has the `curl --http3` commands and a deployment note for HAProxy and nginx, and
+  `Http3ServerTest` starts it with that file and checks HTTP/2 with `Alt-Svc` then HTTP/3, HTTP/3 only, HTTP/1.1, a
+  PROXY v1 header naming the client and a client without one refused. `samples/webtransport-chat` is a WebTransport
+  chat room: a Ktor server (`webTransport("/chat")`) and a client in common code (`HttpClient.webTransport`, compiled
+  for the JVM, macOS and the iOS simulator) with a bidirectional stream per member for messages and membership,
+  datagrams for typing indicators (relayed at most every 250 ms), refusals as session close codes (a taken name, a
+  full room of 25, a bad line), control characters in messages replaced, a slow reader dropped once its 256-line queue
+  is full and `ServerDraining` on a graceful stop. No server key is in common code: the JVM server loads its identity
+  from PEM files, with the sample's public one only on loopback. `ChatTest` runs the server and its clients in one JVM
+  over UDP. Both run in the CI `apple` job (the chat's iOS simulator compile in `apple-native`) and in the local gate.
 - Engine interop bench (`kuicksilver-engine-interop`, not published; docs/spec/interop.md, "Engine interop"): the Ktor
   client engine against Ktor's Netty server (HTTP/1.1, HTTP/2 and HTTP/3) and CIO server and a plain Netty server (1xx,
   trailers, GOAWAY), and the Ktor server engine against Ktor's CIO, OkHttp and Java client engines, OkHttp and the JDK's
@@ -457,11 +520,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `verify-release.sh` checks that the package's `Package.swift` names the signed release asset. Each framework of the
   xcframework carries Kuicksilver's `LICENSE` and `NOTICE` and OpenSSL's licence. `KuicksilverInfo.VERSION`
   in the xcframework is now the version it was built as, not the `-SNAPSHOT` fallback.
+- CI: `.github/workflows/public-h3.yml` (weekly and by hand) runs the Ktor client against public HTTP/3 servers, each a
+  different QUIC implementation: Cloudflare, Google, Meta, Fastly, LiteSpeed and nginx. Per target: HTTP/3 with `H3Only`
+  (ALPN `h3`, the negotiated QUIC version), `Alt-Svc` discovery from an HTTP/2 first contact, 0-RTT resumption, a
+  migration to a new local port, and on Cloudflare ECH over HTTP/3 with the configuration of its HTTPS record, each judged
+  from the client's diagnostics. A server that changed or could not be reached is a warning annotation; the job fails only
+  when a verdict blames the client twice in a row, or when a check passes on none of three or more reachable targets
+  while a hand-built Version Negotiation probe shows that UDP to port 443 gets through (docs/how-we-verify.md, "Public
+  HTTP/3 servers"). The job summary has a table per run, and the qlog traces of the
+  checks that did not pass are an artifact. By hand where UDP/443 is open:
+  `./gradlew --max-workers=2 :kuicksilver-ktor-client:publicH3Check`; not part of `check` or `jvmTest`, and not in the
+  release gate. Targets checked 2026-11-25.
 - CI: `.github/workflows/gradle-wrapper.yml` validates `gradle/wrapper/gradle-wrapper.jar` against the official Gradle
   releases (Gradle's wrapper-validation action) on every push and pull request to `main` and `release/**`.
 - WebSockets over HTTP/2 (RFC 8441, Extended CONNECT; `docs/guide/ktor.md`, "WebSockets over HTTP/2"), in both Ktor
-  engines. Server: with `http2 = true`, the new experimental `webSocketsOverHttp2` (`EngineMain` key
-  `kuicksilver.webSocketsOverHttp2`; on by default, as `webSocketsOverHttp3`) advertises SETTINGS_ENABLE_CONNECT_PROTOCOL
+  engines. Server: with HTTP/2 on (the default since), `webSockets { overHttp2 }` (`EngineMain` key
+  `kuicksilver.webSockets.overHttp2`; on by default, as `overHttp3`) advertises SETTINGS_ENABLE_CONNECT_PROTOCOL
   and serves `webSocket {}` routes over an Extended CONNECT with `:protocol = websocket`, answered `:status 200`; another
   protocol or a classic CONNECT gets 501, a Sec-WebSocket-Version other than one 13 gets 400 with `sec-websocket-version: 13` (RFC 6455 section
   4.2.1; no 426, which needs Upgrade), and a route that is not a WebSocket one cannot answer the CONNECT with a 2xx (501). Client: a `wss://`
@@ -553,7 +627,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   every server connection ID (config rotation bits and self-encoded length in the first octet; with a key, made by
   `QuicCrypto.newLoadBalancerKey(bytes)` so the bytes live in `ksl` only, the server ID and nonce are AES-encrypted,
   single-pass or four-pass). `QuicEndpoint.updateLoadBalancer` (also `Http3Endpoint`, the sans-IO `EndpointCore`, and the
-  Ktor engine's `quicLoadBalancer` / `engine.updateLoadBalancer`) rotates to a new configuration: each live connection
+  Ktor engine's `http3 { endpoint { loadBalancer } }` / `engine.updateLoadBalancer`) rotates to a new configuration: each live connection
   gets one NEW_CONNECTION_ID under it that retires its earlier IDs, a second change waits for those retirements, and
   `null` issues unroutable `0b111` IDs. Nonces never repeat within a process for a key (shared by every endpoint and
   server ID using it); `QuicLbConfig.nonceReservation` carries the counter (and in clear a permutation secret) across
@@ -589,7 +663,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `HttpsRecordSource.followingPrivateDns(connectivity)` (strict Private DNS) do the same for the system resolver. A cached `Alt-Svc` alternative's own HTTPS records decide
   where its HTTP/3 goes (section 9.3). An `http://` request to an origin with HTTPS records is answered by the engine
   with a 307 to its `https` URL, which Ktor follows (section 9.5). The request waits for
-  the records at most `httpsRecordExtraWait` (50 ms) after the origin's addresses resolved; answers are cached by TTL
+  the records at most `network { httpsRecordWait }` (50 ms) after the origin's addresses resolved; answers are cached by TTL
   and dropped on a network change. New `KuicksilverEventListener.httpsRecordUsed` and `AlternativeSource.HttpsRecord`
   (reserved before). `HttpsRecordSource.System` asks the system resolver: `res_nquery` on Linux, `DNSServiceQueryRecord`
   on macOS and iOS, `DnsQuery_W` on Windows (new `ksl_dns_query`, additive under ksl ABI 7; the Linux libraries now
@@ -604,7 +678,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   exception and code exists in the source), `llms-full.sh --check`, and the HTTP/2 server sample is compiled by
   `GuideSamplesTest`.
 - Ktor client: HTTP/3 connections can follow the device's network (connection migration, RFC 9000 section 9;
-  `docs/guide/ktor.md`, "Connection migration"), opt-in and experimental: `http3 { connectionMigration = ... }` takes an
+  `docs/guide/ktor.md`, "Connection migration"), opt-in and experimental: `http3 { migration = ... }` takes an
   `Http3ConnectionMigration`, with `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android
   (`ConnectivityManager`) and `followDefaultNetwork()` on iOS and macOS (`NWPathMonitor`); elsewhere it wraps a
   `NetworkMigrator` over a source of your own. Every pooled HTTP/3 connection then moves to the new default network once
@@ -629,25 +703,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   security groups, Docker and Kubernetes (mixed-protocol `LoadBalancer` Services, the client address and the per-IP
   connection limit), L4 load balancers versus proxies that terminate HTTP/3 (AWS NLB, Cloudflare, nginx; checked against
   their documentation), connection IDs without QUIC-LB, UDP socket buffers per OS (what Kuicksilver asks for and how to
-  raise the Linux limits), GSO/GRO and `udpSocketCount`, certificates and their rotation, the run-time HTTP/3 switches,
+  raise the Linux limits), GSO/GRO and `http3 { endpoint { loops } }`, certificates and their rotation, the run-time HTTP/3 switches,
   security limits, observability, and a checklist from symptom to cause. Linked from the README, `llms.txt` and the
   Ktor, QUIC and troubleshooting guides.
 - Ktor server: TCP connection limits (`docs/guide/ktor.md`, "Connection limits"; threat model 3.2), experimental:
-  `maxTcpConnections` (10,000 per connector, HTTP/1.1 and HTTP/2 alike, TLS handshakes included) is taken before
+  `tcp { maxConnections }` (10,000 per connector, HTTP/1.1 and HTTP/2 alike, TLS handshakes included) is taken before
   `accept()`, so at the limit a connector stops accepting and the OS backlog holds new clients, as Go's
-  `netutil.LimitListener`, Jetty and nginx do; `maxTcpConnectionsPerIp` (off by default; enable it, e.g. 256, only on
+  `netutil.LimitListener`, Jetty and nginx do; `tcp { maxConnectionsPerIp }` (off by default; enable it, e.g. 256, only on
   a server that faces its clients directly: behind a proxy, load balancer, SNAT or NAT every client shares one address)
   resets one more connection from that address right after `accept()`, before its TLS handshake, which a proxy in
   front reports as 502/503. An address is its bytes (no reverse lookup), IPv4-mapped peers count as IPv4 and IPv6 peers
   by their whole address (a /64 holder gets around it), as QUIC `maxConnectionsPerIp`. `KuicksilverServerEventListener.connectionRefused(protocol, remote, reason)` reports a client
-  closed at accept (`per-IP limit`, or `HTTP/2 repeat offender` for `http2RepeatOffenderPenalty`), the application log
+  closed at accept (`per-IP limit`, or `HTTP/2 repeat offender` for `http2 { repeatOffenderPenalty }`), the application log
   gets at most one warning per 10 s, and the soak probe counts `server.tcpConnections` and `server.tcpRefusedPerIp`.
-  `EngineMain` keys `kuicksilver.maxTcpConnections` and `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off).
+  `EngineMain` keys `kuicksilver.tcp.maxConnections` and `kuicksilver.tcp.maxConnectionsPerIp` (`off` by default).
 - TLS: experimental `VerifyReason.WeakKey` and `VerifyReason.WeakSignature` (alert `bad_certificate`) name a peer chain
   refused for a key or a certificate signature below 112 security bits (see "Changed").
-- Ktor server: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the server"), opt-in and experimental:
-  `http2 = true` (`EngineMain` key `kuicksilver.http2`; off by default) makes every TLS connector offer `h2` before
-  `http/1.1` in ALPN, and `http2Settings` takes the windows and limits. Each stream is a Ktor call (`httpVersion`
+- Ktor server: HTTP/2 over TLS (RFC 9113; `docs/guide/ktor.md`, "HTTP/2 on the server"): `http2 { enabled }`
+  (`EngineMain` key `kuicksilver.http2.enabled`; on by default, see "Changed") makes every TLS connector offer `h2`
+  before `http/1.1` in ALPN, and `http2 { settings { } }` (experimental) takes the windows and limits. Each stream is a Ktor call (`httpVersion`
   "HTTP/2"); requests are checked against RFC 9113 section 8 (a malformed one is reset with PROTOCOL_ERROR before any
   handler runs, a field section above the limit gets 431), responses go out without connection-specific fields, the
   engine's `Alt-Svc` goes on every response as the field ("Alt-Svc header fields remain valid in responses delivered over
@@ -656,14 +730,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   content within the client's flow-control windows and never past or short of its
   `Content-Length` (the stream is reset instead). One stream's failure (a client's reset, a handler's exception) ends
   that stream only, and the server never answers a client's RST_STREAM with one. The client's preface and field blocks are
-  bounded by `requestHeaderTimeoutSeconds`, request content and idle connections by `connectionIdleTimeoutSeconds`; a
+  bounded by `requestHeaderTimeout`, request content and idle connections by `tcp { idleTimeout }`; a
   client's RST_STREAM cancels its handler, and a stop sends the two-step GOAWAY (RFC 9113 section 6.8). TLS 1.3 only, no
   h2c, no server push; WebSockets over HTTP/2 (RFC 8441), below. The event listener reports `HTTP_2_0`, and the soak probe
   counts `server.h2Connections` and `server.h2Streams`. Flood defences in the engine on top of the per-connection limits
   of `Http2Settings`: a reset stream's handler is cancelled and counts toward SETTINGS_MAX_CONCURRENT_STREAMS until it
   returns (Rapid Reset, MadeYouReset); a connection that is over gets the send-stall deadline for what it still has to
-  write, for as long as the client takes it; experimental `http2RepeatOffenderPenalty` (`EngineMain` key
-  `kuicksilver.http2RepeatOffenderPenalty`; off by default) closes at accept, for that long, the TCP connections of an
+  write, for as long as the client takes it; experimental `http2 { repeatOffenderPenalty }` (`EngineMain` key
+  `kuicksilver.http2.repeatOffenderPenalty`; off by default) closes at accept, for that long, the TCP connections of an
   address whose HTTP/2 connections ended in a flood limit three times within a minute (IPv6 by its /56): only for a
   server that sees real client addresses, never behind a NAT or a source-rewriting load balancer. The server passes
   h2spec 2.6.0, all 146 cases
@@ -686,9 +760,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `h2` too and speaks it with a TLS 1.2 server (RFC 9113 section 9.2: SNI, no compression, ECDHE with AEAD suites only,
   none of them prohibited by section 9.2.2); a server's renegotiation request (a HelloRequest) is refused and ends the
   connection with a connection error of type PROTOCOL_ERROR (section 9.2.1), the calls on it failing with
-  `Http2Exception.ConnectionClosed`. Configuration: experimental
-  `engine { http2 { enabled; settings; pingInterval } }` (`Http2ClientConfig`); `enabled = false` offers only
-  `http/1.1`, as in 0.2. The HTTP/3 kill switch (`http3Allowed`) does not turn HTTP/2 off. Responses report
+  `Http2Exception.ConnectionClosed`. Configuration:
+  `engine { http2 { enabled; pingInterval; settings { } } }` (`Http2ClientConfig`; `settings` experimental); `enabled = false` offers only
+  `http/1.1`, as in 0.2. The HTTP/3 kill switch (`http3 { allowed }`) does not turn HTTP/2 off. Responses report
   `HttpProtocolVersion.HTTP_2_0`, as do `ProtocolDiagnostics.protocol`, `connectionAcquired` and the race's
   `raceEnded(winner)`; the resource probe adds `client.h2Connections`, `client.h2Streams`, `client.h2Routes` and
   `client.h2Refused`.
@@ -720,9 +794,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Tickets are bound to the leaf they were issued under, so a ticket from before a reload is not resumed (a full
   handshake with the new certificate; its 0-RTT refused).
 - Ktor server: certificate rotation without a restart (`docs/guide/ktor.md`, "Certificate rotation"). A connector's
-  identity (or the configuration's `identity`) may be a `TlsIdentity.Reloadable`: HTTP/1.1 and HTTP/3 handshakes after a
+  identity (`tls { identity }`, on the engine or a connector) may be a `TlsIdentity.Reloadable`: HTTP/1.1 and HTTP/3 handshakes after a
   `reload` present the new certificate, open connections keep theirs. `EngineMain` watches its PEM files with the new
-  key `kuicksilver.tls.reloadInterval` (experimental `identityReloadInterval`; off by default, at least 1 s): a changed
+  key `kuicksilver.tls.reloadInterval` (`tls { reloadInterval }`; off by default, at least 1 s): a changed
   chain is applied once two reads a second apart agree and the key matches; a failure keeps the identity in use, is
   logged once (never with key material) and retried after 1 s, then twice as long each time up to the interval.
   `EngineMain` now reads the key file without making a `String` of it or leaving it in kotlinx-io's pooled buffers
@@ -730,7 +804,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   watcher reads the files again a second after a reload and refuses a chain file that also holds a private key (as
   `EngineMain` does at startup when reloading is on). A watcher read that never returns no longer holds up the stop.
 - TLS: client CA rotation without a restart (experimental `TrustConfig.ReloadableCa`, `TrustConfig.reloadable`;
-  `docs/guide/tls.md`, "Rotating the client CA"). A server's `trust` for client certificates may be a `ReloadableCa`
+  `docs/guide/tls.md`, "Rotating the client CA"). A server's client-certificate trust (`tls { clientTrust }` in the Ktor server) may be a `ReloadableCa`
   (alone or as the base of `Pinned`). Once `reload(next)` returns, no handshake, over TCP or QUIC, accepts a client
   certificate that only a CA missing from `next` vouches for: a handshake takes the bundle when its ClientHello arrives,
   and one that completes after a reload replaced its certificates verifies the client's chain again against the current
@@ -749,7 +823,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   against the renewed bundle (`docs/guide/ktor.md`, "Certificate rotation"). A CA file with certificates that are not
   CA certificates (each would be an anchor) is applied with a warning. On the JVM the keys cannot be combined with a
   `-sslPort` connector, whose `ktor.security.ssl.trustStore` decides client certificates: the start is refused. A
-  connector's `trust` may be a `TrustConfig.ReloadableCa`, shared by its TCP and QUIC handshakes (HTTP/1.1, HTTP/2 and
+  server's `tls { clientTrust }` may be a `TrustConfig.ReloadableCa`, shared by its TCP and QUIC handshakes (HTTP/1.1, HTTP/2 and
   HTTP/3).
 - Ktor client: experimental `FileAltSvcStore(file: java.io.File)` on the JVM and Android, for an Android app's
   `File(context.filesDir, "altsvc.tsv")` (`docs/guide/ktor.md`, "Discovery and Alt-Svc"). It works on API 24 and 25 too:
@@ -798,7 +872,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   there, closing the original path; a failed validation keeps the connection where it was, and a public server cannot
   send the client to a local, unspecified, multicast or broadcast address. `disable_active_migration` does not stop the
   move, and after it the client may migrate.
-- Ktor client: proxy resolution (experimental `proxyResolver`, `docs/guide/ktor.md`, "Proxies"):
+- Ktor client: proxy resolution (experimental `proxies { resolver }`, `docs/guide/ktor.md`, "Proxies"):
   `ProxyResolvers.System` (the platform's settings: `ProxySelector` on the JVM and Android, CFNetwork on Apple
   platforms, WinHTTP's Internet settings on Windows, the environment on Linux), `ProxyResolvers.Environment` (curl's
   `https_proxy`, `http_proxy`, `all_proxy` and `no_proxy`, with `socks5://` and `socks5h://`), `ProxyResolvers.None`,
@@ -808,7 +882,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resolver sends through a proxy.
 - Ktor client: SOCKS5 proxies (RFC 1928, CONNECT only) with username/password authentication (RFC 1929): a
   `ProxyBuilder.socks(host, port)` proxy now tunnels every request instead of being refused, the proxy resolving the
-  origin's name. New experimental `proxyCredentials` for the explicit `proxy` (SOCKS5 username/password, sent only
+  origin's name. New experimental `proxies { credentials }` for the explicit `proxy` (SOCKS5 username/password, sent only
   when the proxy picks that method; `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request to an
   HTTP proxy) and `ProxyException` (a SOCKS5 reply or CONNECT status other than success, as `replyCode`). Off the JVM
   a proxy URL's user info is used as its credentials, and an `https://` proxy URL is refused instead of being spoken
@@ -820,7 +894,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the authentication reply's VER must be X'01' (RFC 1929 section 2) and the CONNECT reply's RSV X'00' (RFC 1928 section
   6), else `ProxyException` before the CONNECT or before any TLS.
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
-  hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
+  hints (`quicConfig { pathMtu { icmpHints } }`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
   and at most 64 a second per endpoint are looked at (`EndpointStats.ptbAccepted`, `ptbIgnored`). It ends larger probes
   at once. One below the size in use drops the MTU to 1200 at once (RFC 8899 section 4.6.2: "The PLPMTU SHOULD be set to
@@ -880,7 +954,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   unidirectional streams, sends and receives datagrams, closes with an application code and reason
   (WT_CLOSE_SESSION, then FIN) and drains; application error codes are mapped into the HTTP/3 space;
   `Http3ErrorCode` has the WebTransport codes.
-- Ktor server (experimental): `webTransport = true` and `Route.webTransport(path, protocols, checkOrigin) { session -> }`
+- Ktor server (experimental): `http3 { webTransport { enabled = true } }` and `Route.webTransport(path, protocols, checkOrigin) { session -> }`
   serve WebTransport sessions over HTTP/3 (`docs/guide/ktor.md`, "WebTransport over HTTP/3"): the route matches only a
   WebTransport Extended CONNECT, refuses a foreign `origin` with 403 (`sameHostOrigin` by default), picks the
   protocol, and closes the session when the handler returns (code 0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`).
@@ -888,12 +962,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `reset_stream_at` (0x1d, and the unregistered codepoint of earlier drafts, as quic-go does); `QuicStream.resetAt(code, reliableSize)` and `ConnectionCore.resetStreamAt` reset a stream while
   still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
-  server advertises it with `webTransport`.
+  server advertises it with `http3 { webTransport { enabled } }`.
   `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it.
 - Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on the
   Kuicksilver engine's pooled HTTP/3 connection of the URL's origin (see the session pooling entry below;
-  `docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
-  `http3 { webTransportIgnoresProxy = true }`; at most `http3 { maxWebTransportSessions }` (64) at once.
+  `docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused with `http3 { enabled = false }` and through a proxy unless
+  `http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassHttpProxy } }`; at most
+  `http3 { webTransport { maxSessions } }` (64) at once.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/interop.md`, "Interop WebTransport".
@@ -903,11 +978,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   through the native library, as `InetAddress` asks for both at once), the first IPv6 answer starts a connection at
   once and an IPv4 answer that comes first waits at most 50 ms for it; answers that come later join the attempts in
   progress. The addresses are sorted by RFC 6724 destination address selection of the engine's own on every platform
-  (also those of HTTPS records), with the families alternating, and tried one `connectionAttemptDelay` apart
-  (*experimental*, 250 ms; 100 ms to 2 s, or `Duration.INFINITE` for one address after another) or at once when an
+  (also those of HTTPS records), with the families alternating, and tried one `network { happyEyeballsDelay }` apart
+  (250 ms; 100 ms to 2 s, or `null` for one address after another) or at once when an
   attempt failed, never within 10 ms of the last one; the first connection wins and the others are cancelled or
   closed. HTTP/3 races its QUIC handshakes over the same addresses, so a family that drops UDP costs one attempt
-  delay, `H3Only` included (with `earlyData` and a session ticket the first address sends 0-RTT at once and the others
+  delay, `H3Only` included (with `http3 { earlyData { enabled } }` and a session ticket the first address sends 0-RTT at once and the others
   are not tried for that setup; a failed handshake there falls back as before); a server's CONNECTION_REFUSED at one address now moves on to the next, and counts as a
   refusal (no broken mark) only when every address refused. On an IPv6-only network without 464XLAT, IPv4 addresses
   the host has no route to (IPv4 literals, IPv4-only names) are reached through the network's NAT64 (RFC 6052): Apple's
@@ -949,11 +1024,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `KuicksilverDiagnosticsKey`): the protocol that served it, the `ProtocolReason`, why it did not go over HTTP/3 as a
   `FallbackReason` (`HandshakeTimeout`, `TlsFailure`, `BrokenAlternative`, `H3NotReady`, `MisdirectedRequest`, ...), the HTTP/3 alternative
   and its `AlternativeSource`, the race and its head start, the HTTP/3 failure and the number of attempts. The engine's
-  logger gets one line per call HTTP/3 could have served but did not, at `http3 { diagnosticsLogLevel }` (`Info` by
+  logger gets one line per call HTTP/3 could have served but did not, at `observability { protocolChoiceLogLevel }` (`Info` by
   default; HTTP/3 calls at `Debug`; `null` for none), without the URL's query or user info. A broken alternative now
   remembers why it broke, and when both the HTTP/3 and the HTTP/1.1 setups fail the HTTP/1.1 failure carries the HTTP/3
   one in `suppressed`.
-- Ktor client: an HTTP/3 kill switch (experimental `http3 { http3Allowed = { ... } }`; `docs/guide/ktor.md`, "Turning
+- Ktor client: an HTTP/3 kill switch (`http3 { allowed = { ... } }`; `docs/guide/ktor.md`, "Turning
   HTTP/3 off remotely"), read once per `https://` request from the application's remote configuration. While it returns
   false requests go over HTTP/1.1 (`ProtocolReason.Http3Disabled`, `FallbackReason.Http3Disabled`), open HTTP/3
   connections take no new requests, `Alt-Svc` is still learned, and `H3Only` requests and `HttpClient.webTransport` fail
@@ -961,10 +1036,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   logged at most once per 5 minutes. `HttpClient.closeHttp3Connections()` sends GOAWAY on every pooled HTTP/3 connection
   and closes each once its calls are done (a request handed one just before goes again on a new connection), and sends
   every open WebTransport session `WT_DRAIN_SESSION`.
-- Ktor server: the QUIC endpoint limits of the HTTP/3 listeners are set from the engine configuration, experimental:
-  `quicMaxConnections` (10,000), `quicMaxConnectionsPerIp` (256; `null` turns it off) and `quicAcceptQueue` (128), with
-  the same defaults and ranges as `QuicEndpointConfig`, and `EngineMain` keys `kuicksilver.quicMaxConnections`,
-  `kuicksilver.quicMaxConnectionsPerIp` (`0` is off) and `kuicksilver.quicAcceptQueue`. Behind a NAT, Kubernetes
+- Ktor server: the QUIC endpoint limits of the HTTP/3 listeners are set from the engine configuration:
+  `http3 { endpoint { maxConnections } }` (10,000), `maxConnectionsPerIp` (256; `null` turns it off) and `acceptQueue`
+  (128), with the same defaults and ranges as `QuicEndpointConfig`, and `EngineMain` keys
+  `kuicksilver.http3.endpoint.maxConnections`, `kuicksilver.http3.endpoint.maxConnectionsPerIp` (`off` turns it off) and
+  `kuicksilver.http3.endpoint.acceptQueue`. Behind a NAT, Kubernetes
   `kube-proxy` with `externalTrafficPolicy: Cluster` or a UDP proxy that sends from its own address every client shares
   one address and hit the fixed 256 per address; raise or turn off the limit there (docs/guide/deployment.md, "QUIC
   connection limits").
@@ -1041,13 +1117,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Http3Headers.withNeverIndexed(...)` (or the engines' `neverIndex`) go as literals with the bit, never inserted nor
   referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit. A WebSocket's Extended CONNECT
   and its answer (RFC 8441, RFC 9220) carry the marks the same way.
-- Ktor server: TLS 1.2 on request (RFC 9325 section 3.1.1, "Implementations MUST support TLS 1.2"). The experimental
-  `versions` option of `tlsConnector(identity) { … }` (`TlsVersions.Tls13` by default, `TlsVersions.Tls12And13` to serve
+- Ktor server: TLS 1.2 on request (RFC 9325 section 3.1.1, "Implementations MUST support TLS 1.2"). The
+  `tls { versions }` option (`TlsVersions.Tls13` by default, `TlsVersions.Tls12And13` to serve
   TLS 1.2 clients over TCP), the `EngineMain` key `kuicksilver.tls.versions` (`tls13` or `tls12And13`, for the deployment
   port; refused next to `-sslPort`) and, on the JVM, Ktor's own `enabledProtocols` on `sslConnector` (`TLSv1.2` with
   `TLSv1.3`). TLS 1.2 runs under the RFC 9325 profile of the TLS layer (ECDHE with AES-GCM or ChaCha20-Poly1305,
   Extended Master Secret required, no renegotiation, no compression); a client with TLS 1.3 still gets it, and HTTP/3 on
-  the same port stays TLS 1.3. With `http2`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
+  the same port stays TLS 1.3. With HTTP/2 on, it is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
   renegotiation attempt on an HTTP/2 connection ends it with GOAWAY PROTOCOL_ERROR (section 9.2.1). The default connector
   still refuses a TLS 1.2 client with `protocol_version` (docs/guide/ktor.md, "TLS 1.2 on the server").
 - Release: prereleases on GitHub only. `tools/release/local-release.sh <version> --github-prerelease` builds, checks and
@@ -1074,6 +1150,187 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Configuration in blocks (breaking; ADR-0026, `docs/guide/configuration.md`). Every builder and both Ktor engines group
+  their options in blocks with one name per concept: the client keeps `connectTimeout` at the top and puts the rest in
+  `tls { }`, `http3 { }`, `http2 { }`, `http1 { }`, `pool { }`, `network { }`, `proxies { }`, `webSockets { }` and
+  `observability { }`; the server keeps `requestHeaderTimeout` (now a `Duration`) and puts the rest in `tls { }`,
+  `tlsConnector { }`, `plainConnector { }`, `http1 { }`, `http2 { }`, `http3 { endpoint { } }`, `webSockets { }`, `tcp { }`
+  and `observability { }`; the low-level builders get `flowControl { }`, `pathMtu { }`, `datagrams { }`, `migration { }`,
+  `qpack { }`, `ech { }`, `observability { }`, `runtime { }`, `floodLimits { }` and an experimental `expert { }` each.
+  "Off" is `null` everywhere (`Duration.ZERO`, `Duration.INFINITE` and `0` for "none" are refused), time is a `Duration`,
+  byte and stream counts are `Long`, a rate with its burst is one `RateLimit`. An engine derives what follows from other
+  options (ALPN, the server name, the connection ID length, Extended CONNECT, the client's
+  handshake deadline) and refuses an explicit assignment with `... is derived by the engine (<why>); remove it`; the QUIC
+  stream limits stay settable (`expert { maxUniStreams }` at least 3, RFC 9114 section 6.2) and default to 100, raised to
+  fit the WebTransport sessions of a connection (`kuicksilver.http3.quic.expert.maxUniStreams` in `EngineMain`). The
+  readers of `QuicConfig`, `QuicEndpointConfig`, `QuicClientConfig`, `QuicServerConfig`, `Http3Settings` and
+  `Http2Settings` are internal: build with the DSL, copy with `toBuilder()`. The first-screen options of both engines are stable; `@SecuritySensitive` marks the options whose
+  wrong value weakens security (🔒 in the reference). No deprecated aliases exist: an old Kotlin name does not compile, and
+  `tools/migrate/config-0.3.py` rewrites most of them into their blocks. The options 0.2.x released move as follows
+  (options added in 0.3.0 snapshots: under their new name in the reference):
+
+  | 0.2.x | 0.3.0 |
+  |---|---|
+  | client `trust`, `identity` | `tls { trust; identity }` |
+  | client `tls { }` (a `TlsConfig.Builder` lambda) | `tls { }` (`ClientTlsConfig`; ALPN, server name and handshake deadline derived) |
+  | client `tls { handshakeTimeout }` | `connectTimeout` (the TLS handshake's deadline is derived from it) |
+  | client `tls { sessionTickets }`, `tls { genericAlerts }` | no replacement: ticket keys are a server's, and the client sends the specific alert (`tlsConfig(role) { expert { genericAlerts } }` stays for the low-level API) |
+  | client `tls { echConfigList }` | `tls { ech { configLists = mapOf(host to list) } }` |
+  | client `quic = …` | `http3 { quic { … } }` |
+  | client `quic = quicConfig { handshakeTimeout }` | `connectTimeout`: `http3 { quic { handshakeTimeout } }` is derived and refused |
+  | client `http3 { settings = http3Settings { webTransportMaxSessions } }` | `http3 { webTransport { maxSessionsPerConnection } }` |
+  | client `maxConnectionsCount`, `maxConnectionsPerRoute`, `maxIdleConnectionsPerRoute`, `idleTimeout` | `pool { maxConnections; maxConnectionsPerRoute; maxIdleConnectionsPerRoute; idleTimeout }` |
+  | client `maxConnectionLifetime = Duration.INFINITE` | `pool { maxConnectionLifetime = null }` (the default) |
+  | client `logger: KuicksilverLogger?`, `eventListener` | `observability { logger; eventListener }` (`logger` not nullable, `KuicksilverLogger.Default`) |
+  | client `http3 { discovery = Http3DiscoveryMode.H1Only }` | `http3 { enabled = false }` |
+  | client `Http3DiscoveryMode.Auto / Preferred / H3Only` | `Http3Discovery.Auto / Preferred / H3Only` |
+  | client `http3 { quicHints }` | `http3 { hints }` |
+  | client `http3 { clearOnNetworkChange }` | `http3 { expert { clearAltSvcOnNetworkChange } }` |
+  | client `http3 { hardDelay = null / d / Duration.INFINITE }` | `http3 { expert { raceHeadStart = RaceHeadStart.Adaptive / Fixed(d) / NoRace } }` |
+  | client `http3 { networkId }` | `network { networkId }` (`null`: not set) |
+  | client `http3 { settings = … }` | `http3 { settings { … } }` |
+  | client `http3 { endpoint = … }` | `http3 { expert { connectionIdLength; dispatcher } }`, `observability { }` |
+  | client `http3 { earlyData = true }` | `http3 { earlyData { enabled = true } }` |
+  | client `http3 { qlog; connectionListener }` | `observability { qlog; connectionListener }` |
+  | server `identity`, `tlsConnector(identity) { }` | `tls { identity }` (or `tls { pemFiles(chain, key) }`) and `tlsConnector { }` |
+  | server `tlsConnector { clientAuth; trust; cipherSuites; sniSelector }` | `tls { clientAuth; clientTrust; cipherSuites; sniSelector }` (per connector: `tlsConnector { tls { } }`) |
+  | server `tlsConnector { host = "0.0.0.0" }` (the default) | `tlsConnector { host = null }` (the default: every interface, see below) |
+  | server `connectionIdleTimeoutSeconds: Int` | `tcp { idleTimeout: Duration }` (HTTP/1.1 and HTTP/2) |
+  | server `requestHeaderTimeoutSeconds: Int` | `requestHeaderTimeout: Duration` |
+  | server `http3: Boolean`, `altSvc` | `http3 { enabled; altSvc }` |
+  | server `quic = …`, `quicMaxIdleTimeout` | `http3 { quic { … } }`, `http3 { quic { maxIdleTimeout } }` |
+  | server `quic = quicConfig { connectionIdLength }` | `http3 { endpoint { expert { connectionIdLength } } }` (`kuicksilver.http3.endpoint.expert.connectionIdLength`; refused next to `loadBalancer`) |
+  | server `udpSocketCount` | `http3 { endpoint { loops } }` |
+  | server `quicAdmission` (null: the default) | `http3 { endpoint { admission } }` (not nullable) |
+  | server `http3Settings = …` | `http3 { settings { … } }` |
+  | server `http3Settings { webTransport; webTransportMaxSessions; webTransportInitialMaxStreamsBidi; webTransportInitialMaxStreamsUni; webTransportInitialMaxData }` | `http3 { webTransport { enabled; maxSessionsPerConnection; initialMaxStreamsBidi; initialMaxStreamsUni; initialMaxData } }` |
+  | server `quicEarlyData`, `http3Settings.earlyData` | `http3 { earlyData { enabled; policy } }` |
+  | server `webSocketsOverHttp3` | `webSockets { overHttp3 }` |
+  | server `logger`, `qlog`, `connectionListener`, `eventListener` | `observability { logger; qlog; connectionListener; eventListener }` (`logger` not nullable, `ServerObservability.ApplicationLog`) |
+  | `quicConfig { maxIdleTimeout = Duration.ZERO }` | `quicConfig { maxIdleTimeout = null }` |
+  | `quicConfig { initialStreamWindow; initialConnectionWindow; maxStreamWindow; maxConnectionWindow; maxSendBuffer }` | `quicConfig { flowControl { … } }` |
+  | `quicConfig { maxUdpPayloadSize; pmtud }` | `quicConfig { pathMtu { maxReceive; discovery } }` |
+  | `quicConfig { maxDatagramFrameSize = 0 }`, `datagramReceiveQueue`, `datagramSendQueue`, `datagramSendQueueBytes` | `quicConfig { datagrams { maxFrameSize = null; receiveQueue; sendQueue; sendQueueBytes } }` |
+  | `quicConfig { allowMigration; allowMigrationToLoopback }` | `quicConfig { migration { allow; allowToLoopback } }` |
+  | `quicConfig { maxUniStreams; maxAckDelay; ackDelayExponent; activeConnectionIdLimit; initialVersion; initialRtt; greaseQuicBit; glitchProtection }` | `quicConfig { expert { … } }` |
+  | `quicConfig { defaultStreamErrorCode }` | `quicConfig { expert { cancelErrorCode } }` |
+  | `quicConfig { connectionIdLength }`, `quicConfig { qlog }` | `quicEndpointConfig { connectionIdLength }`, `quicEndpointConfig { observability { qlog } }` |
+  | `quicServerConfig(tls) { earlyData }` | `quicServerConfig(tls) { acceptEarlyData }` |
+  | `quicEndpointConfig { crypto; dispatcher; io }` | `quicEndpointConfig { runtime { … } }` |
+  | `quicEndpointConfig { initialQueueCap; rejectInitialFromReflectivePorts; statelessPerAddressPerSecond; statelessTotalPerSecond }` | `quicEndpointConfig { expert { initialAdmissionQueue; … } }` |
+  | `quicEndpointConfig { logger; listener }` | `quicEndpointConfig { observability { logger; connectionListener } }` |
+  | `tlsConfig(role) { genericAlerts }` | `tlsConfig(role) { expert { genericAlerts } }` |
+  | `http3Settings { qpackMaxTableCapacity; qpackBlockedStreams; encoderMaxTableCapacity }`, `enableQpackDynamicTable()` | `http3Settings { qpack { maxTableCapacity; blockedStreams; encoderMaxTableCapacity; enableDynamicTable() } }` |
+  | `http3Settings { grease; maxEarlyPriorityUpdates; glitchProtection }` | `http3Settings { expert { … } }` |
+
+  The `EngineMain` keys follow the server's DSL under `kuicksilver.` (`kuicksilver.http3.endpoint.maxConnections` is
+  `http3 { endpoint { maxConnections } }`), `off` is the one "none" (`0` there is refused), and every key under
+  `kuicksilver.` must be known. Kuicksilver refuses to start with a 0.2.x key and names the new one
+  (`kuicksilver.altSvc was replaced in 0.3.0 by kuicksilver.http3.altSvc`); no old key is read. The 0.2.x keys:
+
+  | 0.2.x | 0.3.0 |
+  |---|---|
+  | `kuicksilver.http3` | `kuicksilver.http3.enabled` |
+  | `kuicksilver.altSvc` | `kuicksilver.http3.altSvc` |
+  | `kuicksilver.udpSocketCount` | `kuicksilver.http3.endpoint.loops` |
+  | `kuicksilver.webSocketsOverHttp3` | `kuicksilver.webSockets.overHttp3` |
+  | `kuicksilver.tls.certificateChain`, `kuicksilver.tls.privateKey` | unchanged |
+
+  The keys of the 0.3.0 snapshots are refused the same way; their replacements are in `docs/guide/configuration.md`,
+  "Migrating from 0.2.x". New keys: `kuicksilver.requestHeaderTimeout`, `kuicksilver.http3.earlyData.enabled`,
+  `kuicksilver.webSockets.maxMessageSize`. New in code: `tls { pemFiles(chain, key); clientCaFile(path);
+  ocspStaplingFile(path) }` with `reloadInterval` watching the files, as `EngineMain` did, and
+  `http3 { endpoint { maxConnectionLifetime; expert { } } }`.
+- Ktor server: HTTP/2 is on by default (breaking behaviour; ADR-0026). Every TLS connector, and the deployment port of
+  `EngineMain` with TLS files, offers ALPN `h2`, then `http/1.1`: a client that offers both (browsers, OkHttp, the JDK's
+  client, curl, Kuicksilver's) gets HTTP/2 where 0.2 gave it HTTP/1.1, and WebSockets come over HTTP/2 with it (RFC 8441)
+  unless `webSockets { overHttp2 = false }`. `http2 { enabled = false }` (`kuicksilver.http2.enabled = false`) keeps
+  HTTP/1.1 alone. Plain connectors and h2c are unchanged. A Ktor client call that lacks a client certificate the server
+  requires now fails with `Http2Exception.ConnectionClosed` carrying the TLS alert, where HTTP/1.1 threw the
+  `TlsException` itself. The `http2 { }` blocks of both engines are stable; `http2 { settings { } }` stays experimental.
+  Over TLS 1.2 (`tls { versions = TlsVersions.Tls12And13 }`) `h2` goes only to a handshake that can support
+  `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` with P-256 (RFC 9113 section 9.2.2 MUST): one whose certificate has no
+  rsaEncryption key or whose groups leave P-256 out gets `http/1.1` (in every TLS server, `ksl`'s ALPN selection), and the
+  engine refuses to start a connector serving HTTP/2 over TLS 1.2 whose `keyExchangeGroups` leave `secp256r1` out. What a
+  TLS 1.2 client of an ECDSA (or RSA-PSS) certificate sees: offering `h2` and `http/1.1`, it gets HTTP/1.1 where it
+  could expect HTTP/2; offering `h2` alone, its handshake fails with `no_application_protocol`. A resumed TLS 1.2
+  session is held to the same rule. A TLS context holds one certificate (`ksl` refuses a second identity), so the
+  certificate that decides is the one the handshake uses.
+- Logging: `KuicksilverLogger.Default` is the platform's logger at warnings and up, and every QUIC endpoint and the Ktor
+  client start with it: SLF4J on the JVM (logger `io.kuicksilver`; standard error when no SLF4J provider is on the
+  classpath, or no `slf4j-api` at all: the module compiles against it, Ktor brings it), Logcat on Android (tag `Kuicksilver`), `NSLog` on Apple platforms, standard error on Linux and Windows.
+  Before, the default was `KuicksilverLogger.Stderr`. The Ktor server logs to the application's log (`environment.log`)
+  unless `observability { logger }` is set: its default is `ServerObservability.ApplicationLog` (not nullable, as on the
+  client), and a logger of the application's own takes every engine line, TCP, HTTP/1.1, HTTP/2 and the TLS file
+  watchers included, not the HTTP/3 endpoints' alone; nothing such a logger throws reaches the engine, each level is asked
+  before a line is built, and on the JVM and Android every SLF4J form of the engine's `Logger` (formatted, with a marker,
+  the `isXxxEnabled` checks) goes to it, none to an SLF4J binding. `KuicksilverLogger.platform(level)` gives the platform's
+  logger at another level; `KuicksilverLogger` and `LogLevel` are stable.
+- Ktor server: `tlsConnector { }` and `plainConnector { }` without a `host` bind every interface of both families (breaking
+  behaviour): one dual-stack socket per protocol on `::`, IPv4 clients arriving as IPv4-mapped addresses, or `0.0.0.0` where
+  the host has no IPv6 (logged at Info). `call.request.local` reports such a client, and the local address it reached, as
+  the IPv4 addresses they are (`127.0.0.1`, on Kotlin/Native too, where TCP sockets reported `::ffff:127.0.0.1`), and an
+  HTTP/3 call's `localAddress` is the address the client sent to (the active path's destination, as the UDP socket reports
+  it, on the JVM and Kotlin/Native alike), else the connector's. 0.2 bound `0.0.0.0`, so such a server was unreachable over IPv6; `host = "0.0.0.0"`
+  keeps IPv4 alone. `host` is `String?` now, and Ktor logs `Responding at https://:::443` for such a connector (`[::]:443`;
+  `resolvedConnectors()` keeps the bare `::`, which socket APIs take back). The deployment port of `EngineMain` without
+  `ktor.deployment.host` (or `-host`) binds the same way; an explicit `ktor.deployment.host = "0.0.0.0"` keeps IPv4
+  alone. Ktor's own `connector { }` keeps Ktor's `0.0.0.0`.
+- QUIC: the NEW_TOKEN replay register grows on demand, from 128 KiB, doubling at 3/4 load, up to
+  `newTokenReplayCapacity`, instead of allocating all of it (32 MiB at the default) with the first token. The protection
+  is unchanged: a full register still treats a token as absent and never accepts one twice; the 0-RTT register does the
+  same.
+- QUIC: the per-address connection limit (`maxConnectionsPerIp`, 256 by default) logs one warning when it first refuses a
+  client, then at most one every 5 minutes per endpoint: `QUIC per-IP limit (256) reached for <address>; behind NAT or
+  kube-proxy set http3 { endpoint { maxConnectionsPerIp = null } }`. Before, the excess was dropped silently.
+- Ktor client: the first alternative marked broken on a network logs one warning, `HTTP/3 to <origin> failed (<reason>);
+  using TCP for <backoff>. See response.kuicksilverDiagnostics`; a network change arms it again. The line per call that
+  HTTP/3 did not serve stays at `observability { protocolChoiceLogLevel }` (Info), which the default logger leaves out.
+- HTTP/3: `Http3Settings.maxInformationalResponses`, ignored since 0.2.1, is removed (breaking). Interim responses are
+  bounded by `maxFieldSectionSize` (RFC 9110 section 15.2).
+- HTTP/3: RFC 9114 section 6's SHOULDs are refused (breaking strictness): an HTTP/3 server (`Http3Endpoint.bind`, the
+  Ktor server's `http3 { quic { maxBidiStreams } }`) needs at least 100 request streams (section 6.1), and both roles
+  (`Http3Endpoint.bind`, `connect`, `connectEarly`, both engines' `http3 { quic { flowControl { initialStreamWindow } } }`)
+  need an initial stream window of at least 1024 bytes (section 6.2). The defaults (100, 512 KiB) are unchanged; a
+  smaller value now fails with IllegalArgumentException naming the option and the RFC.
+- WebTransport: both engines raise `http3 { quic { flowControl { maxConnectionWindow } } }`, when left alone, to
+  `maxSessionsPerConnection x initialMaxData` (as they raise the stream limits), so a server with 8 sessions a connection
+  starts with the default `initialMaxData`; an explicit window the sessions do not fit fails the server's start, or the
+  client's `webTransport()` call, naming the engine's options. A refused `http3 { settings { webTransport { … } } }`
+  names the option that was set and the `http3 { webTransport { } }` option it comes from.
+- HTTP/2: the flood budgets have a ceiling (breaking strictness): `http2Settings { floodLimits { resets } }` takes at most
+  `RateLimit(3300, 100000)` and `glitches` at most `RateLimit(33000, 1000000)`, 100 times their defaults
+  (`FloodLimits.MAX_RESETS`, `MAX_GLITCHES`), so the Rapid Reset defence (CVE-2023-44487) cannot be configured away;
+  `maxContinuationFrames` takes at most 800 (`MAX_CONTINUATION_FRAMES`), `maxControlFramesQueued` at most 100 000
+  (`MAX_CONTROL_FRAMES_QUEUED`) and `maxEmptyFrames` at most 10 000 (`MAX_EMPTY_FRAMES`).
+- QUIC: `quicConfig { maxIdleTimeout }` and `expert { maxAckDelay }` must be whole milliseconds, and `maxAckDelay` at
+  least 0 (breaking strictness, RFC 9000 section 18.2). Both go on the wire in milliseconds while the connection timed
+  itself on the full `Duration`: a fraction was advertised rounded down (`500.microseconds` as 0, "no idle timeout"). The
+  `EngineMain` duration keys take whole milliseconds too (`kuicksilver.http3.quic.maxIdleTimeout = 0.5ms` is refused).
+- QUIC: `flowControl { maxStreamWindow }` and `{ maxConnectionWindow }` take at most 2^60 (`QuicConfig.MAX_WINDOW`), and
+  every MAX_DATA and MAX_STREAM_DATA is clamped to 2^62-1, the largest variable-length integer (RFC 9000 sections 16,
+  19.9, 19.10). A client whose WebTransport sessions needed a larger connection window got one saturated at 2^62-1, which
+  could advertise limits beyond the range; both engines now refuse that configuration, naming the options. The
+  connection's `stats.memoryCeiling` saturates at `Long.MAX_VALUE` instead of wrapping.
+- WebTransport (experimental), draft-02 sessions, which Chrome and Firefox negotiate (breaking strictness,
+  draft-ietf-webtrans-http3-02 section 4.3: stream codes are "limited to an unsigned 8-bit integer"): `reset(code)`,
+  `reset(code, reliableOffset)` and `stopSending(code)` with a code above 255 now throw IllegalArgumentException there,
+  and a peer's reset or STOP_SENDING code above 255 reads as no application code (`StreamReset.code` and
+  `StreamStopped.code` null). Before, any 32-bit code went out and came in. An application that serves browsers keeps its
+  stream codes within 0..255 (`WebTransportSession.maxStreamErrorCode`). Later drafts keep 0..2^32-1, and the code of a
+  session's close stays 32-bit in every draft (draft-02 section 5).
+- Ktor client: the origin key of the Alt-Svc store, the broken marks and the remembered RTTs is canonical. The host's
+  ASCII letters are lowercased (RFC 6454 section 4) and an IPv6 host is written in RFC 5952 text with its brackets, so
+  `https://Example.com/` and `https://example.com/`, or two spellings of one IPv6 address, share their alternatives.
+  Before, they were two origins. A trailing dot is kept: `example.com.` stays another origin. `FileAltSvcStore` reads the
+  origins of an older file into the canonical key, merging two spellings of one origin.
+- Ktor client: `client.engine.coroutineContext.job.join()` after `HttpClient.close()` now returns once the engine closed
+  its pools, its UDP endpoints and its selector. That includes every QUIC connection's qlog trace, so an app that exits
+  after the join keeps complete traces (`docs/guide/ktor.md`, "Closing the client"). The join first waits for every call
+  in flight (bodies until read or cancelled, WebSocket and SSE sessions until closed) and has no bound of its own. Before,
+  the cleanup ran outside the engine's job, and the join returned as soon as the calls had finished. The endpoints of
+  CONNECT-UDP tunnels are now also closed by `close()` instead of waiting for their connections to end, and each cleanup
+  step runs even when one before it failed.
 - Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
   RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
   connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an
@@ -1097,8 +1354,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1 line ends (breaking strictness, RFC 9112 sections 2.2 and 11.2): a request whose request line,
   field lines, closing empty line or trailer lines end with a bare LF (no CR before it) now gets `400 Bad Request` and the
   connection closes, as llhttp answers. RFC 9112 section 2.2 only lets a recipient accept it (MAY), and a server behind a
-  proxy that reads the LF as part of a line frames the request otherwise. New experimental
-  `KuicksilverApplicationEngine.Configuration.h1AllowBareLf` (`EngineMain` key `kuicksilver.h1AllowBareLf`, false by
+  proxy that reads the LF as part of a line frames the request otherwise. New delicate
+  `http1 { allowBareLf }` (`EngineMain` key `kuicksilver.http1.allowBareLf`, false by
   default) turns the old behaviour back on for hand-written clients. Empty lines before the request line are still
   skipped, a bare LF among them. The client is unchanged: it still ends a response line at a bare LF (it is the final
   recipient; Go's net/http and curl do the same).
@@ -1306,14 +1563,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: a request that waits for its response on an HTTP/3 connection the engine chose over TCP keeps that
   connection open past the QUIC `maxIdleTimeout`: stall detection sends a PING when the connection is quiet, at most
   every half of the idle timeout in force, as RFC 9114 section 5.1 expects of a client with responses outstanding.
-  Before 0.3.0 a long poll that the server held longer than the idle timeout ended there. `http3 { stallDetection =
-  false }` sends no PING.
+  Before 0.3.0 a long poll that the server held longer than the idle timeout ended there. `http3 { stall { enabled =
+  false } }` sends no PING.
 - Ktor client: a completed QUIC handshake no longer lifts a broken mark the alternative got for a stall
   (`FallbackReason.QuicStalled`), so the backoff of a network that lets handshakes through and cuts the flows after
   them keeps doubling; each later connection that carried a whole exchange and that the client closed in order without
   it ever stalling takes it one level down.
 - Ktor client: a POST or another request that may not be repeated, on an HTTP/3 connection that stalls, now waits up to
-  `stallAbandonAfter` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
+  `stall { abandonAfter }` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
   timeout (30 s) with `QuicException.ConnectionLost.Timeout` before 0.3.0.
 - Ktor client: a failed call's `ProtocolDiagnostics` stay in the request's attributes until `callFailed` returned (they
   were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`: a
@@ -1437,7 +1694,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   to a new SCID that it also names in `initial_source_connection_id` (msquic#3762, #4905), could finish the handshake.
   msquic servers (IIS, .NET Kestrel on Windows) with a ClientHello of 3 or more datagrams (resumption with ML-KEM and ECH
   GREASE): QUIC fails per RFC 9000 section 7.3 (msquic#4905); requests go over TCP (`docs/guide/troubleshooting.md`,
-  "msquic servers and a large ClientHello"): the Ktor client resumes only with `earlyData`, and then the failed call goes
+  "msquic servers and a large ClientHello"): the Ktor client resumes only with `http3 { earlyData { enabled } }`, and then the failed call goes
   over TCP about two round trips in instead of after the 10 s handshake or connect timeout, and later calls use HTTP/3
   with full handshakes. The RFC 9000 §7.2 row is ✅; the interop cells `msquic->kuicksilver` and
   `msquic->kuicksilver-native` `resumption` and `zerortt` (and `transferloss`/`transfercorruption` when a ClientHello
@@ -1485,7 +1742,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   server that answers with HTTP/1.0 gets a body of unknown length framed by Content-Length from a buffer of at most
   1 MiB, sent once the body ended; a longer body, one that does not end within the connect timeout (or the request
   timeout when that is shorter: a slow or duplex body), or a transfer coding of the application, fails that request
-  with IllegalStateException before anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
+  with IllegalStateException before anything of it is sent. `http1 { knownServers }` (`KnownServers.Listed(…)`: servers known to handle HTTP/1.1; `All`: every server) is the
   RFC's "specific user configuration": requests to them go chunked at once, without the probe (experimental).
 - Ktor client, HTTP/3 (RFC 9114 section 3.3, "Clients SHOULD NOT open more than one HTTP/3 connection to a given IP
   address and UDP port"): one origin reached under several names that resolve to one address and port (its host, an
@@ -1493,7 +1750,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configuration. Before a new connection, the pool now resolves the name and shares a connection of the same origin
   whose address (the literal its Happy Eyeballs race connected to, or the server's preferred address it moved to; the
   zone of a link-local address and the NAT64 synthesis counted) and port match,
-  waiting for one still in its handshake for one `connectionAttemptDelay` at most; setups that ran past each other keep
+  waiting for one still in its handshake for one `network { happyEyeballsDelay }` at most; setups that ran past each other keep
   the older connection and close the newer before any request used it. WebTransport sessions still take a connection each (session pooling is
   separate work). Different origins still get a connection each, and `Alt-Svc` bookkeeping stays
   per alternative (a 421 removes, a failure marks broken, the alternative the request used).
@@ -1511,8 +1768,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   asks for no other. That is the hedged construction the same section names against the side-channel and fault attacks
   deterministic ECDSA invites ("combining both randomness and determinism"), as Go and BoringSSL sign, so
   docs/spec/rfc/9325.md records it as met, not as a deviation.
-- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
-  startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
+- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an
+  RSA-PSS key) gives its TLS 1.2 clients HTTP/1.1 and says so at startup at Info (RFC 9113 section 9.2.2: such
+  deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"; see "HTTP/2 is on by default" above).
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
   1.3-only one when `alpn` holds `h3`.
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
@@ -1563,13 +1821,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   to 64 KiB in one write instead of one write per 16 KiB record) and wakes the drainer only after records that carried no
   application data: the thread wake-ups between the pumps were the largest client CPU cost. A 10 MiB HTTP/1.1 download
   over a paced 200 Mbit/s, 100 ms path took 0.44 s of client CPU instead of 0.57 s (median of 20); HTTP/2 about the same.
-- Ktor server: `udpSocketCount` above 1 serves HTTP/3 on every platform with a QUIC server (macOS, iOS and Windows
+- Ktor server: `http3 { endpoint { loops } }` above 1 serves HTTP/3 on every platform with a QUIC server (macOS, iOS and Windows
   included, the loops sharing one socket there); before, those platforms logged "HTTP/3 is not served" and answered over
   HTTP/1.1 without `Alt-Svc`. See docs/guide/ktor.md.
 - QUIC: `QuicEndpoint.bind` with `loops > 1` no longer throws `UnsupportedOperationException` on macOS, iOS and Windows
-  or with `QuicEndpointConfig.io`: the loops share one socket there (see Added). It still throws without the
+  or with `quicEndpointConfig { runtime { io } }`: the loops share one socket there (see Added). It still throws without the
   accelerated socket and no `io`.
-- Ktor server: a TCP connector holds at most 10,000 connections by default (`maxTcpConnections`, see "Added"); before,
+- Ktor server: a TCP connector holds at most 10,000 connections by default (`tcp { maxConnections }`, see "Added"); before,
   it accepted without a bound. At the limit it stops accepting and new clients wait in the OS backlog.
 - QUIC (performance): one connection moves about 7 times the bytes over a fast path. The endpoint loop's receiver,
   reading the socket on the loop's thread, let the application's writes and commands queued on the loop run only every
@@ -1629,8 +1887,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with its real protocol (`HTTP_2_0` when the server picked `h2`, else `HTTP_1_1`), still before `connectionAcquired`;
   it came before connecting and always said `HTTP_1_1`. A call whose TCP connection cannot be set up therefore gets no
   `protocolSelected`. TCP responses may report `HttpProtocolVersion.HTTP_2_0`: `https://` servers that offer `h2` are now
-  spoken to over HTTP/2 by default (`engine { http2 { enabled = false } }` restores HTTP/1.1), and `Http3DiscoveryMode.H1Only`
-  means "no HTTP/3" (HTTP/1.1 or HTTP/2 over TCP). `maxConnectionsCount` and `maxConnectionsPerRoute` count HTTP/2
+  spoken to over HTTP/2 by default (`engine { http2 { enabled = false } }` restores HTTP/1.1), and `http3 { enabled = false }`
+  means "no HTTP/3" (HTTP/1.1 or HTTP/2 over TCP). `pool { maxConnections }` and `maxConnectionsPerRoute` count HTTP/2
   connections too (once each).
 
 - TLS (performance): a server no longer builds an OpenSSL context (`SSL_CTX`, with its identity, suites and ticket keys)
@@ -1660,8 +1918,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   draft-02 request (`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`; our client then sends one), our
   reading of section 7.1 ("the highest version supported by both endpoints" taken as the highest both can actually
   run; the draft does not say this); its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft,
-  are refused. Safari speaks draft-14 (see `docs/spec/interop.md`). `Http3Endpoint` turns `QuicConfig.resetStreamAt`
-  on with `webTransport`, as the Ktor engines already did, and every reset of a WebTransport stream is a
+  are refused. Safari speaks draft-14 (see `docs/spec/interop.md`). `Http3Endpoint` turns `quicConfig { expert { resetStreamAt } }`
+  on with `http3Settings { webTransport { enabled } }`, as the Ktor engines already did, and every reset of a WebTransport stream is a
   RESET_STREAM_AT keeping the header we wrote (0 bytes on a stream the peer opened; section 4.4; before, a plain
   RESET_STREAM without the parameter and for rejected or abandoned peer streams). With
   `webTransport`, `SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 closes the connection with `H3_SETTINGS_ERROR`
@@ -1692,6 +1950,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   for Low), Critical and High still within 72 hours, each with a GitHub Security Advisory of this repository naming the
   OpenSSL CVE and the fixed version. New: where to see advisories and security releases, the emergency path when the
   month's Maven Central quota is used up, and `main` in the supported-versions table.
+- Release policy (`docs/roadmap.md`, "Version policy", decided on 2026-11-26; `SECURITY.md`, `docs/stability.md`): every
+  minor release 0.X.0 carries new features and the fixes found since the previous one; a patch release 0.X.Y is made
+  only when users need a fix before the next minor release or for a security fix that cannot wait: an OpenSSL security
+  release reachable through Kuicksilver (72 hours and 7 days as before), a Critical or High vulnerability (always,
+  within 30 days of the assessment), and a Medium one that is publicly known or whose disclosure date is within 60 days
+  of the assessment (within 60 days). A non-security OpenSSL 4.1.x patch release now ships in the next minor release
+  (was: a patch release within 30 days), and the move to OpenSSL 4.2 LTS in a minor release (was: a planned patch
+  release).
 - TLS: the sealed `TlsIdentity` gains a member, `TlsIdentity.Reloadable` (docs/stability.md: sealed hierarchies grow);
   a `when` over it without an `else` branch no longer compiles, and one compiled against 0.2.x throws
   `NoWhenBranchMatchedException` when it meets a `Reloadable`.
@@ -1719,7 +1985,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   rejects, a TLS identity it cannot use) fails the start at once, as with a fixed port. Before, every such failure was
   taken for a taken UDP port: the pair was tried 16 times and the server then served HTTP/1.1 alone with only a warning.
   Only a failure to bind is retried now. The accelerated UDP socket reports a refused bind (a port in use) as an
-  IOException, so a taken twin with `udpSocketCount` above 1 is retried like any other.
+  IOException, so a taken twin with `http3 { endpoint { loops } }` above 1 is retried like any other.
 - HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
   the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
   connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is
@@ -1734,14 +2000,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it, as Go's net/http and nginx do on reading; a peer that writes such lines (some servlet containers and
   hand-written servers) has to be fixed.
 - Ktor client: the h3/h1 race starts HTTP/1.1 10 ms after HTTP/3 on a network where QUIC was never confirmed, instead
-  of at the same time, and an explicit `http3 { hardDelay }` must be 10 ms..2 s or `Duration.INFINITE` (else the
-  engine's creation fails with `IllegalArgumentException`; before, any value was used as is). `Duration.INFINITE`
+  of at the same time, and an explicit `http3 { expert { raceHeadStart = RaceHeadStart.Fixed(d) } }` must be 10 ms..2 s (else the
+  engine's creation fails with `IllegalArgumentException`; before, any value was used as is). `RaceHeadStart.NoRace`
   starts HTTP/1.1 only after HTTP/3 failed on every network, a never-confirmed one included. RFC 8305 section 5: a
   subsequent connection attempt MUST NOT start within 10 ms of the previous one, and attempts SHOULD NOT be
   simultaneous.
-- Ktor client: `http3 { clearOnNetworkChange }` is now true by default: when `networkId` reports a new network, the
+- Ktor client: `http3 { expert { clearAltSvcOnNetworkChange } }` is now true by default: when `network { networkId }` reports a new network, the
   engine forgets the Alt-Svc alternatives without `persist=1`, as RFC 7838 section 2.2 says a client SHOULD. Before, it
-  kept them unless asked. `clearOnNetworkChange = false` restores the old behaviour.
+  kept them unless asked. `clearAltSvcOnNetworkChange = false` restores the old behaviour.
 - QUIC: when the server rejects 0-RTT, the client resets every stream it opened before the handshake completed, as
   RFC 9001 section 4.6.2 requires ("MUST reset the state of all streams"); before, it sent their data again in 1-RTT. The
   streams fail with the new `QuicException.StreamError.EarlyDataRejected` (experimental), nothing of them reached the
@@ -1757,9 +2023,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no QPACK Stream Cancellation for the early requests (the request sent again reuses the stream ID, and a cancellation
   arriving after its response was encoded made the server fail the connection with `QPACK_DECODER_STREAM_ERROR`) and
   repeats each early request once.
-- Ktor client: requests now follow the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`):
+- Ktor client: requests now follow the platform's proxy settings by default (`proxies { resolver = ProxyResolvers.System }`):
   where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over
-  HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxyResolver = ProxyResolvers.None`
+  HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxies { resolver = ProxyResolvers.None }`
   restores direct connections.
 - Ktor client: a `ws://` WebSocket through an HTTP proxy now goes in a CONNECT tunnel (RFC 6455 section 4.1), as
   browsers do, instead of an absolute-form Upgrade the proxy may not forward. A CONNECT the proxy refuses fails with
@@ -1791,7 +2057,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   before, both engines took such frames.
 - Ktor client on the JVM and Android: an HTTP/1.1 connection to a host name now tries every address the name resolves
   to (Happy Eyeballs), not only the first; on Kotlin/Native the addresses are tried 250 ms apart instead of one after the
-  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another. HTTP/3 no longer connects to
+  other. `network { happyEyeballsDelay = null }` restores one address after another. HTTP/3 no longer connects to
   the first address only.
 - Ktor client: name lookups run at most 8 of each address family at a time on their own share of `Dispatchers.IO`, one
   per name and address family however many requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
@@ -1817,6 +2083,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebSocket (both Ktor engines): a text frame whose bytes are not UTF-8 fails the connection with 1007 as soon as those
   bytes arrive (RFC 6455 section 8.1), compressed or not. Before, the check waited for the rest of the frame, up to 16 KiB,
   so a peer that sent the bad bytes and then nothing kept the connection open (Autobahn|Testsuite 6.4.3 and 6.4.4).
+- WebTransport (experimental): on a draft-02 session, which Chrome and Firefox speak, a stream the peer resets before its
+  header named a session now reaches the session's application with the reset's code (draft-02 section 4.3: an
+  implementation that "intentionally allows only one session over a given HTTP/3 connection [...] SHALL forward the error
+  codes within WebTransport application error code range to the application that owns the only session"). A draft-02
+  connection carries one session, so its application accepts the stream and reads the reset. Before, the stream was
+  dropped and its code lost.
+- Ktor client: a `ConnectTimeoutException` names the connect timeout that fired, also when only the engine's own
+  `connectTimeout` is set and `HttpTimeout` is not installed. Before, the name lookup and pool wait of HTTP/1.1 and
+  HTTP/2, a WebSocket's name lookup, the wait for an HTTP/2 server's preface and an HTTP/3 setup said
+  `connect_timeout=unknown ms`: they used Ktor's `ConnectTimeoutException(request, cause)`, which reads the plugin's
+  value alone. A WebTransport session's connect timeout names the session's URL now, not only its host and port.
 - The portable JVM and Android socket (`IoPreference.Portable`) no longer leaks its channel and selectors when opening it
   fails after the channel is bound (registering it with its selector, or setting up the socket), a failure not seen in
   practice.
@@ -1828,7 +2105,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: resetting an Extended CONNECT stream (`Http3Stream.reset`) now ends its writer too. Before, the tunnel's
   writer kept waiting for content, so the exchange never ended until the connection closed. A WebTransport client
   session that ended because the server broke it (a malformed WT_CLOSE_SESSION, a capsule section 5.4 prohibits) kept
-  its slot in the connection's session count, so `webTransportMaxSessions` sessions failed that way blocked new ones on
+  its slot in the connection's session count, so `http3Settings { webTransport { maxSessions } }` sessions failed that way blocked new ones on
   that connection. The server side was not affected.
 
 - WebTransport no longer runs a draft-02 session when the selected draft lacks `reset_stream_at` (compatibility shim 3,
@@ -1990,7 +2267,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   close` (`H1PipelineSelectRaceTest.negative_aRequestInTheSocketsBufferBeforeAStopThatAlreadyCompletedIsAnswered`).
   Bytes still in the kernel's socket buffer, or a TLS record not yet decrypted, when the stop begins are not seen: such a
   connection is still closed as idle. A connection whose head has started (any of its bytes read) now holds the stop
-  until that head is complete, or for at most the remaining request-head deadline (`requestHeaderTimeoutSeconds`, then
+  until that head is complete, or for at most the remaining request-head deadline (`requestHeaderTimeout`, then
   408) or the stop's grace period, whichever ends first.
 - Ktor server, HTTP/1.1 (and h2c on a `WithHttp11` port): a connection accepted just before the server stopped, whose
   first request was still on its way, was closed at once without an answer, and its client could not tell whether a
@@ -2556,7 +2833,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so its bytes left the flow-control window and the peer got the credit back (RFC 9204 section 2.2.1: SHOULD remain in
   the window). With blocked streams allowed, request streams are now read without read-ahead and a section's prefix
   first; a section that needs inserts waits there, its other bytes left in the transport.
-- HTTP/3 with the QPACK dynamic table (`enableQpackDynamicTable()`): the encoder wrote insert instructions whatever the
+- HTTP/3 with the QPACK dynamic table (`qpack { enableDynamicTable() }`): the encoder wrote insert instructions whatever the
   encoder stream's flow-control credit, under its lock (RFC 9204 section 2.1.3: SHOULD NOT), so a peer that granted
   the stream no credit could leave every field section waiting behind instructions it would not take. An insert is now
   made only when the encoder stream has the credit for the whole instruction; the field goes as a literal otherwise.
@@ -2633,7 +2910,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   status that went out (before, the route's 200 or the upgrade's 101); an accepted upgrade still reports 101, Ktor's
   model of the switch, which HTTP/3 carries as a 2xx. The same holds on HTTP/1.1 for the 501 that replaces a 2xx to
   CONNECT and on HTTP/2 for the 501 that answers an upgrade (before, 200 and 101).
-- Ktor server: `webSocketsOverHttp3 = false` did not turn WebSockets over HTTP/3 off when `webTransport = true`
+- Ktor server: `webSockets { overHttp3 = false }` did not turn WebSockets over HTTP/3 off when `http3 { webTransport { enabled = true } }`
   advertised Extended CONNECT: a WebSocket CONNECT still reached the `webSocket {}` routes. It is now answered 501.
 - HTTP/3: a reserved (GREASE) frame type on the peer's control stream spent a glitch token, while on a request stream it
   costs nothing. RFC 9114 sections 7.2.8 and 9 have reserved types ignored, and peers are meant to send them; a peer
@@ -2642,7 +2919,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3 client (`Http3Connection.request`): when the request's trailers were refused (above the server's
   SETTINGS_MAX_FIELD_SECTION_SIZE) after the response had begun, the response was abandoned without a QPACK Stream
   Cancellation (RFC 9204 section 4.4.2). Response trailers blocked on the dynamic table at that moment kept their
-  blocked-stream slot for the connection's life; with `enableQpackDynamicTable()`, 16 such requests made the next
+  blocked-stream slot for the connection's life; with `qpack { enableDynamicTable() }`, 16 such requests made the next
   legitimately blocked section end the connection with QPACK_DECOMPRESSION_FAILED. The stream is now cancelled once the
   response's reader stopped, as it is for `cancel()`. The Ktor engine was not affected.
 - HTTP/3 server: when request trailers above `maxFieldSectionSize` arrived while the application called `respond()`,
@@ -2655,7 +2932,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   routing and, for an Extended CONNECT, its datagram channel. It is now forgotten when it is answered or dropped.
 - HTTP/3 WebTransport: every session stayed reachable until its QUIC connection closed (a handler on the connection's
   end held it, with its CONNECT stream and request). A client that opens and closes sessions one after another on one
-  connection to a server with `webTransport` grew the server's memory by about 10 KB per session for as long as it kept
+  connection to a server with WebTransport on grew the server's memory by about 10 KB per session for as long as it kept
   the connection open. The handler is now removed when the session ends.
 - HTTP/2: with `Http2Settings.maxFrameSize` raised above its 16 KiB default, the frame decoder allocated a frame's whole
   declared payload as soon as its 9-byte header arrived, so a peer could hold up to 16 MiB per connection by declaring a
@@ -2666,7 +2943,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   while our writer waited on the socket: nothing bounded the writing of what was left (with the default `pingInterval`,
   no PING notices it). The transport is now closed hard 2 s after the connection's end when the writer has not finished
   by then, as it already was for a connection whose PING went unanswered.
-- HTTP/2 server: a request whose field section was above `maxHeaderListSize` (answered 431, RFC 9113 section 8.2) took
+- HTTP/2 server: a request whose field section was above `http2Settings { maxFieldSectionSize }` (answered 431, RFC 9113 section 8.2) took
   the whole connection down, or failed an unrelated call, when its stream could no longer send by the time the request
   was handled: the client reset the stream in the same read, a later error in that read closed it, or the client's own
   SETTINGS_MAX_HEADER_LIST_SIZE was too small for the 431 head. The 431 threw out of the event dispatch: on the reader
@@ -2862,7 +3139,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   behind, or while a compressed message was inflated) ended the session's input as if the peer had closed the stream,
   without the failure. The input now fails with the connection's cause.
 - Ktor server: the TLS handshake of a TCP connection was cut after 10 s (`TlsConfig.handshakeTimeout`'s default), not at
-  `requestHeaderTimeoutSeconds` (30 s) as documented. A client on a slow, lossy path (200 ms, 5 % loss) whose last
+  `requestHeaderTimeout` (30 s) as documented. A client on a slow, lossy path (200 ms, 5 % loss) whose last
   handshake flight needed retransmissions had its connection closed after it had sent its request, and saw "unexpected end
   of stream". The request-head deadline alone bounds the handshake now.
 - QUIC: `maxConnections` and `maxConnectionsPerIp` bound the endpoint as a whole with `loops > 1`. Each loop counted its
@@ -2872,7 +3149,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   compare-and-set, never larger than the connections themselves). A slot is reserved when an Initial passes the limits,
   given back when no connection comes of it (policy refusal, Retry, an Initial that does not decrypt), and released when
   the connection is removed or its loop closes. `ConnectionAttempt.connections` and `connectionsFromAddress` count the
-  whole endpoint too. One loop behaves as before. Upgrading with `loops > 1` (the Ktor engine's `udpSocketCount`): the
+  whole endpoint too. One loop behaves as before. Upgrading with `loops > 1` (the Ktor server's `http3 { endpoint { loops } }`): the
   limits are now endpoint-wide, so multiply the old values by the loop count to keep the same capacity.
 - Ktor client: connections end with TLS `close_notify` whenever the client's write side is whole (RFC 9846 section 6.1):
   an HTTP/1.1 connection after a `Connection: close` response, an abandoned response body, a finished upload or upgrade,
@@ -3066,8 +3343,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
   still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`
   (64 KiB by default), past which the request fails with `H3_EXCESSIVE_LOAD` and its stream is reset, as the HTTP/1.1
-  client's 64 KiB budget. `Http3Settings.maxInformationalResponses` is deprecated and ignored (still validated, ABI
-  unchanged).
+  client's 64 KiB budget. `Http3Settings.maxInformationalResponses` was ignored from then on (removed in 0.3.0, see "Changed").
 - QUIC with BBR (`QuicConfig.congestionController`): persistent congestion is BBR's retransmission timeout
   (draft-ietf-ccwg-bbr-06 section 5.6.4.4): the window still drops to max(bytes in flight + 1 datagram, 4 datagrams)
   (`OnEnterRTO`), and now the window from before comes back once a packet sent after it is acknowledged (`RestoreCwnd`,
@@ -3166,12 +3442,12 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   without close_notify (truncation)" without a cause: ktor-io reads a channel failed with a cause as one that ended, and
   the failure was dropped. It is now the exception's cause, so the application and the Ktor server's
   `tlsHandshakeFailed` event see it.
-- Ktor server: a TLS handshake that completed just as the request-head deadline (`requestHeaderTimeoutSeconds`) fired,
+- Ktor server: a TLS handshake that completed just as the request-head deadline (`requestHeaderTimeout`) fired,
   or as the engine stopped, was dropped by the deadline (kotlinx's `withTimeoutOrNull` discards a result that arrives
   with its timeout) and its TLS session was never closed: one native TLS session per occurrence for the rest of the
   process. That session is now aborted. And a connection accepted just before a hard stop (the grace period ran out)
   whose coroutine was launched on the already cancelled connection scope never ran: neither its handshake nor its close,
-  so the socket stayed open and kept its `maxTcpConnections` and `maxTcpConnectionsPerIp` slot. Such a connection is now
+  so the socket stayed open and kept its `tcp { maxConnections }` and `tcp { maxConnectionsPerIp }` slot. Such a connection is now
   aborted, which releases the slot.
 - Ktor server: a graceful stop with a grace period under about three seconds (Ktor's default `stop(500, 500)`,
   `stop(1000, 2000)`) never ended gracefully while a browser or curl kept an idle HTTP/3 connection open: after the stop's
@@ -3415,13 +3691,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   work (STOP_SENDING and a reset with `H3_REQUEST_CANCELLED`); before, such a request stayed open with its receive half
   for the connection's life and held off the GOAWAY idle close. Released 0.2.1 has no limit on HTTP/3 request resets at
   all (see the Rapid Reset entry below).
-- Ktor client, CONNECT-UDP proxy (`connectUdpProxy`): the QUIC connection to the proxy itself was set up with the
+- Ktor client, CONNECT-UDP proxy (`proxies { connectUdp }`): the QUIC connection to the proxy itself was set up with the
   origin's TLS configuration. The origin's client certificate (`identity`) was presented to the proxy, a third party
   (CWE-200); the origin's pins (`TrustConfig.Pinned`) were applied to the proxy, which failed every request through a
   proxy with another key, and the origin's `TrustConfig.ExpectedName` replaced the proxy's name, so a proxy presenting
-  the origin's certificate passed; `proxyTls` was ignored. The proxy hop now takes the proxy's own configuration exactly
-  as the TCP hop to an `https://` proxy does (ADR-0023): the proxy's host as SNI and reference identifier, `proxyTls` or
-  by default the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxyTls` sets one,
+  the origin's certificate passed; `proxies { tls { } }` was ignored. The proxy hop now takes the proxy's own configuration exactly
+  as the TCP hop to an `https://` proxy does (ADR-0023): the proxy's host as SNI and reference identifier, `proxies { tls { } }` or
+  by default the origin's trust without its `ExpectedName` and pins, no client certificate unless `proxies { tls { } }` sets one,
   ALPN `h3`; a failed handshake with the proxy is `ProxyTlsException`, also when a later address of the proxy only timed
   out before any address completed its handshake. Its connections leave from endpoints of their own whose session cache is the proxies' (they resume no session, a
   full handshake each time). The origin's connection inside the tunnel keeps the
@@ -3484,7 +3760,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   `WT_BUFFERED_STREAM_REJECTED`), and every peer's unidirectional stream its type (else `STOP_SENDING
   H3_STREAM_CREATION_ERROR`; spared only while its bytes so far can still be the type of a control or QPACK stream
   not seen yet, one such stream per missing type) and, for
-  WebTransport, its Session ID. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+  WebTransport, its Session ID. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeout`.
 - HTTP/3 (RFC 9114 section 10.5): reserved (GREASE) frames and empty DATA frames were free in any number, so 2 000 000
   two-byte frames in one request never ended the connection. The first 8 of a stream (and of the control stream) stay
   free; each further one spends a glitch token, as unknown frame types do, and a flood ends the connection with
@@ -3504,11 +3780,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   that requires a client certificate cannot ride a connection that asked for none, nor the other way round (as nginx and
   Caddy do with client authentication). A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
   requests are served as before. A connector whose every client is a trusted gateway turns the check off with the new
-  `tlsConnector { trustedGateway = true }`, or with the new `plainConnector { trustedGateway = true }` in place of Ktor's
+  `tlsConnector { allowMisdirectedHosts = true }`, or with the new `plainConnector { allowMisdirectedHosts = true }` in place of Ktor's
   `connector { }` (docs/guide/ktor.md, "Misdirected requests"). **Upgrading:** the check is on by default. A server whose
   certificate does not name every host and address its clients use (`localhost`, `127.0.0.1`, the server's IP) now
   answers those clients 421; the engine logs the reason at debug level (docs/guide/troubleshooting.md, "The server answers
-  `421 Misdirected Request`"). Reissue the certificate; set `trustedGateway` only on connectors that only a trusted
+  `421 Misdirected Request`"). Reissue the certificate; set `allowMisdirectedHosts` only on connectors that only a trusted
   gateway reaches. New for the check and for servers
   built on the libraries: `TlsConnection.localCertificates`, `QuicTlsSession.localCertificates`,
   `QuicConnection.localCertificates`, `TlsSocket.localCertificates` and `Certificate.matchesHost`.
@@ -3526,11 +3802,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 - Ktor engines, WebSockets (RFC 6455 section 10.4): uncompressed frames and messages had no size limit (Ktor's defaults:
   `Long.MAX_VALUE` on the server, `Int.MAX_VALUE` on the client), and Ktor's JVM reader allocates the whole length a
   frame header claims: a few 14-byte headers claiming 2 GiB each could exhaust a JVM or Android server's heap. Both
-  engines now refuse a frame whose header claims more than `webSocketMaxMessageSize` (new, *experimental*, 16 MiB by
+  engines now refuse a frame whose header claims more than `webSockets { maxMessageSize }` (new, 16 MiB by
   default), or that takes its message past it, with 1009 from the header, before any of its payload is read; a
   compressed message is held to the smaller of that and `PerMessageDeflate`'s `maxInflatedMessageSize` as it inflates,
   and a compressed frame whose header claims more than 8 times that plus 64 KiB is refused from its header too.
-  Migration: an application that exchanges messages over 16 MiB must raise `webSocketMaxMessageSize` (client engine and
+  Migration: an application that exchanges messages over 16 MiB must raise `webSockets { maxMessageSize }` (client engine and
   server engine configuration).
 - Ktor client, WebSockets (RFC 6455 section 5.3): the masking keys came from `kotlin.random.Random` (Ktor's writers), which
   is not a CSPRNG on any platform, so an observer could predict the keys of later frames. Every frame the client sends is
@@ -5583,5 +5859,6 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   only resumes under the configuration that issued it.
 - Bounds checks on every buffer copy in the JNI and cinterop bindings.
 
-[Unreleased]: https://github.com/kuicksilver/kuicksilver/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kuicksilver/kuicksilver/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/kuicksilver/kuicksilver/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kuicksilver/kuicksilver/releases/tag/v0.2.0

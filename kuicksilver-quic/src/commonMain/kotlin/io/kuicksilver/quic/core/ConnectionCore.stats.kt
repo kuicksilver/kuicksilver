@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic.core
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.Reassembler
@@ -50,8 +53,26 @@ internal fun ConnectionCore.sizesForTest(): Map<String, Long> {
 
 // the receive term is what the reassembly buffers may hold allocated (RangeBudget): the connection window unread, as much again
 // kept after reads, the doubling slack on what is unread, and twice the smallest buffer of each stream the peer may open
+// (saturating at Long.MAX_VALUE: 2^60 streams of each kind times the smallest buffer would overflow a Long)
 internal fun ConnectionCore.memoryCeiling(): Long =
-    3L * config.maxConnectionWindow + 2L * Reassembler.MIN_WINDOW * (config.maxBidiStreams + config.maxUniStreams) +
-        config.maxSendBuffer +
-        3L * config.limits.cryptoOutOfOrderPerLevel + config.limits.cryptoPostHandshake +
-        config.limits.undecryptablePackets.toLong() * path.mtu + config.limits.qlogBytes
+    listOf(
+        satMul(3L, config.maxConnectionWindow),
+        satMul(2L * Reassembler.MIN_WINDOW, satAdd(config.maxBidiStreams, config.maxUniStreams)),
+        config.maxSendBuffer,
+        satMul(3L, config.limits.cryptoOutOfOrderPerLevel.toLong()),
+        config.limits.cryptoPostHandshake.toLong(),
+        satMul(config.limits.undecryptablePackets.toLong(), path.mtu.toLong()),
+        config.limits.qlogBytes,
+    ).fold(0L, ::satAdd)
+
+/** [a] + [b], Long.MAX_VALUE where the sum overflows; both must be non-negative (a negative one is not checked for). */
+internal fun satAdd(
+    a: Long,
+    b: Long,
+): Long = if (a > Long.MAX_VALUE - b) Long.MAX_VALUE else a + b
+
+/** [a] x [b], Long.MAX_VALUE where the product overflows; both must be non-negative (a negative one is not checked for). */
+internal fun satMul(
+    a: Long,
+    b: Long,
+): Long = if (a != 0L && b > Long.MAX_VALUE / a) Long.MAX_VALUE else a * b

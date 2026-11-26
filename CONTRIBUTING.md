@@ -66,11 +66,12 @@ pull requests too), update the file in the same pull request and review its diff
 ```
 
 `--write-verification-metadata` adds what the run resolved and keeps the rest; remove entries of versions no longer used.
-The samples `samples/realtime-telemetry` and `samples/compose-demo` (their own builds) link the same two files; after a
-change to their plugins or dependencies run
+The samples `samples/realtime-telemetry`, `samples/webtransport-chat`, `samples/http3-server`, `samples/kq-cli` and
+`samples/compose-demo` (their own builds) link the same two files; after a change to their plugins or dependencies run
 `../../gradlew -I ../../tools/check/resolve-all.init.gradle.kts --write-verification-metadata sha256,pgp --export-keys
-ksResolveAll jvmTest` in the first, and the same with `ksResolveAll :composeApp:allTests :androidApp:assembleDebug
-:androidApp:assembleDebugAndroidTest :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test :server:installDist` in the second
+ksResolveAll jvmTest` in the first two (`ksResolveAll test` in `http3-server`), the same with `ksResolveAll jvmTest macosArm64Test linkReleaseExecutableMacosArm64
+linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64` in kq-cli, and the same with `ksResolveAll :composeApp:allTests :androidApp:assembleDebug
+:androidApp:assembleDebugAndroidTest :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test :server:installDist` in the Compose demo
 (it replaces the keyring link with a copy: copy it over `gradle/verification-keyring.keys` and put the link back). Run the update with the
 pins as they will be committed (an AGP or Kotlin pin that moves afterwards brings other tool artifacts), and check it
 with the gate's step `check: dependency verification (every configuration)`:
@@ -115,7 +116,7 @@ bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documenta
 ./gradlew -Pkuicksilver.docs.reportUndocumented :dokkaGenerate   # the API reference alone, warning on every public declaration without KDoc
 bash tools/docs/verify-test.sh                                   # the "How we verify" pages generator on fixtures; a new engine interop test class needs a row in tools/docs/engine-pairs.tsv, a new page label a message in every tools/docs/messages/*.json
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
-tools/ci/local-matrix.sh --only 25,48-49                         # run again only those steps (or --from 44); never a gate
+tools/ci/local-matrix.sh --only 25,47-49                         # run again only those steps (or --from 44); never a gate
 bash tools/ci/local-matrix-test.sh                               # the step selection's refusals, through --dry-run
 ```
 

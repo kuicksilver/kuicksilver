@@ -191,8 +191,8 @@ class PathMtuRefusedTest {
         runBlocking<Unit> {
             ApiPair
                 .open(serverConfigure = {
-                    val inner = io!!
-                    io = { a -> NoDfV4Io(inner(a)) }
+                    val inner = runtime.io!!
+                    runtime { io = { a -> NoDfV4Io(inner(a)) } }
                 })
                 .use { p ->
                     withTimeout(30.seconds) {
@@ -225,7 +225,7 @@ class PathMtuRefusedTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF") }
+                                runtime { io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF") } }
                             }.build(),
                     ).close()
             }
@@ -243,8 +243,8 @@ class PathMtuRefusedTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
-                            io = { serverIo }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { serverIo } }
                         }.build(),
                 )
             val clientIo = NoDfV4Io(net.open(InetSocketAddress("10.0.0.1", 1111)))
@@ -254,8 +254,8 @@ class PathMtuRefusedTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { clientIo }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { clientIo } }
                         }.build(),
                 )
             try {
@@ -380,8 +380,8 @@ class PathMtuRefusedTest {
             var wrapped: EmsgsizeIo? = null
             ApiPair
                 .open(serverConfigure = {
-                    val inner = io!!
-                    io = { a -> EmsgsizeIo(inner(a) as MemoryDatagramIo).also { wrapped = it } }
+                    val inner = runtime.io!!
+                    runtime { io = { a -> EmsgsizeIo(inner(a) as MemoryDatagramIo).also { wrapped = it } } }
                 })
                 .use { p ->
                     withTimeout(30.seconds) {

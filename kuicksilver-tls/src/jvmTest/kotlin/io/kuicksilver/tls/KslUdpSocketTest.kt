@@ -61,7 +61,7 @@ class KslUdpSocketTest {
     /**
      * A port in use is an I/O failure of the bind, not a failure of the native layer: [KslUdpSocket.open] throws an IOException
      * naming the bind, so a server that tries another port for a taken one (the Ktor engine with port 0) does (review of
-     * 19e3f88b, which made a KslException fail the start: a taken twin with udpSocketCount > 1 failed it).
+     * 19e3f88b, which made a KslException fail the start: a taken twin with http3 { endpoint { loops } } > 1 failed it).
      */
     @Test fun aPortInUseIsAnIoFailureOfTheBind() {
         if (!accelerated) return

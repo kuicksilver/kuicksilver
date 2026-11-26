@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -215,10 +217,24 @@ public class Http3Endpoint private constructor(
             local: InetSocketAddress,
             config: QuicEndpointConfig = QuicEndpointConfig.Default,
             settings: Http3Settings = Http3Settings.Default,
+        ): Http3Endpoint = bind(local, config, settings, allowFewerBidiStreams = false)
+
+        /**
+         * Test seam: [bind], and with [allowFewerBidiStreams] a server that grants fewer than the 100 request streams of
+         * section 6.1, so a test can exhaust a client's stream credit with a few requests. Per call, never global: the Ktor
+         * server engine passes its own `allowFewerBidiStreamsForTest`, which only that engine's tests set.
+         */
+        @InternalKuicksilverApi
+        public suspend fun bind(
+            local: InetSocketAddress,
+            config: QuicEndpointConfig,
+            settings: Http3Settings,
+            allowFewerBidiStreams: Boolean,
         ): Http3Endpoint {
             config.server?.let {
                 require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" }
                 requireCriticalStreams(it.quic)
+                if (!allowFewerBidiStreams) requireRequestStreams(it.quic)
             }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
             return Http3Endpoint(QuicEndpoint.bind(local, config.forHttp3Server(server)), server)
@@ -227,7 +243,7 @@ public class Http3Endpoint private constructor(
         /**
          * The server side of an HTTP/3 endpoint. A 0-RTT server binds its SETTINGS into its tickets (RFC 9114 section 7.2.4.2):
          * changed SETTINGS refuse early data. A request stream the QUIC layer gives up before the server saw it (its acceptor was
-         * cancelled) is reset with `QuicConfig.defaultStreamErrorCode`: QUIC's default 0 is no HTTP/3 code (a client reads it as
+         * cancelled) is reset with the QuicConfig `expert { cancelErrorCode }`: QUIC's default 0 is no HTTP/3 code (a client reads it as
          * H3_NO_ERROR, section 9), so it becomes H3_REQUEST_REJECTED, which says the request was not processed and may be
          * retried (sections 4.1.1 and 8.1). A code set explicitly is kept. Every stream the HTTP/3 layer handled is reset with a
          * code of its own, never this default.
@@ -240,13 +256,13 @@ public class Http3Endpoint private constructor(
                     if (q.defaultStreamErrorCode == 0L) {
                         q
                             .toBuilder()
-                            .apply { defaultStreamErrorCode = Http3ErrorCode.REQUEST_REJECTED }
+                            .apply { expert { cancelErrorCode = Http3ErrorCode.REQUEST_REJECTED } }
                             .build()
                     } else {
                         q
                     }
                 }
-            if (!s.earlyData && quic === s.quic) return this
+            if (!s.acceptEarlyData && quic === s.quic) return this
             return toBuilder()
                 .apply {
                     server =
@@ -257,8 +273,8 @@ public class Http3Endpoint private constructor(
                                 newTokenLifetime = s.newTokenLifetime
                                 newTokenReplayCapacity = s.newTokenReplayCapacity
                                 preferredAddress = s.preferredAddress
-                                if (s.earlyData) {
-                                    earlyData = true
+                                if (s.acceptEarlyData) {
+                                    acceptEarlyData = true
                                     earlyDataContext = settings.earlyDataContext()
                                 }
                             }.build()
@@ -267,27 +283,55 @@ public class Http3Endpoint private constructor(
 
         /**
          * draft-ietf-webtrans-http3-17 section 3.1: "both the client and the server enable the extension by sending an empty
-         * reset_stream_at transport parameter", so WebTransport turns [QuicConfig.resetStreamAt] on; without it no session
+         * reset_stream_at transport parameter", so WebTransport turns the QuicConfig `expert { resetStreamAt }` on; without it no session
          * of draft-14 or later could be opened or accepted, and our streams could not be reset as section 4.4 requires.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig {
             settings.requireWebTransportFits(this)
-            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
+            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { expert { resetStreamAt = true } }.build() else this
         }
 
         /** Test hook: binds a server that breaks section 6.2 (its peer's critical streams), to test the peer's side of it. */
         @kotlin.concurrent.Volatile
         internal var allowFewerUniStreamsForTest = false
 
+        /** Test hook: an endpoint that gives a stream less than the 1024 bytes of section 6.2, to test a peer's side of it. */
+        @kotlin.concurrent.Volatile
+        internal var allowSmallerStreamWindowForTest = false
+
+        /** RFC 9114 section 6.1: the fewest request streams a server permits at a time. */
+        internal const val MIN_REQUEST_STREAMS: Long = 100
+
+        /** RFC 9114 section 6.2: the least flow-control credit we give each unidirectional stream. */
+        internal const val MIN_UNI_STREAM_CREDIT: Long = 1024
+
         /**
          * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional
-         * streams" (its control and QPACK streams). A configuration that grants fewer is refused, never raised quietly.
+         * streams" (its control and QPACK streams), and "SHOULD also provide at least 1,024 bytes of flow-control credit to
+         * each unidirectional stream" (`initial_max_stream_data_uni`, the QuicConfig `flowControl { initialStreamWindow }`).
+         * A configuration that grants less is refused, never raised quietly.
          */
         private fun requireCriticalStreams(q: QuicConfig) {
             require(q.maxUniStreams >= 3 || allowFewerUniStreamsForTest) {
-                "HTTP/3 needs QuicConfig.maxUniStreams >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
+                "HTTP/3 needs QuicConfig expert { maxUniStreams } >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
                     "streams), not ${q.maxUniStreams}"
+            }
+            require(q.initialStreamWindow >= MIN_UNI_STREAM_CREDIT || allowSmallerStreamWindowForTest) {
+                "HTTP/3 needs QuicConfig flowControl { initialStreamWindow } >= 1024 (RFC 9114 section 6.2: at least 1,024 bytes " +
+                    "of flow-control credit SHOULD go to each unidirectional stream), not ${q.initialStreamWindow}"
+            }
+        }
+
+        /**
+         * RFC 9114 section 6.1: "So as to not unnecessarily limit parallelism, at least 100 request streams SHOULD be
+         * permitted at a time." A server configuration that permits fewer is refused; a client's limit is left alone (the
+         * server opens no bidirectional streams).
+         */
+        private fun requireRequestStreams(q: QuicConfig) {
+            require(q.maxBidiStreams >= MIN_REQUEST_STREAMS) {
+                "an HTTP/3 server needs QuicConfig maxBidiStreams >= 100 (RFC 9114 section 6.1: at least 100 request streams " +
+                    "SHOULD be permitted at a time), not ${q.maxBidiStreams}"
             }
         }
 
@@ -297,7 +341,7 @@ public class Http3Endpoint private constructor(
                 q.maxDatagramFrameSize == 0L
             ) {
                 // WebTransport sessions carry HTTP datagrams: refused, never quietly turned off with them
-                require(!webTransport) { "Http3Settings.webTransport needs QUIC datagrams: QuicConfig.maxDatagramFrameSize is 0" }
+                require(!webTransport) { "Http3Settings.webTransport needs QUIC datagrams: QuicConfig datagrams { maxFrameSize } is null" }
                 toBuilder().apply { h3Datagram = false }.build()
             } else {
                 this

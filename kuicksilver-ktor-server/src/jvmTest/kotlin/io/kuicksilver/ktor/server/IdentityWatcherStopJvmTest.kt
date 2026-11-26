@@ -29,17 +29,23 @@ class IdentityWatcherStopJvmTest {
         serverTest {
             val entered = CountDownLatch(1)
             val release = CountDownLatch(1)
-            val r = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
+            val dir =
+                java.nio.file.Files
+                    .createTempDirectory("kuicksilver-watch-stop")
+                    .toFile()
+                    .also { it.deleteOnExit() }
+            val chain = java.io.File(dir, "chain.pem").apply { writeText(TestCerts.toPem("CERTIFICATE", TestCerts.server)) }
+            val key = java.io.File(dir, "key.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
             val server =
                 kuicksilverServer(null, configure = {
-                    identity = r
-                    identityFiles = "chain.pem" to "key.pem"
-                    closeIdentityOnStop = true
-                    identityReloadInterval = 1.hours
-                    identityReadTextForTest = {
-                        entered.countDown()
-                        release.await() // a coroutine's cancellation does not interrupt a thread blocked here
-                        ""
+                    tls {
+                        pemFiles(chain.path, key.path) // the engine's own identity, closed at its stop
+                        reloadInterval = 1.hours
+                        readTextForTest = {
+                            entered.countDown()
+                            release.await() // a coroutine's cancellation does not interrupt a thread blocked here
+                            ""
+                        }
                     }
                     connector {
                         host = "127.0.0.1"
@@ -48,6 +54,7 @@ class IdentityWatcherStopJvmTest {
                 }, module = {})
             try {
                 server.startSuspend(false)
+                val r = checkNotNull(server.engine.engineTls.reloadableIdentity)
                 val reading = withContext(Dispatchers.IO) { entered.await(20, TimeUnit.SECONDS) }
                 assertTrue(reading, "the watcher's first read did not start within 20 s")
                 server.stopSuspend(100, 500)

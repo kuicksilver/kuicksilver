@@ -21,7 +21,7 @@ class TimerHeapTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     @Test fun headIsAlwaysTheEarliestDeadline() {
-        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(2))
+        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build(), Random(2))
         val cfg = QuicClientConfig.Builder(CoreFixtures.client()).build()
         val cores = (0 until 40).map { ep.connect(cfg, InetSocketAddress("10.0.0.1", 1000 + it), TimeMark(1_000_000_000L)) }
         val heap = TimerHeap()

@@ -27,7 +27,7 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.AlternativeSource
 import io.kuicksilver.ktor.client.FallbackReason
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.InMemoryAltSvcStore
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.ktor.network.tls
@@ -219,18 +219,20 @@ class ServerHttp3AdvertisingTest {
                 HttpClient(KuicksilverClient) {
                     expectSuccess = false
                     engine {
-                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
+                        tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
                         http3 {
-                            discovery = Http3DiscoveryMode.Auto
+                            discovery = Http3Discovery.Auto
                             altSvcStore = store
-                            hardDelay = Duration.INFINITE // HTTP/1.1 only once HTTP/3 failed: the outcome does not depend on timing
+                            expert {
+                                raceHeadStart = io.kuicksilver.ktor.client.RaceHeadStart.NoRace
+                            } // TCP only once HTTP/3 failed: the outcome does not depend on timing
                         }
                     }
                 }
             try {
-                // advertised: the client learns the alternative from an HTTP/1.1 response
+                // advertised: the client learns the alternative from an HTTP/2 response (HTTP/2 is on by default)
                 val learned = withTimeout(10.seconds) { client.get("$origin/") }
-                assertEquals(HttpProtocolVersion.HTTP_1_1, learned.kuicksilverDiagnostics?.protocol)
+                assertEquals(HttpProtocolVersion.HTTP_2_0, learned.kuicksilverDiagnostics?.protocol)
                 assertEquals(listOf(port), store.get(origin).map { it.port }, "Alt-Svc learned before Drain")
                 server.advertising(Http3Advertising.Drain)
                 val refused =
@@ -244,7 +246,7 @@ class ServerHttp3AdvertisingTest {
                 assertEquals(true, resp.endsWith("ok") && resp.contains("Alt-Svc: clear\r\n"), resp)
                 val refusedCall = withTimeout(10.seconds) { client.get("$origin/") }
                 val d = assertNotNull(refusedCall.kuicksilverDiagnostics)
-                assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
+                assertEquals(HttpProtocolVersion.HTTP_2_0, d.protocol)
                 assertEquals(FallbackReason.Refused, d.fallback, "${d.h3Failure}")
                 assertEquals(AlternativeSource.AltSvc, d.alternativeSource)
                 assertEquals("ok", refusedCall.bodyAsText())
@@ -308,7 +310,7 @@ class ServerHttp3AdvertisingTest {
      */
     @Test fun altSvcOffSendsNoHeaderInAnyMode() =
         h3ServerTest {
-            val (server, port) = tlsServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = tlsServer(configure = { http3 { altSvc = false } }) { routing { get("/") { call.respondText("ok") } } }
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             try {
                 for (mode in Http3Advertising.entries) {
@@ -343,7 +345,7 @@ class ServerHttp3AdvertisingTest {
                 val arrived = CompletableDeferred<Unit>()
                 val release = CompletableDeferred<Unit>()
                 val (server, port) =
-                    tlsServer(configure = { altSvc = altSvcOn }) {
+                    tlsServer(configure = { http3 { altSvc = altSvcOn } }) {
                         routing {
                             get("/") { call.respondText("ok") }
                             get("/slow") {
@@ -383,7 +385,7 @@ class ServerHttp3AdvertisingTest {
         }
 
     /**
-     * A configured `quicAdmission` decides under `On`; under `Drain` it is not asked, and the client gets CONNECTION_REFUSED.
+     * A configured `http3 { endpoint { admission } }` decides under `On`; under `Drain` it is not asked, and the client gets CONNECTION_REFUSED.
      * The policy records the client ports it saw, so a late retransmission from the first client cannot pass for the second.
      */
     @Test fun configuredAdmissionAppliesUnderOnAndIsBypassedUnderDrain() =
@@ -391,11 +393,15 @@ class ServerHttp3AdvertisingTest {
             val askedPorts = kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             val (server, port) =
                 tlsServer(configure = {
-                    quicAdmission =
-                        ConnectionAdmission { attempt ->
-                            askedPorts.trySend(attempt.remote.port)
-                            AdmissionDecision.Close(TransportError.APPLICATION_ERROR)
+                    http3 {
+                        endpoint {
+                            admission =
+                                ConnectionAdmission { attempt ->
+                                    askedPorts.trySend(attempt.remote.port)
+                                    AdmissionDecision.Close(TransportError.APPLICATION_ERROR)
+                                }
                         }
+                    }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val first = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             val second = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))

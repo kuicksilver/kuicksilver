@@ -5,6 +5,7 @@
 
 # Outputs of documented commands, not references to tracked files.
 CONTRIBUTING.md | path-ignored | kuicksilver-soak/build/soak # the soak report's default directory, written by the run
+samples/http3-server/README.md | path-ignored | samples/http3-server/build/dev-certs/ # the development CA and key, written by the sample's certs/gen.sh
 docs/benchmarks.md | path-missing | tables.md (missing # a file run-table.sh writes into its --out directory
 
 # ADR-0013 is a design record: its test plan and API sketch name what was planned, and a note after them names what

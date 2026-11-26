@@ -131,7 +131,8 @@ class ServerFailedChannelResponseTest {
                     host = "127.0.0.1"
                     port = 0
                 }
-                tlsConnector(ServerFixtures.identity()) {
+                tlsConnector {
+                    tls { identity = ServerFixtures.identity() }
                     host = "127.0.0.1"
                     port = 0
                 }

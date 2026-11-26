@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# The HTTP/2 server h2spec runs against (tools/interop/h2spec.sh): the Ktor server engine with `http2 = true` on one TLS
-# connector, or with h2c on one plain connector (kuicksilver-soak, H2specServer.kt). It prints "h2spec-server listening on
+# The HTTP/2 server h2spec runs against (tools/interop/h2spec.sh): the Ktor server engine as configured by default (HTTP/2
+# is on by default since 0.3.0) on one TLS connector, or with h2c on one plain connector (kuicksilver-soak, H2specServer.kt). It prints "h2spec-server listening on
 # <port>" once it accepts connections and runs until killed.
 # Usage: h2-server.sh build <jvm|macos|linux-x64>       build the server of that kind (Gradle, offline-capable)
 #        h2-server.sh run <jvm|macos> [host] [port] [trusted-gateway] [h2c]

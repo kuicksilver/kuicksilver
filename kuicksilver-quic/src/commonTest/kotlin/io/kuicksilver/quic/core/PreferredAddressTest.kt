@@ -487,7 +487,7 @@ class PreferredAddressTest {
             EndpointPair(
                 crypto = KslQuicCrypto,
                 serverPreferred = PreferredAddress(v4, null),
-                serverQuic = quicConfig { allowMigration = false },
+                serverQuic = quicConfig { migration { allow = false } },
             )
         p.use { _ ->
             val c = p.connect()
@@ -817,7 +817,7 @@ class PreferredAddressTest {
 
     @Test fun withoutAnIdleTimeoutAnIdIsKeptForTheFallback() {
         // neither side sets an idle timeout (the connection may last for ever): an ID is kept max(3 x PTO, 30 s), then forgotten
-        val none = io.kuicksilver.quic.quicConfig { maxIdleTimeout = kotlin.time.Duration.ZERO }
+        val none = io.kuicksilver.quic.quicConfig { maxIdleTimeout = null }
         val p = EndpointPair(crypto = KslQuicCrypto, serverQuic = none, serverPreferred = PreferredAddress(v4, null))
         p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p, none)
@@ -840,7 +840,7 @@ class PreferredAddressTest {
         // client's ID on the original address), not the one of the path it left
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
         p.use { _ ->
-            val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
+            val c = p.connect(io.kuicksilver.quic.quicConfig { migration { followPreferredAddress = false } })
             assertTrue(p.confirmed(c))
             assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
             val s = p.server.connections().single()
@@ -862,7 +862,7 @@ class PreferredAddressTest {
         // makes that packet stale, and the move with it: the server must stay where the client is, not drop its packets there
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
         p.use { _ ->
-            val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
+            val c = p.connect(io.kuicksilver.quic.quicConfig { migration { followPreferredAddress = false } })
             assertTrue(p.confirmed(c))
             assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
             val s = p.server.connections().single()

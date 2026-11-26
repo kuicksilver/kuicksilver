@@ -41,7 +41,7 @@ class ClientServerWebSocketCloseTest {
     ) = clientTest {
         if (transport == Transport.H3 && !quicServerSupported()) return@clientTest
         val (server, port) =
-            testServer(plain = transport == Transport.H1Plain, configure = { if (transport == Transport.H2) http2 = true }) {
+            testServer(plain = transport == Transport.H1Plain, configure = { if (transport == Transport.H2) http2 { enabled = true } }) {
                 install(ServerWebSockets)
                 routing {
                     get("/") { call.respondText("ok") }
@@ -51,7 +51,7 @@ class ClientServerWebSocketCloseTest {
             }
         val hook = MutableStateFlow(emptyList<String>())
         try {
-            val discovery = if (transport == Transport.H3) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only
+            val discovery = if (transport == Transport.H3) Http3Discovery.H3Only else null
             testClient(discovery, block = { install(WebSockets) }).use { c ->
                 val e = c.engine as KuicksilverEngine
                 val record: (String) -> Unit = { ev -> hook.update { it + ev } }

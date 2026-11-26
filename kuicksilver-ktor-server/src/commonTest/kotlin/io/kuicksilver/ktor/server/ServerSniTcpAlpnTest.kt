@@ -27,10 +27,9 @@ class ServerSniTcpAlpnTest {
         val id = ServerFixtures.identity()
         return tlsServer(
             configure = {
-                http2 = true
-                http3 = true
+                http3 { enabled = true }
             },
-            connector = { sniSelector = { ServerTlsOverride(id, alpn = alpn) } },
+            connector = { tls { sniSelector = { ServerTlsOverride(id, alpn = alpn) } } },
         ) { routing { get("/") { call.respondText("ok") } } }
     }
 
@@ -138,7 +137,7 @@ class ServerSniTcpAlpnTest {
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun theConnectorsTcpConfigurationsTakeHttp11ForAClientWithoutAlpn() {
-        val connector = KuicksilverTlsConnector.Builder(ServerFixtures.identity()).build()
+        val connector = testConnector { tls { identity = ServerFixtures.identity() } }
         assertEquals("http/1.1", connector.tlsConfig(listOf("h2")).alpnFallback)
         assertEquals("http/1.1", connector.tlsConfig(listOf("h2", "http/1.1")).alpnFallback)
         assertEquals(null, connector.tlsConfig(listOf("h3")).alpnFallback)

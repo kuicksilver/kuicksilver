@@ -88,7 +88,7 @@ internal object QuicLbFixtures {
                         .apply { quic = quicConfig { connectionIdLength = lb?.connectionIdLength ?: 8 } }
                         .build()
                 connectionIdLength = lb?.connectionIdLength ?: 8
-                crypto = LbNullCrypto
+                runtime { crypto = LbNullCrypto }
                 loadBalancer = lb
                 this.loops = loops
                 admission?.let { this.admission = it }
@@ -144,7 +144,7 @@ internal class LbPair(
     val serverAddr = InetSocketAddress("10.0.0.2", 443)
     var now = TimeMark(1_000_000_000L)
     val server = EndpointCore(QuicLbFixtures.endpointConfig(lb, admission = admission), Random(serverSeed))
-    val client = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(6))
+    val client = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build(), Random(6))
     private val batch = PacketBatch(16)
 
     fun connect(): ConnectionCore = client.connect(QuicClientConfig.Builder(CoreFixtures.client()).build(), serverAddr, now)

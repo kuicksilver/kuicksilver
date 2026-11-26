@@ -226,6 +226,14 @@ public class TlsConnection private constructor(
     /** Client: an ECH configuration was set on this connection ([TlsConfig.echConfigList]). */
     private var echOffered = false
 
+    /**
+     * Client: until when the OCSP response the server stapled in the handshake is fresh (its nextUpdate, epoch seconds), 0
+     * when none was checked; a resumed session keeps its full handshake's (`verifyForReuse` holds a coalesced origin to it).
+     */
+    @InternalKuicksilverApi
+    public var stapleUntil: Long = 0L
+        private set
+
     private fun s(): Long {
         if (closed || ssl == 0L) throw IllegalStateException("connection closed")
         return ssl
@@ -442,6 +450,7 @@ public class TlsConnection private constructor(
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
         keyExchangeGroup = groupOf(s())
         echStatus = echStatusOf(s())
+        if (config.role == TlsRole.Client) stapleUntil = if (reused) cached?.stapleUntil ?: 0L else stapleUntilOf(s())
         peerCertificateCompression = CertificateCompression.of(Ksl.sslGet(s(), KslConst.GET_CERT_COMPRESSION))
         presented = chain()
         val effective = overrideCtx?.ctx?.config ?: config

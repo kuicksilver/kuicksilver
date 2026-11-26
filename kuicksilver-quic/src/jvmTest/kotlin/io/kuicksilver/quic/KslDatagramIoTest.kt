@@ -315,11 +315,11 @@ class KslDatagramIoTest {
                             .apply {
                                 this.server =
                                     QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                ; crypto = KslQuicCrypto
+                                ; runtime { crypto = KslQuicCrypto }
                             }.build(),
                     )
                 }
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(30.seconds) {
                     val accepted = async { server.accept() }
@@ -632,10 +632,10 @@ class KslDatagramIoTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(180.seconds) {
                     val accepted = async { server.accept() }
@@ -679,9 +679,9 @@ class KslDatagramIoTest {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val quic =
                 quicConfig {
-                    maxUdpPayloadSize = 1500
-                    initialUdpPayloadSize = 1500
-                    pmtud = false
+                    pathMtu { maxReceive = 1500 }
+                    pathMtu { initial = 1500 }
+                    pathMtu { discovery = false }
                 }
             val server =
                 QuicEndpoint.bind(
@@ -690,10 +690,10 @@ class KslDatagramIoTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { this.quic = quic }.build()
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(60.seconds) {
                     val accepted = async { server.accept() }
@@ -736,7 +736,7 @@ class KslDatagramIoTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
             val bleaching =
@@ -745,9 +745,9 @@ class KslDatagramIoTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io =
-                                { local ->
+                            runtime { crypto = KslQuicCrypto }
+                            runtime {
+                                io = { local ->
                                     val inner = KslDatagramIo.open(local)!!
                                     object : DatagramIo by inner {
                                         override suspend fun receive(into: PacketBatch): Int {
@@ -761,9 +761,10 @@ class KslDatagramIoTest {
                                         }
                                     }
                                 }
+                            }
                         }.build(),
                 )
-            val clean = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val clean = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(120.seconds) {
                     suspend fun transfer(client: QuicEndpoint): Pair<QuicConnection, QuicConnection> {
@@ -810,10 +811,11 @@ class KslDatagramIoTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val clients = List(80) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build()) }
+            val clients =
+                List(80) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build()) }
             try {
                 withTimeout(30.seconds) {
                     val accepted = async { server.accept() }

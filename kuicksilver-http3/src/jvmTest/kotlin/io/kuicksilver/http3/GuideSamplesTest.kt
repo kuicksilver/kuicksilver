@@ -110,12 +110,12 @@ class GuideSamplesTest {
                 val q = QuicPair.open()
                 val (quicConnection, serverQuic) = q.connect()
                 // guide:http3:qpack
-                val settings = http3Settings { enableQpackDynamicTable() } // advertise 4096 bytes / 16 blocked streams
+                val settings = http3Settings { qpack { enableDynamicTable() } } // advertise 4096 bytes / 16 blocked streams
                 val serverConnection =
                     Http3Connection.server(
                         serverQuic,
                         http3Settings {
-                            enableQpackDynamicTable()
+                            qpack { enableDynamicTable() }
                             enableConnectProtocol =
                                 true
                         },
@@ -175,7 +175,7 @@ class GuideSamplesTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(H3Fixtures.server()).build()
-                                io = { net.open(webAt) }
+                                runtime { io = { net.open(webAt) } }
                             }.build(),
                     )
                 val webServing =
@@ -223,8 +223,7 @@ class GuideSamplesTest {
                             QuicEndpointConfig
                                 .Builder()
                                 .apply {
-                                    io =
-                                        { tunnel.asDatagramIo() }
+                                    runtime { io = { tunnel.asDatagramIo() } }
                                 }.build(),
                         )
                     val h3 = inner.connect(tunnel.remoteAddress, tls)
@@ -284,7 +283,7 @@ class GuideSamplesTest {
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     }
                 val serverConnection = Http3Connection.server(serverQuic, wt)
                 val client = Http3Connection.client(quicConnection, wt)
@@ -323,7 +322,7 @@ class GuideSamplesTest {
                 val wt =
                     http3Settings {
                         enableConnectProtocol = true
-                        webTransport = true
+                        webTransport { enabled = true }
                     }
                 val serverConnection = Http3Connection.server(serverQuic, wt)
                 val client = Http3Connection.client(quicConnection, wt)

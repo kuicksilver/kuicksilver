@@ -32,6 +32,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.peerCertificates
@@ -72,7 +73,6 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:client" in guide, "marker client")
-        assertTrue("guide:ktor:minimal-client" in guide, "marker minimal-client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
@@ -83,6 +83,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
         assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
         assertTrue("guide:ktor:h2c-client" in guide, "marker h2c-client")
+        assertTrue("guide:ktor:coalescing" in guide, "marker coalescing")
         assertTrue("guide:ktor:mtls-client" in guide, "marker mtls-client")
         assertTrue("guide:ktor:protocol-log" in guide, "marker protocol-log")
         assertTrue("guide:ktor:client-connection" in guide, "marker client-connection")
@@ -94,7 +95,7 @@ class GuideSamplesTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val url = "https://127.0.0.1:$port/"
             try {
-                HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                HttpClient(Kuicksilver) { engine { tls { trust = ClientFixtures.trust } } }.use { client ->
                     // guide:ktor:client-connection
                     val d =
                         client.prepareGet(url).execute { response ->
@@ -130,7 +131,7 @@ class GuideSamplesTest {
                         ).use { (it.localAddress as io.ktor.network.sockets.InetSocketAddress).port }
                 }
             val url = "https://127.0.0.1:$port/"
-            HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+            HttpClient(Kuicksilver) { engine { tls { trust = ClientFixtures.trust } } }.use { client ->
                 var seen: ProtocolDiagnostics? = null
                 // guide:ktor:client-failure
                 try {
@@ -158,7 +159,7 @@ class GuideSamplesTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val url = "https://127.0.0.1:$port/"
             try {
-                HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                HttpClient(Kuicksilver) { engine { tls { trust = ClientFixtures.trust } } }.use { client ->
                     // guide:ktor:client-diagnostics
                     val response = client.get(url)
                     val d = response.kuicksilverDiagnostics
@@ -180,7 +181,7 @@ class GuideSamplesTest {
             val quicAllowed: StateFlow<Boolean> = remoteConfig
             val client =
                 HttpClient(Kuicksilver) {
-                    engine { http3 { http3Allowed = { quicAllowed.value } } }
+                    engine { http3 { allowed = { quicAllowed.value } } }
                 }
             client.closeHttp3Connections()
 
@@ -191,10 +192,10 @@ class GuideSamplesTest {
                     // the guide's client with the test trust: switched off, a Preferred request goes over HTTP/1.1
                     HttpClient(Kuicksilver) {
                         engine {
-                            trust = ClientFixtures.trust
+                            tls { trust = ClientFixtures.trust }
                             http3 {
-                                discovery = Http3DiscoveryMode.Preferred
-                                http3Allowed = { quicAllowed.value }
+                                discovery = Http3Discovery.Preferred
+                                allowed = { quicAllowed.value }
                             }
                         }
                     }.use { t -> assertEquals(HttpProtocolVersion.HTTP_1_1, t.get("https://127.0.0.1:$port/").version) }
@@ -234,24 +235,26 @@ class GuideSamplesTest {
         val observed =
             HttpClient(Kuicksilver) {
                 engine {
-                    eventListener =
-                        object : KuicksilverEventListener() {
-                            override fun protocolSelected(
-                                request: HttpRequestData,
-                                protocol: HttpProtocolVersion,
-                                reason: ProtocolReason,
-                            ) {
-                                println("${request.url}: $protocol ($reason)")
+                    observability {
+                        eventListener =
+                            object : KuicksilverEventListener() {
+                                override fun protocolSelected(
+                                    request: HttpRequestData,
+                                    protocol: HttpProtocolVersion,
+                                    reason: ProtocolReason,
+                                ) {
+                                    println("${request.url}: $protocol ($reason)")
+                                }
                             }
-                        }
-                    http3 { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+                        qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
+                    }
                 }
             }
         observed.close()
         // guide:ktor:zero-rtt-client
         val client =
             HttpClient(Kuicksilver) {
-                engine { http3 { earlyData = true } }
+                engine { http3 { earlyData { enabled = true } } }
             }
         client.close()
     }
@@ -278,7 +281,7 @@ class GuideSamplesTest {
     @Test fun webTransportClientSample() =
         h3Test {
             val (server, port) =
-                testServer(configure = { webTransport = true }) {
+                testServer(configure = { http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransportRoute("/echo", protocols = listOf("echo-v1")) { s ->
                             val st = s.acceptBidi()
@@ -289,7 +292,7 @@ class GuideSamplesTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto).use { client ->
+                testClient(Http3Discovery.Auto).use { client ->
                     val url = "https://127.0.0.1:$port/echo"
                     // guide:ktor:webtransport-client
                     val session = client.webTransport(url, protocols = listOf("echo-v1"))
@@ -315,7 +318,7 @@ class GuideSamplesTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                testClient(Http3Discovery.H3Only).use { client ->
                     val origin = "https://127.0.0.1:$port"
                     // guide:ktor:priority-client
                     val page = client.get("$origin/index.html") { priority(urgency = 1) }
@@ -338,15 +341,17 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    connectUdpProxy =
-                        ConnectUdpProxy(
-                            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
-                            ProxyCredentials("user", password),
-                        ) { url -> !url.host.endsWith(".internal.test") } // these go the usual way
+                    proxies {
+                        connectUdp =
+                            ConnectUdpProxy(
+                                UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+                                ProxyCredentials("user", password),
+                            ) { url -> !url.host.endsWith(".internal.test") }
+                    } // these go the usual way
                 }
             }
         client.use {
-            val p = (it.engine as KuicksilverEngine).config.connectUdpProxy!!
+            val p = (it.engine as KuicksilverEngine).config.proxies.connectUdp!!
             assertEquals(false, p.applies(io.ktor.http.Url("https://a.internal.test/"))) // ClientConnectUdpProxyTest runs one
             assertEquals("masque.example", p.template.authority)
         }
@@ -361,38 +366,43 @@ class GuideSamplesTest {
                 HttpClient(Kuicksilver) {
                     engine {
                         proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
-                        proxyCredentials = ProxyCredentials("user", password) // for `proxy` only
+                        proxies { credentials = ProxyCredentials("user", password) } // for `proxy` only
                     }
                 }
             // a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
             val perHost =
                 HttpClient(Kuicksilver) {
                     engine {
-                        proxyResolver =
-                            ProxyResolver { url ->
-                                if (url.host.endsWith(".internal.test")) {
-                                    null // direct
-                                } else {
-                                    ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+                        proxies {
+                            resolver =
+                                ProxyResolver { url ->
+                                    if (url.host.endsWith(".internal.test")) {
+                                        null // direct
+                                    } else {
+                                        ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+                                    }
                                 }
-                            }
+                        }
                     }
                 }
             // an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
             val overTls =
                 HttpClient(Kuicksilver) {
                     engine {
-                        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
-                        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+                        proxies {
+                            resolver =
+                                ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+                            tls { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+                        }
                     }
                 }
             overTls.use {
-                val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
+                val resolver = (it.engine as KuicksilverEngine).config.proxies.resolver
                 assertEquals("https://proxy.corp.test:443", resolver.proxyFor(io.ktor.http.Url("https://example.test/")).toString())
             }
             viaProxy.close()
             perHost.use {
-                val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
+                val resolver = (it.engine as KuicksilverEngine).config.proxies.resolver
                 assertEquals(null, resolver.proxyFor(io.ktor.http.Url("https://a.internal.test/")))
                 assertEquals("user", resolver.proxyFor(io.ktor.http.Url("https://example.test/"))?.credentials?.user)
             }
@@ -406,24 +416,26 @@ class GuideSamplesTest {
             val client =
                 HttpClient(Kuicksilver) {
                     engine {
-                        dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) }
+                        network { dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) } }
                     }
                 }
             // a blocking resolver (here the JDK's; an OkHttp Dns alike) runs on threads of its own
             val blocking =
                 HttpClient(Kuicksilver) {
                     engine {
-                        dns =
-                            Dns.blocking { name ->
-                                java.net.InetAddress
-                                    .getAllByName(name)
-                                    .map { IpAddress.of(it) }
-                            }
+                        network {
+                            dns =
+                                Dns.blocking { name ->
+                                    java.net.InetAddress
+                                        .getAllByName(name)
+                                        .map { IpAddress.of(it) }
+                                }
+                        }
                     }
                 }
             blocking.close()
             client.use {
-                val dns = (it.engine as KuicksilverEngine).config.dns
+                val dns = (it.engine as KuicksilverEngine).config.network.dns
                 assertEquals(fixed["api.example.test"], dns.lookup("api.example.test"))
                 assertEquals(listOf(IpAddress.parse("127.0.0.1")), dns.lookup("127.0.0.1"))
             }
@@ -435,17 +447,36 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    maxConnectionsCount = 1000 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
-                    maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
-                    maxIdleConnectionsPerRoute = 4 // idle keep-alive connections kept per route
-                    idleTimeout = 5.minutes // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
-                    maxConnectionLifetime = Duration.INFINITE // age after which a connection takes no new requests
+                    pool {
+                        maxConnections = 1000 // TCP connections (HTTP/1.1, HTTP/2) of the engine, idle ones included
+                        maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
+                        maxIdleConnectionsPerRoute = 4 // idle keep-alive connections kept per route
+                        idleTimeout = 5.minutes // idle HTTP/1.1, HTTP/2 and HTTP/3 connections are closed after this
+                        maxConnectionLifetime = null // age after which a connection takes no new requests; null: none
+                    }
                 }
             }
         client.use {
             val config = it.engine.config as KuicksilverEngineConfig
-            assertEquals(1000, config.maxConnectionsCount)
-            assertEquals(5.minutes, config.idleTimeout)
+            assertEquals(1000, config.pool.maxConnections)
+            assertEquals(5.minutes, config.pool.idleTimeout)
+        }
+    }
+
+    @Test
+    fun coalescingSample() {
+        // guide:ktor:coalescing
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    // another origin's HTTP/2 or HTTP/3 connection may carry a request when its certificate passes every check
+                    // for the request's host and that host resolves to its address (off by default)
+                    pool { coalescing = true }
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertTrue(config.pool.coalescing)
         }
     }
 
@@ -456,9 +487,8 @@ class GuideSamplesTest {
             HttpClient(Kuicksilver) {
                 engine {
                     http2 {
-                        enabled = true // the default: offer h2 on every TLS connection over TCP
-                        pingInterval = 30.seconds // a keep-alive PING; Duration.INFINITE (the default): none
-                        settings = Http2Settings(initialStreamWindow = 1 shl 20) // our windows and limits (threat model 3.23)
+                        pingInterval = 30.seconds // a keep-alive PING; null (the default): none
+                        settings { initialStreamWindow = 1 shl 20 } // our windows and limits (threat model 3.23)
                     }
                 }
             }
@@ -466,7 +496,7 @@ class GuideSamplesTest {
             val config = it.engine.config as KuicksilverEngineConfig
             assertTrue(config.http2.enabled)
             assertEquals(30.seconds, config.http2.pingInterval)
-            assertEquals(1 shl 20, config.http2.settings.initialStreamWindow)
+            assertEquals(1 shl 20, config.resolveHttp2Settings().initialStreamWindow)
         }
     }
 
@@ -495,11 +525,14 @@ class GuideSamplesTest {
             val serverCaPem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
             val server =
                 embeddedServer(KuicksilverServer, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
-                        clientAuth = ClientAuth.Required
-                        trust = ClientFixtures.trust
+                        tls {
+                            clientAuth = ClientAuth.Required
+                            clientTrust = ClientFixtures.trust
+                        }
                     }
                 }) {
                     routing {
@@ -520,18 +553,22 @@ class GuideSamplesTest {
                 val client =
                     HttpClient(Kuicksilver) {
                         engine {
-                            this.identity = identity // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
-                            // or keep Platform for a public server certificate
-                            trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))
+                            tls {
+                                this.identity = identity // presented over HTTP/3, HTTP/2 and HTTP/1.1 alike
+                                // or keep Platform for a public server certificate
+                                trust = TrustConfig.AnchoredCa(Certificate.parsePem(serverCaPem))
+                            }
                         }
                     }
 
-                client.use { c -> assertEquals("HTTP/1.1 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
+                client.use { c -> assertEquals("HTTP/2 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                 HttpClient(Kuicksilver) {
                     engine {
-                        this.identity = identity
-                        trust = ClientFixtures.trust
-                        http3 { discovery = Http3DiscoveryMode.H3Only }
+                        tls {
+                            this.identity = identity
+                            trust = ClientFixtures.trust
+                        }
+                        http3 { discovery = Http3Discovery.H3Only }
                     }
                 }.use { c -> assertEquals("HTTP/3 [client.test]", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                 // without a certificate: the server ends the QUIC handshake with certificate_required (0x0100 + 116)
@@ -539,49 +576,54 @@ class GuideSamplesTest {
                     assertFails {
                         HttpClient(Kuicksilver) {
                             engine {
-                                trust = ClientFixtures.trust
-                                http3 { discovery = Http3DiscoveryMode.H3Only }
+                                tls { trust = ClientFixtures.trust }
+                                http3 { discovery = Http3Discovery.H3Only }
                             }
                         }.use { c -> c.get("https://127.0.0.1:$port/") }
                     }
                 assertIs<QuicException.ConnectionLost.TransportClosed>(without, without.toString())
                 assertEquals(0x0174L, without.code)
                 assertIs<TlsException.AlertReceived>(without.cause, without.toString())
-                // over TCP (H1Only), and in Preferred mode, where HTTP/3 fails first and the call goes on over TCP: there the TLS
-                // handshake completes on the client's side and the alert ends the request, so the TCP failure is thrown alone
+                // over TCP (HTTP/3 off), and in Preferred mode, where HTTP/3 fails first and the call goes on over TCP: there the
+                // TLS handshake completes on the client's side and the alert ends the HTTP/2 connection (the server offers h2 by
+                // default), so the TCP failure is thrown alone
                 val h3Failures = mutableListOf<Throwable?>()
-                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.Preferred)) {
+                for (mode in listOf(null, Http3Discovery.Preferred)) {
                     val e =
                         assertFails {
                             HttpClient(Kuicksilver) {
                                 engine {
-                                    trust = ClientFixtures.trust
-                                    http3 { discovery = mode }
-                                    eventListener =
-                                        object : KuicksilverEventListener() {
-                                            override fun raceEnded(
-                                                request: HttpRequestData,
-                                                winner: HttpProtocolVersion,
-                                                headStart: kotlin.time.Duration,
-                                                h3Failure: Throwable?,
-                                            ) {
-                                                h3Failures += h3Failure
-                                            }
+                                    tls { trust = ClientFixtures.trust }
+                                    http3 { mode?.let { discovery = it } ?: run { enabled = false } }
+                                    observability {
+                                        eventListener =
+                                            object : KuicksilverEventListener() {
+                                                override fun raceEnded(
+                                                    request: HttpRequestData,
+                                                    winner: HttpProtocolVersion,
+                                                    headStart: kotlin.time.Duration,
+                                                    h3Failure: Throwable?,
+                                                ) {
+                                                    h3Failures += h3Failure
+                                                }
 
-                                            override fun fallback(
-                                                request: HttpRequestData,
-                                                cause: Throwable,
-                                            ) {
-                                                h3Failures += cause
+                                                override fun fallback(
+                                                    request: HttpRequestData,
+                                                    cause: Throwable,
+                                                ) {
+                                                    h3Failures += cause
+                                                }
                                             }
-                                        }
+                                    }
                                 }
                             }.use { c -> c.get("https://127.0.0.1:$port/") }
                         }
-                    assertEquals("TLS alert received from the peer: certificate_required (116)", e.message, "$mode: $e")
-                    assertIs<TlsException.AlertReceived>(generateSequence(e) { it.cause }.last(), "$mode: $e")
-                    assertEquals(emptyList(), e.suppressed.toList(), "$mode: $e")
-                    if (mode == Http3DiscoveryMode.H1Only) {
+                    assertIs<io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed>(e, "$mode: $e")
+                    assertEquals("the connection was lost: TLS alert received from the peer: certificate_required (116)", e.message)
+                    assertIs<TlsException.AlertReceived>(generateSequence<Throwable>(e) { it.cause }.last(), "$mode: $e")
+                    // nothing but the diagnostics of the failed call rides along
+                    assertEquals(emptyList(), e.suppressed.filter { it !is FailureDiagnostics }, "$mode: $e")
+                    if (mode == null) {
                         assertEquals(emptyList(), h3Failures, "H1Only never tries HTTP/3")
                     } else {
                         // HTTP/3 was tried alongside TCP: the race ended, and if HTTP/3 had failed by then it was with the alert
@@ -611,26 +653,30 @@ class GuideSamplesTest {
                 val client =
                     HttpClient(Kuicksilver) {
                         engine {
-                            trust = ClientFixtures.trust
+                            tls { trust = ClientFixtures.trust }
                             // the engine's own line per call that HTTP/3 could have served, into your logging
-                            logger =
-                                object : KuicksilverLogger {
-                                    override fun isEnabled(level: LogLevel) = level >= LogLevel.Info
+                            observability {
+                                logger =
+                                    object : KuicksilverLogger {
+                                        override fun isEnabled(level: LogLevel) = level >= LogLevel.Info
 
-                                    override fun log(
-                                        level: LogLevel,
-                                        message: String,
-                                        cause: Throwable?,
-                                    ) = logLine("$level $message")
-                                }
+                                        override fun log(
+                                            level: LogLevel,
+                                            message: String,
+                                            cause: Throwable?,
+                                        ) = logLine("$level $message")
+                                    }
+                            }
                             // the HTTP/3 failure itself, when it happens; why the call did not use HTTP/3 is on the response
-                            eventListener =
-                                object : KuicksilverEventListener() {
-                                    override fun fallback(
-                                        request: HttpRequestData,
-                                        cause: Throwable,
-                                    ) = logLine("HTTP/3 failed for ${request.url.host}: $cause")
-                                }
+                            observability {
+                                eventListener =
+                                    object : KuicksilverEventListener() {
+                                        override fun fallback(
+                                            request: HttpRequestData,
+                                            cause: Throwable,
+                                        ) = logLine("HTTP/3 failed for ${request.url.host}: $cause")
+                                    }
+                            }
                         }
                         // one line per response: the protocol and why
                         install(
@@ -656,7 +702,7 @@ class GuideSamplesTest {
     // sample's `HttpClient(Kuicksilver)` resolves to this member, which adds that CA and nothing else.
     @Suppress("FunctionName")
     private fun HttpClient(engine: HttpClientEngineFactory<KuicksilverEngineConfig>): HttpClient =
-        io.ktor.client.HttpClient(engine) { engine { trust = ClientFixtures.trust } }
+        io.ktor.client.HttpClient(engine) { engine { tls { trust = ClientFixtures.trust } } }
 
     @Test fun minimalClientSample() =
         clientTest {
@@ -672,7 +718,7 @@ class GuideSamplesTest {
                 }
             val url = "https://127.0.0.1:$port/"
             try {
-                // guide:ktor:minimal-client
+                // the first screen of the guide (guide:ktor:first-screen-client), against a running server
                 val client = HttpClient(Kuicksilver)
                 println(client.get(url).bodyAsText())
                 client.close()
@@ -687,12 +733,7 @@ class GuideSamplesTest {
         val client =
             HttpClient(Kuicksilver) {
                 engine {
-                    trust =
-                        TrustConfig.Pinned(
-                            setOf(SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")),
-                            base = TrustConfig.Platform,
-                        )
-                    http3 { discovery = Http3DiscoveryMode.Auto } // the default: HTTP/1.1 first, HTTP/3 after Alt-Svc
+                    http3 { discovery = Http3Discovery.Auto } // the default: TCP first, HTTP/3 after Alt-Svc
                 }
                 install(HttpTimeout) {
                     connectTimeoutMillis = 5_000
@@ -701,8 +742,27 @@ class GuideSamplesTest {
             }
         client.use {
             val config = it.engine.config as KuicksilverEngineConfig
-            assertTrue(config.trust is TrustConfig.Pinned)
-            assertEquals(Http3DiscoveryMode.Auto, config.http3.discovery)
+            assertEquals(Http3Discovery.Auto, config.http3.discovery)
+        }
+        // guide:ktor:pinning
+        val pinned =
+            HttpClient(Kuicksilver) {
+                engine {
+                    tls {
+                        trust =
+                            TrustConfig.Pinned(
+                                setOf(
+                                    SpkiSha256.parse("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="), // the current key
+                                    SpkiSha256.parse("sha256/u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="), // the backup key
+                                ),
+                                base = TrustConfig.Platform, // the chain is still verified; the pin comes on top
+                            )
+                    }
+                }
+            }
+        pinned.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertTrue(config.tls.trust is TrustConfig.Pinned)
         }
     }
 
@@ -720,8 +780,8 @@ class GuideSamplesTest {
                 HttpClient(Kuicksilver) {
                     engine {
                         // the records' `ech`, through your DNS-over-HTTPS exchange (see "HTTPS records")
-                        http3 { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
-                        ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) }
+                        network { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
+                        tls { ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) } }
                     }
                 }
 

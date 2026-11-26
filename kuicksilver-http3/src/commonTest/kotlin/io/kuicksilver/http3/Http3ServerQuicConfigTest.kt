@@ -39,11 +39,11 @@ class Http3ServerQuicConfigTest {
                         quic =
                             quicConfig {
                                 maxBidiStreams = 7
-                                code?.let { defaultStreamErrorCode = it }
+                                code?.let { expert { cancelErrorCode = it } }
                             }
-                        earlyData = early
+                        acceptEarlyData = early
                     }.build()
-            crypto = NullCryptoProvider
+            runtime { crypto = NullCryptoProvider }
         }.build()
 
     @Test fun aRequestStreamAbandonedUnseenIsRejected() {
@@ -59,12 +59,12 @@ class Http3ServerQuicConfigTest {
 
     @Test fun aZeroRttServerKeepsItsEarlyDataAndTheRejectionCode() {
         val s = endpoint(null, early = true).forHttp3Server(Http3Settings.Default).server!!
-        assertTrue(s.earlyData)
+        assertTrue(s.acceptEarlyData)
         assertEquals(Http3ErrorCode.REQUEST_REJECTED, s.quic.defaultStreamErrorCode)
     }
 
     @Test fun aClientOnlyEndpointIsUnchanged() {
-        val c = QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build()
+        val c = QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build()
         assertNull(c.forHttp3Server(Http3Settings.Default).server)
     }
 }

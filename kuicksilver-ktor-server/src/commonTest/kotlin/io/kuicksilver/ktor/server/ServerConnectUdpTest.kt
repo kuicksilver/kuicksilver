@@ -99,7 +99,7 @@ class ServerConnectUdpTest {
 
     @Test fun tunnelThroughTheRoute() =
         h3ServerTest {
-            val (server, port) = tlsServer({ connectUdp = true }) { routing { connectUdp(loopbackProxy()) } }
+            val (server, port) = tlsServer({ http3 { connectUdp = true } }) { routing { connectUdp(loopbackProxy()) } }
             val target = DatagramIo.open(loopback)
             try {
                 coroutineScope {
@@ -122,7 +122,7 @@ class ServerConnectUdpTest {
     /** The default proxy refuses loopback (RFC 9298 section 7): 403 with `destination_ip_prohibited`, through the route. */
     @Test fun negative_defaultProxyRefusesLoopbackThroughTheRoute() =
         h3ServerTest {
-            val (server, port) = tlsServer({ connectUdp = true }) { routing { connectUdp() } }
+            val (server, port) = tlsServer({ http3 { connectUdp = true } }) { routing { connectUdp() } }
             try {
                 h3(port) { c ->
                     val e = assertFailsWith<Http3Exception.ConnectRejected> { c.connectUdp(template, "127.0.0.1", 9) }
@@ -139,7 +139,7 @@ class ServerConnectUdpTest {
         h3ServerTest {
             val proxy = loopbackProxy()
             val (server, port) =
-                tlsServer({ connectUdp = true }) {
+                tlsServer({ http3 { connectUdp = true } }) {
                     routing {
                         route("/") {
                             intercept(io.ktor.server.application.ApplicationCallPipeline.Plugins) {
@@ -168,7 +168,7 @@ class ServerConnectUdpTest {
     /** Without `connectUdp = true` the engine answers a CONNECT-UDP with 501 (RFC 9220 section 3), whatever the routes. */
     @Test fun negative_engineWithoutConnectUdpAnswers501() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webSocketsOverHttp3 = true }) { routing { connectUdp(loopbackProxy()) } }
+            val (server, port) = tlsServer({ webSockets { overHttp3 = true } }) { routing { connectUdp(loopbackProxy()) } }
             try {
                 h3(port) { c ->
                     assertEquals(501, assertFailsWith<Http3Exception.ConnectRejected> { c.connectUdp(template, "127.0.0.1", 9) }.status)
@@ -182,7 +182,7 @@ class ServerConnectUdpTest {
     @Test fun negative_otherRoutesTwoHundredIs501() =
         h3ServerTest {
             val (server, port) =
-                tlsServer({ connectUdp = true }) {
+                tlsServer({ http3 { connectUdp = true } }) {
                     routing { route("{...}", HttpMethod("CONNECT")) { handle { call.respondText("not a tunnel") } } }
                 }
             try {
@@ -197,7 +197,7 @@ class ServerConnectUdpTest {
     /** No route takes a CONNECT-UDP request: Ktor's 404. */
     @Test fun noRouteIs404() =
         h3ServerTest {
-            val (server, port) = tlsServer({ connectUdp = true }) { routing { route("/x") { handle { call.respondText("x") } } } }
+            val (server, port) = tlsServer({ http3 { connectUdp = true } }) { routing { route("/x") { handle { call.respondText("x") } } } }
             try {
                 h3(port) { c ->
                     assertEquals(404, assertFailsWith<Http3Exception.ConnectRejected> { c.connectUdp(template, "127.0.0.1", 9) }.status)

@@ -209,7 +209,7 @@ class WebTransportCloseTest {
                     rawSession(
                         q,
                         io.kuicksilver.quic.quicConfig {
-                            resetStreamAt = true
+                            expert { resetStreamAt = true }
                             maxBidiStreams = 0 // the server may open no bidirectional stream
                         },
                     )

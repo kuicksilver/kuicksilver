@@ -52,7 +52,7 @@ class ClientDeflateKtorTest {
     }
 
     private suspend fun roundTrip(
-        discovery: Http3DiscoveryMode,
+        discovery: Http3Discovery?,
         url: (Int) -> String,
         plain: Boolean,
     ) {
@@ -77,7 +77,7 @@ class ClientDeflateKtorTest {
     private suspend fun interop(
         clientExtension: WebSocketExtensionFactory<*, *>,
         serverExtension: WebSocketExtensionFactory<*, *>,
-        discovery: Http3DiscoveryMode,
+        discovery: Http3Discovery?,
         url: (Int) -> String,
         plain: Boolean,
     ) {
@@ -119,21 +119,21 @@ class ClientDeflateKtorTest {
     }
 
     @Test fun kuicksilverClientWithKtorServerExtensionH1() =
-        clientTest { interop(PerMessageDeflate, WebSocketDeflateExtension, Http3DiscoveryMode.H1Only, { "ws://127.0.0.1:$it/ws" }, true) }
+        clientTest { interop(PerMessageDeflate, WebSocketDeflateExtension, null, { "ws://127.0.0.1:$it/ws" }, true) }
 
     @Test fun kuicksilverClientWithKtorServerExtensionH3() =
-        h3Test { interop(PerMessageDeflate, WebSocketDeflateExtension, Http3DiscoveryMode.H3Only, { "wss://127.0.0.1:$it/ws" }, false) }
+        h3Test { interop(PerMessageDeflate, WebSocketDeflateExtension, Http3Discovery.H3Only, { "wss://127.0.0.1:$it/ws" }, false) }
 
     @Test fun ktorClientWithKuicksilverServerExtensionH1() =
-        clientTest { interop(WebSocketDeflateExtension, PerMessageDeflate, Http3DiscoveryMode.H1Only, { "ws://127.0.0.1:$it/ws" }, true) }
+        clientTest { interop(WebSocketDeflateExtension, PerMessageDeflate, null, { "ws://127.0.0.1:$it/ws" }, true) }
 
     @Test fun ktorClientWithKuicksilverServerExtensionH3() =
-        h3Test { interop(WebSocketDeflateExtension, PerMessageDeflate, Http3DiscoveryMode.H3Only, { "wss://127.0.0.1:$it/ws" }, false) }
+        h3Test { interop(WebSocketDeflateExtension, PerMessageDeflate, Http3Discovery.H3Only, { "wss://127.0.0.1:$it/ws" }, false) }
 
     @Test fun ktorDeflateExtensionRoundTripH1() =
         clientTest {
             roundTrip(
-                Http3DiscoveryMode.H1Only,
+                null,
                 { "ws://127.0.0.1:$it/ws" },
                 plain = true,
             )
@@ -142,7 +142,7 @@ class ClientDeflateKtorTest {
     @Test fun ktorDeflateExtensionRoundTripH3() =
         h3Test {
             roundTrip(
-                Http3DiscoveryMode.H3Only,
+                Http3Discovery.H3Only,
                 { "wss://127.0.0.1:$it/ws" },
                 plain = false,
             )

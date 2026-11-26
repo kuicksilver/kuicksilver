@@ -108,7 +108,7 @@ class ZeroRttApiTest {
     @Test fun earlyStreamResetThroughARetryHasItsSize(): Unit =
         earlyResetAccepted(admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
 
-    private val withAt = quicConfig { resetStreamAt = true }
+    private val withAt = quicConfig { expert { resetStreamAt = true } }
 
     private fun earlyResetAccepted(admission: io.kuicksilver.quic.ConnectionAdmission?): Unit =
         runBlocking {
@@ -148,7 +148,12 @@ class ZeroRttApiTest {
                 withTimeout(20.seconds) {
                     ticketFrom(p)
                     // a restarted server has other ticket keys: it refuses the ticket's early data
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto, admission = admission)
+                    val server =
+                        p.restartServer(
+                            quicConfig { flowControl { initialConnectionWindow = 700_000 } },
+                            KslQuicCrypto,
+                            admission = admission,
+                        )
                     try {
                         launch { runCatching { server.accept() } } // ends with the server's close
                         p.net.hold(p.clientIo.localAddress)
@@ -263,7 +268,7 @@ class ZeroRttApiTest {
             ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
                 withTimeout(20.seconds) {
                     ticketFrom(p)
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    val server = p.restartServer(quicConfig { flowControl { initialConnectionWindow = 700_000 } }, KslQuicCrypto)
                     try {
                         launch { runCatching { server.accept() } } // ends with the server's close
                         p.net.hold(p.clientIo.localAddress)
@@ -512,7 +517,7 @@ class ZeroRttApiTest {
                     while (sessions.size() == 0) yield()
                     first.close()
                     firstServer.await()
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    val server = p.restartServer(quicConfig { flowControl { initialConnectionWindow = 700_000 } }, KslQuicCrypto)
                     try {
                         val seen = mutableListOf<String>()
                         val serving =
@@ -579,7 +584,7 @@ class ZeroRttApiTest {
                     while (loop.sessions.size() == 0) yield()
                     first.close()
                     firstServer.await()
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    val server = p.restartServer(quicConfig { flowControl { initialConnectionWindow = 700_000 } }, KslQuicCrypto)
                     try {
                         val seen = mutableListOf<String>()
                         val serving =
@@ -660,7 +665,7 @@ class ZeroRttApiTest {
                     while (sessions.size() == 0) yield()
                     first.close()
                     firstServer.await()
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    val server = p.restartServer(quicConfig { flowControl { initialConnectionWindow = 700_000 } }, KslQuicCrypto)
                     try {
                         p.net.hold(p.clientIo.localAddress)
                         val second = p.client.connectEarly(server.localAddress, clientConfig())

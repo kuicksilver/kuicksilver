@@ -38,13 +38,13 @@ class KuicksilverH1WebSocketTest : WebSocketEngineSuite<E, C>(Kuicksilver) {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
-     * Ktor's `testBigFrame` sends a 20 MiB frame, over the engine's default `webSocketMaxMessageSize` (16 MiB, RFC 6455
+     * Ktor's `testBigFrame` sends a 20 MiB frame, over the engine's default `webSockets { maxMessageSize }` (16 MiB, RFC 6455
      * section 10.4), which would close the connection with 1009: the suite runs with a larger limit.
      * `ServerWebSocketHandshakeTest` covers the limit itself.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     override fun configure(configuration: C) {
-        configuration.webSocketMaxMessageSize = 32L shl 20
+        configuration.webSockets.maxMessageSize = 32L shl 20
     }
 
     /**

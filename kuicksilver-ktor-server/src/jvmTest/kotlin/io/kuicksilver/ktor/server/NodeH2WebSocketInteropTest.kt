@@ -17,7 +17,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
@@ -115,8 +115,8 @@ class NodeH2WebSocketInteropTest {
                 HttpClient(KuicksilverClient) {
                     install(ClientWebSockets)
                     engine {
-                        trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                        http3 { discovery = Http3DiscoveryMode.H1Only }
+                        tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                        http3 { enabled = false }
                     }
                 }.use { c ->
                     val get = withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/") }

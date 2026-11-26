@@ -16,7 +16,7 @@
 #   $KSL_WIN_JVM_TEST (default ~/.kuicksilver-tools/win-jvm-test, Parallels; outside the repository).
 # --with-browser also runs ChromeWebTransportTest against the installed Chrome (headless; skipped by the test itself
 #   when no Chrome or Chromium is installed).
-# --only <steps> runs only the listed steps, a comma list of numbers and ranges (--only 25,48-49,52); --from <n> runs step
+# --only <steps> runs only the listed steps, a comma list of numbers and ranges (--only 25,47-49,52); --from <n> runs step
 #   n and every later one (--from 44). The numbers are those of a full run with the same --skip-*/--with-* options (what --dry-run
 #   with those options prints, the [n] of the output and build/ci/<n>.log), so a failure line maps onto --only n; the
 #   steps left out print nothing. A step that reads what an earlier step produced (the AAR, the linked test executables,
@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;;
     --only|--from)
       [ $# -gt 0 ] && [ "${1#--}" = "$1" ] || refuse_args "$a needs a value: --only <steps> (e.g. 25,48-49,52) or --from <n>"
-      [ -z "$selection" ] || [ "--${selection%%=*}" != "$a" ] || refuse_args "$a given twice (one list per run: --only 25,48-49)"
+      [ -z "$selection" ] || [ "--${selection%%=*}" != "$a" ] || refuse_args "$a given twice (one list per run: --only 25,47-49)"
       [ -z "$selection" ] || refuse_args "--only and --from together (one selection per run; --only n-<last> is --from n)"
       if [ "$a" = --only ]; then only="$1"; selection="only=$1"; else from="$1"; selection="from=$1"; fi; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -50,8 +50,8 @@ while [ $# -gt 0 ]; do
 done
 case "${KSL_MATRIX_ALL_MODULES-}" in ''|0|1) ;; *) refuse_args "KSL_MATRIX_ALL_MODULES='${KSL_MATRIX_ALL_MODULES}': 1 (every module on the old platforms) or 0 (the changed ones), nothing else" ;; esac
 # a release run tests every module on the old platforms: its gate must not depend on what changed since origin/main
-# the device of the current-API device steps (54-56 by default); never the API 24 emulator's, which step 57 starts and
-# stops (tools/ci/avd-api24.sh: emulator-<KSL_AVD_API24_PORT, default 5580>)
+# the device of the current-API device steps (the `android:` emulator steps before the API 24 one); never the API 24
+# emulator's, which its own step starts and stops (tools/ci/avd-api24.sh: emulator-<KSL_AVD_API24_PORT, default 5580>)
 dev="${KSL_DEVICE_SERIAL:-emulator-5554}"
 [ "$dev" != "emulator-${KSL_AVD_API24_PORT:-5580}" ] || refuse_args "KSL_DEVICE_SERIAL='$dev' is the API 24 emulator's serial (tools/ci/avd-api24.sh); the current-API device steps need the other emulator"
 release_run=0
@@ -230,16 +230,17 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/select-races.py || rc=1; python3 -I tools/check/race-tests.py || rc=1
   python3 -I tools/check/wall-bounds.py || rc=1
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
-  python3 -I tools/check/sentinel.py || rc=1
+  python3 -I tools/check/sentinel.py || rc=1; python3 -I tools/check/kdoc-links.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
 # with the base CI's lint job exports to all its later steps (KSL_FUZZ_FORMATS_BASE, build.yml), so a control that reads it
 # unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
   KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
-  for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
+  for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links; do
     bash "tools/check/$t-test.sh" || rc=1
   done
+  bash tools/migrate/config-0.3-test.sh || rc=1
   bash tools/ci/race-repeat-test.sh || rc=1
   bash tools/ci/gradlew-retry-test.sh || rc=1
   bash tools/ci/interop-host-test.sh || rc=1
@@ -288,6 +289,10 @@ step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-en
 step "jvm: module tests on JDK 17"              jdk_tests 17   # CI's jdk-compat (17): the changed modules and their dependents
 step "jvm: module tests on JDK 25"              jdk_tests 25   # CI's jdk-compat (25), restricted native access denied
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
+step "sample: webtransport-chat"                bash -c 'cd samples/webtransport-chat && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest compileKotlinMacosArm64 compileKotlinIosSimulatorArm64'   # server and clients in one JVM over UDP; the common code for macOS and the iOS simulator
+step "sample: http3-server"                     bash -c 'cd samples/http3-server && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false test'   # EngineMain with its application.conf, the Kuicksilver client against it
+# the kq command line: its tests on the JVM and macOS, its executable for every native target (linux and mingw linked only)
+step "sample: kq-cli (tests, the kq executables)" bash -c 'cd samples/kq-cli && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest macosArm64Test linkReleaseExecutableMacosArm64 linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64'
 # the samples' test classes are read by tools/check/test-bytecode.py too (the instrumented test of the demo app compiled here)
 step "sample: compose-demo (build, tests)"     bash -c "$G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :androidApp:compileDebugAndroidTestKotlin :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test && python3 -I tools/check/test-bytecode.py --targets samples"   # its own build, verified against gradle/verification-metadata.xml
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"

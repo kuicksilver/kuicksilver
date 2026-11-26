@@ -14,7 +14,9 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 
 class QuicConfigTest {
@@ -64,11 +66,11 @@ class QuicConfigTest {
         // RFC 9002 section 6.2.2: the initial RTT seeds the PTO; zero or negative would make it fire at once and forever, and an
         // absurd value would leave a lost first flight unrepaired for minutes
         for (bad in listOf(Duration.ZERO, (-1).milliseconds, 10.seconds + 1.milliseconds, Duration.INFINITE)) {
-            val e = assertFailsWith<IllegalArgumentException>("initialRtt = $bad") { quicConfig { initialRtt = bad } }
-            assertEquals("initialRtt must be positive and at most 10 s", e.message)
+            val e = assertFailsWith<IllegalArgumentException>("initialRtt = $bad") { quicConfig { expert { initialRtt = bad } } }
+            assertEquals("expert { initialRtt } must be positive and at most 10 s", e.message)
         }
-        assertEquals(1.milliseconds, quicConfig { initialRtt = 1.milliseconds }.initialRtt)
-        assertEquals(10.seconds, quicConfig { initialRtt = 10.seconds }.initialRtt)
+        assertEquals(1.milliseconds, quicConfig { expert { initialRtt = 1.milliseconds } }.initialRtt)
+        assertEquals(10.seconds, quicConfig { expert { initialRtt = 10.seconds } }.initialRtt)
     }
 
     @Test fun keepAliveAboveThreeQuartersIdleRejected() {
@@ -87,17 +89,82 @@ class QuicConfigTest {
 
     @Test fun negative_maxSendBufferMustBePositive() {
         for (bad in listOf(0L, -1L, (1L shl 62) + 1)) {
-            val e = assertFailsWith<IllegalArgumentException>("maxSendBuffer = $bad") { quicConfig { maxSendBuffer = bad } }
-            assertEquals("maxSendBuffer must be 1..2^62", e.message)
+            val e = assertFailsWith<IllegalArgumentException>("maxSendBuffer = $bad") { quicConfig { flowControl { maxSendBuffer = bad } } }
+            assertEquals("flowControl { maxSendBuffer } must be 1..2^62", e.message)
         }
-        assertEquals(1L, quicConfig { maxSendBuffer = 1 }.maxSendBuffer)
+        assertEquals(1L, quicConfig { flowControl { maxSendBuffer = 1 } }.maxSendBuffer)
     }
 
-    @Test fun negative_maxIdleTimeoutMustBeZeroOrFinite() {
-        for (bad in listOf((-1).milliseconds, Duration.INFINITE)) {
+    @Test fun negative_maxIdleTimeoutMustBePositiveAndFiniteOrNull() {
+        for (bad in listOf((-1).milliseconds, Duration.ZERO, Duration.INFINITE)) {
             val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }
-            assertEquals("maxIdleTimeout must be zero (none) or a positive finite duration", e.message)
+            assertEquals("maxIdleTimeout must be positive and finite, or null (none): Duration.ZERO is no longer \"none\"", e.message)
         }
+    }
+
+    /** RFC 9000 section 18.2: `max_idle_timeout` is in milliseconds; 0.5 ms would be advertised as 0, "no idle timeout". */
+
+    /** The windows stop at 2^60 (QuicConfig.MAX_WINDOW), so every limit they advertise stays within RFC 9000 section 16's 2^62-1. */
+    @Test fun negative_windowsAboveTheirCeilingAreRefused() {
+        val top =
+            quicConfig {
+                flowControl {
+                    maxStreamWindow = QuicConfig.MAX_WINDOW
+                    maxConnectionWindow = QuicConfig.MAX_WINDOW
+                }
+            }
+        assertEquals(1L shl 60, top.maxStreamWindow)
+        assertEquals(1L shl 60, top.maxConnectionWindow)
+        for ((stream, connection) in listOf(
+            (1L shl 60) + 1 to 15_728_640L,
+            6_291_456L to (1L shl 60) + 1,
+            Long.MAX_VALUE to Long.MAX_VALUE,
+        )) {
+            val e =
+                assertFailsWith<IllegalArgumentException>("$stream $connection") {
+                    quicConfig {
+                        flowControl {
+                            maxStreamWindow = stream
+                            maxConnectionWindow = connection
+                        }
+                    }
+                }
+            assertEquals(
+                "flowControl { maxStreamWindow } and { maxConnectionWindow } must be at most 2^60 (MAX_WINDOW), not $stream and $connection",
+                e.message,
+            )
+        }
+    }
+
+    @Test fun negative_maxIdleTimeoutMustBeWholeMilliseconds() {
+        for (bad in listOf(500.microseconds, 1500.microseconds, 1.nanoseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }
+            assertEquals(
+                "maxIdleTimeout must be a whole number of milliseconds (max_idle_timeout is advertised in them), not $bad",
+                e.message,
+            )
+        }
+        val tp = quicConfig { maxIdleTimeout = 1.milliseconds }.localTransportParameters(TlsRole.Client, ConnectionId(ByteArray(8)), null)
+        assertEquals(1L, tp.maxIdleTimeoutMs)
+    }
+
+    /** `max_ack_delay` is advertised in milliseconds and ACKs are timed on the same value: no fraction, no negative. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_maxAckDelayMustBeWholeMillisecondsInRange() {
+        for (bad in listOf((-1).milliseconds, 16384.milliseconds, Duration.INFINITE)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxAckDelay = $bad") { quicConfig { expert { maxAckDelay = bad } } }
+            assertEquals("expert { maxAckDelay } must be 0..2^14-1 ms", e.message)
+        }
+        for (bad in listOf(500.microseconds, 25_500.microseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxAckDelay = $bad") { quicConfig { expert { maxAckDelay = bad } } }
+            assertEquals(
+                "expert { maxAckDelay } must be a whole number of milliseconds (max_ack_delay is advertised in them), not $bad",
+                e.message,
+            )
+        }
+        assertEquals(Duration.ZERO, quicConfig { expert { maxAckDelay = Duration.ZERO } }.maxAckDelay)
+        assertEquals(16383.milliseconds, quicConfig { expert { maxAckDelay = 16383.milliseconds } }.maxAckDelay)
     }
 
     @Test fun negative_keepAliveMustBePositiveAndFinite() {
@@ -105,7 +172,7 @@ class QuicConfigTest {
             val e =
                 assertFailsWith<IllegalArgumentException>("keepAlive = $bad") {
                     quicConfig {
-                        maxIdleTimeout = Duration.ZERO
+                        maxIdleTimeout = null
                         keepAlive = bad
                     }
                 }
@@ -117,7 +184,7 @@ class QuicConfigTest {
     @Test fun keepAliveWithIdleTimeoutDisabledIsAllowed() {
         val c =
             quicConfig {
-                maxIdleTimeout = Duration.ZERO
+                maxIdleTimeout = null
                 keepAlive = 15.seconds
             }
         assertEquals(15.seconds, c.keepAlive)
@@ -163,7 +230,7 @@ class QuicConfigTest {
         val c =
             quicConfig {
                 versions = listOf(VersionProfile.V2, VersionProfile.V1)
-                initialVersion = VersionProfile.V1
+                expert { initialVersion = VersionProfile.V1 }
             }
         assertEquals(VersionProfile.V1, c.firstVersion)
         val tp = c.localTransportParameters(TlsRole.Client, ConnectionId(ByteArray(8)), null)
@@ -175,7 +242,7 @@ class QuicConfigTest {
                 versions = listOf(VersionProfile.V2, VersionProfile.V1)
             }.firstVersion,
         ) // default: the preferred one
-        assertFailsWith<IllegalArgumentException> { quicConfig { initialVersion = VersionProfile.V2 } } // not among versions
+        assertFailsWith<IllegalArgumentException> { quicConfig { expert { initialVersion = VersionProfile.V2 } } } // not among versions
     }
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -194,8 +261,8 @@ class QuicConfigTest {
                 keepAlive = 1.seconds
                 maxBidiStreams = 7
                 versions = listOf(VersionProfile.V2, VersionProfile.V1)
-                maxDatagramFrameSize = 0
-                greaseQuicBit = false
+                datagrams { maxFrameSize = null }
+                expert { greaseQuicBit = false }
             }
         val copy = c.toBuilder().apply { qlog = sink }.build()
         assertEquals(5.seconds, copy.maxIdleTimeout)

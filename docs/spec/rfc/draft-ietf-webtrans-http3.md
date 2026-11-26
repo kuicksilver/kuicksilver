@@ -40,7 +40,7 @@ Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#http)
 
 Original row: draft-ietf-webtrans-http3-16 §3.1, §7.1 (SETTINGS); draft-17 in 0.3.0.
 
-**Requirement.** With `Http3Settings.webTransport` (needs `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it without QUIC datagrams and turns `QuicConfig.resetStreamAt` on) a server sends `SETTINGS_WT_ENABLED=1` of draft-17 (0x20b8933b) and of draft-16 (0x2c7cf000), `SETTINGS_WT_MAX_SESSIONS` (0x14e9cd29, draft-14: `webTransportMaxSessions` with flow control, else 1) and `SETTINGS_ENABLE_WEBTRANSPORT=1` (0x2b603742, draft-02), a client all but draft-14's.
+**Requirement.** With `http3Settings { webTransport { enabled } }` (needs `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it without QUIC datagrams and turns `quicConfig { expert { resetStreamAt } }` on) a server sends `SETTINGS_WT_ENABLED=1` of draft-17 (0x20b8933b) and of draft-16 (0x2c7cf000), `SETTINGS_WT_MAX_SESSIONS` (0x14e9cd29, draft-14: `webTransport { maxSessions }` with flow control, else 1) and `SETTINGS_ENABLE_WEBTRANSPORT=1` (0x2b603742, draft-02), a client all but draft-14's.
 
 **Recorded status.** ✅ 0.3.0
 
@@ -48,13 +48,13 @@ Quoted (§3.1): "SETTINGS_WT_ENABLED has no meaning when sent by a client; a ser
 
 **How it is met.**
 
-- the transport parameters of §3.1: `max_datagram_frame_size` above 0 (`webTransport` is refused without it) and an empty `reset_stream_at`, which `Http3Endpoint` (`connect`, `connectEarly`, `bind`) and the Ktor engines turn on with `webTransport`
+- the transport parameters of §3.1: `max_datagram_frame_size` above 0 (`webTransport { enabled }` is refused without it) and an empty `reset_stream_at`, which `Http3Endpoint` (`connect`, `connectEarly`, `bind`) and the Ktor engines turn on with `webTransport { enabled }`
 - the version is the highest both sides announce (§7.1 "The highest version supported by both endpoints is selected"; our client announces draft-17, draft-16 and draft-02, so it never picks a draft it did not offer, and against a draft-14-only server it has none in common and throws `Http3Exception.Settings`, as §7.1 has it: "A client that supports only draft versions that the server does not support finds none of its codepoints in the server's SETTINGS, so it treats the server as not supporting WebTransport"); a server whose client announces no draft selects draft-17 (§7.1 "Otherwise, the server selects the version described in this document"), and such a client's CONNECT must then carry draft-17's `webtransport-h3` (the older token is malformed: its drafts need their own setting)
 - a session is opened (client) or accepted (server) only when the peer sent every required setting and transport parameter of that version: draft-16 and draft-14 need the peer's `max_datagram_frame_size` above 0 and `reset_stream_at` on both sides (`QuicConnection.resetStreamAtEnabled`); draft-02 (Chrome, Firefox) predates RESET_STREAM_AT and needs no `reset_stream_at` (draft-02 §3.1 asks for `SETTINGS_ENABLE_WEBTRANSPORT` only)
 - the selected version runs or nothing does: a peer whose selected draft lacks its §3.1 transport parameters gets no session, even when it announces draft-02 too and whatever the form of its CONNECT (the client throws `Http3Exception.Settings` before any CONNECT, the server treats the request as malformed, sessions row); the version is the connection's, so a CONNECT in draft-02 form from a client whose selected draft is newer is malformed by its token, as the sessions row says (the draft-02 fallback, a compatibility shim until 0.3.0, [removed](../compat-shims.md#removed))
-- `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (0x2b64), `_BIDI` (0x2b65) and `SETTINGS_WT_INITIAL_MAX_DATA` (0x2b61) from `Http3Settings.webTransportInitialMaxStreamsUni` / `Bidi` / `MaxData`, sent when not 0, which turns flow control on with a peer that declares it too ([flow-control row](#s5-flow-control))
+- `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (0x2b64), `_BIDI` (0x2b65) and `SETTINGS_WT_INITIAL_MAX_DATA` (0x2b61) from `http3Settings { webTransport { initialMaxStreamsUni, initialMaxStreamsBidi, initialMaxData } }`, sent when not 0, which turns flow control on with a peer that declares it too ([flow-control row](#s5-flow-control))
 - the peer's codepoints become `Http3PeerSettings.webTransport` and the highest draft it speaks, and leave `unknown`
-- a WebTransport client takes a server's `SETTINGS_WT_ENABLED`, draft-17's or draft-16's, other than 0 or 1 as `H3_SETTINGS_ERROR` (§3.1 of both, "Clients MUST treat values greater than "1" as a connection error of type H3_SETTINGS_ERROR"); a server ignores the client's values and reads only a 1 as a version, and an endpoint without WebTransport ignores them all (RFC 9114 §7.2.4: "Endpoints MUST ignore any settings with identifiers they do not understand"); a server without WebTransport selects no version; with `webTransport`, `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02) other than 0 or 1 too (draft-02 §3.1 "an endpoint that receives a value other than "0" or "1" MUST close the connection with the H3_SETTINGS_ERROR error code")
+- a WebTransport client takes a server's `SETTINGS_WT_ENABLED`, draft-17's or draft-16's, other than 0 or 1 as `H3_SETTINGS_ERROR` (§3.1 of both, "Clients MUST treat values greater than "1" as a connection error of type H3_SETTINGS_ERROR"); a server ignores the client's values and reads only a 1 as a version, and an endpoint without WebTransport ignores them all (RFC 9114 §7.2.4: "Endpoints MUST ignore any settings with identifiers they do not understand"); a server without WebTransport selects no version; with `webTransport { enabled }`, `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02) other than 0 or 1 too (draft-02 §3.1 "an endpoint that receives a value other than "0" or "1" MUST close the connection with the H3_SETTINGS_ERROR error code")
 - the 0-RTT ticket context covers the setting
 - qlog names `SETTINGS_WT_ENABLED` for draft-17's codepoint; draft-16's goes by its number (a JSON key names one)
 
@@ -82,13 +82,13 @@ Quoted (§3.4): "it is RECOMMENDED that clients and servers apply the scheduling
 - `WT-Available-Protocols` as a Structured Field List, a `WT-Protocol` naming another protocol resets the CONNECT with `WT_ALPN_ERROR` and throws `WebTransportException.Alpn`, one that is no valid Structured Field String is ignored (no protocol selected); parameters are ignored but parsed as RFC 8941 parameters (keys `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`, values bare items), and a malformed one makes the whole field ignored (mutation review 2026-11-15: any run up to `;`, `,` or whitespace passed as a value, and keys took Unicode letters and digits; the parsers of `Capsule-Protocol`, `priority` and these fields now share one set of Structured Field helpers — `webtransport.WtProtocolsGapTest.negative_malformedParametersInvalidateTheField`, `.negative_malformedAvailableProtocolsAreIgnoredAsAWhole`)
 - a non-2xx → `ConnectRejected`, redirects not followed
 - a caller cancelled before it has the session ends the CONNECT in one of two §6-conformant ways: before the session is set up, RESET_STREAM and STOP_SENDING with `H3_REQUEST_CANCELLED`; once it has started and its end is watched (cancelled as `webTransport` returns), a graceful close as `close(0, "")`: WT_CLOSE_SESSION with code 0 and no reason, then FIN; a setup that fails there for a reason of its own resets the CONNECT with `H3_INTERNAL_ERROR` — `webtransport.WebTransportSessionTest.negative_aCallerCancelledAsTheConnectIsAnsweredResetsTheStream`, `.negative_aCallerCancelledAsItsSessionIsHandedOverCountsItOffOnce`, `.negative_aSessionThatFailsToStartResetsItsConnectStream`, `.negative_aCallerCancelledAsItsSessionIsCountedLeavesTheCountAtZero`
-- several sessions on one connection when flow control is on for it, up to our own `webTransportMaxSessions` (`WebTransportException.ConnectionFull` beyond, before anything is sent); without flow control one (§5.1 "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous WebTransport session"), ConnectionFull too
+- several sessions on one connection when flow control is on for it, up to our own `webTransport { maxSessions }` (`WebTransportException.ConnectionFull` beyond, before anything is sent); without flow control one (§5.1 "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous WebTransport session"), ConnectionFull too
 - Server: both tokens are `isWebTransport`; `acceptWebTransport` takes only the selected draft's (draft-17 and draft-16 §3.2 "the :protocol pseudo-header field MUST be set to webtransport-h3", draft-14 and draft-02 `webtransport`; compared without regard to case, RFC 9110 §7.8), another is malformed: 400 and `H3_MESSAGE_ERROR` (`webtransport.WtDraftVersionsTest.negative_tokenOfAnotherDraftIsMalformed`)
 - `acceptWebTransport` waits for the client's SETTINGS (10 s; draft-17 §7.1 "the server MUST NOT process any incoming WebTransport requests until the client's SETTINGS have been received") and selects the version from the client's codepoints (§7.1: draft-17 when the client sends draft-17's, else the highest draft both speak among draft-16, draft-14 `SETTINGS_WT_MAX_SESSIONS` above 0 and draft-02 `SETTINGS_ENABLE_WEBTRANSPORT=1`, which Chrome and Firefox send, else draft-17 with `webtransport-h3` only); it requires the client's `H3_DATAGRAM` and the transport parameters of the SETTINGS row, else the request is malformed (§3.1, RFC 9114 §4.1.2): answered with 400 and stopped with `H3_MESSAGE_ERROR`; no session is established before the client's SETTINGS, so none is established with wrong ones; it answers 200 with `WT-Protocol` (one of the offered) and, for a session that runs draft-02 whose client sent `sec-webtransport-http3-draft02: 1`, `sec-webtransport-http3-draft: draft02` (compatibility shim 2; `webtransport.WebTransportSessionTest.negative_draft02ResponseFieldOnlyForADraft02Session`)
-- another WebTransport CONNECT while sessions are open is admitted only when flow control is on for it and for every open session (the client's SETTINGS are awaited first, §7.1) and fewer than `webTransportMaxSessions` are open; otherwise it is reset with `H3_REQUEST_REJECTED` before the application (§5.1 "A server that receives more than one session on an underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a H3_REQUEST_REJECTED status"; draft-14 §5.2 likewise); a draft-02 session neither shares a connection nor joins one; the connection stays
+- another WebTransport CONNECT while sessions are open is admitted only when flow control is on for it and for every open session (the client's SETTINGS are awaited first, §7.1) and fewer than `webTransport { maxSessions }` are open; otherwise it is reset with `H3_REQUEST_REJECTED` before the application (§5.1 "A server that receives more than one session on an underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a H3_REQUEST_REJECTED status"; draft-14 §5.2 likewise); a draft-02 session neither shares a connection nor joins one; the connection stays
 - a session ends with its CONNECT stream, and its late streams are rejected
 - §3.4: the session's streams are sent at the RFC 9218 priority (urgency, incremental) of its CONNECT stream: opened with it, and an accepted stream gets it before the application writes; a server moves them with the client's PRIORITY_UPDATE for the CONNECT stream (a priority the server's response set stays, as for every request); capsules travel on the CONNECT stream itself; datagrams go with the CONNECT stream's urgency too (every HTTP datagram goes with its request stream's): a datagram never preempts stream data of strictly more urgent streams (the HTTP/3 control and QPACK streams included), while stream data of the same or a lower urgency waits behind it (unreliable, latency-sensitive), O(1) per packet; the urgency is strict both ways, so more urgent bulk streams hold the datagrams back and a datagram flood starves streams of the same or a lower urgency; the send queue keeps one FIFO per urgency, so a datagram never waits behind a less urgent one (of this session or another request on the connection) and order is kept within an urgency (`QuicConnection.sendDatagram(data, policy, priority)`; RFC 9297 §2 leaves the prioritization of HTTP datagrams open) — `runtime.DatagramSendQueueTest.negative_urgentDatagramDoesNotWaitBehindALessUrgentOne`
-- §5.2 "Servers SHOULD limit the rate of incoming WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources": at most `webTransportMaxSessions` (4) at once, and a rate per connection, a burst of 32 CONNECTs then 8 a second; beyond either a CONNECT is reset with `H3_REQUEST_REJECTED` (one above the rate also spends a glitch token, so a peer that keeps trying meets `H3_EXCESSIVE_LOAD`), and the endpoint's connection admission bounds the connections
+- §5.2 "Servers SHOULD limit the rate of incoming WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources": at most `webTransport { maxSessions }` (4) at once, and a rate per connection, a burst of 32 CONNECTs then 8 a second; beyond either a CONNECT is reset with `H3_REQUEST_REJECTED` (one above the rate also spends a glitch token, so a peer that keeps trying meets `H3_EXCESSIVE_LOAD`), and the endpoint's connection admission bounds the connections
 - §3.2 "Clients cannot initiate WebTransport sessions in 0-RTT packets": our client never sends a CONNECT in 0-RTT; one that arrives in 0-RTT anyway is held until the handshake completes, answered 425 under `Reject425`, or dropped when the connection is lost or the 0-RTT rejected, each leaving no session slot behind
 
 **Tests that pin it.**
@@ -103,7 +103,7 @@ Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#http)
 
 Original row: draft-ietf-webtrans-http3-16 §4.2, §4.3, §4.6 (streams); draft-17 in 0.3.0.
 
-**Requirement.** With `Http3Settings.webTransport`: a uni stream of type `0x54` and a bidirectional stream that starts with the `WT_STREAM` signal `0x41` (read before the stream is taken for a request, so the Session ID is never parsed as a frame length) are routed to their session by the Session ID.
+**Requirement.** With `http3Settings { webTransport { enabled } }`: a uni stream of type `0x54` and a bidirectional stream that starts with the `WT_STREAM` signal `0x41` (read before the stream is taken for a request, so the Session ID is never parsed as a frame length) are routed to their session by the Session ID.
 
 Quoted: "SHOULD buffer streams and datagrams until they can be associated with an established session".
 
@@ -114,11 +114,13 @@ Quoted: "SHOULD buffer streams and datagrams until they can be associated with a
 - a Session ID that is not a client-initiated bidirectional stream, or (server) one beyond the bidirectional stream limit we granted, → `H3_ID_ERROR` (review: the latter was buffered for 5 s)
 - the signal anywhere but the first bytes the initiator sends on a bidirectional stream (after HEADERS, on the control stream after SETTINGS) → the connection error of the connection's draft: draft-17 §4.3 "H3_FRAME_UNEXPECTED", draft-16 and -14 `H3_FRAME_ERROR` (draft-17's before the peer's SETTINGS: the server's choice for a client that names none, §7.1); as the control stream's first frame → `H3_MISSING_SETTINGS`, RFC 9114 §6.2.1 (see the SETTINGS row)
 - a client accepts a server-initiated bidirectional stream only with the signal (`H3_STREAM_CREATION_ERROR` otherwise, as without WebTransport)
+- a stream the peer resets before its header named a session (before its type or signal, or inside its Session ID), with a code in the session's WebTransport application error range (8 bits on draft-02, above), goes to the connection's only session when that session runs draft-02, whose connection carries no second session (draft-02 has no WebTransport flow control, sessions row): its application accepts it and reads the reset and its code (draft-02 §4.3 "If a WebTransport implementation intentionally allows only one session over a given HTTP/3 connection, it SHALL forward the error codes within WebTransport application error code range to the application that owns the only session on that connection"; review: such streams were dropped); not a unidirectional stream whose type bytes so far can no longer be 0x54, nor (server) a client bidirectional stream at or below the session's CONNECT stream, which predates the session; another code, a connection of a later draft (several sessions, and the peer keeps the header with RESET_STREAM_AT, §4.4), or a session not established yet drops it as before (RFC 9114 §6.2; draft-02 §4.3 "WebTransport application error codes are best effort")
 - streams that arrive before their session wait (16 per connection, 5 s each), the excess and late ones are rejected with `WT_BUFFERED_STREAM_REJECTED`; the rejection leaves the session alone (draft-17 §4.6 "Rejecting a buffered stream does not affect the session it was intended for": the streams that waited are delivered, `negative_bufferedStreamsCapped`)
 - datagrams that arrive before their session's CONNECT HEADERS wait on the server and reach the session once it is accepted (review: they were dropped): §4.6 "SHOULD buffer streams and datagrams until they can be associated with an established session", at most 16 per connection, the excess dropped, each "temporarily (on the order of a round trip)" as RFC 9297 §2.1 requires of a stream not yet created: one PTO (RFC 9002 §6.2.1 with the default max_ack_delay of 25 ms) plus one smoothed RTT, at least 50 ms and at most 5 s (review: 5 s each); a datagram for a stream that exists but whose HEADERS are still arriving waits up to 5 s, as an early WebTransport stream does (§4.6 "SHOULD buffer"; `webtransport.WtStreamRoutingTest.aDatagramForAStreamWhoseHeadersAreOnTheWayWaitsLonger`); every kept datagram goes when its own hold ends (`aShortHoldBehindALongOneEndsOnTime`), and only while the stream may still become a session (not once its HEADERS were read; a request other than CONNECT is aborted with `H3_DATAGRAM_ERROR`, RFC 9297 §2)
 
 **Tests that pin it.**
 
+- `webtransport.WtHeaderlessResetTest.*`
 - `webtransport.WtStreamRoutingTest.*` (including `datagramBeforeConnectHeadersIsDelivered`, `datagramKeptPastItsHoldIsDropped`, `datagramWithinItsHoldIsKept`, `pendingHoldFollowsTheRtt`, `datagramsForAnOpenGetLeaveTheSlotsToASession`, `sessionIdBeyondStreamLimitIsIdError`, `negative_pendingDatagramsBounded`, `negative_bufferedStreamsCapped`, `negative_wtSignalMidRequestIsFrameError`, `negative_wtSessionIdNotClientBidiIsIdError`), `webtransport.WtDraftVersionsTest.negative_misplacedWtStreamSignalIsTheCodeOfTheConnectionsDraft`, `frame.FrameRulesTest.negative_misplacedWtStreamTakesTheCodeOfTheDraft`
 
 **Open items.** None.
@@ -135,7 +137,7 @@ Original row: draft-ietf-webtrans-http3-16 §4.4, §4.5, §4.7, §6 (session); d
 
 **How it is met.**
 
-- application codes 0..2^32-1 mapped into `0x52e4a40fa8db..0x52e5ac983162` skipping GREASE, a peer code outside it reads as `StreamReset(null)`/`StreamStopped(null)`
+- application codes 0..2^32-1 mapped into `0x52e4a40fa8db..0x52e5ac983162` skipping GREASE, a peer code outside it reads as `StreamReset(null)`/`StreamStopped(null)`; on a draft-02 session a stream's codes are 0..255 (draft-02 §4.3: "WebTransport application errors for streams are limited to an unsigned 8-bit integer, assuming values between 0x00 and 0xff", mapped into `0x52e4a40fa8db..0x52e4a40fa9e2`): `reset` and `stopSending` above 255 throw IllegalArgumentException, a peer's code above 255 reads as null (`webtransport.WtHeaderlessResetTest.negative_aDraft02StreamCodeAbove255IsNoApplicationCode`, `negative_aDraft02ResetAbove255IsRefused`); a session's close code stays 32-bit (draft-02 §5: "Application Error Code: A 32-bit error code") Open: check on the next Chrome and Firefox rerun how a stream code above 255 behaves on draft-02; no receive shim (owner decision 2026-11-26).
 - datagrams by the session's quarter stream ID, `TooLarge` reports the payload limit
 - the Capsule Protocol on the CONNECT stream (`WT_CLOSE_SESSION` terminal, ≤ 4 + 1024 bytes; `WT_DRAIN_SESSION` empty; the flow-control capsules read with flow control on, [flow-control row](#s5-flow-control), and skipped without it; other types skipped)
 - the session's streams are reset and stopped with `WT_SESSION_GONE`
@@ -238,7 +240,7 @@ share of controlled resources; this applies both to sending data and to opening 
 **How it is met.**
 
 - settings: `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (0x2b64), `_BIDI` (0x2b65), `SETTINGS_WT_INITIAL_MAX_DATA` (0x2b61) from
-  `Http3Settings.webTransportInitialMaxStreamsUni` / `Bidi` / `MaxData` (24, 24, 3 932 160), sent when non-zero;
+  `http3Settings { webTransport { initialMaxStreamsUni, initialMaxStreamsBidi, initialMaxData } }` (24, 24, 3 932 160), sent when non-zero;
   flow control is on for a draft-14, draft-16 or draft-17 session when both sides declared it (draft-14 also by
   `SETTINGS_WT_MAX_SESSIONS` above 1); draft-02 has none; `Http3Endpoint` refuses settings whose sessions do not fit the
   QUIC limits, and the connection's receive window is kept at the open sessions' combined data limit
@@ -267,8 +269,8 @@ share of controlled resources; this applies both to sending data and to opening 
   stream (§3.4), read again at every turn, so a more urgent session gets the larger share but none waits more than a
   round (urgency is a preference, not strict: the sessions are separate trust domains, RFC 9218 §10 "it is RECOMMENDED
   that servers avoid such starvation where possible"); each session holds at most its part of the connection's send
-  buffer (`maxSendBuffer`, followed per stream with `QuicStream.sendReleased`): a reserve of one part in
-  `webTransportMaxSessions` + 1 stays free for a session that joins and the rest is split between the open sessions, so
+  buffer (`quicConfig { flowControl { maxSendBuffer } }`, followed per stream with `QuicStream.sendReleased`): a reserve of one part in
+  `webTransport { maxSessions }` + 1 stays free for a session that joins and the rest is split between the open sessions, so
   one whose peer never reads a stream cannot stall the others, and a session alone gets nearly all of it; datagrams and
   capsules are outside the turns (a session's datagram burst can push other sessions' datagrams out of the connection's
   datagram queue, never stall their streams)
@@ -301,7 +303,7 @@ Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#http)
 
 Original row: draft-ietf-webtrans-http3-16 (Ktor server); draft-17 in 0.3.0.
 
-**Requirement.** `webTransport = true` turns the settings on.
+**Requirement.** `http3 { webTransport { enabled = true } }` turns the settings on.
 
 **Recorded status.** ✅ 0.3.0
 
@@ -310,8 +312,8 @@ Original row: draft-ietf-webtrans-http3-16 (Ktor server); draft-17 in 0.3.0.
 - `Route.webTransport(path)` matches only a WebTransport Extended CONNECT over HTTP/3 (an HTTP/1.1 request never reaches it, another method gets Ktor's 405; no matching route → Ktor's 404; another route's 2xx → 501), checks `origin` (403; same host or none by default, the opaque `null` and non-http(s) origins refused)
 - a request that rules out capsules (`content-type`, …) → 400, picks the first of its protocols the client offers, accepts, and closes the session when the handler returns (0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`)
 - without the flag the SETTINGS are not sent and such a CONNECT gets 501 as before
-- `webTransport` turns `reset_stream_at` on (SETTINGS row)
-- §5.2 "Servers SHOULD limit the rate of incoming WebTransport sessions": `webTransportMaxSessions` at once and a rate per connection (sessions row), and the endpoint's connection limits bound the connections
+- `webTransport { enabled }` turns `reset_stream_at` on (SETTINGS row)
+- §5.2 "Servers SHOULD limit the rate of incoming WebTransport sessions": `webTransport { maxSessions }` at once and a rate per connection (sessions row), and the endpoint's connection limits bound the connections
 - a draft-14 client that leaves a session without flow-control credit for ten seconds (`WebTransportDiagnostics.creditStall`) is logged once as a warning
 
 **Tests that pin it.**
@@ -332,8 +334,9 @@ Original row: draft-ietf-webtrans-http3-16 (Ktor client); draft-17 in 0.3.0. Unt
 
 **How it is met.**
 
-- `H1Only` and a proxy for the URL are refused (UnsupportedOperationException; `webTransportIgnoresProxy` connects directly)
-- at most `maxWebTransportSessions` (64) at once, one more fails at once
+- `http3 { enabled = false }` and a proxy for the URL are refused (UnsupportedOperationException; a
+  `http3 { webTransport { proxyPolicy } }` other than `Refuse` connects directly)
+- at most `http3 { webTransport { maxSessions } }` (64) at once, one more fails at once
 - the resolved addresses are tried in order within `connectTimeout`
 - RFC 9114 §3.3 ("Clients SHOULD NOT open more than one HTTP/3 connection to a given IP address and UDP port"): sessions share the engine's pooled HTTP/3 connection of the URL's host and port with each other and with requests; the pooled connection is made WebTransport-capable (WebTransport, Extended CONNECT and `reset_stream_at`), a request-only one is replaced and finishes its requests; a session the connection cannot take (`ConnectionFull`: no flow control, or our limit) or the server refuses unprocessed (`H3_REQUEST_REJECTED`, its limit, §5.2; the connection is then taken as full at its count; a refusal while none of our sessions is on it is the server's rate, not its limit, and is thrown) goes to an extra connection to the same server, which later sessions share too (sessions racing past a full connection share one being set up) and which closes with its last session
 - one deadline (`connectTimeout`) for every connection a call sets up or waits for: sessions waiting for an extra connection another one sets up share its failure
@@ -342,7 +345,7 @@ Original row: draft-ietf-webtrans-http3-16 (Ktor client); draft-17 in 0.3.0. Unt
 - a connection stays in use while a session is open and until its CONNECT stream ended both ways (at most five seconds after the session closed), so a connection closing with its last user never cuts the close short (the server sees the close code)
 - `connectTimeout` bounds the setup, a session that cannot be opened releases its connection
 - no fallback to HTTP/1.1
-- §8 "a WebTransport client SHOULD limit the number of outgoing sessions": `maxWebTransportSessions` (64)
+- §8 "a WebTransport client SHOULD limit the number of outgoing sessions": `http3 { webTransport { maxSessions } }` (64)
 
 **Tests that pin it.**
 

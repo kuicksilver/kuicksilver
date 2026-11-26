@@ -52,7 +52,7 @@ internal class H2Call(
     webSocket: Boolean,
     engineDispatcher: CoroutineContext,
     userDispatcher: CoroutineContext,
-    /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
+    /** The engine's `webSockets { maxMessageSize }`, for an Extended CONNECT for `websocket`. */
     webSocketMaxMessageSize: Long,
     /** The connection's scheme: `https` over TLS, `http` over h2c (RFC 9113 section 3.3). */
     scheme: String = "https",

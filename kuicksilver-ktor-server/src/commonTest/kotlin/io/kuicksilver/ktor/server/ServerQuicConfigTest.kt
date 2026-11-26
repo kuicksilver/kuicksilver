@@ -22,13 +22,13 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** How `quic` and `quicMaxIdleTimeout` combine into the HTTP/3 listeners' QUIC settings. */
+/** How `http3 { quic { } }` makes the HTTP/3 listeners' QUIC settings. */
 class ServerQuicConfigTest {
     @kotlin.test.BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
      * 0-RTT and client certificates do not go together (`QuicServerConfig` refuses `earlyData` with a `clientAuth` other than
-     * None; docs/guide/ktor.md, "Mutual TLS"): `quicEarlyData` on an engine whose TLS connector asks for client certificates
+     * None; docs/guide/ktor.md, "Mutual TLS"): `http3 { earlyData { enabled } }` on an engine whose TLS connector asks for client certificates
      * fails the start with that message, instead of serving HTTP/3 without 0-RTT or HTTP/1.1 alone.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -38,49 +38,24 @@ class ServerQuicConfigTest {
             for (auth in listOf(ClientAuth.Optional, ClientAuth.Required)) {
                 val e =
                     assertFailsWith<IllegalArgumentException>("clientAuth $auth") {
-                        tlsServer({ quicEarlyData = true }, connector = {
-                            clientAuth = auth
-                            trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                        tlsServer({ http3 { earlyData { enabled = true } } }, connector = {
+                            tls {
+                                clientAuth = auth
+                                clientTrust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                            }
                         }) {}
                     }
-                assertEquals("earlyData cannot be combined with client certificates", e.message, "clientAuth $auth")
+                assertEquals("acceptEarlyData cannot be combined with client certificates", e.message, "clientAuth $auth")
             }
         }
 
-    @Test fun quicMaxIdleTimeoutAppliesWhileQuicIsUnset() {
-        val c = KuicksilverApplicationEngine.Configuration().apply { quicMaxIdleTimeout = 7.seconds }
-        assertEquals(7.seconds, c.http3Quic().maxIdleTimeout)
-    }
-
-    /** Assigning [QuicConfig.Default] is setting `quic`: it carries its own timeout, as any other assigned value does. */
-    @Test fun quicAssignedTheDefaultIsSetToo() {
-        val c =
-            KuicksilverApplicationEngine.Configuration().apply {
-                quicMaxIdleTimeout = 7.seconds
-                quic = QuicConfig.Default
-            }
-        assertEquals(QuicConfig.Default.maxIdleTimeout, c.http3Quic().maxIdleTimeout)
-    }
-
-    /** The order of the two assignments does not matter. */
-    @Test fun quicSetBeforeOrAfterTheTimeoutWins() {
-        val explicit = quicConfig { maxIdleTimeout = 20.seconds }
-        val before =
-            KuicksilverApplicationEngine.Configuration().apply {
-                quic = explicit
-                quicMaxIdleTimeout = 7.seconds
-            }
-        val after =
-            KuicksilverApplicationEngine.Configuration().apply {
-                quicMaxIdleTimeout = 7.seconds
-                quic = explicit
-            }
-        assertEquals(20.seconds, before.http3Quic().maxIdleTimeout)
-        assertEquals(20.seconds, after.http3Quic().maxIdleTimeout)
+    @Test fun theQuicBlockReachesTheListeners() {
+        val c = KuicksilverApplicationEngine.Configuration().apply { http3 { quic { maxIdleTimeout = 7.seconds } } }
+        assertEquals(7.seconds, c.resolveQuic().maxIdleTimeout)
     }
 
     /**
-     * `udpSocketCount = 4` serves HTTP/3 on every platform with a QUIC server: four loops on the port, with SO_REUSEPORT where
+     * `http3 { endpoint { loops = 4 } }` serves HTTP/3 on every platform with a QUIC server: four loops on the port, with SO_REUSEPORT where
      * the kernel balances (Linux, Android), else on one socket routed in process (macOS, iOS, Windows). Before 0.3.0 the
      * engine logged why and served HTTP/1.1 alone, without `Alt-Svc`, outside Linux and Android.
      */
@@ -88,7 +63,7 @@ class ServerQuicConfigTest {
         h3ServerTest {
             val log = CapturedLog()
             val (server, port) =
-                tlsServer({ udpSocketCount = 4 }, log = log) {
+                tlsServer({ http3 { endpoint { loops = 4 } } }, log = log) {
                     routing { get("/") { call.respondText("${call.request.httpVersion} ok") } }
                 }
             try {
@@ -120,21 +95,26 @@ class ServerQuicConfigTest {
         serverTest {
             val e =
                 assertFailsWith<IllegalArgumentException> {
-                    val (server, _) = tlsServer({ quic = quicConfig { maxUniStreams = 2 } }) {}
+                    val (server, _) = tlsServer({ http3 { quic { expert { maxUniStreams = 2 } } } }) {}
                     server.stop(100, 500)
                 }
             assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
-            val (server, _) =
-                tlsServer({
-                    http3 = false
-                    quic = quicConfig { maxUniStreams = 2 }
-                }) {}
-            server.stop(100, 500)
+            // refused whether HTTP/3 is served or not: the block is checked at every start
+            assertFailsWith<IllegalArgumentException> {
+                val (server, _) =
+                    tlsServer({
+                        http3 {
+                            enabled = false
+                            quic { expert { maxUniStreams = 2 } }
+                        }
+                    }) {}
+                server.stop(100, 500)
+            }
         }
 
     /**
      * A start that fails at a later connector stops the ones before it: a plain connector on a fixed port, then a TLS one
-     * whose HTTP/3 settings are refused while it is set up. Before, the failure left the first connector accepting.
+     * whose TLS configuration is refused while it is set up. Before, the failure left the first connector accepting.
      */
     @Test fun negative_aFailedStartLeavesNoEarlierConnectorAccepting() =
         serverTest {
@@ -151,17 +131,25 @@ class ServerQuicConfigTest {
                 probe.close()
                 val server =
                     kuicksilverServer(null, configure = {
-                        quic = quicConfig { maxUniStreams = 2 }
                         connector {
                             host = "127.0.0.1"
                             this.port = port
                         }
-                        tlsConnector(ServerFixtures.identity()) {
+                        tlsConnector {
+                            tls {
+                                identity = ServerFixtures.identity()
+                                // key shares are a client's: the TLS configuration of this connector is refused as it is set up
+                                keyExchangeGroups =
+                                    io.kuicksilver.tls.KeyExchangeGroups(
+                                        listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519),
+                                        setOf(io.kuicksilver.tls.KeyExchangeGroups.X25519),
+                                    )
+                            }
                             host = "127.0.0.1"
                             this.port = 0
                         }
                     }) {}
-                assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
+                assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
                 assertEquals(0, server.engine.tcpConnectionsForProbe.size, "a connector that failed to start is still counted by the probe")
                 // without stop(): the first connector's port is free again, its listener closed by the failed start itself
                 val again =
@@ -187,6 +175,10 @@ class ServerQuicConfigTest {
         }
 
     @Test fun nothingSetKeepsTheDefault() {
-        assertEquals(QuicConfig.Default, KuicksilverApplicationEngine.Configuration().http3Quic())
+        val q = KuicksilverApplicationEngine.Configuration().resolveQuic()
+        assertEquals(QuicConfig.Default.maxIdleTimeout, q.maxIdleTimeout)
+        assertEquals(QuicConfig.Default.maxBidiStreams, q.maxBidiStreams)
+        assertEquals(QuicConfig.Default.initialStreamWindow, q.initialStreamWindow)
+        assertEquals(QuicConfig.Default.resetStreamAt, q.resetStreamAt)
     }
 }

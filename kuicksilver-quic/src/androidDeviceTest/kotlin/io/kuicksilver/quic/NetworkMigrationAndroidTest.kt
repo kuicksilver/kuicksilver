@@ -52,10 +52,10 @@ class NetworkMigrationAndroidTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(60.seconds) {
                     val accepted = async { server.accept() }
@@ -104,10 +104,10 @@ class NetworkMigrationAndroidTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(60.seconds) {
                     val accepted = async { server.accept() }
@@ -150,10 +150,10 @@ class NetworkMigrationAndroidTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(60.seconds) {
                     val accepted = async { server.accept() }
@@ -229,10 +229,10 @@ class NetworkMigrationAndroidTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(60.seconds) {
                     val accepted = async { server.accept() }

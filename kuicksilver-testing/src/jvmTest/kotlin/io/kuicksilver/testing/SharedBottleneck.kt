@@ -76,14 +76,17 @@ internal class SharedBottleneck(
         val clientAddr = InetSocketAddress("10.0.1.${index + 1}", 40000 + index)
         val serverAddr = InetSocketAddress("10.0.2.${index + 1}", 443)
         val clientEp =
-            EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(seedBase + 100 + index))
+            EndpointCore(
+                QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build(),
+                Random(seedBase + 100 + index),
+            )
         val serverEp =
             EndpointCore(
                 QuicEndpointConfig
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(tls.second).apply { this.quic = quic }.build()
-                        crypto = NullCryptoProvider
+                        runtime { crypto = NullCryptoProvider }
                     }.build(),
                 Random(seedBase + 200 + index),
             )

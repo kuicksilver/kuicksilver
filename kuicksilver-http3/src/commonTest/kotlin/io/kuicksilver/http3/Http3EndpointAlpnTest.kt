@@ -49,8 +49,8 @@ class Http3EndpointAlpnTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(serverTls).build()
-                            crypto = KslQuicCrypto
-                            io = { b }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { b } }
                         }.build(),
                 )
             val client =
@@ -59,8 +59,8 @@ class Http3EndpointAlpnTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { a } }
                         }.build(),
                 )
             try {

@@ -63,7 +63,7 @@ internal object Testcases {
         if (testcase !in supported) return null
         // v2: both sides prefer v2; the client's first flight is v1 and the server upgrades it (RFC 9368 section 2.3)
         // 30 s like the server plan: under handshakecorruption a two-datagram ClientHello (ML-KEM key share) can need more than four PTO rounds
-        val quic = quicConfig { handshakeTimeout = 30.seconds; congestionController = cc; if (testcase == "v2") { versions = v2first; initialVersion = VersionProfile.V1 } }
+        val quic = quicConfig { handshakeTimeout = 30.seconds; congestionController = cc; if (testcase == "v2") { versions = v2first; expert { initialVersion = VersionProfile.V1 } } }
         return ClientPlan(quic, suites(testcase), keyUpdateAfterBytes = if (testcase == "keyupdate") 1L shl 18 else null, connectionPerRequest = testcase == "multiconnect", http3 = testcase == "http3",
             earlyData = if (testcase in resuming) EarlyDataState.Allowed else EarlyDataState.Disabled, zeroRtt = testcase == "zerortt")
     }

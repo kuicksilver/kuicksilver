@@ -94,4 +94,51 @@ class ZeroRttReplayRegisterTest {
         // the next rotation (one half later) must keep it: a replay 21 s after its admission is still inside the register
         assertFalse(r.admit(id(1), t0 + half * 3 + 11.seconds), "a replay right after a rotation that followed an idle stretch")
     }
+
+    /** The register starts small and grows with its load (ADR-0026): one admission does not allocate the whole capacity. */
+    @Test fun aNewRegisterStartsSmallAndGrows() {
+        val r = ZeroRttReplayRegister(Random(9))
+        assertTrue(r.admit(id(1), t0))
+        val first = r.memoryBytes
+        assertEquals(ZeroRttReplayRegister.STRIPES * ZeroRttReplayRegister.INITIAL_SLOTS * 2 * 8L, first)
+        assertTrue(first < 1024 * 1024, "less than 1 MiB at first: $first")
+        for (i in 2..20_000) r.admit(id(i), t0)
+        assertTrue(r.memoryBytes > first, "grown with the load: ${r.memoryBytes}")
+        assertTrue(r.memoryBytes <= ZeroRttReplayRegister.CAPACITY * 2 * 8L, "never past the capacity: ${r.memoryBytes}")
+    }
+
+    /** No replay gets through while a stripe grows, in either half: growing rehashes what both halves remember. */
+    @Test fun negative_noReplayGetsThroughAGrowth() {
+        val r = ZeroRttReplayRegister(Random(10), stripeCount = 1, slots = 1024)
+        val before = (0 until 90).map { id(10_000 + it) }
+        for (x in before) assertTrue(r.admit(x, t0))
+        // one half later the first batch sits in the previous half; the next admissions grow the stripe past 128, 256, 512
+        val t1 = t0 + ZeroRttReplayRegister.HALF_SPAN
+        val admitted = mutableListOf<ByteArray>()
+        for (n in 0 until 700) {
+            val x = id(n)
+            assertTrue(r.admit(x, t1), "fresh $n")
+            admitted += x
+            if (n % 50 == 49 || n in 90..100 || n in 186..200 || n in 380..390) {
+                for (y in admitted) assertFalse(r.admit(y, t1), "a replay after $n admissions")
+                for (y in before) assertFalse(r.admit(y, t1), "a replay of the previous half after $n admissions")
+            }
+        }
+        assertEquals(1024L * 2 * 8, r.memoryBytes, "grown to its largest size")
+        assertFalse(r.admit(id(5), t1 + 5.seconds), "still refused once grown")
+    }
+
+    /** A NEW_TOKEN register of the default capacity (1 Mi tokens, 32 MiB at most) takes far less after its first token. */
+    @Test fun firstNewTokenAllocatesLessThanOneMebibyte() {
+        io.kuicksilver.native.KslLoader
+            .ensureLoaded()
+        val tokens = AddressTokens(io.kuicksilver.tls.KslQuicCrypto, Random(11))
+        try {
+            assertTrue(tokens.admitNewToken(42, t0))
+            assertTrue(tokens.replayMemoryBytesForTest in 1 until 1024 * 1024, "${tokens.replayMemoryBytesForTest}")
+            assertFalse(tokens.admitNewToken(42, t0), "and never twice")
+        } finally {
+            tokens.close()
+        }
+    }
 }

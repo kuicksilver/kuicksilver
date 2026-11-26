@@ -24,13 +24,48 @@
     "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
 
+/* RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+   [TLS-ECDHE] with the P-256 elliptic curve [RFC8422]". A TLS 1.2 handshake whose context cannot (its certificate has no
+   rsaEncryption key, or P-256 is not among its groups) does not get h2; TLS 1.3 is unaffected. In TLS 1.2 OpenSSL selects
+   ALPN after the version, the certificate (SNI) and the cipher suite (tls_post_process_client_hello), and calls this with the
+   session's current context: an SNI override's, with its own groups. OpenSSL could hold one certificate per key type in a
+   context (RSA and ECDSA side by side, the suite choosing between them); ksl holds one: ksl_ctx_set_identity_pkey refuses a
+   second identity, so the key in use is the context's only one and an RSA certificate cannot sit unseen beside it. A resumed
+   TLS 1.2 session gets the same answer: OpenSSL calls the ALPN callback on resumption too, with the same context. */
+static int ctx_has_p256(const ksl_ctx *c);
+static int h2_allowed(SSL *ssl, const ksl_ctx *c) {
+    if (SSL_version(ssl) != TLS1_2_VERSION)
+        return 1;
+    EVP_PKEY *key = SSL_get_privatekey(ssl);
+    return key && EVP_PKEY_get_base_id(key) == EVP_PKEY_RSA && ctx_has_p256(c);
+}
+/* SSL_select_next_proto in the server's order, h2 left out where h2_allowed says so; *out points into c->alpn, which lives as
+   long as the context. */
 static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
                           unsigned int inlen, void *arg) {
-    (void)ssl;
     ksl_ctx *c = arg;
-    if (SSL_select_next_proto((unsigned char **)out, outlen, c->alpn, (unsigned)c->alpn_len, in, inlen) ==
-        OPENSSL_NPN_NEGOTIATED)
-        return SSL_TLSEXT_ERR_OK;
+    int h2 = -1; /* not looked at yet: only a list with h2 needs h2_allowed */
+    for (size_t i = 0; i < c->alpn_len; i += 1 + (size_t)c->alpn[i]) {
+        const unsigned char *p = c->alpn + i + 1;
+        unsigned char l = c->alpn[i];
+        if (i + 1 + l > c->alpn_len)
+            break;
+        if (l == 2 && memcmp(p, "h2", 2) == 0) {
+            if (h2 < 0)
+                h2 = h2_allowed(ssl, c);
+            if (!h2)
+                continue;
+        }
+        for (unsigned int j = 0; j < inlen; j += 1u + in[j]) {
+            if (j + 1u + in[j] > inlen)
+                break; /* OpenSSL checked the list's framing (tls_parse_ctos_alpn); a short tail is ignored */
+            if (in[j] == l && memcmp(in + j + 1, p, l) == 0) {
+                *out = p;
+                *outlen = l;
+                return SSL_TLSEXT_ERR_OK;
+            }
+        }
+    }
     return SSL_TLSEXT_ERR_ALERT_FATAL; /* no_application_protocol (120) */
 }
 /* Records alerts for both modes: sent -> code, received -> code | 0x100 (ksl_ssl_last_error). Fatal ones and close_notify; in TLS
@@ -418,6 +453,15 @@ static const struct {
     {"X25519MLKEM768", 0x11ec}, {"SecP256r1MLKEM768", 0x11eb}, {"SecP384r1MLKEM1024", 0x11ed}, {"X25519", 0x001d},
     {"X448", 0x001e},           {"secp256r1", 0x0017},         {"secp384r1", 0x0018},          {"secp521r1", 0x0019},
 };
+/* Whether P-256 is among c's groups; OpenSSL's defaults, which have it, when ksl_ctx_set_groups never ran (h2_allowed). */
+static int ctx_has_p256(const ksl_ctx *c) {
+    if (c->group_count == 0)
+        return 1;
+    for (size_t k = 0; k < c->group_count; k++)
+        if (group_table[c->group_idx[k]].id == 0x0017)
+            return 1;
+    return 0;
+}
 static int group_lookup(const char *name, size_t len) {
     for (int i = 0; i < KSL_GROUPS_MAX; i++)
         if (strlen(group_table[i].name) == len && OPENSSL_strncasecmp(group_table[i].name, name, len) == 0)
@@ -865,6 +909,12 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
     ERR_clear_error();
     if (!key) {
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no private key");
+        return KSL_ERROR;
+    }
+    /* one identity per context (h2_allowed relies on it): a second, of another key type, would sit beside the first in
+       OpenSSL's per-type slots and be chosen by the suite, unseen by the checks made on the first */
+    if (SSL_CTX_get0_certificate(c->ctx) != NULL) {
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: the context has an identity already (one per context)");
         return KSL_ERROR;
     }
     STACK_OF(X509) *sk = NULL;

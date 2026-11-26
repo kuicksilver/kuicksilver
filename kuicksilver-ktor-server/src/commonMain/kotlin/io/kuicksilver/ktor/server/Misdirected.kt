@@ -71,7 +71,7 @@ internal class SniChoice(
  * [matchesHost]); the port plays no part, a certificate names none. Not rejected: on a plain connection a scheme other
  * than `https`, a request
  * without an authority (its target URI takes the server's own, RFC 9112 section 3.3), and a connection from a trusted
- * gateway ([KuicksilverTlsConnector.trustedGateway], the exception section 7.4 makes). An authority whose host is no valid
+ * gateway ([KuicksilverTlsConnector.Builder.allowMisdirectedHosts], the exception section 7.4 makes). An authority whose host is no valid
  * reference identifier (not ASCII, malformed) cannot be valid for the certificate and is rejected. On a connection an
  * `sniSelector` set up ([sni]), the host must also be the name it was set up for ([SniChoice]).
  */

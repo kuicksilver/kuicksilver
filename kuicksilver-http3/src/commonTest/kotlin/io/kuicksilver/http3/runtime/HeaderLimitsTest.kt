@@ -144,7 +144,7 @@ class HeaderLimitsTest {
             maxHeaderBlockTime = 300.milliseconds
             enableConnectProtocol = true
             h3Datagram = true
-            webTransport = true
+            webTransport { enabled = true }
         }
 
     /**

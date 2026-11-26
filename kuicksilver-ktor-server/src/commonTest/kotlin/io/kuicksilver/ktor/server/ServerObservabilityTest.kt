@@ -236,7 +236,7 @@ class ServerObservabilityTest {
     @Test fun theEventListenerHearsHttp1AndHttp3() =
         h3ServerTest {
             val events = Recorder()
-            val (server, port) = tlsServer({ eventListener = events }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = tlsServer({ observability { eventListener = events } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val raw = rawHttp(port, "GET /?h1 HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(raw.startsWith("HTTP/1.1 200"), raw)
@@ -274,7 +274,7 @@ class ServerObservabilityTest {
             val events = Recorder()
             val noMoreRequests = CompletableDeferred<Unit>()
             val (server, port) =
-                tlsServer({ eventListener = events }) {
+                tlsServer({ observability { eventListener = events } }) {
                     routing {
                         get("/") {
                             call.respondText("ok")
@@ -339,7 +339,10 @@ class ServerObservabilityTest {
                     ): Unit = bug()
                 }
             val log = CapturedLog()
-            val (server, port) = tlsServer({ eventListener = throwing }, log = log) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) =
+                tlsServer({
+                    observability { eventListener = throwing }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 repeat(2) {
                     val raw = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -408,9 +411,11 @@ class ServerObservabilityTest {
                 }
             val (server, port) =
                 tlsServer({
-                    this.logger = logger
-                    this.qlog = qlog
-                    connectionListener = listener
+                    observability {
+                        this.logger = logger
+                        this.qlog = qlog
+                        connectionListener = listener
+                    }
                 }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))

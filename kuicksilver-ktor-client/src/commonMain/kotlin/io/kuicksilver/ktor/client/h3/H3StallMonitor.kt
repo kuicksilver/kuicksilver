@@ -27,7 +27,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The thresholds of HTTP/3 stall detection (`http3 { stallDetection }`): [probeTimeouts] probe timeouts in a row
+ * The thresholds of HTTP/3 stall detection (`http3 { stall { enabled } }`): [probeTimeouts] probe timeouts in a row
  * (RFC 9002 section 6.2) and at least [minSilence] without any packet from the peer.
  */
 internal class StallSettings(

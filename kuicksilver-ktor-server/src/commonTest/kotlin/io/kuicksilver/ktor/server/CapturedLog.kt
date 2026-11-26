@@ -41,6 +41,16 @@ internal class CapturedLog(
         taken.update { it + CapturedLine(level, message, cause) }
     }
 
+    private val infoTaken = AtomicReference(emptyList<String>())
+
+    /** The Info lines, kept apart from [lines] (which holds warnings and errors only) and still printed. */
+    val infos: List<String> get() = infoTaken.load()
+
+    override fun info(message: String) {
+        infoTaken.update { it + message }
+        delegate.info(message)
+    }
+
     override fun warn(message: String) = take("WARN", message, null)
 
     override fun warn(

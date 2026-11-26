@@ -7,7 +7,6 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.InternalAPI
 import kotlinx.io.Buffer
-import kotlinx.io.EOFException
 import kotlinx.io.InternalIoApi
 import kotlinx.io.indexOf
 import kotlinx.io.readByteArray
@@ -61,7 +60,7 @@ internal suspend fun readResponseHeadBytes(
     while (true) {
         if (input.readBuffer.exhausted() && !input.awaitContent()) {
             if (taken == 0) return null
-            throw ClosedReadChannelException(EOFException("The response head ended before its empty line"))
+            throw ClosedReadChannelException(PeerTruncation("The response head ended before its empty line"))
         }
         val from = input.readBuffer.buffer
         while (!from.exhausted()) {

@@ -19,9 +19,10 @@ import kotlinx.io.readString
 
 /**
  * The server `tools/check/deployment-guide.sh` runs the commands of docs/guide/deployment.md against: the Ktor engine as
- * that guide deploys it, one TLS connector with the engine's defaults (HTTP/1.1 with `Alt-Svc`, HTTP/3 on the same UDP
- * port), its identity read from PEM files. `GET /` (and `HEAD /`) answers `ok`. Arguments: `host port chain.pem key.pem`; the bound port is
- * printed as `deployment-server listening on <port>` once the server accepts connections. Runs until the process is killed.
+ * that guide deploys it, one TLS connector with the engine's defaults (HTTP/1.1 and HTTP/2 by ALPN with `Alt-Svc`, HTTP/3
+ * on the same UDP port), its identity read from PEM files. `GET /` (and `HEAD /`) answers `ok`. Arguments:
+ * `host port chain.pem key.pem`; the bound port is printed as `deployment-server listening on <port>` once the server
+ * accepts connections. Runs until the process is killed.
  */
 public fun deploymentServerMain(args: Array<String>) {
     require(args.size == 4) { "usage: deployment-server <host> <port> <chain.pem> <key.pem>" }
@@ -30,7 +31,8 @@ public fun deploymentServerMain(args: Array<String>) {
     runBlocking {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     this.host = host
                     this.port = port.toInt()
                 }

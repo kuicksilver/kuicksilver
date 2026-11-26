@@ -27,17 +27,19 @@ class ClientMigrationAppleTest {
             val (server, port) = testServer { routing { get("/") { call.respondText(call.request.httpVersion) } } }
             val heard = Channel<MigrationEvent<*>>(Channel.UNLIMITED)
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    eventListener =
-                        object : KuicksilverEventListener() {
-                            override fun connectionMigrated(
-                                origin: String,
-                                event: MigrationEvent<*>,
-                            ) {
-                                heard.trySend(event)
+                testClient(Http3Discovery.H3Only, engine = {
+                    observability {
+                        eventListener =
+                            object : KuicksilverEventListener() {
+                                override fun connectionMigrated(
+                                    origin: String,
+                                    event: MigrationEvent<*>,
+                                ) {
+                                    heard.trySend(event)
+                                }
                             }
-                        }
-                    http3 { connectionMigration = Http3ConnectionMigration.followDefaultNetwork() }
+                    }
+                    http3 { migration = Http3ConnectionMigration.followDefaultNetwork() }
                 }).use { c ->
                     repeat(3) { assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                     // the network did not change: nothing moved, nothing failed

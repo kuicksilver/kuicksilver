@@ -489,7 +489,7 @@ class ClientWebSocketConnectingTest {
                 input.discard()
             }) { port ->
                 testClient(
-                    engine = { maxConnectionsPerRoute = 1 },
+                    engine = { pool { maxConnectionsPerRoute = 1 } },
                     block = { install(WebSockets) },
                 ).use { c ->
                     val engine = c.engine as KuicksilverEngine

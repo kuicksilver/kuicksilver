@@ -134,7 +134,7 @@ class AlpnExtensionAlertTest {
     ): TlsConfig =
         TcpFixtures.server {
             this.alpn = alpn
-            alpnFallback = fallback
+            expert { alpnFallback = fallback }
         }
 
     private val malformed =

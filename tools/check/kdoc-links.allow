@@ -1,0 +1,2 @@
+# KDoc links tools/check/kdoc-links.py cannot resolve, judged: <path> | <link> | <reason>.
+kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/ConnectionReuse.kt | HTTP | a quotation of RFC 9114, whose [HTTP] is its reference to RFC 9110, not a KDoc link

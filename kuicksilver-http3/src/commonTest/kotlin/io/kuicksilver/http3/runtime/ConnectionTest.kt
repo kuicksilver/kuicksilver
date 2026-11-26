@@ -46,7 +46,7 @@ class ConnectionTest {
 
     @Test fun settingsSentImmediately() =
         h3Test {
-            H3Pair.open(clientSettings = http3Settings { enableQpackDynamicTable() }).use { p ->
+            H3Pair.open(clientSettings = http3Settings { qpack { enableDynamicTable() } }).use { p ->
                 // no request was made: SETTINGS left at once, in both directions
                 val seen =
                     p.server.peerSettings
@@ -85,7 +85,7 @@ class ConnectionTest {
             for (grease in listOf(true, false)) {
                 QuicPair.open().useScoped { q ->
                     val (c, s) = q.connect()
-                    val server = async { Http3Connection.server(s, http3Settings { this.grease = grease }) }
+                    val server = async { Http3Connection.server(s, http3Settings { expert { this.grease = grease } }) }
                     val types = ArrayList<Long>()
                     withTimeout(3.seconds) { repeat(if (grease) 4 else 3) { types += c.acceptStream().readVarInt() } }
                     assertEquals(grease, types.any { FrameType.isGrease(it) }, "types $types")

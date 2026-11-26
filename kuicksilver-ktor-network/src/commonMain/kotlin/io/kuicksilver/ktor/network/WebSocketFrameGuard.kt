@@ -158,7 +158,7 @@ private fun WebSocketExtensionFactory<*, *>.rsvBits(): Int =
 private const val PERMESSAGE_DEFLATE = "permessage-deflate"
 
 /**
- * The default of the engines' `webSocketMaxMessageSize`: 16 MiB, as `PerMessageDeflate`'s `maxInflatedMessageSize`. The
+ * The default of the engines' `webSockets { maxMessageSize }`: 16 MiB, as `PerMessageDeflate`'s `maxInflatedMessageSize`. The
  * largest frame, and message once reassembled, a peer may send (RFC 6455 section 10.4).
  */
 @InternalKuicksilverApi

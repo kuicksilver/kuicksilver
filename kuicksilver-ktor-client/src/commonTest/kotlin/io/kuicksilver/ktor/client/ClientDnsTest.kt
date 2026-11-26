@@ -108,8 +108,8 @@ class ClientDnsTest {
             try {
                 val plain = DnsEvents()
                 testClient(engine = {
-                    dns = Dns { listOf(loopback, IpAddress.parse("0.0.0.0")) }
-                    eventListener = plain
+                    network { dns = Dns { listOf(loopback, IpAddress.parse("0.0.0.0")) } }
+                    observability { eventListener = plain }
                 }).use { c ->
                     c.get("https://server.test:$port/a")
                     assertEquals(listOf("start server.test both /a", "end server.test both [127.0.0.1] null"), plain.drain())
@@ -118,8 +118,8 @@ class ClientDnsTest {
                 }
                 val failing = DnsEvents()
                 testClient(engine = {
-                    dns = Dns { throw IOException("boom") }
-                    eventListener = failing
+                    network { dns = Dns { throw IOException("boom") } }
+                    observability { eventListener = failing }
                 }).use { c ->
                     assertFailsWith<IOException> { c.get("https://server.test:$port/c") }
                     assertEquals(listOf("start server.test both /c", "end server.test both [] boom"), failing.drain())
@@ -138,7 +138,7 @@ class ClientDnsTest {
                     }
                 }
                 try {
-                    testClient(engine = { eventListener = perFamily }).use { c ->
+                    testClient(engine = { observability { eventListener = perFamily } }).use { c ->
                         c.get("https://server.test:$port/d")
                         assertEquals(
                             setOf(
@@ -160,9 +160,9 @@ class ClientDnsTest {
 
     @Test fun theDefaultIsTheSystemResolver() {
         val config = KuicksilverEngineConfig()
-        assertSame(Dns.System, config.dns)
+        assertSame(Dns.System, config.network.dns)
         assertTrue(config.newRequestDns().isSystemForTest, "the default must keep the system path as it was")
-        config.dns = Dns { emptyList() }
+        config.network.dns = Dns { emptyList() }
         assertTrue(!config.newRequestDns().isSystemForTest)
     }
 
@@ -171,7 +171,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val dns = Recording(mapOf("server.test" to listOf(loopback)))
-                testClient(engine = { this.dns = dns }).use { c ->
+                testClient(engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
                 assertEquals(listOf("server.test"), dns.asked())
@@ -185,7 +185,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             try {
                 val dns = Recording(mapOf("server.test" to listOf(loopback)))
-                testClient(Http3DiscoveryMode.H3Only, engine = { this.dns = dns }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { network { this.dns = dns } }).use { c ->
                     val r = c.get("https://server.test:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("v=HTTP/3", r.bodyAsText())
@@ -202,7 +202,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val dns = Recording(mapOf("server.test" to listOf(loopback)))
-                testClient(Http3DiscoveryMode.Preferred, engine = { this.dns = dns }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
                 assertEquals(listOf("server.test"), dns.asked())
@@ -227,7 +227,7 @@ class ClientDnsTest {
                             return if (ipv6) emptyList() else listOf(loopback)
                         }
                     }
-                testClient(engine = { this.dns = dns }).use { c ->
+                testClient(engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
                 assertEquals(setOf("server.test" to true, "server.test" to false), asked.withLock { families.toSet() })
@@ -242,7 +242,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val dns = Dns { error("asked for $it") }
-                testClient(engine = { this.dns = dns }).use { c ->
+                testClient(engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                 }
             } finally {
@@ -262,13 +262,16 @@ class ClientDnsTest {
             val sni = ArrayList<String?>()
             val server =
                 embeddedServer(KuicksilverServer, configure = {
-                    tlsConnector(ClientFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ClientFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
                         // the same certificate for every name: whether a name is accepted is the client's check alone
-                        sniSelector = { hello ->
-                            names.withLock { sni += hello.serverName }
-                            ServerTlsOverride(ClientFixtures.identity())
+                        tls {
+                            sniSelector = { hello ->
+                                names.withLock { sni += hello.serverName }
+                                ServerTlsOverride(ClientFixtures.identity())
+                            }
                         }
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }
@@ -280,7 +283,7 @@ class ClientDnsTest {
                         .first()
                         .port
                 val dns = Recording(mapOf("server.test" to listOf(loopback), "evil.test" to listOf(loopback)))
-                testClient(engine = { this.dns = dns }).use { c ->
+                testClient(engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                     assertEquals(listOf<String?>("server.test"), names.withLock { sni.toList() })
                     val e = assertFailsWith<Throwable> { c.get("https://evil.test:$port/") }
@@ -298,7 +301,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val dns = Recording(mapOf("server.test" to listOf(loopback), "evil.test" to listOf(loopback)))
-                testClient(Http3DiscoveryMode.H3Only, engine = { this.dns = dns }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { network { this.dns = dns } }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("https://server.test:$port/").version)
                     val e = assertFailsWith<Throwable> { c.get("https://evil.test:$port/") }
                     assertTrue(generateSequence(e) { it.cause }.any { it is TlsException }, "$e")
@@ -318,7 +321,7 @@ class ClientDnsTest {
             val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("reached") } } }
             try {
                 val dns = Recording(mapOf("server.test" to listOf(IpAddress.parse("0.0.0.0"), IpAddress.parse("224.0.0.1"))))
-                testClient(engine = { this.dns = dns }).use { c ->
+                testClient(engine = { network { this.dns = dns } }).use { c ->
                     val e = assertFailsWith<IOException> { c.get("http://server.test:$port/") }
                     assertTrue("no address" in e.message.orEmpty(), "$e")
                 }
@@ -349,11 +352,11 @@ class ClientDnsTest {
                 val modes =
                     if (quicServerSupported()) {
                         listOf(
-                            Http3DiscoveryMode.H1Only,
-                            Http3DiscoveryMode.H3Only,
+                            null,
+                            Http3Discovery.H3Only,
                         )
                     } else {
-                        listOf(Http3DiscoveryMode.H1Only)
+                        listOf(null)
                     }
                 for (mode in modes) {
                     testClient(mode, engine = { connectTimeout = 30.seconds }).use { c ->
@@ -379,11 +382,11 @@ class ClientDnsTest {
                 val modes =
                     if (quicServerSupported()) {
                         listOf(
-                            Http3DiscoveryMode.H1Only,
-                            Http3DiscoveryMode.H3Only,
+                            null,
+                            Http3Discovery.H3Only,
                         )
                     } else {
-                        listOf(Http3DiscoveryMode.H1Only)
+                        listOf(null)
                     }
                 for (mode in modes) {
                     testClient(mode, engine = { connectTimeout = 30.seconds }).use { c ->
@@ -424,10 +427,10 @@ class ClientDnsTest {
                         ): List<IpAddress> = error("asked for $host")
                     }
                 testClient(engine = {
-                    this.dns = dns
-                    eventListener = events
+                    network { this.dns = dns }
+                    observability { eventListener = events }
                     // the JDK's ProxySelector takes no URI with such a host
-                    proxyResolver = ProxyResolvers.None
+                    proxies { resolver = ProxyResolvers.None }
                 }).use { c ->
                     assertEquals("ok", c.get("http://127.1:$port/").bodyAsText())
                 }
@@ -440,11 +443,11 @@ class ClientDnsTest {
     @Test fun negative_aDnsThatThrowsFailsTheCall() =
         clientTest {
             val boom = IOException("boom")
-            testClient(engine = { dns = Dns { throw boom } }).use { c ->
+            testClient(engine = { network { dns = Dns { throw boom } } }).use { c ->
                 val e = assertFailsWith<IOException> { c.get("https://server.test:1/") }
                 assertTrue(generateSequence<Throwable>(e) { it.cause }.any { it === boom }, "$e")
             }
-            testClient(engine = { dns = Dns { emptyList() } }).use { c ->
+            testClient(engine = { network { dns = Dns { emptyList() } } }).use { c ->
                 val e = assertFailsWith<IOException> { c.get("https://server.test:1/") }
                 assertTrue("no address" in e.message.orEmpty(), "$e")
             }
@@ -459,7 +462,7 @@ class ClientDnsTest {
     @Test fun negative_aCancellationTheDnsThrowsFailsTheCall() =
         clientTest {
             testClient(engine = {
-                dns = Dns { throw CancellationException("its own timeout") }
+                network { dns = Dns { throw CancellationException("its own timeout") } }
                 connectTimeout = 60.seconds
             }, block = { install(WebSockets) }).use { c ->
                 for (call in listOf<suspend () -> Unit>({ c.get("https://server.test:1/") }, { c.webSocket("ws://server.test:1/") {} })) {
@@ -474,7 +477,7 @@ class ClientDnsTest {
     /** A resolver that never answers ends at the connect timeout, cancelled ([Dns]: the lookup is part of connecting). */
     @Test fun negative_aStalledDnsEndsAtTheConnectTimeout() =
         clientTest {
-            for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.H3Only)) {
+            for (mode in listOf(null, Http3Discovery.H3Only)) {
                 val entered = CompletableDeferred<Unit>()
                 val cancelled = CompletableDeferred<Unit>()
                 val dns =
@@ -487,7 +490,7 @@ class ClientDnsTest {
                         }
                     }
                 testClient(mode, engine = {
-                    this.dns = dns
+                    network { this.dns = dns }
                     connectTimeout = 300.milliseconds
                 }).use { c ->
                     val started = TimeSource.Monotonic.markNow()
@@ -510,7 +513,7 @@ class ClientDnsTest {
                         emptyList()
                     }
                 testClient(engine = {
-                    this.dns = dns
+                    network { this.dns = dns }
                     connectTimeout = 300.milliseconds
                 }).use { c ->
                     assertFailsWith<ConnectTimeoutException> { c.get("https://stalled.test:$port/") }
@@ -537,7 +540,7 @@ class ClientDnsTest {
                         cancelled.complete(Unit)
                     }
                 }
-            testClient(engine = { this.dns = dns }).use { c ->
+            testClient(engine = { network { this.dns = dns } }).use { c ->
                 coroutineScope {
                     val call = async { c.get("https://server.test:443/") }
                     entered.await()
@@ -553,7 +556,7 @@ class ClientDnsTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val many = listOf(loopback) + List(200_000) { IpAddress.of(byteArrayOf(127, 0, (it shr 8).toByte(), it.toByte())) }
-                testClient(engine = { dns = Dns { many } }).use { c ->
+                testClient(engine = { network { dns = Dns { many } } }).use { c ->
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
                 }
             } finally {
@@ -580,7 +583,7 @@ class ClientDnsTest {
             port = bound
             try {
                 val dns = Recording(mapOf("server.test" to listOf(loopback), "alt.test" to listOf(loopback)))
-                testClient(Http3DiscoveryMode.Auto, engine = { this.dns = dns }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { network { this.dns = dns } }).use { c ->
                     assertEquals("v=HTTP/1.1", c.get("https://server.test:$port/").bodyAsText())
                     // the alternative is known now: this request races it (QUIC to alt.test, verified as server.test) against
                     // TCP; whichever wins, the QUIC side asked the resolver for the alternative's host
@@ -604,8 +607,8 @@ class ClientDnsTest {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
                     val dns = Recording(mapOf("proxy.test" to listOf(loopback)))
                     testClient(engine = {
-                        this.dns = dns
-                        proxyResolver = ProxyResolver { ResolvedProxy.http("proxy.test", proxyPort) }
+                        network { this.dns = dns }
+                        proxies { resolver = ProxyResolver { ResolvedProxy.http("proxy.test", proxyPort) } }
                     }).use { c ->
                         assertEquals("through", c.get("https://server.test:$port/").bodyAsText())
                     }

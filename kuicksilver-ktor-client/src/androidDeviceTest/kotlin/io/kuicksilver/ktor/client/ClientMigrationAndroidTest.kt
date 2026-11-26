@@ -128,16 +128,16 @@ class ClientMigrationAndroidTest {
     private fun client(
         listener: KuicksilverEventListener,
         migrate: Boolean,
-    ) = testClient(Http3DiscoveryMode.Preferred, engine = {
-        trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) // the test certificate, reached as 10.0.2.2
-        quic = quicConfig { maxIdleTimeout = 10.seconds }
-        eventListener = listener
+    ) = testClient(Http3Discovery.Preferred, engine = {
+        tls { trust = TrustConfig.ExpectedName("server.test", ClientFixtures.trust) } // the test certificate, reached as 10.0.2.2
+        http3 { quic { maxIdleTimeout = 10.seconds } }
+        observability { eventListener = listener }
         http3 {
-            hardDelay = Duration.INFINITE // HTTP/1.1 only after HTTP/3 failed
+            expert { raceHeadStart = RaceHeadStart.NoRace } // TCP (HTTP/2 or HTTP/1.1) only after HTTP/3 failed
             if (migrate) {
                 // guide:ktor:android-migration
-                connectionMigration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
-                networkId = { connectivity.activeNetwork?.toString() }
+                migration = Http3ConnectionMigration.followDefaultNetwork(connectivity)
+                network { networkId = { connectivity.activeNetwork?.toString() } }
             }
         }
     })
@@ -186,7 +186,7 @@ class ClientMigrationAndroidTest {
         }
 
     /**
-     * Without `connectionMigration` (0.2's behaviour), on the same switch: logs what happens to the download, for the guide's
+     * Without `http3 { migration }` (0.2's behaviour), on the same switch: logs what happens to the download, for the guide's
      * claim about connections that do not migrate, and checks that nothing migrates. The engine's endpoint socket is bound
      * to no network, so the system may route it over the new default network and the server follow that as a NAT
      * rebinding: on the API 32 emulator (2026-11-06) the download completed that way, which is why the guide says such a

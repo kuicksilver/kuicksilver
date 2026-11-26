@@ -63,7 +63,7 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Per-call protocol diagnostics through the engine (docs/guide/ktor.md, "Why did this request not use HTTP/3?"): the
  * response attribute, the log line, and their agreement with the event listener. Races whose order matters use
- * `hardDelay = Duration.INFINITE` (HTTP/1.1 only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
+ * `raceHeadStart = RaceHeadStart.NoRace` (TCP only once HTTP/3 failed) or hold the HTTP/3 setup, so no outcome depends on
  * which loopback connection is faster.
  */
 class ClientDiagnosticsTest {
@@ -123,9 +123,9 @@ class ClientDiagnosticsTest {
             val (server, port) = testServer(module = okServer())
             val reasons = Reasons()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    http3 { hardDelay = Duration.INFINITE }
-                    eventListener = reasons
+                testClient(Http3Discovery.Preferred, engine = {
+                    http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
+                    observability { eventListener = reasons }
                 }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("ok", r.bodyAsText())
@@ -157,7 +157,7 @@ class ClientDiagnosticsTest {
         clientTest {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.Auto).use { c ->
+                testClient(Http3Discovery.Auto).use { c ->
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
                     assertEquals(FallbackReason.NoAlternative, d.fallback)
@@ -175,7 +175,7 @@ class ClientDiagnosticsTest {
         clientTest {
             val (server, port) = testServer(plain = true, module = okServer())
             try {
-                testClient(Http3DiscoveryMode.Preferred).use { c ->
+                testClient(Http3Discovery.Preferred).use { c ->
                     val d = assertNotNull(c.get("http://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
                     assertEquals(FallbackReason.NotSecure, d.fallback)
@@ -190,7 +190,7 @@ class ClientDiagnosticsTest {
         clientTest {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                testClient(null).use { c ->
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(FallbackReason.Configuration, d.fallback)
                 }
@@ -204,7 +204,7 @@ class ClientDiagnosticsTest {
             val (server, port) = testServer(module = okServer())
             try {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, _ ->
-                    testClient(Http3DiscoveryMode.Preferred, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
+                    testClient(Http3Discovery.Preferred, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
                         .use { c ->
                             val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                             assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
@@ -233,10 +233,12 @@ class ClientDiagnosticsTest {
             val reasons = Reasons()
             val log = DiagnosticLines(LogLevel.Info)
             tlsH1WithSilentUdp(handler = serveOk) { port ->
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    quic = quicConfig { handshakeTimeout = 2.seconds }
-                    eventListener = reasons
-                    logger = log
+                testClient(Http3Discovery.Preferred, engine = {
+                    quicHandshakeTimeoutForTest = 2.seconds
+                    observability {
+                        eventListener = reasons
+                        logger = log
+                    }
                 }).use { c ->
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
@@ -269,14 +271,11 @@ class ClientDiagnosticsTest {
     @Test fun noDontFragmentFallsBackToTcpAtOnce() =
         clientTest {
             tlsH1WithSilentUdp(handler = serveOk) { port ->
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                testClient(Http3Discovery.Preferred, engine = {
+                    quicHandshakeTimeoutForTest = 30.seconds
                     http3 {
-                        hardDelay = Duration.INFINITE
-                        endpoint =
-                            io.kuicksilver.quic.quicEndpointConfig {
-                                io = { throw QuicException.DontFragmentUnavailable(null, "test: no DF on this socket") }
-                            }
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
+                        endpointIoForTest = { throw QuicException.DontFragmentUnavailable(null, "test: no DF on this socket") }
                     }
                 }).use { c ->
                     val d = withTimeout(10.seconds) { assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics) }
@@ -291,9 +290,9 @@ class ClientDiagnosticsTest {
     @Test fun udpTimeoutBeforeTcpIsHandshakeTimeout() =
         clientTest {
             tlsH1WithSilentUdp(handler = serveOk) { port ->
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    quic = quicConfig { handshakeTimeout = 300.milliseconds }
-                    http3 { hardDelay = Duration.INFINITE }
+                testClient(Http3Discovery.Preferred, engine = {
+                    quicHandshakeTimeoutForTest = 300.milliseconds
+                    http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                 }).use { c ->
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
@@ -314,7 +313,7 @@ class ClientDiagnosticsTest {
             bindOnSamePort(
                 first = udp,
                 releaseFirst = release,
-                second = { p -> testServer(configure = { http3 = false }, port = p, module = module) },
+                second = { p -> testServer(configure = { http3 { enabled = false } }, port = p, module = module) },
                 releaseSecond = { runCatching { it.stop(0, 0) } },
             )
         return Triple(server, u, port)
@@ -362,7 +361,7 @@ class ClientDiagnosticsTest {
                         { it.close() },
                     )
                 try {
-                    testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                         val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                         assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
                         assertEquals(FallbackReason.TlsFailure, d.fallback, "${d.h3Failure}")
@@ -384,7 +383,7 @@ class ClientDiagnosticsTest {
                         while (true) conn.acceptRequest().reset(Http3ErrorCode.INTERNAL_ERROR)
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
                         assertEquals("ok", r.bodyAsText())
                         val d = assertNotNull(r.kuicksilverDiagnostics)
@@ -410,7 +409,10 @@ class ClientDiagnosticsTest {
             val (server, port) = testServer(module = okServer())
             val hold = CompletableDeferred<Unit>()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = 10.milliseconds } }).use { c ->
+                testClient(
+                    Http3Discovery.Preferred,
+                    engine = { http3 { expert { raceHeadStart = RaceHeadStart.Fixed(10.milliseconds) } } },
+                ).use { c ->
                     (c.engine as KuicksilverEngine).h3.beforeSetupForTest = { hold.await() }
                     val d = assertNotNull(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d.protocol)
@@ -436,10 +438,10 @@ class ClientDiagnosticsTest {
             val reasons = Reasons()
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    trust = pinned
-                    http3 { hardDelay = Duration.INFINITE }
-                    eventListener = reasons
+                testClient(Http3Discovery.Preferred, engine = {
+                    tls { trust = pinned }
+                    http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
+                    observability { eventListener = reasons }
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     val (cause, diagnostics) = assertNotNull(reasons.failed.load())
@@ -468,7 +470,7 @@ class ClientDiagnosticsTest {
             val (server, port) = testServer(module = okServer())
             val log = DiagnosticLines(LogLevel.Debug)
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = { logger = log }).use { c ->
+                testClient(Http3Discovery.Auto, engine = { observability { logger = log } }).use { c ->
                     c.get("https://127.0.0.1:$port/?token=secret")
                     val line = log.lines.single().second
                     assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/1.1 (fallback=NoAlternative)", line)
@@ -479,19 +481,23 @@ class ClientDiagnosticsTest {
             }
         }
 
-    /** `diagnosticsLogLevel = null` writes no line at all; an HTTP/3 call writes its line at Debug. */
+    /** `observability { protocolChoiceLogLevel = null }` writes no line at all; an HTTP/3 call writes its line at Debug. */
     @Test fun logLevels() =
         h3Test {
             val (server, port) = testServer(module = okServer())
             val quiet = DiagnosticLines(LogLevel.Debug)
             val loud = DiagnosticLines(LogLevel.Debug)
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = {
-                    logger = quiet
-                    http3 { diagnosticsLogLevel = null }
+                testClient(null, engine = {
+                    observability {
+                        logger = quiet
+                        protocolChoiceLogLevel = null
+                    }
                 }).use { c -> c.get("https://127.0.0.1:$port/") }
                 assertEquals(emptyList(), quiet.lines)
-                testClient(Http3DiscoveryMode.H3Only, engine = { logger = loud }).use { c -> c.get("https://127.0.0.1:$port/") }
+                testClient(Http3Discovery.H3Only, engine = { observability { logger = loud } }).use { c ->
+                    c.get("https://127.0.0.1:$port/")
+                }
                 val (level, line) = loud.lines.single()
                 assertEquals(LogLevel.Debug, level)
                 assertEquals("kuicksilver: GET https://127.0.0.1:$port/ -> HTTP/3.0 (alt=127.0.0.1:$port via H3Only)", line)
@@ -530,7 +536,7 @@ class ClientDiagnosticsTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = listener }) {
+                testClient(null, engine = { observability { eventListener = listener } }) {
                     install(io.ktor.client.plugins.HttpRequestRetry) {
                         retryOnServerErrors(maxRetries = 1)
                         delayMillis { 0L }
@@ -570,7 +576,7 @@ class ClientDiagnosticsTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
                         assertEquals("h3", r.bodyAsText())
                         val d = assertNotNull(r.kuicksilverDiagnostics)
@@ -602,9 +608,9 @@ class ClientDiagnosticsTest {
                         while (true) conn.acceptRequest().respond(421, io.kuicksilver.http3.Http3Headers(emptyList())).finish()
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        http3 { hardDelay = Duration.INFINITE }
-                        logger = log
+                    testClient(Http3Discovery.Auto, engine = {
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
+                        observability { logger = log }
                     }).use { c ->
                         assertEquals(FallbackReason.NoAlternative, c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.fallback)
                         val r = c.get("https://127.0.0.1:$port/")
@@ -641,7 +647,7 @@ class ClientDiagnosticsTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Preferred) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
+                testClient(Http3Discovery.Preferred) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
                     var d: ProtocolDiagnostics? = null
                     c.webSocket("wss://127.0.0.1:$port/ws") { d = call.response.kuicksilverDiagnostics }
                     assertEquals(HttpProtocolVersion.HTTP_1_1, d?.protocol)
@@ -669,7 +675,7 @@ class ClientDiagnosticsTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
+                testClient(Http3Discovery.Auto) { install(io.ktor.client.plugins.websocket.WebSockets) }.use { c ->
                     val engine = c.engine as KuicksilverEngine
                     // the WebSocket's own HTTP/1.1 answer carries Alt-Svc: filed under https://
                     c.webSocket("wss://127.0.0.1:$port/ws") {}

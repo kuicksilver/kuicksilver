@@ -38,14 +38,15 @@ class GuideBothEnginesTest {
         // guide:ktor:both-engines
         val server =
             embeddedServer(KuicksilverServer, configure = {
-                tlsConnector(identity) {
+                tlsConnector {
+                    tls { this.identity = identity }
                     port = 0
                     host = "127.0.0.1" // reached over 127.0.0.1 below; the wildcard address shares the port there
                 }
             }, module = Application::module)
         val client =
             HttpClient(KuicksilverClient) {
-                engine { trust = TrustConfig.AnchoredCa(listOf(Certificate(certs.testCa))) }
+                engine { tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(certs.testCa))) } }
             }
 
         server.start(wait = false)

@@ -35,6 +35,7 @@ import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.io.ConnectionEndedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineName
@@ -284,6 +285,17 @@ internal actual fun platformResolveFamily(
 ): List<TcpAddress> = kslResolveFamily(name, ipv6) ?: throw IOException("Failed to resolve $name: the native library is not usable")
 
 @InternalKuicksilverApi
+public actual fun ipv6Bindable(): Boolean {
+    tcpStartup()
+    return try {
+        tcpClose(tcpOpen(afInet6))
+        true
+    } catch (_: Exception) {
+        false // EAFNOSUPPORT: a kernel without IPv6
+    }
+}
+
+@InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,
     host: String,
@@ -293,6 +305,8 @@ public actual suspend fun bindTcp(
     val at = tcpResolve(host.unbracketed(), port).firstOrNull()?.unmapped() ?: throw IOException("Failed to resolve address for $host")
     val fd = tcpOpen(at.family)
     try {
+        // `::` is every interface of both families, as on the JVM: Windows (and a Linux with bindv6only) would take IPv6 alone
+        if (at.family == afInet6 && at.ip.all { it.toInt() == 0 }) tcpDualStack(fd)
         tcpBindListen(fd, at, BACKLOG)
         return NativeTcpServerSocket(selector, fd, tcpAddressOf(fd, peer = false).toInet())
     } catch (e: Throwable) {
@@ -333,7 +347,8 @@ internal class NativeTcpServerSocket(
             }
             val socket =
                 try {
-                    NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
+                    // an IPv4 client of a dual-stack `::` listener is the IPv4 address it is (`127.0.0.1`), as the JDK reports it
+                    NativeTcpSocket(selector, fd, Sockaddr(peer).unmapped().toInet(), socketContext)
                 } catch (e: Throwable) {
                     tcpClose(fd)
                     throw e
@@ -399,7 +414,8 @@ internal class NativeTcpSocket(
      * system may not have chosen the address yet (Windows answers the wildcard). Throws [PosixException] when it cannot.
      */
     internal fun recordLocalAddress() {
-        local = tcpAddressOf(descriptor, peer = false).toInet()
+        // the local end of an IPv4 connection on a dual-stack socket is IPv4 too (`::ffff:127.0.0.1` is 127.0.0.1)
+        local = tcpAddressOf(descriptor, peer = false).unmapped().toInet()
     }
 
     private val closeFlag = AtomicBoolean(false)
@@ -521,7 +537,7 @@ internal class NativeTcpSocket(
         producer: (ByteChannel) -> J,
     ): J {
         if (closeFlag.load()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             channel.cancel(e)
             throw e
         }
@@ -531,7 +547,7 @@ internal class NativeTcpSocket(
             throw IllegalStateException("$name channel has already been set")
         }
         if (closeFlag.load()) {
-            val e = IOException("Socket closed")
+            val e = ConnectionEndedException.LocalClose("Socket closed")
             j.cancel()
             channel.cancel(e)
             throw e
@@ -580,9 +596,9 @@ internal class NativeTcpSocket(
                 // loop leaves its cancellation
                 val cause =
                     sendFailures.recorded ?: when {
-                        aborted -> IOException("The connection was aborted")
-                        resetFlag.load() -> IOException("The connection was reset")
-                        closeFlag.load() -> IOException("Socket closed")
+                        aborted -> ConnectionEndedException.LocalClose("The connection was aborted")
+                        resetFlag.load() -> ConnectionEndedException.LocalClose("The connection was reset")
+                        closeFlag.load() -> ConnectionEndedException.LocalClose("Socket closed")
                         else -> null
                     }
                 readDelivery.fail(channel, cause ?: e)
@@ -591,7 +607,8 @@ internal class NativeTcpSocket(
                 // a receive error (a reset) or a select that fails is not the peer's end: the channel fails with it (a send's
                 // failure that came first is the cause). The close below ran first and closed it cleanly (a select failure
                 // even broke out of the loop as if at the end), so a reader took a cut stream for a complete one
-                val cause = sendFailures.recorded ?: if (aborted) IOException("The connection was aborted", e) else e
+                val cause =
+                    sendFailures.recorded ?: if (aborted) ConnectionEndedException.LocalClose("The connection was aborted", e) else e
                 readDelivery.fail(channel, cause)
                 throw cause
             } finally {
@@ -744,7 +761,7 @@ internal class NativeTcpSocket(
                 if (withTimeoutOrNull(roomRecheck) { pending.await() } != null) select = null
             } catch (e: CancellationException) {
                 val cause = lost.load()
-                if (cause != null && scope.isActive) throw IOException("Connection reset by peer", cause)
+                if (cause != null && scope.isActive) throw ConnectionEndedException.PeerClosed("Connection reset by peer", cause)
                 throw e
             } catch (e: Throwable) {
                 select = null // a select that failed is not kept: its failure is thrown once, the next wait selects again

@@ -82,13 +82,13 @@ class EchTest {
     }
 
     @Test fun negative_configurationsInTheWrongPlaceAreRefused() {
-        assertFailsWith<TlsException.Config> { Fixtures.server { echConfigList = listA } }
-        assertFailsWith<TlsException.Config> { Fixtures.client { echKeys = EchServerKeys(listOf(keyA)) } }
+        assertFailsWith<TlsException.Config> { Fixtures.server { ech { configList = listA } } }
+        assertFailsWith<TlsException.Config> { Fixtures.client { ech { keys = EchServerKeys(listOf(keyA)) } } }
         // ECH is TLS 1.3 only (RFC 9849 section 6.1; ADR-0019: the TLS 1.2 support of ksl and ECH do not mix on OpenSSL 4.1)
         assertFailsWith<TlsException.Config> {
             TcpFixtures.client {
                 versions = TlsVersions.Tls12And13
-                echConfigList = listA
+                ech { configList = listA }
             }
         }
         assertFailsWith<TlsException.Config> { EchServerKeys(listOf(EchKey(EchTestKeys.A, inRetryConfigs = false))) }
@@ -108,14 +108,14 @@ class EchTest {
         assertTrue(echInThisBuild, "this build has ECH")
         val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
         val onlyOther = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
-        val e = assertFailsWith<TlsException.Config> { Fixtures.client { echConfigList = onlyOther } }
+        val e = assertFailsWith<TlsException.Config> { Fixtures.client { ech { configList = onlyOther } } }
         assertEquals(unusableEchMessage(hasEch = true), e.message)
         assertTrue("no ECHConfig" in e.message!!)
-        assertFailsWith<TlsException.Config> { TcpFixtures.client { echConfigList = onlyOther } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.client { ech { configList = onlyOther } } }
         val noEch = unusableEchMessage(hasEch = false)
         assertTrue("this build has no Encrypted Client Hello" in noEch && noEch != e.message, noEch)
         // the usable list and no list at all still build
-        Fixtures.client { echConfigList = listA }
+        Fixtures.client { ech { configList = listA } }
         Fixtures.client()
     }
 
@@ -131,7 +131,7 @@ class EchTest {
         val fromChars = EchKey(chars)
         assertTrue(chars.all { it == '\u0000' }, "the caller's characters are zeroed")
         for (k in kotlin.collections.listOf(fromBytes, fromChars)) {
-            val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(k)) })
+            val p = quic(Fixtures.client { ech { configList = listA } }, Fixtures.server { ech { keys = EchServerKeys(listOf(k)) } })
             p.close()
             assertEquals(EchStatus.Accepted, p.c.echStatus)
             val e = assertFailsWith<TlsException.Config> { EchServerKeys(listOf(k)) }
@@ -143,7 +143,7 @@ class EchTest {
     }
 
     @Test fun quicAccepted() {
-        val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyA)) })
+        val p = quic(Fixtures.client { ech { configList = listA } }, Fixtures.server { ech { keys = EchServerKeys(listOf(keyA)) } })
         try {
             assertTrue(p.cs.done && p.ss.done, "${p.cs.last} / ${p.ss.last}")
             assertEquals(EchStatus.Accepted, p.c.echStatus)
@@ -155,8 +155,8 @@ class EchTest {
 
     /** RFC 9849 section 6.1.6: rejected, the handshake fails with ech_required and the server's retry configurations. */
     @Test fun negative_quicRejectedReportsRetryConfigs() {
-        val server = Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) }
-        val p = quic(Fixtures.client { echConfigList = listA }, server)
+        val server = Fixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } }
+        val p = quic(Fixtures.client { ech { configList = listA } }, server)
         try {
             val f = assertIs<DriveResult.Failed>(p.cs.last)
             val e = assertIs<TlsException.EchRejected>(f.exception)
@@ -167,7 +167,7 @@ class EchTest {
             p.close()
         }
         // the single retry with them is accepted
-        val r = quic(Fixtures.client { echConfigList = p.retryOf() }, server)
+        val r = quic(Fixtures.client { ech { configList = p.retryOf() } }, server)
         try {
             assertTrue(r.cs.done && r.ss.done)
             assertEquals(EchStatus.Accepted, r.c.echStatus)
@@ -193,9 +193,9 @@ class EchTest {
                             VerifyResult.Rejected(VerifyReason.HostnameMismatch(host ?: "", emptyList()))
                         }
                     },
-            ) { echConfigList = listA }
+            ) { ech { configList = listA } }
         val c = KslQuicCrypto.newSession(client)
-        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } })
         c.setTransportParameters(Fixtures.tp)
         s.setTransportParameters(Fixtures.tp)
         val p = Pump(c, s)
@@ -223,9 +223,9 @@ class EchTest {
                         seen += host
                         VerifyResult.Accepted(chain)
                     },
-            ) { echConfigList = listA }
+            ) { ech { configList = listA } }
         val c = KslQuicCrypto.newSession(client)
-        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } })
         c.setTransportParameters(Fixtures.tp)
         s.setTransportParameters(Fixtures.tp)
         val p = Pump(c, s)
@@ -275,8 +275,8 @@ class EchTest {
             list: EchConfigList?,
             key: EchKey,
         ) {
-            val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Custom(verifier)) { echConfigList = list })
-            val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(key)) })
+            val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Custom(verifier)) { ech { configList = list } })
+            val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(key)) } })
             c.setTransportParameters(Fixtures.tp)
             s.setTransportParameters(Fixtures.tp)
             val p = Pump(c, s)
@@ -325,10 +325,10 @@ class EchTest {
         val client =
             Fixtures.client(trust = TrustConfig.Custom(verifier)) {
                 serverName = EchTestKeys.PUBLIC_NAME
-                echConfigList = listA
+                ech { configList = listA }
             }
         val c = KslQuicCrypto.newSession(client)
-        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } })
         c.setTransportParameters(Fixtures.tp)
         s.setTransportParameters(Fixtures.tp)
         val p = Pump(c, s)
@@ -359,8 +359,8 @@ class EchTest {
                 list: EchConfigList?,
                 key: EchKey,
             ): EchStatus {
-                val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { echConfigList = list })
-                val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(key)) })
+                val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { ech { configList = list } })
+                val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(key)) } })
                 c.setTransportParameters(Fixtures.tp)
                 s.setTransportParameters(Fixtures.tp)
                 val p = Pump(c, s)
@@ -382,8 +382,8 @@ class EchTest {
 
     /** A client whose rejection goes through the paused path with [trust]: the pump after a server with key B. */
     private fun rejectedThrough(trust: TrustConfig): Pump {
-        val c = KslQuicCrypto.newSession(Fixtures.client(trust = trust) { echConfigList = listA })
-        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        val c = KslQuicCrypto.newSession(Fixtures.client(trust = trust) { ech { configList = listA } })
+        val s = KslQuicCrypto.newSession(Fixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } })
         c.setTransportParameters(Fixtures.tp)
         s.setTransportParameters(Fixtures.tp)
         val p = Pump(c, s)
@@ -410,7 +410,16 @@ class EchTest {
     /** The OpenSSL path under pins: a rejection authenticated by the CA for the public_name reports the retry configurations. */
     @Test fun pinsDoNotFailAnAnchoredRejection() {
         val trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32) { 7 })), base = TrustConfig.AnchoredCa(listOf(Fixtures.testCa)))
-        val p = quic(Fixtures.client(trust = trust) { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        val p =
+            quic(
+                Fixtures.client(trust = trust) { ech { configList = listA } },
+                Fixtures.server {
+                    ech {
+                        keys =
+                            EchServerKeys(listOf(keyB))
+                    }
+                },
+            )
         try {
             assertEquals(listB, assertIs<TlsException.EchRejected>(assertIs<DriveResult.Failed>(p.cs.last).exception).retryConfigs)
         } finally {
@@ -472,8 +481,11 @@ class EchTest {
     @Test fun negative_quicUnauthenticatedRejectionHasNoRetryConfigs() {
         val p =
             quic(
-                Fixtures.client { echConfigList = listA },
-                Fixtures.server(listOf(TestCerts.serverOtherKey), TestCerts.serverOtherKeyKey) { echKeys = EchServerKeys(listOf(keyB)) },
+                Fixtures.client { ech { configList = listA } },
+                Fixtures.server(
+                    listOf(TestCerts.serverOtherKey),
+                    TestCerts.serverOtherKeyKey,
+                ) { ech { keys = EchServerKeys(listOf(keyB)) } },
             )
         try {
             val f = assertIs<DriveResult.Failed>(p.cs.last)
@@ -485,7 +497,7 @@ class EchTest {
     }
 
     @Test fun negative_quicServerWithoutEchIsSecurelyDisabled() {
-        val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server())
+        val p = quic(Fixtures.client { ech { configList = listA } }, Fixtures.server())
         try {
             val e = assertIs<TlsException.EchRejected>(assertIs<DriveResult.Failed>(p.cs.last).exception)
             assertNull(e.retryConfigs)
@@ -495,7 +507,7 @@ class EchTest {
     }
 
     @Test fun quicGreaseByDefault() {
-        val p = quic(Fixtures.client(), Fixtures.server { echKeys = EchServerKeys(listOf(keyA)) })
+        val p = quic(Fixtures.client(), Fixtures.server { ech { keys = EchServerKeys(listOf(keyA)) } })
         try {
             assertTrue(p.cs.done && p.ss.done)
             assertEquals(EchStatus.Grease, p.c.echStatus)
@@ -503,7 +515,7 @@ class EchTest {
         } finally {
             p.close()
         }
-        val off = quic(Fixtures.client { echGrease = false }, Fixtures.server())
+        val off = quic(Fixtures.client { ech { grease = false } }, Fixtures.server())
         try {
             assertTrue(off.cs.done)
             assertEquals(EchStatus.None, off.c.echStatus)
@@ -524,7 +536,7 @@ class EchTest {
         val before = live()
         val keys = EchServerKeys(listOf(EchKey(EchTestKeys.A)))
         assertEquals(before + 1, live(), "one native set while open")
-        val lease = KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true)
+        val lease = KslContext.acquire(Fixtures.server { ech { this.keys = keys } }, quic = true)
         try {
             val freed = ArrayList<Int>()
             keys.freedForTest = { freed += it }
@@ -533,7 +545,7 @@ class EchTest {
             assertEquals(kotlin.collections.listOf(1), freed, "the set is freed once, at close")
             assertEquals(before, live(), "the handle is gone; the context keeps its own reference")
             assertEquals(1, lease.ctx.echAppliedVersion, "the context built before keeps its set")
-            val e = assertFailsWith<TlsException.Config> { KslContext.acquire(Fixtures.server { echKeys = keys }, quic = true) }
+            val e = assertFailsWith<TlsException.Config> { KslContext.acquire(Fixtures.server { ech { this.keys = keys } }, quic = true) }
             assertTrue("closed" in e.message!!, e.message)
             assertFailsWith<TlsException.Config> { keys.rotate(listOf(EchKey(EchTestKeys.B))) }
         } finally {
@@ -574,7 +586,7 @@ class EchTest {
                 KslQuicCrypto.newSession(
                     Fixtures.client(name = name) {
                         this.alpn = alpn
-                        echConfigList = listA
+                        ech { configList = listA }
                     },
                 )
             try {
@@ -621,16 +633,16 @@ class EchTest {
     /** A rotation reaches the contexts already built from the configuration; the old key keeps decrypting while it is kept. */
     @Test fun rotation() {
         val keys = EchServerKeys(listOf(keyA))
-        val server = Fixtures.server { echKeys = keys }
-        val first = quic(Fixtures.client { echConfigList = listA }, server)
+        val server = Fixtures.server { ech { this.keys = keys } }
+        val first = quic(Fixtures.client { ech { configList = listA } }, server)
         first.close()
         assertEquals(EchStatus.Accepted, first.c.echStatus)
         keys.rotate(listOf(keyB, EchKey(EchTestKeys.A, inRetryConfigs = false)))
-        val old = quic(Fixtures.client { echConfigList = listA }, server)
+        val old = quic(Fixtures.client { ech { configList = listA } }, server)
         old.close()
         assertEquals(EchStatus.Accepted, old.c.echStatus, "the old key decrypts while kept")
         keys.rotate(listOf(keyB))
-        val gone = quic(Fixtures.client { echConfigList = listA }, server)
+        val gone = quic(Fixtures.client { ech { configList = listA } }, server)
         gone.close()
         assertEquals(listB, (assertIs<DriveResult.Failed>(gone.cs.last).exception as TlsException.EchRejected).retryConfigs)
     }
@@ -639,8 +651,8 @@ class EchTest {
         runBlocking {
             val (cd, sd) =
                 connect(
-                    TcpFixtures.client { echConfigList = listA },
-                    TcpFixtures.server { echKeys = EchServerKeys(listOf(keyA)) },
+                    TcpFixtures.client { ech { configList = listA } },
+                    TcpFixtures.server { ech { keys = EchServerKeys(listOf(keyA)) } },
                 )
             val c = withTimeout(10.seconds) { cd.await() }
             val s = withTimeout(10.seconds) { sd.await() }
@@ -653,8 +665,8 @@ class EchTest {
             }
             val (rd, rs) =
                 connect(
-                    TcpFixtures.client { echConfigList = listA },
-                    TcpFixtures.server { echKeys = EchServerKeys(listOf(keyB)) },
+                    TcpFixtures.client { ech { configList = listA } },
+                    TcpFixtures.server { ech { keys = EchServerKeys(listOf(keyB)) } },
                 )
             val e = assertFailsWith<TlsException.EchRejected> { withTimeout(10.seconds) { rd.await() } }
             assertContentEquals(listB.bytes, e.retryConfigs?.bytes)
@@ -702,8 +714,8 @@ class EchTest {
      * kind resumes its own.
      */
     @Test fun negative_echTicketsAreNotOfferedWithoutEch() {
-        val server = TcpFixtures.server { echKeys = EchServerKeys(listOf(keyA)) }
-        val withEch = TcpFixtures.client { echConfigList = listA }
+        val server = TcpFixtures.server { ech { keys = EchServerKeys(listOf(keyA)) } }
+        val withEch = TcpFixtures.client { ech { configList = listA } }
         val plain = TcpFixtures.client()
         assertFalse(tcpOnce(withEch, server, ech = true), "first ECH connection: a full handshake")
         assertFalse(tcpOnce(plain, server, ech = false), "the ECH connection's ticket is not offered without ECH")

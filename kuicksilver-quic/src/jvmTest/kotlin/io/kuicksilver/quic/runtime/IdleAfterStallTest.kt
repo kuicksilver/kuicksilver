@@ -73,8 +73,8 @@ class IdleAfterStallTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { quic = quicConfig { maxIdleTimeout = idle } }
                                     .build()
-                            crypto = NullCryptoProvider
-                            io = { sio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { sio } }
                         }.build(),
                 )
             val client =
@@ -83,8 +83,8 @@ class IdleAfterStallTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { cio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { cio } }
                         }.build(),
                 ) as EndpointLoop
             val side = CoroutineScope(Dispatchers.Default + SupervisorJob())

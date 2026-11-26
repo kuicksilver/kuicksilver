@@ -95,7 +95,7 @@ internal class H2ConnectionPoint(
 }
 
 /**
- * A request body whose every wait for content has its own deadline, [idle], as on HTTP/1.1 (`connectionIdleTimeoutSeconds`):
+ * A request body whose every wait for content has its own deadline, [idle], as on HTTP/1.1 (`tcp { idleTimeout }`):
  * a slow but moving upload is read in full, a client that stops sending fails the read with [RequestBodyTimeout] (answered
  * 408 when no response has started). Reading credits the client as the stream's own channel does.
  */

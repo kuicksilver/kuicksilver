@@ -22,7 +22,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 public abstract class KuicksilverServerEventListener {
     /**
      * A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, `HTTP_2_0`, or `HTTP_3_0`) from
-     * [remote]: after the TLS handshake for HTTP/1.1 and HTTP/2 (ALPN `h2`), at `accept` for HTTP/3, which with `quicEarlyData` is when 0-RTT was accepted,
+     * [remote]: after the TLS handshake for HTTP/1.1 and HTTP/2 (ALPN `h2`), at `accept` for HTTP/3, which with `http3 { earlyData { enabled } }` is when 0-RTT was accepted,
      * before the handshake completes (the client is not authenticated yet).
      */
     public open fun connectionOpened(
@@ -46,11 +46,11 @@ public abstract class KuicksilverServerEventListener {
      * A client from [remote] was refused before it became a connection, for [reason]. For TCP the refusal comes right after
      * `accept`, before the TLS handshake, so whether the client would have spoken HTTP/1.1 or HTTP/2 is not known and
      * [protocol] is `HTTP_1_1`; the socket is closed at once. Reasons: `per-IP limit` (the address holds
-     * `maxTcpConnectionsPerIp` connections already), `HTTP/2 repeat offender` (the address serves an
-     * `http2RepeatOffenderPenalty`; on a PROXY protocol connector, the client its header names, while [remote] stays the TCP
+     * `tcp { maxConnectionsPerIp }` connections already), `HTTP/2 repeat offender` (the address serves an
+     * `http2 { repeatOffenderPenalty }`; on a PROXY protocol connector, the client its header names, while [remote] stays the TCP
      * peer, the proxy), `PROXY protocol untrusted
      * source` (a PROXY protocol connector's peer outside its `trustedSources`) and `PROXY protocol header` (no valid PROXY
-     * protocol header within its limits; reported after the header was read, so [remote] is the TCP peer). A connector at `maxTcpConnections` refuses no one: it stops accepting and the OS
+     * protocol header within its limits; reported after the header was read, so [remote] is the TCP peer). A connector at `tcp { maxConnections }` refuses no one: it stops accepting and the OS
      * backlog holds new clients, so they are not reported here.
      */
     public open fun connectionRefused(

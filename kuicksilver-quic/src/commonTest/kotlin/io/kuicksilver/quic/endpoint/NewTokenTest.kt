@@ -467,7 +467,7 @@ class NewTokenTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = KslQuicCrypto
+                        runtime { crypto = KslQuicCrypto }
                         admission = rec
                     }.build(),
                 Random(9),

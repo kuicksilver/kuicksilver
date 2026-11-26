@@ -32,16 +32,18 @@ class ClientHttpsFailureTest {
     private fun client(
         source: HttpsRecordSource,
         connectTimeout: kotlin.time.Duration = 30.seconds,
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
         this.connectTimeout = connectTimeout
-        http3 { httpsRecords = source }
+        network { httpsRecords = source }
     })
 
     private suspend fun origin() =
         testServer(configure = {
-            http3 = false
-            altSvc = false
+            http3 {
+                enabled = false
+                altSvc = false
+            }
         }) { routing { get("/") { call.respondText("origin") } } }
 
     private val servfail: suspend (ByteArray) -> ByteArray = { q -> SvcbTestEncoder.response(questionName(q), emptyList(), rcode = 2) }

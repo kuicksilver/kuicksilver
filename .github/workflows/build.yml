@@ -119,13 +119,15 @@ jobs:
           python3 -I tools/check/tracked-hashes.py || rc=1  # cited hashes in tracked files
           python3 -I tools/check/wildcard-binds.py || rc=1  # test sockets reached over loopback bind loopback
           python3 -I tools/check/sentinel.py || rc=1   # the leak sentinel's allowlist only shrinks (tools/check/sentinel.allow)
+          python3 -I tools/check/kdoc-links.py || rc=1  # KDoc links of the main sources name declarations that exist
           exit $rc
-      - name: 'lint: doc-refs and test-check negative controls'
+      - name: 'lint: doc-refs and test-check negative controls, migration fixtures'
         run: |
           rc=0
-          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
+          for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel kdoc-links; do
             bash "tools/check/$t-test.sh" || rc=1
           done
+          bash tools/migrate/config-0.3-test.sh || rc=1   # the 0.2.x -> 0.3.0 configuration migration on its fixtures
           exit $rc
       - name: 'lint: the carried OpenSSL patch applies exactly, and only with its pinned hash'
         run: bash tools/openssl/apply-patch-test.sh   # ADR-0019
@@ -378,6 +380,8 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2046,SC2086   # the lists split into Gradle task paths on purpose
           $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
+      - name: 'sample: kq-cli (the kq executables for linuxX64, linuxArm64 and mingwX64, linked only)'
+        run: (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace linkReleaseExecutableLinuxX64 linkReleaseExecutableLinuxArm64 linkReleaseExecutableMingwX64)
       - name: 'c-tests: mingw-x64 (cross-built, -Werror; run by windows)'
         # the ksl C tests (test_udp_win.c among them) with the Kotlin/Native llvm + mingw sysroot the link step fetched;
         # only system DLLs are imported, so the exe runs as is on the windows runner
@@ -682,6 +686,22 @@ jobs:
         run: |
           (cd samples/realtime-telemetry && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
           python3 -I tools/check/test-bytecode.py samples/realtime-telemetry/build/classes/kotlin/jvm/test
+      - name: 'sample: webtransport-chat'
+        # the chat server and its clients in one JVM over UDP on loopback (WebTransport streams and datagrams), and its
+        # common code compiled for macOS (the iOS simulator compile is in apple-native, which builds that OpenSSL anyway)
+        run: |
+          (cd samples/webtransport-chat && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest compileKotlinMacosArm64)
+          python3 -I tools/check/test-bytecode.py samples/webtransport-chat/build/classes/kotlin/jvm/test
+      - name: 'sample: http3-server'
+        # EngineMain with the sample's application.conf; the Kuicksilver client over HTTP/2, HTTP/3 and HTTP/1.1, the PROXY protocol
+        run: |
+          (cd samples/http3-server && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace test)
+          python3 -I tools/check/test-bytecode.py samples/http3-server/build/classes/kotlin/test
+      - name: 'sample: kq-cli (JVM tests)'
+        # the kq command line against an in-process server; the native executables are built by apple-native and linux-native
+        run: |
+          (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace jvmTest)
+          python3 -I tools/check/test-bytecode.py samples/kq-cli/build/classes/kotlin/jvm/test
       - name: 'fuzz: regression corpus'
         run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"
       - name: 'sim: Monte-Carlo (KSL_SIM_RUNS=200)'
@@ -760,11 +780,16 @@ jobs:
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_MACOS_TESTS
+      - name: 'sample: kq-cli (macosArm64 tests, the kq executable)'
+        run: (cd samples/kq-cli && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace macosArm64Test linkReleaseExecutableMacosArm64)
       - name: 'native: iosSimulatorArm64 tests'
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_SIM_TESTS
+      - name: 'sample: webtransport-chat (iosSimulatorArm64 compile)'
+        # the chat client and server in common code, as an iOS app takes them (the apple job compiles them for macOS)
+        run: (cd samples/webtransport-chat && KSL_GRADLEW=../../gradlew bash ../../tools/ci/gradlew-retry.sh --stacktrace compileKotlinIosSimulatorArm64)
       - name: 'native: compile iosArm64 (device)'
         id: ios-device
         run: |

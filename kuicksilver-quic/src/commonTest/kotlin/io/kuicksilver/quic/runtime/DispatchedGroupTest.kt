@@ -62,13 +62,13 @@ class DispatchedGroupTest {
         .Builder()
         .apply {
             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-            this.crypto = crypto
+            runtime { this.crypto = crypto }
             this.loops = loops
             this.acceptQueue = acceptQueue
             this.maxConnections = maxConnections
             this.maxConnectionsPerIp = maxConnectionsPerIp
             admission?.let { this.admission = it }
-            io = { net.open(it) }
+            runtime { io = { net.open(it) } }
         }.build()
 
     private fun clientEndpointConfig(
@@ -77,8 +77,8 @@ class DispatchedGroupTest {
     ) = QuicEndpointConfig
         .Builder()
         .apply {
-            this.crypto = crypto
-            this.io = { io }
+            runtime { this.crypto = crypto }
+            runtime { this.io = { io } }
         }.build()
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
@@ -362,10 +362,10 @@ class DispatchedGroupTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = LbNullCrypto
+                            runtime { crypto = LbNullCrypto }
                             loadBalancer = QuicLbFixtures.config()
                             loops = 4
-                            io = { net.open(it) }
+                            runtime { io = { net.open(it) } }
                         }.build()
                 }
             } finally {
@@ -386,8 +386,8 @@ class DispatchedGroupTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
-                            io = { net.open(it) }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { net.open(it) } }
                         }.build(),
                 )
             try {
@@ -427,7 +427,7 @@ class DispatchedGroupTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
                                     .build()
-                            crypto = NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                             loops = 4
                         }.build()
                 val main = net.open(serverAddr)

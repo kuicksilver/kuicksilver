@@ -204,15 +204,15 @@ private fun DiagnosticsScreen(app: DemoApp) {
     var demoCa by remember { mutableStateOf(true) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(
-            "Any URL with Kuicksilver in Auto discovery: HTTP/1.1 first, HTTP/3 once the origin has announced it with Alt-Svc " +
-                "(run it twice). The switch is the engine's http3Allowed kill switch, read on every request.",
+            "Any URL with Kuicksilver in Auto discovery: HTTP/2 or HTTP/1.1 first, HTTP/3 once the origin has announced it with Alt-Svc " +
+                "(run it twice). The switch is the engine's http3 { allowed } kill switch, read on every request.",
             style = MaterialTheme.typography.bodySmall,
         )
         OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = s.http3Allowed, onCheckedChange = { app.diagnostics.setHttp3Allowed(it) })
             Spacer(Modifier.width(8.dp))
-            Text("http3Allowed")
+            Text("http3 { allowed }")
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = demoCa, onCheckedChange = { demoCa = it })

@@ -395,64 +395,60 @@ public final class io/kuicksilver/http3/Http3ServerRequest$DefaultImpls {
 
 public final class io/kuicksilver/http3/Http3Settings {
 	public static final field Companion Lio/kuicksilver/http3/Http3Settings$Companion;
-	public final fun getEarlyData ()Lio/kuicksilver/http3/Http3EarlyDataPolicy;
-	public final fun getEnableConnectProtocol ()Z
-	public final fun getEncoderMaxTableCapacity ()J
-	public final fun getGlitchProtection ()Z
-	public final fun getGrease ()Z
-	public final fun getH3Datagram ()Z
-	public final fun getMaxEarlyPriorityUpdates ()I
-	public final fun getMaxFieldSectionSize ()J
-	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
-	public final fun getMaxInformationalResponses ()I
-	public final fun getQpackBlockedStreams ()J
-	public final fun getQpackMaxTableCapacity ()J
-	public final fun getWebTransport ()Z
-	public final fun getWebTransportInitialMaxData ()J
-	public final fun getWebTransportInitialMaxStreamsBidi ()J
-	public final fun getWebTransportInitialMaxStreamsUni ()J
-	public final fun getWebTransportMaxSessions ()I
 	public final fun toBuilder ()Lio/kuicksilver/http3/Http3Settings$Builder;
 }
 
 public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/http3/Http3Settings;
-	public final fun enableQpackDynamicTable ()V
+	public final fun expert (Lkotlin/jvm/functions/Function1;)V
 	public final fun getEarlyData ()Lio/kuicksilver/http3/Http3EarlyDataPolicy;
 	public final fun getEnableConnectProtocol ()Z
-	public final fun getEncoderMaxTableCapacity ()J
-	public final fun getGlitchProtection ()Z
-	public final fun getGrease ()Z
+	public final fun getExpert ()Lio/kuicksilver/http3/Http3Settings$Builder$Expert;
 	public final fun getH3Datagram ()Z
-	public final fun getMaxEarlyPriorityUpdates ()I
 	public final fun getMaxFieldSectionSize ()J
 	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
-	public final fun getMaxInformationalResponses ()I
-	public final fun getQpackBlockedStreams ()J
-	public final fun getQpackMaxTableCapacity ()J
-	public final fun getWebTransport ()Z
-	public final fun getWebTransportInitialMaxData ()J
-	public final fun getWebTransportInitialMaxStreamsBidi ()J
-	public final fun getWebTransportInitialMaxStreamsUni ()J
-	public final fun getWebTransportMaxSessions ()I
+	public final fun getQpack ()Lio/kuicksilver/http3/Http3Settings$Builder$Qpack;
+	public final fun getWebTransport ()Lio/kuicksilver/http3/Http3Settings$Builder$WebTransport;
+	public final fun qpack (Lkotlin/jvm/functions/Function1;)V
 	public final fun setEarlyData (Lio/kuicksilver/http3/Http3EarlyDataPolicy;)V
 	public final fun setEnableConnectProtocol (Z)V
-	public final fun setEncoderMaxTableCapacity (J)V
-	public final fun setGlitchProtection (Z)V
-	public final fun setGrease (Z)V
 	public final fun setH3Datagram (Z)V
-	public final fun setMaxEarlyPriorityUpdates (I)V
 	public final fun setMaxFieldSectionSize (J)V
 	public final fun setMaxHeaderBlockTime-LRDsOJo (J)V
-	public final fun setMaxInformationalResponses (I)V
-	public final fun setQpackBlockedStreams (J)V
-	public final fun setQpackMaxTableCapacity (J)V
-	public final fun setWebTransport (Z)V
-	public final fun setWebTransportInitialMaxData (J)V
-	public final fun setWebTransportInitialMaxStreamsBidi (J)V
-	public final fun setWebTransportInitialMaxStreamsUni (J)V
-	public final fun setWebTransportMaxSessions (I)V
+	public final fun webTransport (Lkotlin/jvm/functions/Function1;)V
+}
+
+public final class io/kuicksilver/http3/Http3Settings$Builder$Expert {
+	public final fun getGlitchProtection ()Z
+	public final fun getGrease ()Z
+	public final fun getMaxEarlyPriorityUpdates ()I
+	public final fun setGlitchProtection (Z)V
+	public final fun setGrease (Z)V
+	public final fun setMaxEarlyPriorityUpdates (I)V
+}
+
+public final class io/kuicksilver/http3/Http3Settings$Builder$Qpack {
+	public final fun enableDynamicTable ()V
+	public final fun getBlockedStreams ()J
+	public final fun getEncoderMaxTableCapacity ()J
+	public final fun getMaxTableCapacity ()J
+	public final fun setBlockedStreams (J)V
+	public final fun setEncoderMaxTableCapacity (J)V
+	public final fun setMaxTableCapacity (J)V
+}
+
+public final class io/kuicksilver/http3/Http3Settings$Builder$WebTransport {
+	public final fun getEnabled ()Z
+	public final fun getInitialMaxData ()J
+	public final fun getInitialMaxStreamsBidi ()J
+	public final fun getInitialMaxStreamsUni ()J
+	public final fun getMaxSessions ()I
+	public final fun setEnabled (Z)V
+	public final fun setInitialMaxData (J)V
+	public final fun setInitialMaxStreamsBidi (J)V
+	public final fun setInitialMaxStreamsUni (J)V
+	public final fun setMaxSessions (I)V
 }
 
 public final class io/kuicksilver/http3/Http3Settings$Companion {
@@ -506,18 +502,16 @@ public final class io/kuicksilver/http3/UdpProxy {
 
 public final class io/kuicksilver/http3/UdpProxyConfig {
 	public fun <init> ()V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIIIIZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIILio/kuicksilver/config/RateLimit;Lio/kuicksilver/config/RateLimit;IZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIILio/kuicksilver/config/RateLimit;Lio/kuicksilver/config/RateLimit;IZZLjava/lang/String;ZLkotlin/jvm/functions/Function2;JLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getClientIpv6Prefix ()I
-	public final fun getClientPacketBurst ()I
-	public final fun getClientPacketRate ()I
+	public final fun getClientPackets ()Lio/kuicksilver/config/RateLimit;
 	public final fun getIdleTimeout-UwyO8pc ()J
 	public final fun getLinkMtu ()I
 	public final fun getMaxTunnels ()I
 	public final fun getMaxTunnelsPerClient ()I
-	public final fun getPacketBurst ()I
-	public final fun getPacketRate ()I
 	public final fun getPacketTooBig ()Z
+	public final fun getPackets ()Lio/kuicksilver/config/RateLimit;
 	public final fun getPathTemplate ()Ljava/lang/String;
 	public final fun getProxyName ()Ljava/lang/String;
 	public final fun getRefuseOwnAddresses ()Z
@@ -697,6 +691,7 @@ public abstract interface class io/kuicksilver/http3/WebTransportSession {
 	public abstract fun getClosed ()Lkotlinx/coroutines/Deferred;
 	public abstract fun getDrainRequested ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
+	public fun getMaxStreamErrorCode ()J
 	public abstract fun getProtocol ()Ljava/lang/String;
 	public abstract fun getSessionId ()J
 	public abstract fun openBidi (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -708,5 +703,6 @@ public abstract interface class io/kuicksilver/http3/WebTransportSession {
 
 public final class io/kuicksilver/http3/WebTransportSession$DefaultImpls {
 	public static synthetic fun close$default (Lio/kuicksilver/http3/WebTransportSession;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun getMaxStreamErrorCode (Lio/kuicksilver/http3/WebTransportSession;)J
 }
 

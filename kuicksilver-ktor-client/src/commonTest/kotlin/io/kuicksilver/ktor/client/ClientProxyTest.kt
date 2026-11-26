@@ -206,7 +206,7 @@ class ClientProxyTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
             try {
                 tunnelProxy(port) { proxyPort, connectHead ->
-                    testClient(Http3DiscoveryMode.H3Only, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
+                    testClient(Http3Discovery.H3Only, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
                         .use { c ->
                             val e = assertFailsWith<UnsupportedOperationException> { c.get("https://127.0.0.1:$port/").bodyAsText() }
                             assertTrue(e.message!!.contains("HTTP/3") && e.message!!.contains("proxy"), e.message)
@@ -270,7 +270,7 @@ class ClientProxyTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
             try {
                 tunnelProxy(port) { proxyPort, _ ->
-                    testClient(Http3DiscoveryMode.Auto, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
+                    testClient(Http3Discovery.Auto, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
                         .use { c ->
                             val r = c.get("https://127.0.0.1:$port/")
                             assertEquals("through", r.bodyAsText())

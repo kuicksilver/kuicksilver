@@ -90,6 +90,12 @@ internal class WtSessionImpl(
     io.kuicksilver.http3.WebTransportDiagnostics {
     override val sessionId: Long get() = stream.streamId
 
+    /** Draft-02 has no WebTransport flow control: its connection carries this session alone (section 4.3 of draft-02). */
+    override val onlySessionOfItsConnection: Boolean get() = version == WtVersion.Draft02
+
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    override val maxStreamErrorCode: Long get() = version.maxStreamErrorCode
+
     override val creditStall = CompletableDeferred<String>()
 
     /** The connection's dispatcher, where [flow] lives (a test hook). */
@@ -592,6 +598,7 @@ internal class WtSessionImpl(
                     sendTurns,
                     // RESET_STREAM_AT goes only where both sides advertised it (draft-ietf-quic-reliable-stream-reset section 3)
                     reliableResets = h3.quic.resetStreamAtEnabled,
+                    maxCode = version.maxStreamErrorCode,
                 )
             if (closedInfo.isCompleted) {
                 s.gone()

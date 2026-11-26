@@ -7,55 +7,37 @@ import io.ktor.server.config.ApplicationConfigValue
 import io.ktor.server.engine.CommandLineConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
-import io.ktor.util.logging.KtorSimpleLogger
+import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
-import io.kuicksilver.quic.QuicConfig
-import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.TlsException
-import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsVersions
-import io.kuicksilver.tls.TrustConfig
 import kotlin.jvm.JvmStatic
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * `EngineMain` for the Kuicksilver engine, configured like Ktor's own engines (`ktor.deployment.*`, and on the JVM
- * `ktor.security.ssl.*` with `-sslPort`). Keys of its own, on every platform:
- * `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files: the deployment port then serves TLS
- * and HTTP/3), `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`: ask for a client certificate) and
- * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
- * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
- * `kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's order of preference, e.g.
- * `["X25519MLKEM768", "x25519", "secp256r1"]`, or one string of them separated by `:` or `,`; the default list when absent),
- * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
- * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
- * `kuicksilver.tls.echKeys` (a list of PEM files of Encrypted Client Hello keys, each what `openssl ech` writes, every one
- * of them sent in retry configurations; read once at startup, rotated in code with `EchServerKeys.rotate`, freed when the
- * engine stops),
- * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
- * proxy, is a trusted gateway: no `421 Misdirected Request`),
- * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
- * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.h2c` (`off`, the default,
- * `withHttp11` or `only`: HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port, [H2cMode]; only without
- * the `kuicksilver.tls.*` identity files), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
- * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
- * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
- * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.h1AllowBareLf` (off by
- * default: a bare LF in an HTTP/1.1 request head gets 400), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
- * server), `kuicksilver.proxyProtocol.trustedSources`, `headerTimeout` and `maxHeaderSize` (the PROXY protocol on the
- * deployment port, [ProxyProtocolConfig]; off by default), and the QUIC transport of the HTTP/3 listeners under `kuicksilver.quic`
- * ([KuicksilverApplicationEngine.Configuration.quic], each key the `QuicConfig` option of its name): `initialUdpPayloadSize`,
- * `maxSendUdpPayloadSize`, `maxUdpPayloadSize` (bytes), `pmtud` and `allowMigration` (`true`/`false`), `maxIdleTimeout`,
- * `handshakeTimeout` and `keepAlive` (durations such as `30s`; `0` is none for the idle timeout and off for keep-alive),
- * `maxBidiStreams` and `maxUniStreams`.
+ * `ktor.security.ssl.*` with `-sslPort`). Its own keys follow the engine's DSL: a key is the path of its option under
+ * `kuicksilver.` (`kuicksilver.http3.endpoint.maxConnections` is `http3 { endpoint { maxConnections } }`), with three
+ * exceptions: the TLS files (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`, `ocspStapling`, `echKeys`,
+ * which the DSL reads with `pemFiles`, `clientCaFile` and `ocspStaplingFile`), the `kuicksilver.connector` block (the
+ * deployment port, a Ktor connector: `allowMisdirectedHosts`, `h2c`, `proxyProtocol.*`) and Ktor's own
+ * `ktor.deployment.connectionIdleTimeoutSeconds` (`tcp { idleTimeout }`). Every key is in [KNOWN_KEYS]; the same keys
+ * work in `application.yaml`. Without `ktor.deployment.host` (or `-host`) the deployment port binds every interface as a
+ * host-less `tlsConnector { }` does (`::` dual-stack, `0.0.0.0` where the host has no IPv6), not Ktor's `0.0.0.0`.
+ *
+ * Values: `true`/`false` for a switch (nothing else); a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1h`,
+ * `PT30S`), in whole milliseconds; names of an enumeration in any case (`required`, `tls12And13`, `withHttp11`); `off` for
+ * "none" or "no limit" of a key that has one (`tls.reloadInterval`, `http2.repeatOffenderPenalty`,
+ * `http3.endpoint.maxConnectionsPerIp`, `http3.quic.maxIdleTimeout`, `http3.quic.keepAlive`, `tcp.maxConnectionsPerIp`),
+ * where `0` is refused. An unknown key
+ * under `kuicksilver.` fails the start, naming the key that replaced it (a 0.2.x key or an earlier 0.3.0 one,
+ * [RENAMED_KEYS]) or the closest known key.
  */
 public object EngineMain {
-    /** Where configuration warnings go before the application exists (a client CA file with non-CA certificates). */
-    private val startupLog = KtorSimpleLogger("io.kuicksilver.ktor.server.EngineMain")
-
     /** Starts the server from command-line arguments and the configuration file, and blocks until it stops. */
     @JvmStatic
     public fun main(args: Array<String>) {
@@ -63,305 +45,435 @@ public object EngineMain {
     }
 
     /**
-     * The server [main] would run, not started yet. Throws [IllegalArgumentException] when only one of the two
-     * `kuicksilver.tls.*` file keys is set, `kuicksilver.tls.reloadInterval` is set without them or is not a duration of
-     * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
-     * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files,
-     * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
-     * `kuicksilver.tls.keyExchangeGroups` is not a list `KeyExchangeGroups` takes (an unknown name, a duplicate, an empty list)
-     * or is set without the identity files,
-     * `kuicksilver.tls.ocspStapling` or `kuicksilver.tls.echKeys` is set without the identity files, `kuicksilver.h2c` is not
-     * `off`, `withHttp11` or `only`, or is not `off` with the identity files (h2c needs the cleartext port), a boolean key is not
-     * `true`/`false`, or `kuicksilver.maxTcpConnections`,
-     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, a
-     * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`, or a `kuicksilver.quic.*` key is not one of
-     * the QUIC keys, does not parse or is out of the range of its `QuicConfig` option (e.g. `initialUdpPayloadSize` below 1200). Throws
-     * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
-     * or is larger than 1 MiB, and when the chain file (with `kuicksilver.tls.reloadInterval`) or the client CA file also holds
-     * a private key. Throws `TlsException.Config` when a PEM file holds no certificate or a damaged one, the key does not
-     * match the chain or is encrypted, and, with `kuicksilver.tls.reloadInterval`, when the leaf certificate has expired or is
-     * not valid yet or no certificate of the client CA file is valid now, and when the `kuicksilver.tls.ocspStapling` file is
-     * empty or not a DER SEQUENCE (`kotlinx.io.IOException` when it cannot be read or is larger than 1 MiB), and when an
-     * `kuicksilver.tls.echKeys` file is not an ECH key (`kotlinx.io.IOException` when it cannot be read or is larger than 1
-     * MiB).
+     * The server [main] would run, not started yet. Throws [IllegalArgumentException] naming the key for a key that is not
+     * one of [KNOWN_KEYS] (an old key names its replacement), a value that does not parse or that the engine's option
+     * refuses, `0` for a key whose "none" is `off`, only one of `kuicksilver.tls.certificateChain` and `privateKey`, another
+     * `kuicksilver.tls.*` key without them, `kuicksilver.tls.clientAuth` other than `none` without `kuicksilver.tls.clientCa`
+     * (or the other way round), `kuicksilver.connector.h2c` other than `off` with them, and a `kuicksilver.connector.proxyProtocol.*`
+     * key without `trustedSources`. Throws `kotlinx.io.IOException` when a PEM, OCSP or ECH key file cannot be read, is larger
+     * than 1 MiB, or (the client CA file) holds a private key, and `TlsException.Config` when such a file holds no
+     * certificate or a damaged one, the key does not match the chain or is encrypted, or a file is not what its key reads.
+     * The start fails later (with `kuicksilver.tls.reloadInterval`) for a chain file that holds the private key or an
+     * expired leaf certificate.
      */
     public fun createServer(args: Array<String>): EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration> {
         val config = CommandLineConfig(args)
+        // Ktor gives the deployment connectors 0.0.0.0 when no host is set; the engine binds them as host-less connectors
+        // of its own instead (`::`, both families): told by the absence of the key and of `-host`, not by the value
+        val hostGiven =
+            args.any { it.startsWith("-host=") } || config.rootConfig.environment.config
+                .propertyOrNull("ktor.deployment.host") != null
         return EmbeddedServer(config.rootConfig, Kuicksilver) {
             takeFrom(config.engineConfig)
+            deploymentEveryInterface = !hostGiven
             loadConfiguration(config.rootConfig.environment.config)
         }
     }
 
+    /**
+     * Every key of `EngineMain` under `kuicksilver.`, each the path of its DSL option (tools/check/config-table.sh reads them
+     * from here).
+     */
+    internal val KNOWN_KEYS: Set<String> =
+        linkedSetOf(
+            "kuicksilver.requestHeaderTimeout",
+            "kuicksilver.tls.certificateChain",
+            "kuicksilver.tls.privateKey",
+            "kuicksilver.tls.reloadInterval",
+            "kuicksilver.tls.clientAuth",
+            "kuicksilver.tls.clientCa",
+            "kuicksilver.tls.versions",
+            "kuicksilver.tls.keyExchangeGroups",
+            "kuicksilver.tls.ocspStapling",
+            "kuicksilver.tls.echKeys",
+            "kuicksilver.connector.allowMisdirectedHosts",
+            "kuicksilver.connector.h2c",
+            "kuicksilver.connector.proxyProtocol.trustedSources",
+            "kuicksilver.connector.proxyProtocol.headerTimeout",
+            "kuicksilver.connector.proxyProtocol.maxHeaderSize",
+            "kuicksilver.http1.allowBareLf",
+            "kuicksilver.http2.enabled",
+            "kuicksilver.http2.repeatOffenderPenalty",
+            "kuicksilver.http3.enabled",
+            "kuicksilver.http3.altSvc",
+            "kuicksilver.http3.earlyData.enabled",
+            "kuicksilver.http3.endpoint.loops",
+            "kuicksilver.http3.endpoint.maxConnections",
+            "kuicksilver.http3.endpoint.maxConnectionsPerIp",
+            "kuicksilver.http3.endpoint.acceptQueue",
+            "kuicksilver.http3.endpoint.expert.connectionIdLength",
+            "kuicksilver.http3.quic.maxIdleTimeout",
+            "kuicksilver.http3.quic.handshakeTimeout",
+            "kuicksilver.http3.quic.keepAlive",
+            "kuicksilver.http3.quic.maxBidiStreams",
+            "kuicksilver.http3.quic.pathMtu.maxReceive",
+            "kuicksilver.http3.quic.pathMtu.initial",
+            "kuicksilver.http3.quic.pathMtu.maxSend",
+            "kuicksilver.http3.quic.pathMtu.discovery",
+            "kuicksilver.http3.quic.migration.allow",
+            "kuicksilver.http3.quic.expert.maxUniStreams",
+            "kuicksilver.webSockets.overHttp2",
+            "kuicksilver.webSockets.overHttp3",
+            "kuicksilver.webSockets.maxMessageSize",
+            "kuicksilver.tcp.maxConnections",
+            "kuicksilver.tcp.maxConnectionsPerIp",
+        )
+
+    /**
+     * The keys of 0.2.x and of earlier 0.3.0 snapshots and the keys that replaced them: an old key fails the start with its
+     * replacement named, and is never read (docs/guide/configuration.md, "Migrating from 0.2.x").
+     */
+    internal val RENAMED_KEYS: Map<String, String> =
+        linkedMapOf(
+            // 0.2.x (kuicksilver.tls.certificateChain and privateKey kept their names)
+            "kuicksilver.http3" to "kuicksilver.http3.enabled",
+            "kuicksilver.altSvc" to "kuicksilver.http3.altSvc",
+            "kuicksilver.udpSocketCount" to "kuicksilver.http3.endpoint.loops",
+            "kuicksilver.webSocketsOverHttp3" to "kuicksilver.webSockets.overHttp3",
+            // 0.3.0 snapshots
+            "kuicksilver.tls.trustedGateway" to "kuicksilver.connector.allowMisdirectedHosts",
+            "kuicksilver.http2" to "kuicksilver.http2.enabled",
+            "kuicksilver.h2c" to "kuicksilver.connector.h2c",
+            "kuicksilver.http2RepeatOffenderPenalty" to "kuicksilver.http2.repeatOffenderPenalty",
+            "kuicksilver.maxTcpConnections" to "kuicksilver.tcp.maxConnections",
+            "kuicksilver.maxTcpConnectionsPerIp" to "kuicksilver.tcp.maxConnectionsPerIp",
+            "kuicksilver.quicMaxConnections" to "kuicksilver.http3.endpoint.maxConnections",
+            "kuicksilver.quicMaxConnectionsPerIp" to "kuicksilver.http3.endpoint.maxConnectionsPerIp",
+            "kuicksilver.quicAcceptQueue" to "kuicksilver.http3.endpoint.acceptQueue",
+            "kuicksilver.webSocketsOverHttp2" to "kuicksilver.webSockets.overHttp2",
+            "kuicksilver.h1AllowBareLf" to "kuicksilver.http1.allowBareLf",
+            "kuicksilver.proxyProtocol.trustedSources" to "kuicksilver.connector.proxyProtocol.trustedSources",
+            "kuicksilver.proxyProtocol.headerTimeout" to "kuicksilver.connector.proxyProtocol.headerTimeout",
+            "kuicksilver.proxyProtocol.maxHeaderSize" to "kuicksilver.connector.proxyProtocol.maxHeaderSize",
+            "kuicksilver.quic.initialUdpPayloadSize" to "kuicksilver.http3.quic.pathMtu.initial",
+            "kuicksilver.quic.maxSendUdpPayloadSize" to "kuicksilver.http3.quic.pathMtu.maxSend",
+            "kuicksilver.quic.maxUdpPayloadSize" to "kuicksilver.http3.quic.pathMtu.maxReceive",
+            "kuicksilver.quic.pmtud" to "kuicksilver.http3.quic.pathMtu.discovery",
+            "kuicksilver.quic.maxIdleTimeout" to "kuicksilver.http3.quic.maxIdleTimeout",
+            "kuicksilver.quic.handshakeTimeout" to "kuicksilver.http3.quic.handshakeTimeout",
+            "kuicksilver.quic.keepAlive" to "kuicksilver.http3.quic.keepAlive",
+            "kuicksilver.quic.maxBidiStreams" to "kuicksilver.http3.quic.maxBidiStreams",
+            "kuicksilver.quic.allowMigration" to "kuicksilver.http3.quic.migration.allow",
+            "kuicksilver.quic.maxUniStreams" to "kuicksilver.http3.quic.expert.maxUniStreams",
+        )
+
+    /**
+     * Refuses every key under `kuicksilver.` that is not one of [KNOWN_KEYS], the first in alphabetical order: an old key
+     * with its replacement, any other with the closest known key when there is one.
+     */
+    internal fun checkKeys(config: ApplicationConfig) {
+        val keys =
+            config
+                .keys()
+                .filter { it.startsWith(PREFIX) }
+                .map { leafKey(it) }
+                .distinct()
+                .sorted()
+        for (key in keys) {
+            if (key in KNOWN_KEYS) continue
+            if (key == "kuicksilver.http3") {
+                throw IllegalArgumentException("kuicksilver.http3 = true|false was replaced in 0.3.0 by kuicksilver.http3.enabled")
+            }
+            RENAMED_KEYS[key]?.let { throw IllegalArgumentException("$key was replaced in 0.3.0 by $it") }
+            throw IllegalArgumentException(
+                "$key is not a Kuicksilver key" + (suggestion(key)?.let { "; did you mean $it?" } ?: ""),
+            )
+        }
+    }
+
+    /** The keys whose value may be a list: Ktor's map configuration spells their items `<key>.0`, `<key>.1`, ... and `<key>.size`. */
+    private val LIST_KEYS: Set<String> =
+        setOf("kuicksilver.tls.echKeys", "kuicksilver.tls.keyExchangeGroups", "kuicksilver.connector.proxyProtocol.trustedSources")
+
+    /**
+     * A list's item or size as Ktor's map configuration spells it (`kuicksilver.tls.echKeys.0`, `.size`) is the list's key;
+     * any other key is itself, so `kuicksilver.tcp.maxConnections.size` is refused as the unknown key it is.
+     */
+    private fun leafKey(key: String): String {
+        val last = key.substringAfterLast('.')
+        val list = key.substringBeforeLast('.')
+        val item = last == "size" || (last.isNotEmpty() && last.all { it in '0'..'9' })
+        return if (item && list in LIST_KEYS) list else key
+    }
+
+    /**
+     * The key meant by a [key] that is not one: the replacement of an old key within 3 edits of it, else the known key within 3
+     * edits (the closest), else the known key with the same last name that shares the longest start with it, when only one does
+     * (`kuicksilver.http3.quic.maxConnections` is `kuicksilver.http3.endpoint.maxConnections`, not `kuicksilver.tcp.maxConnections`).
+     */
+    internal fun suggestion(key: String): String? {
+        RENAMED_KEYS.entries
+            .map { (old, new) -> levenshtein(key, old) to new }
+            .filter { it.first <= 3 }
+            .minByOrNull { it.first }
+            ?.let { return it.second }
+        KNOWN_KEYS
+            .map { levenshtein(key, it) to it }
+            .filter { it.first <= 3 }
+            .minByOrNull { it.first }
+            ?.let { return it.second }
+        val leaf = key.substringAfterLast('.')
+        val sameLeaf = KNOWN_KEYS.filter { it.substringAfterLast('.') == leaf }.groupBy { it.commonPrefixWith(key).length }
+        return sameLeaf.maxByOrNull { it.key }?.value?.singleOrNull()
+    }
+
+    /** The edit distance (insertions, deletions, substitutions) between [a] and [b]. */
+    private fun levenshtein(
+        a: String,
+        b: String,
+    ): Int {
+        var prev = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            val cur = IntArray(b.length + 1)
+            cur[0] = i
+            for (j in 1..b.length) {
+                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+            }
+            prev = cur
+        }
+        return prev[b.length]
+    }
+
+    @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
     private fun KuicksilverApplicationEngine.Configuration.loadConfiguration(config: ApplicationConfig) {
         val deployment = config.config("ktor.deployment")
         loadCommonConfiguration(deployment)
-        deployment
-            .propertyOrNull("connectionIdleTimeoutSeconds")
-            ?.getString()
-            ?.toInt()
-            ?.let { connectionIdleTimeoutSeconds = it }
-        val chain = config.propertyOrNull("kuicksilver.tls.certificateChain")?.getString()
-        val key = config.propertyOrNull("kuicksilver.tls.privateKey")?.getString()
+        val k = Keys(config)
+        k.read("ktor.deployment.connectionIdleTimeoutSeconds", { it.toIntOrNull()?.seconds }, "a whole number of seconds") {
+            tcp.idleTimeout = it
+        }
+        checkKeys(config)
+        k.duration("kuicksilver.requestHeaderTimeout") { requestHeaderTimeout = it }
+        loadTls(config, k)
+        k.boolean("kuicksilver.connector.allowMisdirectedHosts") { deploymentAllowMisdirectedHosts = it }
+        k.enum("kuicksilver.connector.h2c", H2cMode.entries) {
+            require(it == H2cMode.Off || tls.identity == null) {
+                "kuicksilver.connector.h2c needs the cleartext deployment port: it cannot go with kuicksilver.tls.certificateChain and privateKey"
+            }
+            deploymentH2c = it
+        }
+        deploymentProxyProtocol = parseProxyProtocol(config, k)
+        k.boolean("kuicksilver.http1.allowBareLf") { http1.allowBareLf = it }
+        k.boolean("kuicksilver.http2.enabled") { http2.enabled = it }
+        k.durationOrOff("kuicksilver.http2.repeatOffenderPenalty") { http2.repeatOffenderPenalty = it }
+        k.boolean("kuicksilver.http3.enabled") { http3.enabled = it }
+        k.boolean("kuicksilver.http3.altSvc") { http3.altSvc = it }
+        k.boolean("kuicksilver.http3.earlyData.enabled") { http3.earlyData.enabled = it }
+        k.int("kuicksilver.http3.endpoint.loops") { http3.endpoint.loops = it }
+        k.int("kuicksilver.http3.endpoint.maxConnections") { http3.endpoint.maxConnections = it }
+        k.intOrOff("kuicksilver.http3.endpoint.maxConnectionsPerIp") { http3.endpoint.maxConnectionsPerIp = it }
+        k.int("kuicksilver.http3.endpoint.acceptQueue") { http3.endpoint.acceptQueue = it }
+        k.int("kuicksilver.http3.endpoint.expert.connectionIdLength") { http3.endpoint.expert.connectionIdLength = it }
+        val q = http3.quicBuilder
+        k.durationOrOff("kuicksilver.http3.quic.maxIdleTimeout") { q.maxIdleTimeout = it }
+        k.duration("kuicksilver.http3.quic.handshakeTimeout") { q.handshakeTimeout = it }
+        k.durationOrOff("kuicksilver.http3.quic.keepAlive") { q.keepAlive = it }
+        k.long("kuicksilver.http3.quic.maxBidiStreams") { q.maxBidiStreams = it }
+        k.int("kuicksilver.http3.quic.pathMtu.maxReceive") {
+            // the HTTP/3 listener's QuicEndpoint refuses more at bind, after the configuration was read: name the key now
+            require(it <= QUIC_ENDPOINT_SLOT) { "must be at most $QUIC_ENDPOINT_SLOT (the endpoint's datagram slots), not $it" }
+            q.pathMtu.maxReceive = it
+        }
+        k.int("kuicksilver.http3.quic.pathMtu.initial") { q.pathMtu.initial = it }
+        k.int("kuicksilver.http3.quic.pathMtu.maxSend") { q.pathMtu.maxSend = it }
+        k.boolean("kuicksilver.http3.quic.pathMtu.discovery") { q.pathMtu.discovery = it }
+        k.boolean("kuicksilver.http3.quic.migration.allow") { q.migration.allow = it }
+        k.long("kuicksilver.http3.quic.expert.maxUniStreams") {
+            // the engine refuses less at its start; the key is named now
+            require(it >= 3) { "must be at least 3 (RFC 9114 section 6.2: the peer opens its control and QPACK streams), not $it" }
+            q.expert.maxUniStreams = it
+        }
+        if (config.keys().any { it.startsWith("kuicksilver.http3.quic.") }) {
+            try {
+                q.build()
+            } catch (e: IllegalArgumentException) {
+                // QuicConfig names the option: "pathMtu { initial } must be 1200..65527"
+                throw IllegalArgumentException("kuicksilver.http3.quic: ${e.message}", e)
+            }
+        }
+        k.boolean("kuicksilver.webSockets.overHttp2") { webSockets.overHttp2 = it }
+        k.boolean("kuicksilver.webSockets.overHttp3") { webSockets.overHttp3 = it }
+        k.long("kuicksilver.webSockets.maxMessageSize") { webSockets.maxMessageSize = it }
+        k.int("kuicksilver.tcp.maxConnections") { tcp.maxConnections = it }
+        k.intOrOff("kuicksilver.tcp.maxConnectionsPerIp") { tcp.maxConnectionsPerIp = it }
+    }
+
+    /** The `kuicksilver.tls.*` keys: the deployment port's identity files and what goes with them. */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun KuicksilverApplicationEngine.Configuration.loadTls(
+        config: ApplicationConfig,
+        k: Keys,
+    ) {
+        val chain = k.value("kuicksilver.tls.certificateChain")
+        val key = k.value("kuicksilver.tls.privateKey")
         require((chain == null) == (key == null)) { "kuicksilver.tls.certificateChain and kuicksilver.tls.privateKey go together" }
-        val reload = parseReloadInterval(config.propertyOrNull("kuicksilver.tls.reloadInterval")?.getString())
-        require(reload == null || chain != null) { "kuicksilver.tls.reloadInterval needs kuicksilver.tls.certificateChain and privateKey" }
-        val versions = parseTlsVersions(config.propertyOrNull("kuicksilver.tls.versions")?.getString())
-        require(versions == null || chain != null) { "kuicksilver.tls.versions needs kuicksilver.tls.certificateChain and privateKey" }
-        versions?.let { tlsVersions = it }
-        val groups = config.propertyOrNull("kuicksilver.tls.keyExchangeGroups")?.let { parseKeyExchangeGroups(groupNames(it)) }
-        require(groups == null || chain != null) {
-            "kuicksilver.tls.keyExchangeGroups needs kuicksilver.tls.certificateChain and privateKey"
+        for (needs in listOf("reloadInterval", "clientCa", "versions", "keyExchangeGroups", "ocspStapling", "echKeys")) {
+            require(chain != null || config.propertyOrNull("kuicksilver.tls.$needs") == null) {
+                "kuicksilver.tls.$needs needs kuicksilver.tls.certificateChain and privateKey"
+            }
         }
-        @OptIn(ExperimentalKuicksilverApi::class)
-        groups?.let { tlsKeyExchangeGroups = it }
-        val gateway =
-            config
-                .propertyOrNull("kuicksilver.tls.trustedGateway")
-                ?.getString()
-                ?.trim()
-                ?.toBooleanStrict()
-        gateway?.let { tlsTrustedGateway = it }
-        val ocspFile = config.propertyOrNull("kuicksilver.tls.ocspStapling")?.getString()
-        require(ocspFile == null || chain != null) { "kuicksilver.tls.ocspStapling needs kuicksilver.tls.certificateChain and privateKey" }
-        if (ocspFile != null) {
-            @OptIn(ExperimentalKuicksilverApi::class)
-            tlsOcspStapling = io.kuicksilver.tls.OcspStapling(readOcspResponseFile(ocspFile))
-            tlsOcspFile = ocspFile
-        }
-        val echFiles = config.propertyOrNull("kuicksilver.tls.echKeys")?.let { pemFiles(it) }
-        require(echFiles == null || chain != null) { "kuicksilver.tls.echKeys needs kuicksilver.tls.certificateChain and privateKey" }
-        if (echFiles != null) {
-            @OptIn(ExperimentalKuicksilverApi::class)
-            tlsEchKeys = io.kuicksilver.tls.EchServerKeys(echFiles.map { readEchKeyFile(it) })
+        if (chain == null || key == null) return
+        k.enum("kuicksilver.tls.versions", listOf(TlsVersions.Tls13, TlsVersions.Tls12And13), { it.toString() }) { tls.versions = it }
+        config.propertyOrNull("kuicksilver.tls.keyExchangeGroups")?.let { tls.keyExchangeGroups = parseKeyExchangeGroups(groupNames(it)) }
+        k.value("kuicksilver.tls.ocspStapling")?.let { tls.ocspStaplingFile(it) }
+        config.propertyOrNull("kuicksilver.tls.echKeys")?.let { v ->
+            tls.echKeys = io.kuicksilver.tls.EchServerKeys(pemFiles(v).map { readEchKeyFile(it) })
+            tls.closeEchKeysOnStop = true
         }
         // before the identity: a refused client CA leaves no native key behind
-        loadClientCa(config, chain != null, reload != null)
-        if (chain != null && key != null) {
-            // with reloading, the startup files get the watcher's checks: a combined PEM (key in the chain file) is refused
-            val loaded = TlsIdentity.fromPem(readPemText(chain, refusePrivateKey = reload != null), readPemKey(key))
-            @OptIn(ExperimentalKuicksilverApi::class)
-            identity =
-                if (reload == null) {
-                    loaded
-                } else {
-                    // refuses an expired or not yet valid leaf at startup, as every later reload would
-                    try {
-                        TlsIdentity.reloadable(loaded)
-                    } catch (e: Throwable) {
-                        loaded.close()
-                        throw e
-                    }
-                }
-            identityFiles = chain to key
-            closeIdentityOnStop = true
-            @OptIn(ExperimentalKuicksilverApi::class)
-            identityReloadInterval = reload
+        val auth = k.enumValue("kuicksilver.tls.clientAuth", ClientAuth.entries) ?: ClientAuth.None
+        val caFile = k.value("kuicksilver.tls.clientCa")
+        require(
+            auth == ClientAuth.None || caFile != null,
+        ) { "kuicksilver.tls.clientAuth ${auth.name.lowercase()} needs kuicksilver.tls.clientCa" }
+        require(
+            caFile == null || auth != ClientAuth.None,
+        ) { "kuicksilver.tls.clientCa needs kuicksilver.tls.clientAuth optional or required" }
+        if (caFile != null) {
+            tls.clientCaFile(caFile)
+            tls.clientAuth = auth
         }
-        config
-            .propertyOrNull("kuicksilver.http3")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let { http3 = it }
-        config
-            .propertyOrNull("kuicksilver.http2")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                http2 = it
-            }
-        parseH2c(config.propertyOrNull("kuicksilver.h2c")?.getString())?.let {
-            @OptIn(ExperimentalKuicksilverApi::class)
-            require(it == H2cMode.Off || chain == null) {
-                "kuicksilver.h2c needs the cleartext deployment port: it cannot go with kuicksilver.tls.certificateChain and privateKey"
-            }
-            h2cDeploymentPort = it
-        }
-        config
-            .propertyOrNull("kuicksilver.h1AllowBareLf")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                h1AllowBareLf = it
-            }
-        config
-            .propertyOrNull("kuicksilver.webSocketsOverHttp2")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                webSocketsOverHttp2 = it
-            }
-        config
-            .propertyOrNull("kuicksilver.http2RepeatOffenderPenalty")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                http2RepeatOffenderPenalty = parsePenalty(it)
-            }
-        config
-            .propertyOrNull("kuicksilver.maxTcpConnections")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                maxTcpConnections = parseCount("kuicksilver.maxTcpConnections", it)
-            }
-        config
-            .propertyOrNull("kuicksilver.maxTcpConnectionsPerIp")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                maxTcpConnectionsPerIp = parseCount("kuicksilver.maxTcpConnectionsPerIp", it).takeIf { n -> n != 0 }
-            }
-        config
-            .propertyOrNull("kuicksilver.quicMaxConnections")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                quicMaxConnections = parseCount("kuicksilver.quicMaxConnections", it)
-            }
-        config
-            .propertyOrNull("kuicksilver.quicMaxConnectionsPerIp")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                quicMaxConnectionsPerIp = parseCount("kuicksilver.quicMaxConnectionsPerIp", it).takeIf { n -> n != 0 }
-            }
-        config
-            .propertyOrNull("kuicksilver.quicAcceptQueue")
-            ?.getString()
-            ?.let {
-                @OptIn(ExperimentalKuicksilverApi::class)
-                quicAcceptQueue = parseCount("kuicksilver.quicAcceptQueue", it)
-            }
-        config
-            .propertyOrNull("kuicksilver.altSvc")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let { altSvc = it }
-        config
-            .propertyOrNull("kuicksilver.webSocketsOverHttp3")
-            ?.getString()
-            ?.toBooleanStrict()
-            ?.let { webSocketsOverHttp3 = it }
-        config
-            .propertyOrNull("kuicksilver.udpSocketCount")
-            ?.getString()
-            ?.toInt()
-            ?.let { udpSocketCount = it }
-        deploymentProxyProtocol = parseProxyProtocol(config)
-        parseQuic(config, quic)?.let { quic = it }
+        tls.pemFiles(chain, key)
+        k.durationOrOff("kuicksilver.tls.reloadInterval") { tls.reloadInterval = it }
     }
 
-    /**
-     * The `kuicksilver.quic.*` keys ([QUIC_KEYS]) applied to [base]: null when none is set. Throws [IllegalArgumentException] naming
-     * the key for one that is not a QUIC key, a value that does not parse, or a value [QuicConfig] refuses.
-     */
-    @OptIn(ExperimentalKuicksilverApi::class)
-    internal fun parseQuic(
-        config: ApplicationConfig,
-        base: QuicConfig,
-    ): QuicConfig? {
-        // every key of QUIC_KEYS starts so (each written whole there, for tools/check/config-table.sh)
-        val keys = config.keys().filter { k -> QUIC_KEYS.any { k.startsWith(it.substringBeforeLast('.') + '.') } }
-        if (keys.isEmpty()) return null
-        // a misspelt key would otherwise leave the default in place without a word: an operator tuning a tunnel must know
-        keys.firstOrNull { it !in QUIC_KEYS }?.let {
-            throw IllegalArgumentException("$it is not a QUIC key; the keys are ${QUIC_KEYS.joinToString()}")
-        }
-
-        fun value(key: String): String? = config.propertyOrNull(key)?.getString()?.trim()
-        val b = base.toBuilder()
-        value("kuicksilver.quic.initialUdpPayloadSize")?.let {
-            b.initialUdpPayloadSize = parseCount("kuicksilver.quic.initialUdpPayloadSize", it)
-        }
-        value("kuicksilver.quic.maxSendUdpPayloadSize")?.let {
-            b.maxSendUdpPayloadSize = parseCount("kuicksilver.quic.maxSendUdpPayloadSize", it)
-        }
-        value("kuicksilver.quic.maxUdpPayloadSize")?.let {
-            val n = parseCount("kuicksilver.quic.maxUdpPayloadSize", it)
-            // the HTTP/3 listener's QuicEndpoint refuses more at bind, after the configuration was read: name the key now
-            require(n <= QUIC_ENDPOINT_SLOT) {
-                "kuicksilver.quic.maxUdpPayloadSize must be at most $QUIC_ENDPOINT_SLOT (the endpoint's datagram slots), not $n"
-            }
-            b.maxUdpPayloadSize = n
-        }
-        value("kuicksilver.quic.pmtud")?.let { b.pmtud = parseBoolean("kuicksilver.quic.pmtud", it) }
-        value("kuicksilver.quic.maxIdleTimeout")?.let { b.maxIdleTimeout = parseDuration("kuicksilver.quic.maxIdleTimeout", it) }
-        value("kuicksilver.quic.handshakeTimeout")?.let { b.handshakeTimeout = parseDuration("kuicksilver.quic.handshakeTimeout", it) }
-        value("kuicksilver.quic.keepAlive")?.let {
-            b.keepAlive = parseDuration("kuicksilver.quic.keepAlive", it).takeUnless { d -> d == Duration.ZERO }
-        }
-        value("kuicksilver.quic.maxBidiStreams")?.let { b.maxBidiStreams = parseLong("kuicksilver.quic.maxBidiStreams", it) }
-        value("kuicksilver.quic.maxUniStreams")?.let { b.maxUniStreams = parseLong("kuicksilver.quic.maxUniStreams", it) }
-        value("kuicksilver.quic.allowMigration")?.let { b.allowMigration = parseBoolean("kuicksilver.quic.allowMigration", it) }
-        return try {
-            b.build()
-        } catch (e: IllegalArgumentException) {
-            // QuicConfig names the option: "initialUdpPayloadSize must be 1200..65527"
-            throw IllegalArgumentException("kuicksilver.quic: ${e.message}", e)
-        }
-    }
-
-    /** The largest datagram a `QuicEndpoint` handles (its 1500-byte slots), which bounds `maxUdpPayloadSize` at bind. */
+    /** The largest datagram a `QuicEndpoint` handles (its 1500-byte slots), which bounds `pathMtu { maxReceive }` at bind. */
     private const val QUIC_ENDPOINT_SLOT = 1500
 
-    /** The `kuicksilver.quic.*` keys [parseQuic] reads, each a [QuicConfig] option of the same name. */
-    internal val QUIC_KEYS: List<String> =
-        listOf(
-            "kuicksilver.quic.initialUdpPayloadSize",
-            "kuicksilver.quic.maxSendUdpPayloadSize",
-            "kuicksilver.quic.maxUdpPayloadSize",
-            "kuicksilver.quic.pmtud",
-            "kuicksilver.quic.maxIdleTimeout",
-            "kuicksilver.quic.handshakeTimeout",
-            "kuicksilver.quic.keepAlive",
-            "kuicksilver.quic.maxBidiStreams",
-            "kuicksilver.quic.maxUniStreams",
-            "kuicksilver.quic.allowMigration",
-        )
+    private const val PREFIX = "kuicksilver."
 
-    /** A `true`/`false` key. */
-    private fun parseBoolean(
-        key: String,
-        value: String,
-    ): Boolean = value.toBooleanStrictOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not true or false")
+    private const val DURATION = "a duration in whole milliseconds (30s, 1h, 250ms)"
 
-    /** A whole-number key of [Long] range; the builder checks its range. */
-    private fun parseLong(
-        key: String,
-        value: String,
-    ): Long = value.trim().toLongOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not a whole number")
+    /**
+     * The rules every key reads by: a value is trimmed; a value the option refuses fails with the key named before the
+     * option's own message.
+     */
+    private class Keys(
+        private val config: ApplicationConfig,
+    ) {
+        /** [key]'s value, trimmed; a list where the key takes one value fails naming the key, not with Ktor's own error. */
+        fun value(key: String): String? {
+            val v = config.propertyOrNull(key) ?: return null
+            val text =
+                try {
+                    v.getString()
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("$key: a list, but the key takes one value", e)
+                }
+            return text.trim()
+        }
 
-    /** A duration key: `0`, or a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1m`, `PT30S`). */
-    private fun parseDuration(
-        key: String,
-        value: String,
-    ): Duration {
-        if (value == "0") return Duration.ZERO
-        return try {
-            Duration.parse(value)
-        } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("$key: \"$value\" is not a duration (30s, 1m)", e)
+        /** [key] read with [parse] ([what] names what it must be) and given to [apply]; the option's refusal names the key. */
+        fun <T> read(
+            key: String,
+            parse: (String) -> T?,
+            what: String,
+            apply: (T) -> Unit,
+        ) {
+            val v = value(key) ?: return
+            val parsed = parse(v) ?: throw IllegalArgumentException("$key: \"$v\" is not $what")
+            named(key) { apply(parsed) }
+        }
+
+        /** [read] for a key whose "none" is `off` (applied as null); `0` is refused with a hint. */
+        fun <T : Any> readOrOff(
+            key: String,
+            parse: (String) -> T?,
+            what: String,
+            apply: (T?) -> Unit,
+        ) {
+            val v = value(key) ?: return
+            if (v == "off") return named(key) { apply(null) }
+            require(v != "0") { "$key: use off instead of 0" }
+            val parsed = parse(v) ?: throw IllegalArgumentException("$key: \"$v\" is not $what, or off")
+            named(key) { apply(parsed) }
+        }
+
+        fun boolean(
+            key: String,
+            apply: (Boolean) -> Unit,
+        ) = read(key, { it.toBooleanStrictOrNull() }, "true or false", apply)
+
+        fun int(
+            key: String,
+            apply: (Int) -> Unit,
+        ) = read(key, { it.toIntOrNull() }, "a whole number", apply)
+
+        fun intOrOff(
+            key: String,
+            apply: (Int?) -> Unit,
+        ) = readOrOff(key, { it.toIntOrNull() }, "a whole number", apply)
+
+        fun long(
+            key: String,
+            apply: (Long) -> Unit,
+        ) = read(key, { it.toLongOrNull() }, "a whole number", apply)
+
+        fun duration(
+            key: String,
+            apply: (Duration) -> Unit,
+        ) = read(key, ::parseDuration, DURATION, apply)
+
+        fun durationOrOff(
+            key: String,
+            apply: (Duration?) -> Unit,
+        ) = readOrOff(key, ::parseDuration, DURATION, apply)
+
+        /** An enumeration key: one of [values] by its name, any case. */
+        fun <T : Any> enum(
+            key: String,
+            values: List<T>,
+            name: (T) -> String = { it.toString() },
+            apply: (T) -> Unit,
+        ) = enumValue(key, values, name)?.let { named(key) { apply(it) } }
+
+        fun <T : Any> enumValue(
+            key: String,
+            values: List<T>,
+            name: (T) -> String = { it.toString() },
+        ): T? {
+            val v = value(key) ?: return null
+            return values.firstOrNull { name(it).equals(v, ignoreCase = true) }
+                ?: throw IllegalArgumentException(
+                    "$key: \"$v\" is not ${values.joinToString(", ") { name(it).replaceFirstChar(Char::lowercase) }}",
+                )
+        }
+
+        /**
+         * A duration in whole milliseconds, the unit every timer and transport parameter behind a key works in: `1.5ms`
+         * would be cut to 1 ms, and `0.5ms` to the 0 that means "none".
+         */
+        private fun parseDuration(v: String): Duration? =
+            runCatching { Duration.parse(v) }.getOrNull()?.takeIf { it.isInfinite() || it.inWholeMilliseconds.milliseconds == it }
+
+        /** Runs [block], the option's refusal prefixed with [key]. */
+        fun named(
+            key: String,
+            block: () -> Unit,
+        ) {
+            try {
+                block()
+            } catch (e: IllegalArgumentException) {
+                throw IllegalArgumentException("$key: ${e.message}", e)
+            }
         }
     }
 
     /**
-     * `kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string, of addresses and CIDR blocks; it
-     * turns the PROXY protocol on for the deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration) and
-     * `kuicksilver.proxyProtocol.maxHeaderSize` (bytes); null when none is set. Throws [IllegalArgumentException] for a
-     * value the builder refuses, a value that does not parse, or the other two keys without `trustedSources`.
+     * `kuicksilver.connector.proxyProtocol.trustedSources` (a list, or one comma-separated string, of addresses and CIDR
+     * blocks; it turns the PROXY protocol on for the deployment port), `headerTimeout` (a duration) and `maxHeaderSize`
+     * (bytes); null when none is set. Throws [IllegalArgumentException] for a value the block refuses, a value that does
+     * not parse, or the other two keys without `trustedSources`.
      */
-    @OptIn(ExperimentalKuicksilverApi::class)
-    private fun parseProxyProtocol(config: ApplicationConfig): ProxyProtocolConfig? {
-        val sourcesKey = config.propertyOrNull("kuicksilver.proxyProtocol.trustedSources")
-        val timeout = config.propertyOrNull("kuicksilver.proxyProtocol.headerTimeout")?.getString()?.trim()
-        val size = config.propertyOrNull("kuicksilver.proxyProtocol.maxHeaderSize")?.getString()
+    private fun parseProxyProtocol(
+        config: ApplicationConfig,
+        k: Keys,
+    ): ProxyProtocolConfig? {
+        val base = "kuicksilver.connector.proxyProtocol"
+        val sourcesKey = config.propertyOrNull("$base.trustedSources")
         if (sourcesKey == null) {
-            require(timeout == null && size == null) {
-                "kuicksilver.proxyProtocol.headerTimeout and maxHeaderSize need kuicksilver.proxyProtocol.trustedSources"
+            require(k.value("$base.headerTimeout") == null && k.value("$base.maxHeaderSize") == null) {
+                "$base.headerTimeout and maxHeaderSize need $base.trustedSources"
             }
             return null
         }
@@ -369,61 +481,14 @@ public object EngineMain {
             (runCatching { sourcesKey.getList() }.getOrNull() ?: sourcesKey.getString().split(','))
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
-        return ProxyProtocolConfig
-            .Builder()
-            .apply {
-                trustedSources += sources
-                timeout?.let {
-                    headerTimeout =
-                        try {
-                            Duration.parse(it)
-                        } catch (e: IllegalArgumentException) {
-                            throw IllegalArgumentException("kuicksilver.proxyProtocol.headerTimeout: \"$it\" is not a duration (5s)", e)
-                        }
-                }
-                size?.let { maxHeaderSize = parseCount("kuicksilver.proxyProtocol.maxHeaderSize", it) }
-            }.build()
+        val b = ProxyProtocolConfig.Builder()
+        k.named("$base.trustedSources") { b.trust(*sources.toTypedArray()) }
+        k.duration("$base.headerTimeout") { b.headerTimeout = it }
+        k.int("$base.maxHeaderSize") { b.maxHeaderSize = it }
+        var built: ProxyProtocolConfig? = null
+        k.named(base) { built = b.build() }
+        return built
     }
-
-    /**
-     * `kuicksilver.tls.clientAuth` and `kuicksilver.tls.clientCa`: client certificates on the deployment port, verified against
-     * the CA file, which [reload] makes a `TrustConfig.ReloadableCa` the identity's watcher interval also polls.
-     */
-    private fun KuicksilverApplicationEngine.Configuration.loadClientCa(
-        config: ApplicationConfig,
-        tls: Boolean,
-        reload: Boolean,
-    ) {
-        val auth = parseClientAuth(config.propertyOrNull("kuicksilver.tls.clientAuth")?.getString())
-        val caFile = config.propertyOrNull("kuicksilver.tls.clientCa")?.getString()
-        require(caFile == null || tls) { "kuicksilver.tls.clientCa needs kuicksilver.tls.certificateChain and privateKey" }
-        require(auth == ClientAuth.None || caFile != null) { "kuicksilver.tls.clientAuth $auth needs kuicksilver.tls.clientCa" }
-        require(caFile == null || auth != ClientAuth.None) {
-            "kuicksilver.tls.clientCa needs kuicksilver.tls.clientAuth optional or required"
-        }
-        if (caFile == null) return
-        // the watcher's checks at startup too: a key in the file is refused, a damaged file or one without a certificate fails
-        val roots = Certificate.parsePem(readPemText(caFile, refusePrivateKey = true, holds = CA_FILE_HOLDS))
-        warnNonCa(caFile, roots, startupLog)
-        val bundle = TrustConfig.AnchoredCa(roots)
-        clientAuth = auth
-        @OptIn(ExperimentalKuicksilverApi::class)
-        clientTrust = if (reload) TrustConfig.reloadable(bundle) else bundle
-        clientCaFile = caFile
-    }
-
-    /**
-     * `kuicksilver.tls.versions`: `tls13` or `tls12And13` (the names of `TlsVersions`, case ignored); null when absent. TLS 1.2
-     * alone is not a choice: RFC 9325 section 3.1.1, implementations "SHOULD support TLS 1.3 and, if implemented, MUST prefer
-     * to negotiate TLS 1.3 over earlier versions of TLS".
-     */
-    internal fun parseTlsVersions(value: String?): TlsVersions? =
-        when (value?.trim()?.lowercase()) {
-            null -> null
-            "tls13" -> TlsVersions.Tls13
-            "tls12and13" -> TlsVersions.Tls12And13
-            else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
-        }
 
     /** The files of `kuicksilver.tls.echKeys`: a list, or one value of paths separated by `,`. */
     private fun pemFiles(value: ApplicationConfigValue): List<String> =
@@ -469,59 +534,4 @@ public object EngineMain {
         } catch (e: TlsException.Config) {
             throw IllegalArgumentException("kuicksilver.tls.keyExchangeGroups: ${e.message}", e)
         }
-
-    /** `kuicksilver.h2c`: `off`, `withHttp11` or `only` (case ignored), null when absent. */
-    @OptIn(ExperimentalKuicksilverApi::class)
-    internal fun parseH2c(value: String?): H2cMode? =
-        when (value?.trim()?.lowercase()) {
-            null -> null
-            "off" -> H2cMode.Off
-            "withhttp11" -> H2cMode.WithHttp11
-            "only" -> H2cMode.Only
-            else -> throw IllegalArgumentException("kuicksilver.h2c: \"$value\" is not off, withHttp11 or only")
-        }
-
-    /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */
-    internal fun parseClientAuth(value: String?): ClientAuth =
-        when (value?.trim()) {
-            null, "none" -> ClientAuth.None
-            "optional" -> ClientAuth.Optional
-            "required" -> ClientAuth.Required
-            else -> throw IllegalArgumentException("kuicksilver.tls.clientAuth: \"$value\" is not none, optional or required")
-        }
-
-    /** A whole-number key; the setter checks its range. */
-    private fun parseCount(
-        key: String,
-        value: String,
-    ): Int = value.trim().toIntOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not a whole number")
-
-    /** `kuicksilver.http2RepeatOffenderPenalty`: `0` (off) or a duration as `kotlin.time.Duration.parse` reads it (`30s`). */
-    private fun parsePenalty(value: String): Duration {
-        val v = value.trim()
-        if (v == "0") return Duration.ZERO
-        return try {
-            Duration.parse(v)
-        } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("kuicksilver.http2RepeatOffenderPenalty: \"$v\" is not a duration (30s, 1m)", e)
-        }
-    }
-
-    /**
-     * `kuicksilver.tls.reloadInterval`: a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1h`, `PT1H`); `0` or
-     * absent turns polling off. Throws [IllegalArgumentException] for anything else, or a duration below 1 second.
-     */
-    internal fun parseReloadInterval(value: String?): Duration? {
-        val v = value?.trim() ?: return null
-        if (v == "0") return null
-        val d =
-            try {
-                Duration.parse(v)
-            } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("kuicksilver.tls.reloadInterval: \"$v\" is not a duration (30s, 1h)", e)
-            }
-        if (d == Duration.ZERO) return null
-        require(d >= 1.seconds) { "kuicksilver.tls.reloadInterval must be 0 (off) or at least 1 second, not $v" }
-        return d
-    }
 }

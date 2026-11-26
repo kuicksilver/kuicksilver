@@ -135,9 +135,9 @@ class TokenStoreTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).apply(serverBlock).build()
-                        crypto = KslQuicCrypto
+                        runtime { crypto = KslQuicCrypto }
                         this.admission = admission
-                        io = { b }
+                        runtime { io = { b } }
                     }.build(),
             )
         val client =
@@ -146,9 +146,9 @@ class TokenStoreTest {
                 QuicEndpointConfig
                     .Builder()
                     .apply {
-                        crypto = KslQuicCrypto
-                        this.logger = logger
-                        io = { a }
+                        runtime { crypto = KslQuicCrypto }
+                        observability { this.logger = logger }
+                        runtime { io = { a } }
                     }.build(),
             )
         return Setup(net, server, client, warnings)
@@ -402,7 +402,7 @@ class TokenStoreTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = KslQuicCrypto
+                        runtime { crypto = KslQuicCrypto }
                         admission = ConnectionAdmission.AlwaysRetry
                         loops = 2
                     }.build()
@@ -413,9 +413,9 @@ class TokenStoreTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                             val a = net.open(clientAddr)
-                            io = { a }
+                            runtime { io = { a } }
                         }.build(),
                 )
             try {

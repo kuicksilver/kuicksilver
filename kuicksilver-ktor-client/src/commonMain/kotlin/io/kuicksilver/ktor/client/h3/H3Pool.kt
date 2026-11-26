@@ -38,6 +38,7 @@ import io.kuicksilver.http3.awaitWebTransportExchangeEnd
 import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.runtime.cancelAndJoinSender
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
@@ -45,18 +46,23 @@ import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.HeldTransportEnd
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
+import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
+import io.kuicksilver.ktor.client.checkCoalescing
+import io.kuicksilver.ktor.client.coalescingRetired
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.isTransientRefusal
+import io.kuicksilver.ktor.client.mayCoalesce
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
@@ -82,6 +88,8 @@ import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.handshakeEchStatus
+import io.kuicksilver.quic.handshakeStapleUntil
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
 import io.kuicksilver.quic.unmappedLiteral
@@ -125,6 +133,113 @@ internal class H3Target(
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val key: String get() = "$originHost|$host:$port" + (udpProxy?.let { "|" + it.routeKey } ?: "")
 }
+
+/**
+ * The server answered 421 (Misdirected Request) to a request sent on a connection of another origin (coalescing, ADR-0018):
+ * [H3Pool.execute] sends it once more on a connection of its own origin unless [bodyConsumed].
+ */
+internal class H3Misdirected(
+    val bodyConsumed: Boolean,
+) : Exception("421 Misdirected Request on a connection of another origin")
+
+/**
+ * A request body the stream reads through, over the application's channel [delegate], which cannot give its bytes again:
+ * [Mark] says, as one atomic state, whether any byte was taken ([Mark.touched]) or the channel was kept, untouched, for
+ * a repeat ([Mark.keep]); the two exclude each other. Bytes are moved in [awaitContent] only, as
+ * [io.kuicksilver.ktor.client.ConsumedBody] moves them, and only after the state says touched, so a channel kept for a
+ * repeat has lost nothing, and a reader that finds it kept stops without reading.
+ */
+internal class TouchedBody(
+    private val delegate: ByteReadChannel,
+    private val mark: Mark,
+) : ByteReadChannel {
+    /** The state of one attempt's body: untouched, then touched (a byte was taken) or kept (for a repeat), never both. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    class Mark {
+        private val state = kotlin.concurrent.atomics.AtomicInt(UNTOUCHED)
+
+        val touched: Boolean get() = state.load() == TOUCHED
+
+        /** Before a byte is moved: false when the channel was kept for a repeat (nothing may be read here any more). */
+        fun take(): Boolean = state.compareAndSet(UNTOUCHED, TOUCHED) || state.load() == TOUCHED
+
+        /** Keeps the channel for a repeat; false when a byte was taken already (the body is consumed). */
+        fun keep(): Boolean = state.compareAndSet(UNTOUCHED, KEPT) || state.load() == KEPT
+
+        val kept: Boolean get() = state.load() == KEPT
+
+        /** Readers inside [awaitContent] now (tests: none is left once the sender was stopped and waited for). */
+        internal val readersForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+        private companion object {
+            const val UNTOUCHED = 0
+            const val TOUCHED = 1
+            const val KEPT = 2
+        }
+    }
+
+    private val buffer = kotlinx.io.Buffer()
+
+    override val closedCause: Throwable? get() = delegate.closedCause
+    override val isClosedForRead: Boolean get() = buffer.exhausted() && delegate.isClosedForRead
+
+    @InternalAPI
+    override val readBuffer: kotlinx.io.Source get() = buffer
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    override suspend fun awaitContent(min: Int): Boolean {
+        mark.readersForTest.addAndFetch(1)
+        try {
+            return fill(min)
+        } finally {
+            mark.readersForTest.addAndFetch(-1)
+        }
+    }
+
+    @OptIn(InternalAPI::class)
+    private suspend fun fill(min: Int): Boolean {
+        while (buffer.size < min) {
+            if (mark.kept) throw CancellationException("the request body is kept for a repeat")
+            val from = delegate.readBuffer
+            if (from.exhausted() && !delegate.awaitContent()) return buffer.size >= min
+            if (!mark.take()) throw CancellationException("the request body is kept for a repeat")
+            from.readAtMostTo(buffer, maxOf(STEP, (min - buffer.size)))
+        }
+        return true
+    }
+
+    override fun cancel(cause: Throwable?) {
+        buffer.clear()
+        // a channel kept for a repeat is the repeat's; the repeat, or the call's end, ends it (KeptRequestBody)
+        if (!mark.kept) delegate.cancel(cause)
+    }
+
+    private companion object {
+        const val STEP = 16L * 1024
+    }
+}
+
+/**
+ * The application's channel of a streamed request body that a 421 on another origin's connection left untouched: the
+ * repeat takes it ([take]) instead of asking the content for another (a `ReadChannelContent` may open a new one per
+ * `readFrom()`); a call that ends before the repeat took it cancels it ([release]), so no writer or file stays open.
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class KeptRequestBody(
+    private val channel: ByteReadChannel,
+) {
+    private val taken = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+    fun take(): ByteReadChannel? = if (taken.compareAndSet(false, true)) channel else null
+
+    fun release(cause: Throwable?) {
+        if (taken.compareAndSet(false, true)) channel.cancel(cause)
+    }
+}
+
+/** The [KeptRequestBody] of a request between its 421 and its repeat. */
+internal val KeptRequestBodyKey: io.ktor.util.AttributeKey<KeptRequestBody> =
+    io.ktor.util.AttributeKey("io.kuicksilver.ktor.client.KeptRequestBody")
 
 /** The origin host of an [H3Target.key]. */
 private fun originOfKey(key: String): String = key.substringBefore('|')
@@ -201,7 +316,17 @@ internal class H3Entry(
     val webTransport: Boolean = false,
     /** Called after every [release] (the pool's [H3Pool.releasesForTest]). */
     private val released: () -> Unit = {},
+    /**
+     * The origin host the connection was set up for (its TLS configuration's): an entry filed under a key of another origin
+     * carries that origin's requests by coalescing (ADR-0018, [H3Pool]'s `shareSameAddress`).
+     */
+    val origin: String,
 ) {
+    /** The other origins this connection was checked for, and those that got 421 on it (ADR-0018). */
+    val hosts =
+        io.kuicksilver.ktor.client
+            .CoalescedHosts()
+
     /** Requests and WebTransport sessions using the connection. */
     val active = kotlin.concurrent.atomics.AtomicInt(0)
 
@@ -283,7 +408,7 @@ internal class H3Pool(
     private val clock: () -> Long =
         io.kuicksilver.ktor.client.h1
             .monotonicMillis(),
-    /** Where the migrators of `http3.connectionMigration` run ([followNetwork]); null: connections never migrate. */
+    /** Where the migrators of `http3 { migration }` run ([followNetwork]); null: connections never migrate. */
     private val migrationScope: CoroutineScope? = null,
     /** The engine's one-WebSocket-CONNECTING-per-host lock (RFC 6455 section 4.1 step 2), shared with HTTP/1.1. */
     private val webSocketConnecting: WebSocketConnecting = WebSocketConnecting(),
@@ -315,14 +440,6 @@ internal class H3Pool(
     internal var webSocketConnectedForTest: (suspend () -> Unit)? = null
 
     /**
-     * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
-     * with it): whichever of `quic` and `http3.endpoint` left the default follows the other; two different explicit values
-     * are refused here, when the engine is created.
-     */
-    private val connectionIdLength: Int =
-        resolveConnectionIdLength(config.quic.connectionIdLength, config.http3.endpoint.connectionIdLength)
-
-    /**
      * The session tickets of every endpoint of this pool (the wildcard one and the loopback ones): a name that resolves to
      * both ::1 and 127.0.0.1 (`localhost`) resumes, with 0-RTT, whichever family its next connection takes. Closed by
      * [closeSessions] after the endpoints.
@@ -343,43 +460,29 @@ internal class H3Pool(
     /** The number of session tickets the pool holds (tests: a 0-RTT test waits for its ticket before it drops the connection). */
     internal suspend fun ticketsForTest(): Int = tickets.size()
 
-    /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
+    /** The engine's endpoint with its logger, connection listener, qlog sink and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
-        config.http3.endpoint
-            .toBuilder()
-            .apply {
-                config.logger?.let { logger = it }
-                config.http3.connectionListener?.let { listener = it }
-                connectionIdLength = this@H3Pool.connectionIdLength
-                sessionCache = tickets
-            }.build()
-
-    /** The engine's QUIC settings with its qlog sink and [connectionIdLength]. */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val quic: io.kuicksilver.quic.QuicConfig =
-        config.quic.let { q ->
-            if (config.http3.qlog == null && q.connectionIdLength == connectionIdLength) {
-                q
-            } else {
-                q
-                    .toBuilder()
-                    .apply {
-                        config.http3.qlog?.let { qlog = it }
-                        connectionIdLength = this@H3Pool.connectionIdLength
-                    }.build()
+        io.kuicksilver.quic.quicEndpointConfig {
+            connectionIdLength = config.http3.expert.connectionIdLength
+            observability {
+                logger = config.observability.logger
+                connectionListener = config.observability.connectionListener
+                qlog = config.observability.qlog
             }
+            runtime {
+                dispatcher = config.http3.expert.dispatcher
+                io = config.endpointIoForTest
+                config.cryptoForTest?.let { crypto = it }
+            }
+            sessionCache = tickets
         }
 
-    init {
-        // RFC 9114 section 6.2: refused when the engine is created, not clamped (Http3Endpoint.connect refuses it too)
-        if (config.http3.discovery != Http3DiscoveryMode.H1Only) {
-            require(quic.maxUniStreams >= 3) {
-                "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the server opens its control and QPACK streams), " +
-                    "not ${quic.maxUniStreams}; Http3DiscoveryMode.H1Only does not use HTTP/3"
-            }
-        }
-    }
+    /** The engine's QUIC settings (`http3 { quic { } }` with what the engine derives); the endpoint applies its connection ID length and qlog sink to them. */
+    private val quic: io.kuicksilver.quic.QuicConfig = config.resolveQuic()
+
+    /** The engine's HTTP/3 settings (`http3 { settings { } }`, its derived options refused). */
+    private val h3Settings: io.kuicksilver.http3.Http3Settings = config.resolveHttp3Settings()
 
     /**
      * One set of endpoints, each bound at its first use ([endpointFor]) with [config]: [wildcard] for every destination
@@ -451,13 +554,13 @@ internal class H3Pool(
      */
     private fun goesEarly(data: HttpRequestData): Boolean =
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        config.http3.earlyData && !data.attributes.contains(WEBSOCKETS_KEY) &&
+        config.http3.earlyData.enabled && !data.attributes.contains(WEBSOCKETS_KEY) &&
             data.method.value in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS &&
             data.body.unwrap() is OutgoingContent.NoContent
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val stallSettings =
-        StallSettings(config.http3.stallProbeTimeouts, config.http3.stallMinSilence, config.http3.stallAbandonAfter)
+        StallSettings(config.http3.stall.probeTimeouts, config.http3.stall.minSilence, config.http3.stall.abandonAfter)
 
     /** The stall monitors of connections requests watch ([monitorFor]), under [monitorsLock]; each leaves as its connection ends. */
     private val monitors = HashMap<Http3Connection, H3StallMonitor>()
@@ -554,10 +657,10 @@ internal class H3Pool(
     private val retired = ArrayList<H3Entry>()
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val idleTimeoutMillis = config.idleTimeout.toMillisOrMax()
+    private val idleTimeoutMillis = config.pool.idleTimeout.toMillisOrMax()
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val maxLifetimeMillis = config.maxConnectionLifetime.toMillisOrMax()
+    private val maxLifetimeMillis = config.pool.maxConnectionLifetime?.toMillisOrMax() ?: Long.MAX_VALUE
 
     /** Set by [close]: nothing binds a new endpoint after it (a request or session after the client closed). */
     @kotlin.concurrent.Volatile
@@ -590,7 +693,8 @@ internal class H3Pool(
                         v6 -> set.loopback6
                         else -> set.loopback4
                     }
-                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, config.http3.settings).also {
+                bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, h3Settings).also {
+                    bound(it)
                     endpointBindStepForTest?.invoke(it, false)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
                     // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
@@ -656,27 +760,35 @@ internal class H3Pool(
     /** Test hook: whether an endpoint (a shared one or a loopback one, of origins or of proxies) is bound. */
     internal val endpointBoundForTest: Boolean get() = direct.bound || proxyHop.bound
 
-    /** WebTransport sessions of this client, open or being set up (the `maxWebTransportSessions` cap, a test hook and the resource probe). */
+    /** WebTransport sessions of this client, open or being set up (the `http3 { webTransport { maxSessions } }` cap, a test hook and the resource probe). */
     internal val webTransportSessions = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val maxSessions = config.http3.maxWebTransportSessions
+    private val maxSessions = config.http3.webTransport.maxSessions
 
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        require(config.http3.maxWebTransportSessions >= 1) {
-            "http3.maxWebTransportSessions must be at least 1, not ${config.http3.maxWebTransportSessions}"
+        require(config.http3.webTransport.maxSessions >= 1) {
+            "http3 { webTransport { maxSessions } } must be at least 1, not ${config.http3.webTransport.maxSessions}"
+        }
+        // checked here under the name the application set: the SETTINGS builder below would name webTransport { maxSessions }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        require(config.http3.webTransport.maxSessionsPerConnection in 1..65_535) {
+            "http3 { webTransport { maxSessionsPerConnection } } must be 1..65535, not ${config.http3.webTransport.maxSessionsPerConnection}"
         }
     }
 
     /** The engine's HTTP/3 settings with WebTransport and Extended CONNECT on: a WebTransport-capable connection's. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val wtSettings: io.kuicksilver.http3.Http3Settings =
-        config.http3.settings
+        h3Settings
             .toBuilder()
             .apply {
                 enableConnectProtocol = true
-                webTransport = true
+                webTransport {
+                    enabled = true
+                    maxSessions = config.http3.webTransport.maxSessionsPerConnection
+                }
             }.build()
 
     /**
@@ -700,8 +812,9 @@ internal class H3Pool(
      * HTTP/3 layer refuses a second session without flow control or beyond `webTransportMaxSessions`
      * ([io.kuicksilver.http3.WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
      * request was processed, RFC 9114 section 4.1.1) marks the connection full at its current count. At most two refusals,
-     * then the server's answer is the caller's. At most `maxWebTransportSessions` sessions are open at once; one more fails
-     * at once (IllegalStateException), nothing queues.
+     * then the server's answer is the caller's. At most `http3 { webTransport { maxSessions } }` sessions are open at once; one more fails
+     * at once (IllegalStateException), nothing queues. An explicit QUIC limit the sessions of a connection do not fit fails it
+     * with IllegalArgumentException ([KuicksilverEngineConfig.requireWebTransportFits]).
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     suspend fun webTransport(
@@ -711,9 +824,11 @@ internal class H3Pool(
         connectTimeoutMillis: Long,
     ): io.kuicksilver.http3.WebTransportSession {
         check(!refusingWebTransport && !closed) { "the client is closed" }
+        // an explicit QUIC limit the sessions do not fit, named as the application set it (the HTTP/3 layer would name QuicConfig's)
+        config.requireWebTransportFits(quic)
         while (true) {
             val n = webTransportSessions.value
-            check(n < maxSessions) { "maxWebTransportSessions ($maxSessions) WebTransport sessions are open on this client" }
+            check(n < maxSessions) { "http3 { webTransport { maxSessions } } ($maxSessions) WebTransport sessions are open on this client" }
             if (webTransportSessions.compareAndSet(n, n + 1)) break
         }
         var handedOut = false
@@ -827,7 +942,7 @@ internal class H3Pool(
                     found.active.addAndFetch(1)
                     found to false
                 } else {
-                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased)
+                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased, origin = t.originHost)
                     e.active.addAndFetch(1)
                     e.retire() // kept for the sessions of [t] and closed with its last one
                     wtExtras.getOrPut(t.key) { ArrayList() } += e
@@ -836,7 +951,7 @@ internal class H3Pool(
             }
         if (made) {
             try {
-                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis, deadline)
+                val c = connectWebTransport(t.originHost, t.port, data, dns, connectTimeoutMillis, deadline)
                 c.closed.invokeOnCompletion { launchUnderLock { wtExtras[t.key]?.remove(e) } }
                 e.deferred.complete(c)
             } catch (x: Throwable) {
@@ -926,14 +1041,15 @@ internal class H3Pool(
     private suspend fun connectWebTransport(
         originHost: String,
         port: Int,
+        data: HttpRequestData,
         dns: RequestDns,
         connectTimeoutMillis: Long,
         deadline: kotlin.time.TimeMark,
     ): Http3Connection {
         val left = -deadline.elapsedNow().inWholeMilliseconds
-        if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        if (left <= 0) throw data.connectTimeoutException(connectTimeoutMillis, null)
         ensureOpen()
-        val route = dns.echRoute(originHost) { config.ech.listFor(it) }
+        val route = dns.echRoute(originHost) { config.tls.ech.listFor(it) }
         val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
@@ -952,18 +1068,18 @@ internal class H3Pool(
             }
         } catch (e: TimeoutCancellationException) {
             if (made == null) {
-                throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e).withAttempts(failures)
+                throw data.connectTimeoutException(connectTimeoutMillis, e).withAttempts(failures)
             }
         } catch (e: Throwable) {
             made?.let { withContext(NonCancellable) { runCatching { it.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") } } }
             throw e
         }
-        return made ?: throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
+        return made ?: throw data.connectTimeoutException(connectTimeoutMillis, null)
     }
 
     /**
      * Happy Eyeballs over QUIC (RFC 8305, [raceAddresses]): the handshakes to [host]'s addresses, as [dns] resolves them
-     * one family at a time, sorted by RFC 6724 with the families alternating, one `connectionAttemptDelay` apart or as soon
+     * one family at a time, sorted by RFC 6724 with the families alternating, one `network { happyEyeballsDelay }` apart or as soon
      * as one failed; the first handshake to complete wins, the others are cancelled (a cancelled QUIC connect closes the
      * connection it started) or, when they completed too, closed. With `earlyData` an attempt returns as soon as it can
      * send 0-RTT (a resumed session): the first address of the order then wins at once and the other addresses are not
@@ -981,7 +1097,7 @@ internal class H3Pool(
         connect: suspend (InetSocketAddress) -> Http3Connection,
     ): Http3Connection {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val delay = config.connectionAttemptDelay
+        val delay = config.network.happyEyeballsDelay ?: kotlin.time.Duration.INFINITE
         return raceAddresses(
             host,
             dns.resolution(host, port),
@@ -1047,7 +1163,64 @@ internal class H3Pool(
         closed = true
         direct.close()
         proxyHop.close()
+        for (ep in endpoints.load()) ep.close() // the tunnels' (one per connection through a CONNECT-UDP proxy)
     }
+
+    /**
+     * Every endpoint this pool bound and has not seen finish closing: the direct ones, the proxy hop's and the CONNECT-UDP
+     * tunnels' ([bound]). [closeAndJoin] waits for them; a tunnel's leaves once its own close finished ([closeTunnelEndpoint]).
+     */
+    private val endpoints = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Endpoint>())
+
+    /** Where the endpoint of an ended tunnel closes and is then forgotten (not [ownScope]: [close] cancels that one). */
+    private val tunnelCloses = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /** Notes a newly bound endpoint for [closeAndJoin]; the binder reads [closed] after this and closes it when it is set. */
+    private fun bound(ep: Http3Endpoint) {
+        endpoints.update { it + ep }
+    }
+
+    /** Closes a tunnel's endpoint (its connection ended, or its setup failed) and forgets it once it finished closing. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun closeTunnelEndpoint(ep: Http3Endpoint) {
+        ep.close()
+        tunnelCloses.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+            try {
+                ep.closeAndJoin()
+            } finally {
+                endpoints.update { it - ep }
+            }
+        }
+    }
+
+    /**
+     * [close], then waits until every endpoint of the pool finished closing: each connection on it closed and its qlog trace
+     * closed (`QuicEndpoint.closeAndJoin`), the sockets released. Each endpoint leaves [endpoints] once joined, and the set
+     * is read again until it is empty: an endpoint bound while this runs (its binder sees [closed] and closes it) is joined
+     * too. Taking the [lock] once waits for a direct or proxy-hop bind in progress to have noted its endpoint. The closes of
+     * ended tunnels still running ([closeTunnelEndpoint]) are joined, not cancelled, before [tunnelCloses] goes.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    suspend fun closeAndJoin() {
+        close()
+        lock.withLock {}
+        while (true) {
+            val left = endpoints.load()
+            if (left.isEmpty()) break
+            for (ep in left) {
+                ep.closeAndJoin()
+                endpoints.update { it - ep }
+            }
+        }
+        tunnelCloses.coroutineContext[Job]!!
+            .children
+            .toList()
+            .forEach { it.join() }
+        tunnelCloses.cancel()
+    }
+
+    /** Tests: the endpoints [closeAndJoin] would still wait for. */
+    internal val endpointCountForTest: Int get() = endpoints.load().size
 
     /**
      * Whether [this] ended: its HTTP/3 session took note, or its QUIC transport ended before that (the session learns of
@@ -1158,7 +1331,12 @@ internal class H3Pool(
         val here = e.connectedTo ?: return null
         val now = clock()
         for ((k, other) in connections) {
-            if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
+            // a connection of another origin filed here by coalescing is not taken on without its checks (shareSameAddress)
+            if (other === e || originOfKey(k) != t.originHost || other.origin != t.originHost || other.drained ||
+                other.pastLifetime(now)
+            ) {
+                continue
+            }
             // a WebTransport-capable connection serves requests too, not the other way round
             if (e.webTransport && !other.webTransport) continue
             val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
@@ -1189,38 +1367,141 @@ internal class H3Pool(
      * addresses are those of its current answers, the NAT64 synthesis of an IPv6-only network included. A setup of the
      * same origin still in its handshake is waited for first, for one Connection Attempt Delay at most. Nothing is resolved
      * when the origin has no other connection.
+     *
+     * With [coalesce] (`pool { coalescing }`, ADR-0018) a connection of another origin qualifies too, once its handshake is
+     * complete (never a 0-RTT one: its server is not authenticated yet), when its certificate passes every check for [t]'s
+     * origin and [t]'s name resolves to its address ([checkCoalescing]: RFC 9114 section 3.3, "To use an existing
+     * connection for a new origin, clients MUST validate the certificate presented by the server for the new origin server
+     * using the process described in Section 4.3.4 of \[HTTP\]"). Such a filing is checked again by every request of [t]
+     * (the address now, the certificate once per connection): one that no longer passes, or a request that may not coalesce
+     * (a WebSocket, a WebTransport session, the repeat after a 421), leaves it and gets a connection of [t]'s own origin; the
+     * other origin's connection is never retired for that, unless its certificate failed for a reason that may apply to its
+     * own origins too ([Coalesce.Retire], RFC 9114 section 3.3).
      */
     private suspend fun shareSameAddress(
         t: H3Target,
         dns: RequestDns,
         wt: Boolean = false,
+        coalesce: Boolean = false,
+    ): H3Entry? {
+        // a filing of another origin made by a concurrent request meanwhile is checked for this request too, in another round;
+        // a filing that keeps coming back between the rounds is, after the last one, not there for this request at all
+        repeat(MAX_SHARE_ROUNDS) {
+            val r = shareSameAddressOnce(t, dns, wt, coalesce)
+            if (r.done) return r.checked
+        }
+        return null
+    }
+
+    /**
+     * What a round of [shareSameAddress] found: [done] false when another origin's connection was filed under the target
+     * meanwhile (the next round checks it); [checked] the other origin's entry this request checked and filed (or found
+     * filed and checked), which [connectionEntryOnce] may take, and no other.
+     */
+    private class ShareRound(
+        val done: Boolean,
+        val checked: H3Entry? = null,
+    )
+
+    /** Test hook: runs in [shareSameAddressOnce] between the check of a filed connection and the look for candidates. */
+    @kotlin.concurrent.Volatile
+    internal var beforeCandidatesForTest: (suspend (H3Target) -> Unit)? = null
+
+    /**
+     * Test hook: runs in [shareSameAddressOnce] once a candidate was chosen (and checked), before it is filed, with the
+     * target and the origin the chosen connection was set up for.
+     */
+    @kotlin.concurrent.Volatile
+    internal var beforeFilingForTest: (suspend (H3Target, String) -> Unit)? = null
+
+    /** Tests: files the entry of [from] under [under] too, as a concurrent request's coalescing would. */
+    internal suspend fun fileUnderForTest(
+        from: H3Target,
+        under: H3Target,
     ) {
+        lock.withLock { connections[from.key]?.let { connections[under.key] = it } }
+    }
+
+    /** One round of [shareSameAddress]. */
+    private suspend fun shareSameAddressOnce(
+        t: H3Target,
+        dns: RequestDns,
+        wt: Boolean,
+        coalesce: Boolean,
+    ): ShareRound {
         val now = clock()
 
         fun H3Entry.shareable(): Http3Connection? = deferred.getCompletedOrNull()?.takeIf { it.usable() && !drained && !pastLifetime(now) }
-        val candidates =
+
+        // a connection of another origin, filed under [t] by an earlier request: used only after this request's own checks
+        val filed =
+            lock.withLock {
+                connections[t.key]?.takeIf { it.origin != t.originHost }?.let { e ->
+                    if (coalesce && e.shareable() != null) return@let e
+                    connections.remove(t.key) // left, never retired: it is its own origin's
+                    null
+                }
+            }
+        if (filed != null) {
+            when (crossOriginCheck(t, filed, dns)) {
+                io.kuicksilver.ktor.client.Coalesce.Yes -> {
+                    return ShareRound(true, filed)
+                }
+
+                io.kuicksilver.ktor.client.Coalesce.No -> {
+                    lock.withLock { if (connections[t.key] === filed) connections.remove(t.key) }
+                }
+
+                io.kuicksilver.ktor.client.Coalesce.Retire -> {
+                    lock.withLock { if (connections.values.any { it === filed }) retireUnderEveryKey(filed) }
+                }
+            }
+        }
+        beforeCandidatesForTest?.invoke(t)
+        var refiled = false
+        val (candidates, others) =
             lock.withLock {
                 val existing = connections[t.key]
+                // another origin's, filed by a concurrent request since the check above: not taken unchecked
+                if (existing != null && existing.origin != t.originHost) {
+                    refiled = true
+                    return@withLock emptyList<H3Entry>() to emptyList()
+                }
                 if (existing != null && (!wt || existing.webTransport) &&
                     (!existing.deferred.isCompleted || existing.shareable() != null)
                 ) {
-                    return
+                    return ShareRound(true)
                 }
-                connections.entries
-                    .filter { (k, e) ->
-                        k != t.key && originOfKey(k) == t.originHost && (!wt || e.webTransport) &&
-                            (!e.deferred.isCompleted || e.shareable() != null)
-                    }.map { it.value }
-                    .distinct()
+                val same =
+                    connections.entries
+                        .filter { (k, e) ->
+                            k != t.key && originOfKey(k) == t.originHost && e.origin == t.originHost && (!wt || e.webTransport) &&
+                                (!e.deferred.isCompleted || e.shareable() != null)
+                        }.map { it.value }
+                        .distinct()
+                // another origin's: set up, its handshake complete, direct (a key of a CONNECT-UDP tunnel has a third part)
+                val other =
+                    if (!coalesce) {
+                        emptyList()
+                    } else {
+                        connections.entries
+                            .filter { (k, e) ->
+                                e.origin != t.originHost && k.count { it == '|' } == 1 && e.connectedTo != null &&
+                                    e.shareable()?.quic?.isHandshakeComplete == true
+                            }.map { it.value }
+                            .distinct()
+                    }
+                same to other
             }
-        if (candidates.isEmpty()) return
+        if (refiled) return ShareRound(false)
+        if (candidates.isEmpty() && others.isEmpty()) return ShareRound(true)
         val addresses =
             try {
                 dns.answeredDestinations(t.host, t.port).map(Destination::of)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
-                return // the setup resolves again and reports the failure
+                return ShareRound(true) // the setup resolves again and reports the failure
             }
 
         // a sibling still in its handshake has no address yet: its outcome is waited for, for one Connection Attempt Delay
@@ -1228,30 +1509,79 @@ internal class H3Pool(
         // connection, while a sibling whose handshake stalls (a black-holed alternative) does not hold this one up longer
         // than Happy Eyeballs holds up its next address
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val waitAtMost = config.connectionAttemptDelay
-        withTimeoutOrNull(waitAtMost) {
-            for (e in candidates) {
-                e.deferred.join() // completes failed or not: a failed setup is only no candidate
+        val waitAtMost = config.network.happyEyeballsDelay ?: kotlin.time.Duration.INFINITE
+        if (candidates.isNotEmpty()) {
+            withTimeoutOrNull(waitAtMost) {
+                for (e in candidates) {
+                    e.deferred.join() // completes failed or not: a failed setup is only no candidate
+                }
             }
         }
         val match =
             candidates.firstOrNull { e ->
                 val remote = e.shareable()?.let { e.connectedTo }
                 remote != null && addresses.any { it.sameAs(remote) }
-            } ?: return
-        lock.withLock {
+            } ?: others.firstOrNull { e ->
+                val remote = e.connectedTo
+                remote != null && addresses.any { it.sameAs(remote) } &&
+                    when (crossOriginCheck(t, e, dns)) {
+                        io.kuicksilver.ktor.client.Coalesce.Yes -> {
+                            true
+                        }
+
+                        io.kuicksilver.ktor.client.Coalesce.No -> {
+                            false
+                        }
+
+                        io.kuicksilver.ktor.client.Coalesce.Retire -> {
+                            lock.withLock { if (connections.values.any { it === e }) retireUnderEveryKey(e) }
+                            false
+                        }
+                    }
+            } ?: return ShareRound(true)
+        beforeFilingForTest?.invoke(t, match.origin)
+        return lock.withLock {
             val existing = connections[t.key]
+            if (existing != null && existing !== match && existing.origin != t.originHost) return@withLock ShareRound(false)
             if (existing != null && (!wt || existing.webTransport) && (!existing.deferred.isCompleted || existing.shareable() != null)) {
-                return
+                return@withLock ShareRound(true, existing.takeIf { it === match && it.origin != t.originHost })
             }
-            if (match.shareable() == null || connections.values.none { it === match }) return
-            // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it
+            if (match.shareable() == null || connections.values.none { it === match }) return@withLock ShareRound(true)
+            // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it; one of
+            // another origin is that origin's and is left alone
             val old = existing?.deferred?.getCompletedOrNull()
-            if (existing != null && old != null && old.usable()) {
+            if (existing != null && existing.origin == t.originHost && old != null && old.usable()) {
                 retireUnderEveryKey(existing)
             }
             connections[t.key] = match
             sharedForTest.addAndFetch(1)
+            ShareRound(true, match.takeIf { it.origin != t.originHost })
+        }
+    }
+
+    /**
+     * [checkCoalescing] of [e] (another origin's connection, set up) for [t]: its server's certificate for [t]'s origin host,
+     * and [t]'s name (the origin, or the alternative it goes to) resolving to where [e] is connected.
+     */
+    private suspend fun crossOriginCheck(
+        t: H3Target,
+        e: H3Entry,
+        dns: RequestDns,
+    ): io.kuicksilver.ktor.client.Coalesce {
+        val c = e.deferred.getCompletedOrNull() ?: return io.kuicksilver.ktor.client.Coalesce.No
+        val remote = e.connectedTo ?: return io.kuicksilver.ktor.client.Coalesce.No
+        if (!c.quic.isHandshakeComplete) return io.kuicksilver.ktor.client.Coalesce.No
+        val peer =
+            io.kuicksilver.ktor.client.CoalescingPeer(
+                e.origin,
+                remote,
+                c.quic.peerCertificates,
+                c.quic.handshakeStapleUntil,
+                c.quic.handshakeEchStatus == io.kuicksilver.tls.EchStatus.Accepted,
+                e.hosts,
+            )
+        return config.checkCoalescing(peer, t.originHost, t.port, dns, listOf(Http3Endpoint.H3), lookupHost = t.host) { own, forHost ->
+            events.coalescingRetired(e.origin, t.originHost, own, forHost)
         }
     }
 
@@ -1309,12 +1639,17 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
-        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+        val route = t.ech ?: dns.echRoute(t.originHost) { config.tls.ech.listFor(it) }
+        // another origin's connection only for a request that may coalesce (ADR-0018); never a WebTransport session
+        val coalesce = !wt && config.mayCoalesce(data, viaProxy = t.udpProxy != null)
         // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
-        if (t.udpProxy == null) shareSameAddress(t, dns, wt)
+        val checked = if (t.udpProxy == null) shareSameAddress(t, dns, wt, coalesce) else null
         val (e, connect) =
             lock.withLock {
-                val existing = connections[t.key]
+                // another origin's connection filed here serves only the request that checked it (shareSameAddress); for any
+                // other request it is not there (a concurrent request's filing is not this one's check), and is left as it is
+                // unless this request files a connection of its own over it
+                val existing = connections[t.key]?.takeIf { it.origin == t.originHost || (coalesce && it === checked) }
                 val done = existing?.deferred?.takeIf { it.isCompleted }?.getCompletedOrNull()
                 // a WebTransport session needs a WebTransport-capable connection; a request takes either kind
                 val fits = existing == null || !wt || existing.webTransport
@@ -1326,10 +1661,12 @@ internal class H3Pool(
                     // past its lifetime, or not WebTransport-capable when a session needs it (RFC 9114 section 3.3: one
                     // connection per origin, the capable one serving the requests from now on): it finishes what it carries
                     // first ([evictExpired] closes it); one still being set up is closed once set up and unused
-                    if (existing != null && ((done != null && done.usable()) || !existing.deferred.isCompleted)) {
+                    if (existing != null && existing.origin == t.originHost &&
+                        ((done != null && done.usable()) || !existing.deferred.isCompleted)
+                    ) {
                         retireUnderEveryKey(existing)
                     }
-                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased)
+                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased, origin = t.originHost)
                         .also { connections[t.key] = it } to true
                 }
             }
@@ -1469,7 +1806,7 @@ internal class H3Pool(
         val reached = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, InetSocketAddress>>())
         val raced = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
         // the proxy's TLS, never the origin's (ADR-0023, as the TCP hop to an https:// proxy): its name, its trust
-        // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
+        // (proxies { tls }, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
         val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
             raceQuic(p.host, p.port, dns, failures, { c, a ->
@@ -1481,7 +1818,7 @@ internal class H3Pool(
                 proxyStep(step, data, started) { a ->
                     connectNoting(a) {
                         try {
-                            ep.connect(remote, proxyTls, quic, config.http3.settings)
+                            ep.connect(remote, proxyTls, quic, h3Settings)
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1522,7 +1859,7 @@ internal class H3Pool(
                 endpointConfig
                     .toBuilder()
                     .apply {
-                        io = { tunnel.asDatagramIo() }
+                        runtime { io = { tunnel.asDatagramIo() } }
                         sessionCache = cache // never the direct connections' tickets
                     }.build()
             tunnelTicketsUsedForTest = tunnelConfig.sessionCache
@@ -1530,10 +1867,12 @@ internal class H3Pool(
                 Http3Endpoint.bind(
                     InetSocketAddress("0.0.0.0", 0), // handed to the factory, which gives the tunnel: nothing is bound
                     tunnelConfig,
-                    config.http3.settings,
+                    h3Settings,
                 )
             inner = ep
-            val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
+            bound(ep)
+            if (closed) throw IllegalStateException("the client is closed") // after bound(): closeAndJoin sees it or this does
+            val tunnelled = quic.toBuilder().apply { migration { followPreferredAddress = false } }.build()
             // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
             val c =
@@ -1544,18 +1883,18 @@ internal class H3Pool(
                                 tunnel.remoteAddress,
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
                                 tunnelled,
-                                config.http3.settings,
+                                h3Settings,
                             )
                         }
                     }
                 }
             c.closed.invokeOnCompletion {
-                ep.close()
+                closeTunnelEndpoint(ep)
                 outer.close()
             }
             return c
         } catch (e: Throwable) {
-            inner?.close()
+            inner?.let { closeTunnelEndpoint(it) }
             outer.close()
             throw e
         }
@@ -1755,7 +2094,7 @@ internal class H3Pool(
         return if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-17 section 3.2)
             ep.connect(remote, tls, quic, wtSettings)
-        } else if (config.http3.earlyData && !noResumption.avoids(t.originHost)) {
+        } else if (config.http3.earlyData.enabled && !noResumption.avoids(t.originHost)) {
             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
             // the handshake timer (a request sent early then fails, and falls back, at that time).
             // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
@@ -1777,7 +2116,7 @@ internal class H3Pool(
                 }
             }
             try {
-                ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+                ep.connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), h3Settings)
             } catch (e: Throwable) {
                 // the switched ServerHello can end the attempt before its 0-RTT keys were handed out
                 if (io.kuicksilver.ktor.client
@@ -1791,7 +2130,7 @@ internal class H3Pool(
                 noteServerCidChange(c, t.originHost)
             }
         } else {
-            ep.connect(remote, tls, quic, config.http3.settings)
+            ep.connect(remote, tls, quic, h3Settings)
         }
     }
 
@@ -1799,7 +2138,7 @@ internal class H3Pool(
      * [e], a failed handshake with the CONNECT-UDP proxy [p], as [io.kuicksilver.ktor.client.ProxyTlsException] around the
      * TLS layer's error when the TLS layer failed it (a certificate that does not verify, an alert), as for an `https://`
      * proxy: the failure is the proxy's, not the origin's. Null for any other failure (a refusal, a timeout), which the
-     * address race judges as it is, and for the `proxyTls` block's own [io.kuicksilver.tls.TlsException.Config].
+     * address race judges as it is, and for the `proxies { tls { } }` block's own [io.kuicksilver.tls.TlsException.Config].
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun proxyTlsFailure(
@@ -1836,9 +2175,9 @@ internal class H3Pool(
             failures
                 .takeIf { t.udpProxy != null && !it.proxyReached }
                 ?.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
-                ?: return ConnectTimeoutException(data, x).withAttempts(failures)
+                ?: return data.connectTimeoutException(data.connectTimeoutMillis(config), x).withAttempts(failures)
         for (f in failures.distinct()) if (f !== proxyTls) proxyTls.addSuppressed(f)
-        proxyTls.addSuppressed(ConnectTimeoutException(data, x))
+        proxyTls.addSuppressed(data.connectTimeoutException(data.connectTimeoutMillis(config), x))
         return proxyTls
     }
 
@@ -1936,7 +2275,7 @@ internal class H3Pool(
     private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
 
     /**
-     * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
+     * Lets [c] follow the network with `http3 { migration }`, if set (docs/guide/ktor.md, "Connection migration"): once
      * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
      * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
      * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
@@ -1947,7 +2286,7 @@ internal class H3Pool(
         c: Http3Connection,
         data: HttpRequestData,
     ) {
-        val migration = config.http3.connectionMigration ?: return
+        val migration = config.http3.migration ?: return
         val scope = migrationScope ?: return
         val origin = originKeyOf(data.url)
         val job =
@@ -2042,7 +2381,8 @@ internal class H3Pool(
                 lock.withLock {
                     (listOfNotNull(connections[t.key]) + retired)
                         .firstOrNull {
-                            it.deferred.getCompletedOrNull() === prefer && !it.drained && prefer.usable()
+                            // another origin's connection goes through connectionEntry, which checks it for this request
+                            it.deferred.getCompletedOrNull() === prefer && !it.drained && prefer.usable() && it.origin == t.originHost
                         }?.also { it.active.addAndFetch(1) }
                 }
             if (e != null) return e to prefer
@@ -2133,6 +2473,8 @@ internal class H3Pool(
     suspend fun existing(t: H3Target): Http3Connection? =
         lock
             .withLock { connections[t.key] }
+            // another origin's connection filed here is checked per request (connectionEntry): not "existing" for [t]
+            ?.takeIf { it.origin == t.originHost }
             ?.deferred
             ?.getCompletedOrNull()
             ?.takeIf { it.usable() }
@@ -2143,7 +2485,7 @@ internal class H3Pool(
      * CONNECT (WebSockets over HTTP/3, RFC 9220).
      */
     suspend fun canConnectProtocol(t: H3Target): Boolean =
-        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.let {
+        lock.withLock { connections[t.key] }?.takeIf { it.origin == t.originHost }?.deferred?.getCompletedOrNull()?.let {
             it.usable() &&
                 it.peerSettings.value?.enableConnectProtocol == true
         } ==
@@ -2171,7 +2513,7 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>> = emptyList(),
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         prefer: Http3Connection? = null,
-        // stall detection (`http3 { stallDetection }`): where TCP is the way out, never for a WebSocket
+        // stall detection (`http3 { stall { enabled } }`): where TCP is the way out, never for a WebSocket
         watchStall: Boolean = false,
     ): HttpResponseData {
         var attempts = 0 // repeats of a request the server did not process (at most 2)
@@ -2179,7 +2521,7 @@ internal class H3Pool(
         var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val watched = watchStall && config.http3.stallDetection && !data.attributes.contains(WEBSOCKETS_KEY)
+        val watched = watchStall && config.http3.stall.enabled && !data.attributes.contains(WEBSOCKETS_KEY)
         while (true) {
             val (entry, conn) =
                 try {
@@ -2243,7 +2585,8 @@ internal class H3Pool(
                     ) {
                         webSocket(conn, data, callContext, extraHeaders)
                     } else {
-                        exchange(conn, data, callContext, extraHeaders, watch)
+                        // on another origin's connection (coalescing, ADR-0018) a 421 is not the call's answer
+                        exchange(conn, data, callContext, extraHeaders, watch, misdirectedFails = entry.origin != t.originHost)
                     }
                 // in use until the call ends (its body read or abandoned), not just until the response head; a WebSocket
                 // until its session ended, which may be after the call (WebSocketLifetime): a connection whose count fell to
@@ -2353,10 +2696,31 @@ internal class H3Pool(
                 ) {
                     echRetried = true
                     echEarlyRetriesForTest.addAndFetch(1)
-                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.listFor(it) }
+                    val route = t.ech ?: dns.echRoute(t.originHost) { config.tls.ech.listFor(it) }
                     route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
                     lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
                     // a repeat on a new connection, counted as the RequestNotProcessed one below is
+                    repeats++
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                    events.emit("retry") { retry(data, repeats + 1, e) }
+                    continue
+                }
+                if (e is H3Misdirected) {
+                    // RFC 9110 section 15.5.20: "A client that receives a 421 (Misdirected Request) response MAY retry the
+                    // request, whether or not the request method is idempotent, over a different connection, such as a
+                    // fresh connection specific to the target resource's origin". The connection carries no request of
+                    // this origin any more, and this call coalesces no more: the repeat goes on a connection of its own
+                    entry.hosts.record(t.originHost, accepted = false)
+                    lock.withLock { connections.entries.removeAll { (k, v) -> v === entry && originOfKey(k) == t.originHost } }
+                    data.attributes.put(io.kuicksilver.ktor.client.NoCoalescingKey, Unit)
+                    if (e.bodyConsumed) {
+                        throw H3BodyConsumed(
+                            "421 Misdirected Request on a connection of another origin (connection coalescing), and the " +
+                                "request's streamed body was already consumed",
+                            e,
+                        )
+                    }
                     repeats++
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
@@ -2394,6 +2758,7 @@ internal class H3Pool(
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>>,
         watch: H3StallMonitor.Watch? = null,
+        misdirectedFails: Boolean = false,
     ): HttpResponseData {
         val requestTime = GMTDate()
         val body = data.body.unwrap()
@@ -2403,15 +2768,52 @@ internal class H3Pool(
         // a request that may be repeated (RFC 9110 section 9.2.2) waits for its response only until a stall: then it goes
         // over TCP; any other request waits on, for the path to come back or the stall to be abandoned
         val repeatable = data.method.isIdempotent() && data.body.isReplayable()
+        // a body that cannot be produced again: whether any of it was taken, which decides whether a 421 may send it again
+        val touch = if (misdirectedFails && !body.isReplayable()) TouchedBody.Mark() else null
+        // the application's channel this attempt reads (a streamed body), for the repeat a 421 may hand it to
+        var sent: SentBody? = null
         val response: Http3Response =
             withSocketInactivityTimeout(data, activity) {
                 val w = watch
                 if (w != null && repeatable) {
-                    w.abortable(discard = { it.cancel() }) { send(conn, data, callContext, extraHeaders, body, activity) }
+                    w.abortable(
+                        discard = { it.cancel() },
+                    ) { send(conn, data, callContext, extraHeaders, body, activity, touch) { sent = it } }
                 } else {
-                    send(conn, data, callContext, extraHeaders, body, activity)
+                    send(conn, data, callContext, extraHeaders, body, activity, touch) { sent = it }
                 }
             }
+        if (misdirectedFails && response.status == 421) {
+            // the server is not authoritative for the request on this connection (RFC 9110 section 7.4): the answer is
+            // dropped (its stream abandoned) and the request goes once more on a connection of its own origin (execute)
+            misdirectedForTest?.invoke()
+            // as over HTTP/2, only a body the stream took something of is consumed. The decision is one step: kept now, the
+            // sender takes nothing more (it stops at its next read); then it is stopped and waited for, so it reads nothing
+            // while the repeat does
+            val kept = touch?.keep() == true
+            response.body.cancel(H3Misdirected(false))
+            // bounded: a sender that does not end (a trailers callback that ignores its cancellation) leaves the body for lost
+            val settled =
+                io.kuicksilver.tls.completedWithin(data.connectTimeoutMillis(config).milliseconds) {
+                    response.cancelAndJoinSender()
+                    true
+                } == true
+            misdirectedSettledForTest?.invoke(touch?.readersForTest?.load() ?: 0)
+            if (kept && !settled) {
+                sent?.channel?.cancel(H3Misdirected(true))
+                throw H3Misdirected(true)
+            }
+            if (kept) {
+                val channel = sent?.channel
+                if (channel != null) {
+                    val k = KeptRequestBody(channel)
+                    data.attributes.put(KeptRequestBodyKey, k)
+                    // a call that ends before its repeat took the channel ends the channel too
+                    callContext[Job]?.invokeOnCompletion { k.release(it) }
+                }
+            }
+            throw H3Misdirected(touch != null && !kept)
+        }
         data.attributes.put(PriorityUpdaterKey, response.priorityUpdater()) // for HttpResponse.updatePriority
         // a stall abandoned while the body is read fails the read with QuicStalledException, before the connection's close does;
         // once the whole response arrived the exchange needs the network no more, and a stall must not touch it
@@ -2424,6 +2826,19 @@ internal class H3Pool(
         return finish(conn, data, callContext, response, requestTime)
     }
 
+    /** The channel one attempt sends a request body from. */
+    private class SentBody(
+        val channel: ByteReadChannel,
+    )
+
+    /** Test hook: runs in [exchange] once a 421 on another origin's connection came, before its body is decided on. */
+    @kotlin.concurrent.Volatile
+    internal var misdirectedForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: gets, once the 421'd attempt's sender was stopped and waited for, how many readers its body still has. */
+    @kotlin.concurrent.Volatile
+    internal var misdirectedSettledForTest: ((Int) -> Unit)? = null
+
     @OptIn(InternalAPI::class)
     private suspend fun send(
         conn: Http3Connection,
@@ -2432,10 +2847,15 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>>,
         body: OutgoingContent,
         activity: Activity?,
+        touch: TouchedBody.Mark? = null,
+        onChannel: (SentBody) -> Unit = {},
     ): Http3Response {
         // this attempt's own channel when the body is replayable (bytes, or a writer started for this attempt alone): a retry
-        // or the fallback makes a new one. A streamed body's channel is the application's, the same for every attempt
-        val channel = bodyChannel(body, callContext)
+        // or the fallback makes a new one. A streamed body's channel is the application's: the one a 421's attempt kept
+        // untouched, else what the content gives (a content may open a new channel per readFrom; the kept one is then not
+        // asked for again)
+        val channel = bodyChannel(body, callContext, data.attributes.getOrNull(KeptRequestBodyKey))
+        channel?.let { onChannel(SentBody(it)) }
         return try {
             conn.request(
                 http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
@@ -2445,9 +2865,12 @@ internal class H3Pool(
                             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                             if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
                         }
-                    this.body = channel?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
+                    this.body =
+                        channel?.let { b ->
+                            (touch?.let { TouchedBody(b, it) } ?: b).let { t -> activity?.let { ConsumedBody(t, it) } ?: t }
+                        }
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    allowEarlyData = config.http3.earlyData
+                    allowEarlyData = config.http3.earlyData.enabled
                     priority = data.priority
                 },
             )
@@ -2541,10 +2964,7 @@ internal class H3Pool(
                         webSocketConnectedForTest?.invoke()
                     }
                 }
-                kept ?: throw io.ktor.client.network.sockets.ConnectTimeoutException(
-                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    null,
-                )
+                kept ?: throw data.connectTimeoutException(millis, null, WEBSOCKET_NOT_CONNECTED)
             } catch (e: CancellationException) {
                 // the call itself was cancelled: a stream kept meanwhile is ended here, as connect would have
                 kept?.let {
@@ -2661,7 +3081,7 @@ internal class H3Pool(
                             context = lifetime.context,
                             inflate = handshake.inflate,
                             perMessageDeflate = handshake.perMessageDeflate,
-                            maxMessageSize = config.webSocketMaxMessageSize,
+                            maxMessageSize = config.webSockets.maxMessageSize,
                             checkText = handshake.checkText,
                             onEnd = { inputDone.complete(Unit) },
                             pongs = pongs,
@@ -2690,25 +3110,8 @@ internal class H3Pool(
     }
 
     internal companion object {
-        /** See [connectionIdLength]: the explicit one of the two lengths, or the common one. */
-        fun resolveConnectionIdLength(
-            quic: Int,
-            endpoint: Int,
-        ): Int {
-            val default = io.kuicksilver.quic.QuicConfig.Default.connectionIdLength
-            return when {
-                quic == endpoint -> quic
-
-                endpoint == default -> quic
-
-                quic == default -> endpoint
-
-                else -> throw IllegalArgumentException(
-                    "quic.connectionIdLength ($quic) and http3.endpoint.connectionIdLength ($endpoint) differ: " +
-                        "set one of them, the other follows",
-                )
-            }
-        }
+        /** Rounds of [shareSameAddress] a filing of another origin made meanwhile may cost a request. */
+        const val MAX_SHARE_ROUNDS = 3
 
         /** How long `closeHttp3Connections()` waits for each GOAWAY to be written (WT_DRAIN_SESSION has drain()'s own 5 s). */
         val GOAWAY_TIMEOUT = 5.seconds
@@ -2763,9 +3166,15 @@ internal class H3Pool(
             return Http3Headers(out)
         }
 
+        /**
+         * The channel a request body is sent from; for a streamed body, the application's channel a 421 kept for the repeat
+         * ([kept], [KeptRequestBody]) when there is one, so a content that opens a new channel per `readFrom()` (a file's)
+         * is opened once, whichever protocol the repeat goes over.
+         */
         fun bodyChannel(
             body: OutgoingContent,
             callContext: CoroutineContext,
+            kept: KeptRequestBody? = null,
         ): ByteReadChannel? =
             when (body) {
                 is OutgoingContent.NoContent, is OutgoingContent.ProtocolUpgrade -> {
@@ -2777,7 +3186,7 @@ internal class H3Pool(
                 }
 
                 is OutgoingContent.ReadChannelContent -> {
-                    body.readFrom()
+                    kept?.take() ?: body.readFrom()
                 }
 
                 is OutgoingContent.WriteChannelContent -> {
@@ -2788,7 +3197,7 @@ internal class H3Pool(
                 }
 
                 is OutgoingContent.ContentWrapper -> {
-                    bodyChannel(body.delegate(), callContext)
+                    bodyChannel(body.delegate(), callContext, kept)
                 }
             }
 

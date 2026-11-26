@@ -126,7 +126,7 @@ An app with no Kotlin of its own uses the Swift package
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](guide/http3.md) |
 | `kuicksilver-http2` | HTTP/2 and HPACK: a sans-IO core over any byte stream and its coroutine runtime (experimental, for the engines) | [architecture](architecture.md) |
 | `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/3, and HTTP/2 or HTTP/1.1 over TLS, Alt-Svc discovery, racing, fallback | [ktor.md](guide/ktor.md) |
-| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 (and opt-in HTTP/2) over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](guide/ktor.md) |
+| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 and HTTP/2 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](guide/ktor.md) |
 
 Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
 in-memory UDP), `kuicksilver-bench`, `kuicksilver-interop` and `kuicksilver-engine-interop` live in this repository but
@@ -141,7 +141,7 @@ minors are adopted in Kuicksilver releases; see [Supported Ktor versions](guide/
 
 ## Next
 
-- The Ktor client: discovery modes (`Auto`, `Preferred`, `H3Only`, `H1Only`), trust and pins, timeouts:
+- The Ktor client: discovery modes (`Auto`, `Preferred`, `H3Only`; `http3 { enabled = false }` for none), trust and pins, timeouts:
   [Ktor engines](guide/ktor.md).
 - The Ktor server: one TLS connector serves HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port number, and
   advertises HTTP/3 with `Alt-Svc`; open and forward both `443/tcp` and `443/udp`:

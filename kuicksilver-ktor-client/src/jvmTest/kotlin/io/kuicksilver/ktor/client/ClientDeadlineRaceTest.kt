@@ -84,7 +84,7 @@ class ClientDeadlineRaceTest {
         race({ millis ->
             val config =
                 KuicksilverEngineConfig().apply {
-                    proxyResolver = ProxyResolver { null } // DIRECT
+                    proxies { resolver = ProxyResolver { null } } // DIRECT
                     connectTimeout = millis.milliseconds
                 }
             ProxyRouting(config, io.kuicksilver.quic.KuicksilverLogger.None, answeredForTest = { hold() })

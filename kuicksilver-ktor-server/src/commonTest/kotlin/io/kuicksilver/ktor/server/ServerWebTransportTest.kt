@@ -42,7 +42,7 @@ class ServerWebTransportTest {
     private val wt =
         http3Settings {
             enableConnectProtocol = true
-            webTransport = true
+            webTransport { enabled = true }
         }
 
     private fun wtReq(
@@ -72,7 +72,7 @@ class ServerWebTransportTest {
     @Test fun echoRoute() =
         h3ServerTest {
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({ http3 { webTransport { enabled = true } } }) {
                     routing {
                         webTransport("/wt") { session ->
                             val st = session.acceptBidi()
@@ -101,7 +101,7 @@ class ServerWebTransportTest {
 
     @Test fun unknownPathIs404() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) = tlsServer({ http3 { webTransport { enabled = true } } }) { routing { webTransport("/wt") { } } }
             try {
                 h3(port) { c ->
                     assertEquals(404, assertFailsWith<Http3Exception.ConnectRejected> { c.webTransport(wtReq("/other")) }.status)
@@ -114,7 +114,10 @@ class ServerWebTransportTest {
     @Test fun negative_foreignOriginIs403() =
         h3ServerTest {
             val ran = CompletableDeferred<Unit>()
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { ran.complete(Unit) } } }
+            val (server, port) =
+                tlsServer(
+                    { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { ran.complete(Unit) } } }
             try {
                 h3(port) { c ->
                     val e = assertFailsWith<Http3Exception.ConnectRejected> { c.webTransport(wtReq(origin = "https://evil.test")) }
@@ -129,7 +132,7 @@ class ServerWebTransportTest {
     /** A client without Origin (no browser) is not checked by the default; a browser always sends one. */
     @Test fun noOriginIsAccepted() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) = tlsServer({ http3 { webTransport { enabled = true } } }) { routing { webTransport("/wt") { } } }
             try {
                 h3(port) { c -> withTimeout(5.seconds) { c.webTransport(wtReq(origin = null)).closed.await() } }
             } finally {
@@ -139,7 +142,7 @@ class ServerWebTransportTest {
 
     @Test fun handlerReturnClosesSession() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) = tlsServer({ http3 { webTransport { enabled = true } } }) { routing { webTransport("/wt") { } } }
             try {
                 h3(port) { c ->
                     val info = withTimeout(5.seconds) { c.webTransport(wtReq()).closed.await() }
@@ -156,7 +159,7 @@ class ServerWebTransportTest {
             var calls = 0
             val log = CapturedLog()
             val (server, port) =
-                tlsServer({ webTransport = true }, log = log) {
+                tlsServer({ http3 { webTransport { enabled = true } } }, log = log) {
                     routing { webTransport("/wt") { if (calls++ == 0) throw IllegalStateException("boom") } }
                 }
             try {
@@ -177,7 +180,7 @@ class ServerWebTransportTest {
     @Test fun protocolNegotiatedByRoute() =
         h3ServerTest {
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({ http3 { webTransport { enabled = true } } }) {
                     routing { webTransport("/wt", protocols = listOf("v2", "v1")) { it.closed.await() } }
                 }
             try {
@@ -210,7 +213,10 @@ class ServerWebTransportTest {
     @Test fun h1RequestNeverMatchesWebTransportRoute() =
         h3ServerTest {
             val ran = CompletableDeferred<Unit>()
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { ran.complete(Unit) } } }
+            val (server, port) =
+                tlsServer(
+                    { http3 { webTransport { enabled = true } } },
+                ) { routing { webTransport("/wt") { ran.complete(Unit) } } }
             try {
                 val resp = rawHttp(port, "GET /wt HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 // Ktor's answer when the path matches a route of another method (the route is a CONNECT route)
@@ -224,7 +230,7 @@ class ServerWebTransportTest {
     /** The opaque origin `null` (a sandboxed page) and other schemes are refused by the default check. */
     @Test fun negative_opaqueOriginIs403() =
         h3ServerTest {
-            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            val (server, port) = tlsServer({ http3 { webTransport { enabled = true } } }) { routing { webTransport("/wt") { } } }
             try {
                 h3(port) { c ->
                     for (origin in listOf("null", "file://server.test", "chrome-extension://server.test")) {
@@ -242,7 +248,7 @@ class ServerWebTransportTest {
         h3ServerTest {
             lateinit var reported: Channel<HttpStatusCode?>
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({ http3 { webTransport { enabled = true } } }) {
                     reported = reportedStatuses()
                     routing { route("/wt") { handle { call.respondText("not a session") } } }
                 }
@@ -263,7 +269,7 @@ class ServerWebTransportTest {
         h3ServerTest {
             lateinit var reported: Channel<HttpStatusCode?>
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({ http3 { webTransport { enabled = true } } }) {
                     reported = reportedStatuses()
                     routing { webTransport("/wt") { } }
                 }

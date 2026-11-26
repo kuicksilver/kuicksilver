@@ -30,3 +30,4 @@ Documents and identifiers are in English.
 | [0023](0023-https-proxy.md) | HTTPS proxies in the client engine: TLS to the proxy, HTTP/1.1 only, the proxy's own name and trust | accepted; implemented in 0.3.0 (experimental) |
 | [0024](0024-connect-udp-over-http3.md) | CONNECT-UDP (RFC 9298) over HTTP/3 only, in `kuicksilver-http3`, with proxied QUIC through `DatagramIo` | proposed |
 | [0025](0025-zlib-and-brotli-in-libcrypto.md) | zlib and brotli, pinned and verified, compiled into libcrypto for TLS certificate compression | accepted |
+| [0026](0026-configuration-in-blocks.md) | Configuration in 0.3.0: blocks, one name per concept, strict configuration-file keys, HTTP/2 on by default on the server | accepted; implemented in 0.3.0 |

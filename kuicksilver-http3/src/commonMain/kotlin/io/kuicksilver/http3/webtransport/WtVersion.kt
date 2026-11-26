@@ -1,7 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3.webtransport
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.frame.SettingsId
@@ -42,6 +45,14 @@ internal enum class WtVersion {
      * names none; it keeps the older code).
      */
     val misplacedWtStreamCode: Long get() = if (this >= Draft17) Http3ErrorCode.FRAME_UNEXPECTED else Http3ErrorCode.FRAME_ERROR
+
+    /**
+     * The highest application code of a stream's reset or STOP_SENDING. draft-02 section 4.3: "WebTransport application
+     * errors for streams are limited to an unsigned 8-bit integer, assuming values between 0x00 and 0xff"; from draft-06
+     * on 32 bits (draft-17 section 4.4, 0..2^32-1). The code of a session's close is 32 bits in every draft (draft-02
+     * section 5: "Application Error Code: A 32-bit error code").
+     */
+    val maxStreamErrorCode: Long get() = if (this == Draft02) 0xffL else WtErrorCodes.MAX_APPLICATION_CODE
 
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */
@@ -160,7 +171,7 @@ internal object WtSettings {
      * connection's server sent. draft-17 section 3.2: "a client MUST discard any values for the settings defined in this
      * document (Section 9.2) that it retained from a previous connection and use the values received on the current
      * connection. A server can therefore accept 0-RTT regardless of the values it previously sent for these settings, and
-     * the requirements in Section 7.2.4.2 of [HTTP3] to treat incompatible or omitted settings as a connection error do
+     * the requirements in Section 7.2.4.2 of \[HTTP3\] to treat incompatible or omitted settings as a connection error do
      * not apply to these settings." Draft-17's `SETTINGS_WT_ENABLED` always; the three `SETTINGS_WT_INITIAL_*` when the
      * server speaks draft-17, which our client then selects (it offers draft-17 first, [WtVersion.ours]). A server of
      * draft-16 or draft-14 is held to the values it sent before: their section 3.2, "A client MUST close the connection

@@ -4,7 +4,7 @@ package io.kuicksilver.sample.compose
 
 import io.ktor.client.HttpClient
 import io.kuicksilver.ktor.client.Http3ConnectionMigration
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.tls.Certificate
@@ -71,11 +71,11 @@ fun demoTrust(): TrustConfig = TrustConfig.ExpectedName(DEMO_SERVER_NAME, TrustC
 /**
  * Kuicksilver's Ktor engine for the demo: [discovery] (H3Only for the comparisons, Auto for the Diagnostics screen),
  * the demo CA or the platform's trust store, connection migration when [migration] is set, and the kill switch
- * [http3Allowed]. [listener] hears the engine's events (connectionMigrated among them).
+ * [http3Allowed] (`http3 { allowed }`). [listener] hears the engine's events (connectionMigrated among them).
  */
 fun kuicksilverClient(
     trust: TrustConfig,
-    discovery: Http3DiscoveryMode,
+    discovery: Http3Discovery?,
     migration: Http3ConnectionMigration?,
     networkId: (() -> String?)?,
     http3Allowed: () -> Boolean = { true },
@@ -83,14 +83,14 @@ fun kuicksilverClient(
 ): HttpClient =
     HttpClient(Kuicksilver) {
         engine {
-            this.trust = trust
-            eventListener = listener
+            tls { this.trust = trust }
+            observability { eventListener = listener }
             http3 {
-                this.discovery = discovery
-                this.http3Allowed = http3Allowed
-                connectionMigration = migration
-                if (networkId != null) this.networkId = networkId
+                discovery?.let { this.discovery = it } ?: run { enabled = false }
+                this.allowed = http3Allowed
+                this.migration = migration
             }
+            network { this.networkId = networkId }
         }
     }
 
@@ -111,7 +111,7 @@ fun kuicksilverLane(
         client =
             kuicksilverClient(
                 trust = demoTrust(),
-                discovery = Http3DiscoveryMode.H3Only,
+                discovery = Http3Discovery.H3Only,
                 migration = if (migrate) platform.migration() else null,
                 networkId = if (migrate) platform::networkId else null,
                 listener = listener,

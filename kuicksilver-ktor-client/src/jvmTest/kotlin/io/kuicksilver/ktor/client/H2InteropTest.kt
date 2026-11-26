@@ -330,7 +330,7 @@ class H2InteropTest {
     @Test fun tls12ServerGetsH2() =
         clientTest {
             netty("TLSv1.2").use { n ->
-                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                testClient(engine = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
                     val r = c.get("https://127.0.0.1:${n.port}/hello")
                     assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
                     assertEquals("netty/hello", r.bodyAsText())
@@ -367,7 +367,7 @@ class H2InteropTest {
                             selected += protocol
                         }
                     }
-                testClient(engine = { eventListener = listener }).use { c ->
+                testClient(engine = { observability { eventListener = listener } }).use { c ->
                     val e = kotlin.test.assertFailsWith<Throwable> { c.get("https://127.0.0.1:${n.port}/hello") }
                     val alert = generateSequence(e) { it.cause }.filterIsInstance<io.kuicksilver.tls.TlsException.AlertReceived>().first()
                     assertEquals("protocol_version", alert.description)
@@ -405,7 +405,7 @@ class H2InteropTest {
     @Test fun negative_tls12RenegotiationIsAProtocolError() =
         clientTest {
             netty("TLSv1.2").use { n ->
-                testClient(engine = { tls = { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
+                testClient(engine = { tls { versions = io.kuicksilver.tls.TlsVersions.Tls12And13 } }).use { c ->
                     val e = runCatching { withTimeout(10.seconds) { c.get("https://127.0.0.1:${n.port}/renegotiate") } }.exceptionOrNull()
                     val closed = generateSequence(e) { it.cause }.filterIsInstance<Http2Exception.ConnectionClosed>().firstOrNull()
                     assertEquals(Http2ErrorCode.PROTOCOL_ERROR, closed?.code, "the call failed with $e")

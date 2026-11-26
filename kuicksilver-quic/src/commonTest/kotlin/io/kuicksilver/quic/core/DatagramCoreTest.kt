@@ -149,7 +149,7 @@ class DatagramCoreTest {
         assertEquals(
             0L,
             quicConfig {
-                maxDatagramFrameSize = 0
+                datagrams { maxFrameSize = null }
             }.localTransportParameters(
                 TlsRole.Client,
                 ConnectionId(ByteArray(8)),
@@ -168,7 +168,7 @@ class DatagramCoreTest {
             assertEquals(1200 - 29 - 3 - 32, p.client.maxDatagramPayload)
             assertEquals(1136, p.server!!.maxDatagramPayload)
         }
-        val q = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 500 })
+        val q = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = 500 } })
         q.use { _ ->
             assertTrue(q.handshake())
             // the peer's limit binds, not the packet: the whole 500-byte frame is allowed (type, 2-byte Length, 497 bytes), and
@@ -185,7 +185,7 @@ class DatagramCoreTest {
      */
     @Test fun aSmallPeerLimitStillCarriesDatagrams() {
         for ((limit, payload) in listOf(2L to 0, 3L to 1, 10L to 8, 34L to 32, 66L to 63, 67L to 64)) {
-            val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = limit })
+            val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = limit } })
             p.use { _ ->
                 assertTrue(p.handshake())
                 assertEquals(payload, p.client.maxDatagramPayload, "limit $limit")
@@ -201,7 +201,7 @@ class DatagramCoreTest {
 
     /** A limit of 1 leaves no room for a DATAGRAM frame with a Length field (the only one this sender writes): nothing is sent. */
     @Test fun aPeerLimitOfOneByteTakesNoDatagram() {
-        val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 1 })
+        val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = 1 } })
         p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(0, p.client.maxDatagramPayload)
@@ -215,7 +215,7 @@ class DatagramCoreTest {
     }
 
     @Test fun peerWithoutSupportGivesZero() {
-        val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 0 })
+        val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = null } })
         p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(0, p.client.maxDatagramPayload)
@@ -311,7 +311,7 @@ class DatagramCoreTest {
 
     @Test fun datagramAboveAdvertisedSizeIsProtocolViolation() {
         // RFC 9221 section 3: a DATAGRAM frame larger than our max_datagram_frame_size is PROTOCOL_VIOLATION
-        val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
+        val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = 100 } })
         p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectDatagramBytes = 500
@@ -376,7 +376,7 @@ class DatagramCoreTest {
     /** RFC 9221 section 3: max_datagram_frame_size covers the whole frame; a type 0x30 frame (no Length field) of exactly that size is accepted, one byte more is not. */
     @Test fun typeWithoutLengthAtExactMax() {
         for ((payload, ok) in listOf(99 to true, 100 to false)) {
-            val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
+            val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = 100 } })
             p.use { _ ->
                 assertTrue(p.handshake())
                 p.runUntil(100.milliseconds) { false }

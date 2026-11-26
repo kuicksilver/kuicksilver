@@ -163,7 +163,7 @@ public class EchKey private constructor(
 }
 
 /**
- * A server's Encrypted Client Hello keys (RFC 9849 section 7.1, shared mode), for [TlsConfig.Builder.echKeys]. The keys are
+ * A server's Encrypted Client Hello keys (RFC 9849 section 7.1, shared mode), for [TlsConfig.Builder.Ech.keys]. The keys are
  * parsed into native memory when given and stay there; at least one is [EchKey.inRetryConfigs], and 1 to 16 are kept at once.
  * [rotate] replaces the set: handshakes that start afterwards decrypt with the new one, also under contexts already built
  * from a configuration that holds this object, and handshakes in progress keep the set they started with. [close] frees
@@ -353,9 +353,9 @@ internal val echInThisBuild: Boolean by lazy {
 internal fun unusableEchMessage(hasEch: Boolean): String =
     if (!hasEch) {
         "ECH: this build has no Encrypted Client Hello (it needs the bundled OpenSSL 4; a system OpenSSL has none), " +
-            "so echConfigList cannot be offered"
+            "so ech { configList } cannot be offered"
     } else {
-        "ECH: no ECHConfig of echConfigList is usable (another version, an unsupported key encapsulation, cipher suite or " +
+        "ECH: no ECHConfig of ech { configList } is usable (another version, an unsupported key encapsulation, cipher suite or " +
             "mandatory extension, or a public_name that is no DNS name; RFC 9849 sections 4, 4.2, 6.1.7)"
     }
 

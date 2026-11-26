@@ -53,7 +53,9 @@ Two properties shape the code more than anything else:
 The C shim `ksl` (`src/c/ksl_*.c`, one header `ksl.h`), its JNI binding (`src/jni`), its cinterop definition
 (`src/nativeInterop/cinterop/ksl.def`) and the Kotlin facade `Ksl` (`src/commonMain/.../native/Ksl.kt`, with `actual`s
 per platform). Also `PacketBuffer` (a native-memory buffer: direct `ByteBuffer` on the JVM, `nativeHeap` on Native),
-`KslLoader` and the opt-in annotations (`io.kuicksilver.annotations`). OpenSSL is built from a pinned, signature-checked
+`KslLoader`, the opt-in annotations (`io.kuicksilver.annotations`) and `ConnectionEndedException` (`io.kuicksilver.io`:
+who ended a TCP connection, shared by `kuicksilver-http2`, `kuicksilver-ktor-network` and the client engine, ADR-0017
+clarification 2026-11-26), for which the module depends on `kotlinx-io-core` with `api`. OpenSSL is built from a pinned, signature-checked
 tarball by `tools/openssl`, with zlib and brotli compiled into its libcrypto for TLS certificate compression (ADR-0025),
 and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
 
@@ -182,7 +184,7 @@ The Ktor engines (`io.kuicksilver.ktor.client`, `io.kuicksilver.ktor.server`). T
 `TlsConnection` (`h1`: a vendored CIO parser, a connection pool), HTTP/2 on the same TCP path when the server picks
 `h2` in ALPN (`h2`: `H2Pool`, one multiplexed connection per route holding one slot of the TCP pool, and `H2Exchange`
 over the `kuicksilver-http2` runtime) and HTTP/3 over `Http3Endpoint` (`h3`: `H3Pool`), with
-`Http3DiscoveryMode` (`Auto` learns `Alt-Svc`, `Preferred`, `H3Only`, `H1Only`), a connection race (`ProtocolRace`), a
+`Http3Discovery` (`Auto` learns `Alt-Svc`, `Preferred`, `H3Only`; `http3 { enabled = false }` turns HTTP/3 off), a connection race (`ProtocolRace`), a
 broken-alternative memory (`BrokenAltSvc`), stall detection on HTTP/3 connections (`H3StallMonitor`) and fallback
 rules that never replay a consumed body. The server serves
 HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (`KuicksilverApplicationEngine` starts and stops the
@@ -205,8 +207,10 @@ applications without sockets. Not published yet.
 The QUIC Interop Runner endpoint (`kuicksilver-interop`, Docker image in `tools/interop`), the engine interop bench
 (`kuicksilver-engine-interop`, JVM tests only: the Ktor engines against other HTTP implementations in one process,
 [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), benchmarks and allocation
-gates (`kuicksilver-bench`), `samples/realtime-telemetry`, a separate Gradle build that consumes the library as an
-outside project would, and `samples/ios`, an Xcode app over the library's XCFramework ([iOS guide](guide/ios.md)).
+gates (`kuicksilver-bench`), and the samples, each a separate Gradle build that consumes the library as an outside
+project would: `samples/realtime-telemetry` (kuicksilver-quic), `samples/webtransport-chat` (WebTransport through both
+Ktor engines), `samples/http3-server` (the Ktor server engine from `EngineMain`), `samples/compose-demo` (Android and
+iOS), and `samples/ios`, an Xcode app over the library's XCFramework ([iOS guide](guide/ios.md)).
 
 ## Cross-Cutting Concerns
 

@@ -51,8 +51,10 @@ import kotlin.time.TestTimeSource
 internal val wtClientSettings: List<Pair<Long, Long>> =
     listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.WT_ENABLED_DRAFT16 to 1L, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L)
 
-/** A sink that queues the streams routed to it. */
-internal class QueueSink : WtSessionSink {
+/** A sink that queues the streams routed to it; [sessionId] is the CONNECT stream it stands for. */
+internal class QueueSink(
+    override val sessionId: Long = 0,
+) : WtSessionSink {
     val streams = Channel<Pair<QuicStream, Boolean>>(Channel.UNLIMITED)
 
     override fun onStream(
@@ -504,7 +506,7 @@ class WtStreamRoutingTest {
                     serverQuic =
                         quicConfig {
                             maxBidiStreams = 10
-                            resetStreamAt = true
+                            expert { resetStreamAt = true }
                         },
                 ).useScoped { q ->
                     val (c, s) = q.connect(H3Fixtures.quic)

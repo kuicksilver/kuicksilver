@@ -10,7 +10,7 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.websocket.WebSocketDeflateExtension
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import kotlinx.coroutines.runBlocking
@@ -67,17 +67,18 @@ internal fun ktorClient(
         ClientEngine.Kuicksilver -> {
             HttpClient(Kuicksilver) {
                 engine {
-                    trust = if (otherCa) Pki.otherTrust else Pki.trust
-                    http3 { discovery = if (h3Only) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only }
+                    tls { trust = if (otherCa) Pki.otherTrust else Pki.trust }
+                    http3 { if (h3Only) discovery = Http3Discovery.H3Only else enabled = false }
                     http2 { enabled = http2 }
                     quicIdleTimeout?.let { t ->
-                        quic =
-                            io.kuicksilver.quic.quicConfig {
+                        http3 {
+                            quic {
                                 maxIdleTimeout = t
                                 keepAlive = t / 3
                             }
+                        }
                     }
-                    qlog?.let { http3 { this.qlog = it } }
+                    qlog?.let { sink -> observability { this.qlog = sink } }
                 }
                 common()
             }

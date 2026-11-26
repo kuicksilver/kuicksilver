@@ -66,7 +66,7 @@ internal class H3Call(
     beforeUpgradeForTest: (() -> Unit)? = null,
     /** The engine's `Alt-Svc` for a plain response, read as its head goes out (`clear` while HTTP/3 is withdrawn); null for none. */
     altSvc: () -> String? = { null },
-    /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
+    /** The engine's `webSockets { maxMessageSize }`, for an Extended CONNECT for `websocket`. */
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     /** A CONNECT-UDP request (RFC 9298) on an engine with `connectUdp`: a CONNECT call marked for `connectUdp(proxy)` routes. */
     connectUdp: Boolean = false,

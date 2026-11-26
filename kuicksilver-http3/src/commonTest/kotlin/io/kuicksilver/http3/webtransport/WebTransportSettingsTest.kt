@@ -56,7 +56,7 @@ import kotlin.time.Duration.Companion.seconds
 internal val wtOn: Http3Settings =
     http3Settings {
         enableConnectProtocol = true
-        webTransport = true
+        webTransport { enabled = true }
     }
 
 /** The SETTINGS the peer of [q] sent on its control stream. */
@@ -251,10 +251,10 @@ class WebTransportSettingsTest {
             http3Settings {
                 enableConnectProtocol = true
                 h3Datagram = false
-                webTransport = true
+                webTransport { enabled = true }
             }
         }
-        assertFailsWith<IllegalArgumentException> { http3Settings { webTransport = true } }
+        assertFailsWith<IllegalArgumentException> { http3Settings { webTransport { enabled = true } } }
         assertTrue(wtOn.toBuilder().build().webTransport)
     }
 
@@ -266,10 +266,14 @@ class WebTransportSettingsTest {
                     .Builder()
                     .apply {
                         server =
-                            QuicServerConfig.Builder(H3Fixtures.server()).apply { quic = quicConfig { maxDatagramFrameSize = 0 } }.build()
+                            QuicServerConfig
+                                .Builder(
+                                    H3Fixtures.server(),
+                                ).apply { quic = quicConfig { datagrams { maxFrameSize = null } } }
+                                .build()
                     }.build()
             val e = assertFailsWith<IllegalArgumentException> { Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0), config, wtOn) }
-            assertTrue("maxDatagramFrameSize" in e.message.orEmpty(), e.message)
+            assertTrue("datagrams { maxFrameSize }" in e.message.orEmpty(), e.message)
         }
 
     /**
@@ -289,8 +293,8 @@ class WebTransportSettingsTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(H3Fixtures.server()).build()
-                                crypto = NullCryptoProvider
-                                io = { serverIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { serverIo } }
                             }.build(),
                         wtOn,
                     )
@@ -300,8 +304,8 @@ class WebTransportSettingsTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { clientIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { clientIo } }
                             }.build(),
                     )
                 try {

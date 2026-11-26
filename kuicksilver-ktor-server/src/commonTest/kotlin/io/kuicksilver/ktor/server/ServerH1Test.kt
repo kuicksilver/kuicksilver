@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -170,8 +171,7 @@ class ServerH1Test {
                         host = "127.0.0.1"
                         port = 0
                     }
-                    identity =
-                        ServerFixtures.identity()
+                    tls { identity = ServerFixtures.identity() }
                 }) { routing { get("/") { call.respondText("tls ${call.request.local.scheme}") } } }
             server.startSuspend(false)
             try {
@@ -210,9 +210,10 @@ class ServerH1Test {
         serverTest {
             val (server, port) =
                 tlsServer(connector = {
-                    clientAuth = ClientAuth.Optional
-                    trust =
-                        TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                    tls {
+                        clientAuth = ClientAuth.Optional
+                        clientTrust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                    }
                 }) {
                     routing { get("/") { call.respondText("certs=${call.request.peerCertificates.size}") } }
                 }
@@ -298,7 +299,7 @@ class ServerH1Test {
                 }
                 val (server, port) =
                     if (tls) {
-                        tlsServer(configure = { http3 = false }, module = module)
+                        tlsServer(configure = { http3 { enabled = false } }, module = module)
                     } else {
                         val s =
                             embeddedServer(Kuicksilver, configure = {
@@ -481,7 +482,7 @@ class ServerH1Test {
     }
 
     /**
-     * With `maxTcpConnections = 2` and two connections held (accepted, no TLS handshake yet), the connector stops accepting:
+     * With `tcp { maxConnections = 2 }` and two connections held (accepted, no TLS handshake yet), the connector stops accepting:
      * a third client's connect completes in the OS backlog, and it is answered only once the first connection is closed.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -491,8 +492,8 @@ class ServerH1Test {
             val rec = Recorder()
             val (server, port) =
                 tlsServer({
-                    maxTcpConnections = 2
-                    eventListener = rec
+                    tcp { maxConnections = 2 }
+                    observability { eventListener = rec }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {
@@ -528,7 +529,7 @@ class ServerH1Test {
         }
 
     /**
-     * With `maxTcpConnectionsPerIp = 1`, a second connection from 127.0.0.1 while one is held is closed at accept, before
+     * With `tcp { maxConnectionsPerIp = 1 }`, a second connection from 127.0.0.1 while one is held is closed at accept, before
      * any TLS work (no handshake failure is reported for it, and its client sees the close at once, not after its own
      * handshake timeout), and reported as refused for the per-IP limit; once the first is gone the address is served again.
      * The held connection never sends a ClientHello: on a slow runner its own handshake may time out (the server's TLS
@@ -541,8 +542,8 @@ class ServerH1Test {
             val rec = Recorder()
             val (server, port) =
                 tlsServer({
-                    maxTcpConnectionsPerIp = 1
-                    eventListener = rec
+                    tcp { maxConnectionsPerIp = 1 }
+                    observability { eventListener = rec }
                 }) { routing { get("/") { call.respondText("ok") } } }
             val selector = SelectorManager(Dispatchers.IO)
             try {
@@ -579,6 +580,61 @@ class ServerH1Test {
             } finally {
                 selector.close()
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Self-attack on `observability { logger }`: a logger whose `log` throws, or whose `isEnabled` throws, takes the engine's
+     * lines (here the per-IP refusals, logged from the accept loop, and the start's) without ending anything: refused
+     * clients keep being refused, and once the held connection is gone the address is served again. The logger was called,
+     * so its exception went through the engine's guard.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aThrowingLoggerDoesNotStopTheListener() =
+        serverTest {
+            for (throwIn in listOf("log", "isEnabled")) {
+                val calls = kotlin.concurrent.atomics.AtomicInt(0)
+                val failing =
+                    object : io.kuicksilver.quic.KuicksilverLogger {
+                        override fun isEnabled(level: io.kuicksilver.quic.LogLevel): Boolean {
+                            if (throwIn == "isEnabled") {
+                                calls.incrementAndFetch()
+                                throw IllegalStateException("isEnabled fails")
+                            }
+                            return true
+                        }
+
+                        override fun log(
+                            level: io.kuicksilver.quic.LogLevel,
+                            message: String,
+                            cause: Throwable?,
+                        ) {
+                            calls.incrementAndFetch()
+                            throw kotlinx.coroutines.CancellationException("log fails")
+                        }
+                    }
+                val (server, port) =
+                    tlsServer({
+                        tcp { maxConnectionsPerIp = 1 }
+                        observability { logger = failing }
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                val selector = SelectorManager(Dispatchers.IO)
+                try {
+                    val held = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    repeat(3) {
+                        assertTrue(withTimeout(10.seconds) { runCatching { rawHttp(port, get) } }.isFailure, "$throwIn: refused")
+                    }
+                    withTimeout(10.seconds) { server.engine.refusedPerIp.first { it == 3L } }
+                    assertTrue(calls.load() > 0, "$throwIn: the logger was called")
+                    held.close()
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 0 } }
+                    assertTrue(rawHttp(port, get).startsWith("HTTP/1.1 200"), "$throwIn: the listener still serves")
+                } finally {
+                    selector.close()
+                    server.stop(100, 500)
+                }
             }
         }
 }

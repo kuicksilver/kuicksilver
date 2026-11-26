@@ -40,7 +40,7 @@ class UnresolvableTargetJvmTest {
             val client =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
-                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                    QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build(),
                 )
             try {
                 val e =
@@ -61,7 +61,7 @@ class UnresolvableTargetJvmTest {
             val client =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
-                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                    QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build(),
                 )
             client.close()
             assertFailsWith<QuicException.EndpointClosing> {

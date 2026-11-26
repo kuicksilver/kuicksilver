@@ -27,19 +27,19 @@ class TelemetryMemoryTest {
 
     @Test fun fullSessionOverMemoryNetwork() = runBlocking {
         val network = MemoryNetwork()
-        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); io = { network.open(it) } })
+        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); runtime { io = { network.open(it) } } })
         val wifi = InetSocketAddress("10.1.0.2", 50000)
-        val client = QuicEndpoint.bind(wifi, quicEndpointConfig { io = { network.open(it) } })
+        val client = QuicEndpoint.bind(wifi, quicEndpointConfig { runtime { io = { network.open(it) } } })
         playSession(server, client, serverAddress) { network.cut(wifi); network.open(InetSocketAddress("100.64.0.9", 50000)) }
     }
 
     /** A client that vanishes mid-stream (no BYE, a reset media stream) must not take the server down for the others. */
     @Test fun abruptClientDoesNotStopTheServer() = runBlocking {
         val network = MemoryNetwork()
-        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); io = { network.open(it) } })
+        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); runtime { io = { network.open(it) } } })
         val telemetry = TelemetryServer(server)
         val serving = launch { telemetry.run() }
-        val rude = QuicEndpoint.bind(InetSocketAddress("10.1.0.3", 50000), quicEndpointConfig { io = { network.open(it) } })
+        val rude = QuicEndpoint.bind(InetSocketAddress("10.1.0.3", 50000), quicEndpointConfig { runtime { io = { network.open(it) } } })
         withTimeout(30.seconds) {
             val connection = rude.connect(serverAddress, quicClientConfig(TelemetryTls.client()))
             TelemetryClient(connection).hello("rude")
@@ -50,7 +50,7 @@ class TelemetryMemoryTest {
             delay(500.milliseconds)
         }
         rude.close()
-        val polite = QuicEndpoint.bind(InetSocketAddress("10.1.0.4", 50000), quicEndpointConfig { io = { network.open(it) } })
+        val polite = QuicEndpoint.bind(InetSocketAddress("10.1.0.4", 50000), quicEndpointConfig { runtime { io = { network.open(it) } } })
         withTimeout(30.seconds) {
             val app = TelemetryClient(polite.connect(serverAddress, quicClientConfig(TelemetryTls.client())))
             assertEquals("WELCOME polite", app.hello("polite"))
@@ -63,9 +63,9 @@ class TelemetryMemoryTest {
     /** A control line without an end must not grow the server's buffer: past [Protocol.MAX_LINE] the connection is closed with code 2. */
     @Test fun oversizedControlLineClosesConnection() = runBlocking {
         val network = MemoryNetwork()
-        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); io = { network.open(it) } })
+        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); runtime { io = { network.open(it) } } })
         val serving = launch { TelemetryServer(server).run() }
-        val client = QuicEndpoint.bind(InetSocketAddress("10.1.0.5", 50000), quicEndpointConfig { io = { network.open(it) } })
+        val client = QuicEndpoint.bind(InetSocketAddress("10.1.0.5", 50000), quicEndpointConfig { runtime { io = { network.open(it) } } })
         withTimeout(30.seconds) {
             val connection = client.connect(serverAddress, quicClientConfig(TelemetryTls.client()))
             val control = connection.openBidi()

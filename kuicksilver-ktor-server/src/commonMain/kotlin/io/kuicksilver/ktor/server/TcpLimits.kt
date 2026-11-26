@@ -12,7 +12,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
- * The TCP connection limits of one connector (`maxTcpConnections`, `maxTcpConnectionsPerIp`; threat model 3.2), used by its
+ * The TCP connection limits of one connector (`tcp { maxConnections }`, `tcp { maxConnectionsPerIp }`; threat model 3.2), used by its
  * [acceptLoop]. A slot ([maxConnections] in all) is taken before each `accept()`, so at the limit the loop waits instead of
  * accepting and the kernel backlog holds new clients (Go `x/net/netutil.LimitListener`, Jetty `ConnectionLimit`, nginx
  * `worker_connections`); a client is counted per address ([maxPerIp], by [peerIpKey]) right after `accept()`, the earliest

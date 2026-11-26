@@ -30,13 +30,13 @@ class RealUdpLoopbackTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
             val client =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
-                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                    QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build(),
                 )
             try {
                 withTimeout(120.seconds) {

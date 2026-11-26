@@ -82,7 +82,7 @@ public class EndpointStats internal constructor(
     /** Datagrams the sockets did not take: a send that failed or took only part of a batch (see [sendFailures][EndpointStats.sendFailures]); loss recovery repairs them. */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedSocket: Long = 0,
-    /** Datagrams dropped because a bounded queue was full: the Initial admission queue (`initialQueueCap`) or a loop's queue of datagrams forwarded by another loop. */
+    /** Datagrams dropped because a bounded queue was full: the Initial admission queue (`expert { initialAdmissionQueue }`) or a loop's queue of datagrams forwarded by another loop. */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedQueue: Long = 0,
     /** Datagrams that did not parse as QUIC, and client Initials whose protection did not verify (no state is kept for them). */

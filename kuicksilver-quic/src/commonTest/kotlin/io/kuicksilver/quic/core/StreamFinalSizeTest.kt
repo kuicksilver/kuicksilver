@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
 class StreamFinalSizeTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private val on = quicConfig { resetStreamAt = true }
+    private val on = quicConfig { expert { resetStreamAt = true } }
 
     private fun List<ConnectionEvent>.finals(
         id: Long,

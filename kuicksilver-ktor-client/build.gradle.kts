@@ -38,6 +38,9 @@ kotlin {
     }
 }
 tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+// the first screen of docs/guide/ktor.md without any opt-in (src/jvmFirstScreenTest, ADR-0026): compiled before the JVM tests
+kotlin { jvm { val main = compilations.getByName("main"); compilations.create("firstScreenTest") { associateWith(main) } } }
+tasks.named("jvmTest") { dependsOn("compileFirstScreenTestKotlinJvm") }
 // the same rule for a JVM application that shrinks: R8 reads META-INF/proguard/ of a jar on its own, ProGuard users add the file
 tasks.named<ProcessResources>("jvmProcessResources") { from("consumer-rules.pro") { into("META-INF/proguard"); rename { "kuicksilver-ktor-client.pro" } } }
 // the class jars an Android app links with this library, one path per line: tools/check/r8-inlining.sh shrinks them with the
@@ -190,4 +193,23 @@ tasks.register("androidMigrationDeviceTest") {
 // -Pkuicksilver.liveEch=true
 tasks.withType<Test>().configureEach {
     providers.gradleProperty("kuicksilver.liveEch").orNull?.let { systemProperty("kuicksilver.liveEch", it) }
+}
+
+// The public HTTP/3 check (.github/workflows/public-h3.yml, weekly; docs/how-we-verify.md, "Public HTTP/3 servers"): PublicH3Main
+// (jvmTest) against public deployments over the network, never part of `check` or `jvmTest` (its verdict logic is unit-tested
+// there, PublicH3VerdictsTest). Writes summary.md, results.json and the qlog traces of failed checks to build/public-h3 (or
+// -Pkuicksilver.publicH3.out=<dir>); fails when a verdict blames the client, not when a server changed or was unreachable.
+// A JavaExec with no declared outputs is never up to date: every invocation runs the checks. Run it only where the network may
+// be used for it (GitHub's runners), never in the release gate.
+tasks.register<JavaExec>("publicH3Check") {
+    group = "verification"
+    description = "Checks the client against public HTTP/3 servers (network; not part of check)"
+    val jvmTest = kotlin.jvm().compilations.getByName("test")
+    classpath(jvmTest.output.allOutputs, jvmTest.runtimeDependencyFiles)
+    mainClass.set("io.kuicksilver.ktor.client.publich3.PublicH3Main")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+    // read when the task runs, not when the build is configured
+    val outDir = providers.gradleProperty("kuicksilver.publicH3.out").orElse(layout.buildDirectory.dir("public-h3").map { it.asFile.path })
+    argumentProviders.add(CommandLineArgumentProvider { listOf(outDir.get()) })
+    systemProperty("kuicksilver.version", project.version.toString()) // the User-Agent names it
 }

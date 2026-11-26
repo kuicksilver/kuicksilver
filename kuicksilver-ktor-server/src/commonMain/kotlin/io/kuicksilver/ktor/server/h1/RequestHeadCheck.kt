@@ -85,7 +85,7 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
             continue
         }
         val end = if (lf > lineStart && buffer[lf - 1] == CR_BYTE) lf - 1 else lf
-        // RFC 9112 section 2.2: a bare LF is a line end only where the server allows it (`h1AllowBareLf`)
+        // RFC 9112 section 2.2: a bare LF is a line end only where the server allows it (`http1 { allowBareLf }`)
         if (end == lf && !allowBareLf) refuse("A bare LF ends a line of the request head (RFC 9112 section 2.2)")
         if (fieldsStart < 0) {
             if (end > MAX_REQUEST_LINE_BYTES) refuseLongLine(buffer)

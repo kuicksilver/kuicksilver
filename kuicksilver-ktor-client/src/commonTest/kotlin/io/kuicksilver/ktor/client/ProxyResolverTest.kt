@@ -290,11 +290,13 @@ class ProxyResolverTest {
             try {
                 testClient(engine = {
                     connectTimeout = kotlin.time.Duration.parse("300ms")
-                    proxyResolver =
-                        ProxyResolver {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
-                            null
-                        }
+                    proxies {
+                        resolver =
+                            ProxyResolver {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
+                                null
+                            }
+                    }
                 }).use { c ->
                     val e = assertFailsWith<ProxyException> { c.get("https://hung.test/") }
                     assertTrue("connect timeout" in e.message!!, e.message)
@@ -622,7 +624,7 @@ class ProxyResolverTest {
         assertEquals("2001:db8::a", pacHost(Url("wss://[2001:DB8::A]/x")))
     }
 
-    /** The engine's `pacFullWebSocketUrl` reaches the system resolver; off by default. */
+    /** The engine's `proxies { pacFullWebSocketUrl }` reaches the system resolver; off by default. */
     @Test fun pacFullWebSocketUrlReachesTheSystemResolver() =
         runBlocking {
             val seen = ArrayList<Boolean>()
@@ -642,12 +644,12 @@ class ProxyResolverTest {
                         return null
                     }
                 }
-            assertFalse(KuicksilverEngineConfig().pacFullWebSocketUrl)
-            ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NoLog).lookup(Url("wss://a.test/x"))
+            assertFalse(KuicksilverEngineConfig().proxies.pacFullWebSocketUrl)
+            ProxyRouting(KuicksilverEngineConfig().apply { proxies { this.resolver = resolver } }, NoLog).lookup(Url("wss://a.test/x"))
             ProxyRouting(
                 KuicksilverEngineConfig().apply {
-                    proxyResolver = resolver
-                    pacFullWebSocketUrl = true
+                    proxies { this.resolver = resolver }
+                    proxies { pacFullWebSocketUrl = true }
                 },
                 NoLog,
             ).lookup(Url("wss://a.test/x"))
@@ -661,11 +663,13 @@ class ProxyResolverTest {
             val routing =
                 ProxyRouting(
                     KuicksilverEngineConfig().apply {
-                        proxyResolver =
-                            ProxyResolver {
-                                seen += it.toString()
-                                null
-                            }
+                        proxies {
+                            resolver =
+                                ProxyResolver {
+                                    seen += it.toString()
+                                    null
+                                }
+                        }
                     },
                     NoLog,
                 )
@@ -719,7 +723,7 @@ class ProxyResolverTest {
                         lines += level to message
                     }
                 }
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, logger)
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxies { this.resolver = resolver } }, logger)
             routing.lookup(Url("https://a.test/"))
             routing.lookup(Url("https://b.test/"))
             routing.lookup(Url("https://fail.test/"))
@@ -754,7 +758,7 @@ class ProxyResolverTest {
                         lines += message
                     }
                 }
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, logger) { now }
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxies { this.resolver = resolver } }, logger) { now }
             repeat(3) { routing.lookup(Url("https://x.test/")) }
             assertEquals(1, calls)
             now += ProxyRouting.TTL_MILLIS
@@ -778,7 +782,8 @@ class ProxyResolverTest {
             var calls = 0
             val resolver = ProxyResolver { _ -> null.also { calls++ } }
             val held = HeldDispatcher()
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, noLog, cleanup = held) { now }
+            val routing =
+                ProxyRouting(KuicksilverEngineConfig().apply { proxies { this.resolver = resolver } }, noLog, cleanup = held) { now }
             routing.lookup(Url("https://x.test/"))
             assertEquals(1, routing.inFlightSize(), "the completed call is still listed: its cleanup is held")
             now += ProxyRouting.TTL_MILLIS
@@ -804,7 +809,7 @@ class ProxyResolverTest {
                     gate.await()
                     answer
                 }
-            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, noLog)
+            val routing = ProxyRouting(KuicksilverEngineConfig().apply { proxies { this.resolver = resolver } }, noLog)
             val a = async { routing.lookup(Url("https://x.test/")) }
             withTimeout(5.seconds) { started.await() }
             val b = async { routing.lookup(Url("https://x.test/")) }
@@ -855,8 +860,8 @@ class ProxyResolverTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("via env") } } }
             try {
                 ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        proxyResolver = env("https_proxy" to "http://127.0.0.1:$proxyPort", "no_proxy" to "other.test")
+                    testClient(Http3Discovery.Auto, engine = {
+                        proxies { resolver = env("https_proxy" to "http://127.0.0.1:$proxyPort", "no_proxy" to "other.test") }
                     }).use { c ->
                         assertEquals("via env", c.get("https://server.test:$port/").bodyAsText())
                         assertEquals("CONNECT server.test:$port HTTP/1.1", head().first())
@@ -885,7 +890,7 @@ class ProxyResolverTest {
         try {
             val port = (origin.localAddress as InetSocketAddress).port
             testClient(
-                engine = { proxyResolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "ftp://127.0.0.1:1") },
+                engine = { proxies { resolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "ftp://127.0.0.1:1") } },
             ).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.get("https://origin.test:$port/") }
                 assertTrue("not supported" in e.message!! && "socks4" !in e.message!!, e.message)
@@ -902,7 +907,7 @@ class ProxyResolverTest {
     /** WebTransport refuses a URL the resolver proxies, as a request would go through the proxy. */
     @Test fun negative_webTransportRefusedThroughResolvedProxy() =
         clientTest {
-            testClient(Http3DiscoveryMode.Auto, engine = { proxyResolver = env("https_proxy" to "http://p.test:3128") }).use { c ->
+            testClient(Http3Discovery.Auto, engine = { proxies { resolver = env("https_proxy" to "http://p.test:3128") } }).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.webTransport("https://wt.test:4433/") }
                 assertTrue("proxy" in e.message!!, e.message)
             }

@@ -25,7 +25,7 @@ class ConnectionSlotsTest {
     private fun limits(slots: ConnectionSlots) {
         assertEquals(0, slots.acquire(ip(1), 3, 2))
         assertEquals(1, slots.acquire(ip(1), 3, 2))
-        assertEquals(-1, slots.acquire(ip(1), 3, 2), "the address is full")
+        assertEquals(ConnectionSlots.PER_IP_FULL, slots.acquire(ip(1), 3, 2), "the address is full")
         assertEquals(0, slots.acquire(ip(2), 3, 2))
         assertEquals(-1, slots.acquire(ip(3), 3, 2), "the endpoint is full")
         assertEquals(3, slots.total)

@@ -59,12 +59,16 @@ internal suspend fun testServer(
                 this.port = port
             }
         } else {
-            tlsConnector(ClientFixtures.identity()) {
+            tlsConnector {
+                tls { identity = ClientFixtures.identity() }
                 this.host = host
                 this.port = port
                 tls()
             }
         }
+        // the client's HTTP/1.1 path over TLS is what most tests drive: HTTP/2, on by default on the server since 0.3.0,
+        // is turned on by the tests of the client's HTTP/2 path
+        http2 { enabled = false }
         configure()
     }
     val server =
@@ -87,16 +91,16 @@ internal suspend fun testServer(
             .port
 }
 
-/** A client with the test trust; HTTP/1.1 only unless [discovery] says otherwise. */
+/** A client with the test trust; HTTP/3 off (null) unless [discovery] says otherwise. */
 internal fun testClient(
-    discovery: Http3DiscoveryMode = Http3DiscoveryMode.H1Only,
+    discovery: Http3Discovery? = null,
     engine: KuicksilverEngineConfig.() -> Unit = {},
     block: HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
 ): HttpClient =
     HttpClient(Kuicksilver) {
         engine {
-            trust = ClientFixtures.trust
-            http3 { this.discovery = discovery }
+            tls { trust = ClientFixtures.trust }
+            http3 { discovery?.let { this.discovery = it } ?: run { enabled = false } }
             engine()
         }
         block()

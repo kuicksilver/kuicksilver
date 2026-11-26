@@ -36,6 +36,7 @@ import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.http2.runtime.H2ClientStream
 import io.kuicksilver.http2.runtime.Http2Exception
@@ -71,7 +72,7 @@ import io.ktor.client.request.get as clientGet
 
 /**
  * WebSockets over HTTP/2 (RFC 8441) through Ktor's own `webSocket {}` routes: the server engine with `http2` advertises
- * SETTINGS_ENABLE_CONNECT_PROTOCOL (`webSocketsOverHttp2`, on by default), takes an Extended CONNECT with `:protocol =
+ * SETTINGS_ENABLE_CONNECT_PROTOCOL (`webSockets { overHttp2 }`, on by default), takes an Extended CONNECT with `:protocol =
  * websocket` as Ktor's upgrade request and answers it with `:status 200`; the stream then carries the frames. The client
  * here is the HTTP/2 runtime driven by hand, so every field and status is the server's own.
  */
@@ -93,7 +94,7 @@ class ServerWebSocketH2Test {
     private suspend fun <T> h2(
         port: Int,
         onChange: () -> Unit = {},
-        settings: Http2Settings = Http2Settings(),
+        settings: Http2Settings = Http2Settings.Default,
         block: suspend (H2ClientConnection) -> T,
     ): T {
         val selector = SelectorManager(Dispatchers.IO)
@@ -237,13 +238,12 @@ class ServerWebSocketH2Test {
                 }
             try {
                 val windows =
-                    Http2Settings(
-                        initialStreamWindow = 1 shl 26,
-                        maxStreamWindow = 1 shl 26,
-                        initialConnectionWindow = 1 shl 27,
-                        maxConnectionWindow =
-                            1 shl 27,
-                    )
+                    http2Settings {
+                        initialStreamWindow = 1 shl 26
+                        maxStreamWindow = 1 shl 26
+                        initialConnectionWindow = 1 shl 27
+                        maxConnectionWindow = 1 shl 27
+                    }
                 h2(port, settings = windows) { c ->
                     val ws = c.connect()
                     assertEquals(200, ws.response().status)
@@ -324,15 +324,17 @@ class ServerWebSocketH2Test {
             val closed = CompletableDeferred<CloseReason?>()
             val (server, port) =
                 h2TlsServer(configure = {
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun connectionOpened(
-                                protocol: io.ktor.http.HttpProtocolVersion,
-                                remote: InetSocketAddress?,
-                            ) {
-                                opened.trySend(protocol)
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun connectionOpened(
+                                    protocol: io.ktor.http.HttpProtocolVersion,
+                                    remote: InetSocketAddress?,
+                                ) {
+                                    opened.trySend(protocol)
+                                }
                             }
-                        }
+                    }
                 }) {
                     install(WebSockets)
                     routing {
@@ -354,10 +356,12 @@ class ServerWebSocketH2Test {
                     .HttpClient(io.kuicksilver.ktor.client.Kuicksilver) {
                         install(io.ktor.client.plugins.websocket.WebSockets)
                         engine {
-                            trust =
-                                io.kuicksilver.tls.TrustConfig
-                                    .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
-                            http3 { discovery = io.kuicksilver.ktor.client.Http3DiscoveryMode.H1Only }
+                            tls {
+                                trust =
+                                    io.kuicksilver.tls.TrustConfig
+                                        .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
+                            }
+                            http3 { enabled = false }
                         }
                     }.use { c ->
                         assertEquals(
@@ -398,7 +402,7 @@ class ServerWebSocketH2Test {
     @Test fun settingAdvertisedOnlyWhenEnabled() =
         serverTest {
             for (enabled in listOf(true, false)) {
-                val (server, port) = h2TlsServer(configure = { webSocketsOverHttp2 = enabled }) { echo() }
+                val (server, port) = h2TlsServer(configure = { webSockets { overHttp2 = enabled } }) { echo() }
                 try {
                     h2(port) { c -> assertEquals(enabled, c.serverAllowsExtendedConnect) }
                     RawH2Client.connect(port).use { raw ->
@@ -513,7 +517,7 @@ class ServerWebSocketH2Test {
     @Test fun negative_webSocketAnswerCarriesNoAltSvc() =
         h3ServerTest {
             val (server, port) =
-                h2TlsServer(configure = { http3 = true }) {
+                h2TlsServer(configure = { http3 { enabled = true } }) {
                     echo()
                     routing { get("/") { call.respondText("ok") } }
                 }
@@ -548,10 +552,10 @@ class ServerWebSocketH2Test {
             }
         }
 
-    /** With `webSocketsOverHttp2 = false` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
+    /** With `webSockets { overHttp2 = false }` no SETTINGS_ENABLE_CONNECT_PROTOCOL is sent, so `:protocol` makes the request malformed. */
     @Test fun negative_extendedConnectRefusedWhenDisabled() =
         serverTest {
-            val (server, port) = h2TlsServer(configure = { webSocketsOverHttp2 = false }) { echo() }
+            val (server, port) = h2TlsServer(configure = { webSockets { overHttp2 = false } }) { echo() }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()
@@ -827,7 +831,7 @@ class ServerWebSocketH2Test {
 
     /**
      * A connection that carries only a WebSocket is in use: the stream counts as an open request, which the idle close
-     * (`connectionIdleTimeoutSeconds`) waits to be 0, and the WebSocket keeps it until the session ends.
+     * (`tcp { idleTimeout }`) waits to be 0, and the WebSocket keeps it until the session ends.
      */
     @Test fun aConnectionCarryingAWebSocketIsNotIdle() =
         serverTest {
@@ -907,10 +911,12 @@ class ServerWebSocketH2Test {
                             extensions { install(io.kuicksilver.ktor.network.websocket.PerMessageDeflate) }
                         }
                         engine {
-                            trust =
-                                io.kuicksilver.tls.TrustConfig
-                                    .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
-                            http3 { discovery = io.kuicksilver.ktor.client.Http3DiscoveryMode.H1Only }
+                            tls {
+                                trust =
+                                    io.kuicksilver.tls.TrustConfig
+                                        .AnchoredCa(listOf(io.kuicksilver.tls.Certificate(TestCerts.testCa)))
+                            }
+                            http3 { enabled = false }
                         }
                     }.use { c ->
                         c.clientGet("https://127.0.0.1:$port/")
@@ -931,7 +937,11 @@ class ServerWebSocketH2Test {
         }
 
     /** A client whose stream receive window stays at 64 KiB (no auto-tuning): the server can be ahead of it by that much. */
-    private val smallWindow = Http2Settings(initialStreamWindow = 65_536, maxStreamWindow = 65_536)
+    private val smallWindow =
+        http2Settings {
+            initialStreamWindow = 65_536
+            maxStreamWindow = 65_536
+        }
 
     /**
      * A route that sends [total] bytes in 16 KiB binary frames, then a text "done", counting into [sent] what the

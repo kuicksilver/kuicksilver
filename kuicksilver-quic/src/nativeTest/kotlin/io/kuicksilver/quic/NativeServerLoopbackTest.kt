@@ -31,10 +31,10 @@ class NativeServerLoopbackTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(120.seconds) {
                     val accepted = async { server.accept() }

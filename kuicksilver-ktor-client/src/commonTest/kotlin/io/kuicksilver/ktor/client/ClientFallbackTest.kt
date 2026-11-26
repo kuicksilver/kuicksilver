@@ -74,7 +74,7 @@ class ClientFallbackTest {
                     }
                 }
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
@@ -83,9 +83,9 @@ class ClientFallbackTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    quic = quicConfig { handshakeTimeout = 500.milliseconds }
-                    eventListener = listener
+                testClient(Http3Discovery.Auto, engine = {
+                    quicHandshakeTimeoutForTest = 500.milliseconds
+                    observability { eventListener = listener }
                 }).use { c ->
                     assertEquals("h1", c.get("https://127.0.0.1:$port/").bodyAsText()) // learns the alternative
                     val t0 = TimeSource.Monotonic.markNow()
@@ -112,12 +112,12 @@ class ClientFallbackTest {
         clientTest {
             val (server, port) =
                 testServer(
-                    configure = { http3 = false },
+                    configure = { http3 { enabled = false } },
                 ) { routing { get("/") { call.respondText("must not be reached") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    trust = pinned
+                testClient(Http3Discovery.Preferred, engine = {
+                    tls { trust = pinned }
                     connectTimeout = 1.seconds
                 }).use { c ->
                     val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
@@ -168,7 +168,7 @@ class ClientFallbackTest {
             bindOnSamePort(
                 first = { p -> h3(p).let { it to it.localAddress.port } },
                 releaseFirst = { it.close() },
-                second = { p -> testServer(configure = { http3 = false }, port = p, module = module) },
+                second = { p -> testServer(configure = { http3 { enabled = false } }, port = p, module = module) },
                 releaseSecond = { runCatching { it.stop(0, 0) } },
             )
         return Triple(server, ep, port)
@@ -296,7 +296,7 @@ class ClientFallbackTest {
      * 10.2.3 and 20.1): each refused call falls back to HTTP/1.1 once with `fallback = Refused`, the alternative stays
      * cached and is never marked broken (RFC 7838 sections 2.2 and 3) however often the refusal repeats, and the first call
      * after the server takes clients again goes over HTTP/3. Before 0.3.0 the first refusal marked the alternative broken
-     * for 5 minutes, doubling up to 2 days. `hardDelay = INFINITE`: HTTP/1.1 starts only once HTTP/3 failed, so the
+     * for 5 minutes, doubling up to 2 days. `RaceHeadStart.NoRace`: HTTP/1.1 starts only once HTTP/3 failed, so the
      * winner of each race does not depend on timing.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -320,9 +320,9 @@ class ClientFallbackTest {
                 // the losing HTTP/3 setup is settled (marked or not) in the background: each call waits for it
                 val settled = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        eventListener = listener
-                        http3 { hardDelay = Duration.INFINITE }
+                    testClient(Http3Discovery.Auto, engine = {
+                        observability { eventListener = listener }
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         engine.raceLoserSettledForTest = { settled.trySend(Unit) }
@@ -362,7 +362,7 @@ class ClientFallbackTest {
     /** A client on [port]'s alternative, with an HTTP/3 connection open: learns `Alt-Svc`, then one call goes over HTTP/3. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun h3Client(port: Int): io.ktor.client.HttpClient {
-        val c = testClient(Http3DiscoveryMode.Auto, engine = { http3 { hardDelay = Duration.INFINITE } })
+        val c = testClient(Http3Discovery.Auto, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } })
         c.get("https://127.0.0.1:$port/") // learns h3
         val r = c.get("https://127.0.0.1:$port/")
         assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
@@ -472,6 +472,62 @@ class ClientFallbackTest {
         }
 
     /**
+     * The first alternative marked broken on a network is one Warn line (ADR-0026), which the default logger shows; a
+     * second mark on the same network adds none.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun firstBrokenAlternativeIsOneWarning() =
+        h3Test {
+            kotlinx.coroutines.coroutineScope {
+                val refuseWith = kotlin.concurrent.atomics.AtomicReference<Long?>(null)
+                val (server, ep, port) = originWithRefusingH3(refuseWith)
+                val origin = "https://127.0.0.1:$port"
+                val warnings = kotlin.concurrent.atomics.AtomicReference(emptyList<String>())
+                val log =
+                    object : io.kuicksilver.quic.KuicksilverLogger {
+                        override fun isEnabled(level: io.kuicksilver.quic.LogLevel) = level >= io.kuicksilver.quic.LogLevel.Warn
+
+                        override fun log(
+                            level: io.kuicksilver.quic.LogLevel,
+                            message: String,
+                            cause: Throwable?,
+                        ) {
+                            if (!message.startsWith("HTTP/3 to ")) return
+                            while (true) {
+                                val l = warnings.load()
+                                if (warnings.compareAndSet(l, l + message)) break
+                            }
+                        }
+                    }
+                try {
+                    testClient(
+                        Http3Discovery.Auto,
+                        engine = {
+                            http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
+                            observability { logger = log }
+                        },
+                    ).use { c ->
+                        c.get("$origin/") // learns h3
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, c.get("$origin/").version)
+                        val d = assertNotNull(c.get("$origin/close-no-error").kuicksilverDiagnostics)
+                        assertTrue(d.markedBroken, "$d")
+                        val line = warnings.load().single()
+                        assertTrue(line.startsWith("HTTP/3 to $origin failed ("), line)
+                        assertTrue(line.endsWith("; using TCP for 5m. See response.kuicksilverDiagnostics"), line)
+                        val engine = c.engine as KuicksilverEngine
+                        assertNull(engine.brokenAltSvc.markBroken(origin, "127.0.0.1:$port"), "a second mark on the network")
+                        assertEquals(1, warnings.load().size, "one warning per network")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /**
      * The request's own fallback path: the server rejects the request unprocessed (H3_REQUEST_REJECTED, as for a GOAWAY,
      * RFC 9114 section 5.2), the engine repeats it on a new connection, and the server refuses that one with
      * CONNECTION_REFUSED. The call falls back with `fallback = Refused`, the alternative is not marked broken, and once
@@ -531,9 +587,9 @@ class ClientFallbackTest {
                     }
                 val origin = "https://127.0.0.1:$port"
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        eventListener = listener
-                        http3 { hardDelay = Duration.INFINITE }
+                    testClient(Http3Discovery.Auto, engine = {
+                        observability { eventListener = listener }
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                     }).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         c.get("$origin/") // learns h3
@@ -599,9 +655,9 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Auto, engine = {
-                        http3 { quicHints = setOf(HostPort("127.0.0.1", port)) }
-                        quic = quicConfig { handshakeTimeout = 500.milliseconds }
+                    testClient(Http3Discovery.Auto, engine = {
+                        http3 { hints = setOf(HostPort("127.0.0.1", port)) }
+                        quicHandshakeTimeoutForTest = 500.milliseconds
                     }).use { c ->
                         assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                     }
@@ -648,7 +704,7 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = listener }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { observability { eventListener = listener } }).use { c ->
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                         val engine = c.engine as KuicksilverEngine
                         if (winners.single() == HttpProtocolVersion.HTTP_1_1) {
@@ -677,7 +733,7 @@ class ClientFallbackTest {
                 val (server, ep, port) =
                     h1AndH3({ routing { get("/") { call.respondText("h1") } } }) { p -> failingH3(okPaths = setOf("/warmup"), port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         // the first request may be won by HTTP/1.1 outright; wait for the HTTP/3 connection the race left behind
                         c.get("https://127.0.0.1:$port/warmup")
@@ -710,7 +766,7 @@ class ClientFallbackTest {
                         }
                     }) { p -> failingH3(port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
                         assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                         assertEquals(1, h1Calls)
@@ -737,7 +793,7 @@ class ClientFallbackTest {
                         }
                     }) { p -> failingH3(okPaths = setOf("/warmup"), port = p) }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         // set up the HTTP/3 connection first (the first request may race to HTTP/1.1), so the POST goes over HTTP/3;
                         // the warm-up must succeed over HTTP/3: a fallback would mark the alternative broken and route the POST to HTTP/1.1
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
@@ -804,7 +860,7 @@ class ClientFallbackTest {
                         }
                     }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                    testClient(Http3Discovery.Preferred).use { c ->
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
                         val engine = c.engine as KuicksilverEngine
                         engine.awaitH3Connection(port)

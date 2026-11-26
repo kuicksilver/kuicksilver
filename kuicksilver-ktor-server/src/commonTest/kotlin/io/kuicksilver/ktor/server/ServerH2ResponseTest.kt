@@ -25,7 +25,8 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http2.Http2Settings
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.http2.http2Settings
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
@@ -53,8 +54,8 @@ class ServerH2ResponseTest {
         HttpClient(KuicksilverClient) {
             expectSuccess = false
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false }
             }
         }
 
@@ -219,16 +220,18 @@ class ServerH2ResponseTest {
             val ended = CompletableDeferred<HttpStatusCode?>()
             val (server, port) =
                 h2TlsServer(configure = {
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun requestEnded(
-                                protocol: HttpProtocolVersion,
-                                call: io.ktor.server.application.ApplicationCall,
-                                cause: Throwable?,
-                            ) {
-                                ended.complete(call.response.status())
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun requestEnded(
+                                    protocol: HttpProtocolVersion,
+                                    call: io.ktor.server.application.ApplicationCall,
+                                    cause: Throwable?,
+                                ) {
+                                    ended.complete(call.response.status())
+                                }
                             }
-                        }
+                    }
                 }) { routing { get("/") { call.respond(HttpStatusCode.SwitchingProtocols) } } }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -276,7 +279,9 @@ class ServerH2ResponseTest {
             val release = CompletableDeferred<Unit>()
             val started = CompletableDeferred<Unit>()
             val (server, port) =
-                h2TlsServer(configure = { http2Settings = Http2Settings(maxConcurrentStreams = 1) }) {
+                h2TlsServer(configure = {
+                    http2 { settings { maxConcurrentStreams = 1 } }
+                }) {
                     routing {
                         get("/") {
                             started.complete(Unit)
@@ -326,7 +331,7 @@ class ServerH2ResponseTest {
     @Test fun idleConnectionGetsGoAwayAndCloses() =
         serverTest {
             val (server, port) =
-                h2TlsServer(configure = { connectionIdleTimeoutSeconds = 1 }) { routing { get("/") { call.respondText("ok") } } }
+                h2TlsServer(configure = { tcp { idleTimeout = 1.seconds } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()
@@ -390,8 +395,8 @@ internal suspend fun respondBytesOverH2(size: Int) {
     try {
         HttpClient(KuicksilverClient) {
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only }
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false }
             }
         }.use { c ->
             withTimeout(60.seconds) {

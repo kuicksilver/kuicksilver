@@ -37,7 +37,7 @@ public enum class H2cMode {
      * (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`, RFC 9113 section 3.4) is HTTP/2, any other HTTP/1.1. The octets are looked at as
      * they arrive and none is consumed: the first one that differs from the preface hands the connection to HTTP/1.1 at
      * once (a request shorter than the preface is never held back), and the wait for them is part of the first request
-     * head's deadline (`requestHeaderTimeoutSeconds`), as on HTTP/1.1. Go's `golang.org/x/net/http2/h2c` handler and Netty's
+     * head's deadline (`requestHeaderTimeout`), as on HTTP/1.1. Go's `golang.org/x/net/http2/h2c` handler and Netty's
      * `CleartextHttp2ServerUpgradeHandler` serve both on one port too. When the server stops during the wait, a connection
      * that sent nothing yet is closed at once; one that sent the start of the preface is still waited for, within the
      * same deadline (and the stop's grace period), as a request head that started on HTTP/1.1 is: a whole preface is

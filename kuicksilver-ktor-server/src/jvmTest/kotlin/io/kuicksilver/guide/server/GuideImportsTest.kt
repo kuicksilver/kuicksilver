@@ -17,10 +17,12 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http2.http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
+import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
@@ -35,8 +37,12 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.EchKey
+import io.kuicksilver.tls.EchServerKeys
+import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,22 +65,29 @@ fun everyServerImport(
     val identity = TlsIdentity.fromPem(File(chainFile).readText(), File(keyFile).readText().toCharArray())
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(identity) {
-                clientAuth = ClientAuth.Required
-                trust = TrustConfig.AnchoredCa(Certificate.parsePem(File(chainFile).readText()))
-            }
-            http2Settings = Http2Settings(maxConcurrentStreams = 50)
-            http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }
-            logger = KuicksilverLogger.stderr(LogLevel.Info)
-            qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
-            eventListener =
-                object : KuicksilverServerEventListener() {
-                    override fun requestEnded(
-                        protocol: HttpProtocolVersion,
-                        call: ApplicationCall,
-                        cause: Throwable?,
-                    ) {}
+            tlsConnector {
+                tls {
+                    this.identity = identity
+                    clientAuth = ClientAuth.Required
+                    clientTrust = TrustConfig.AnchoredCa(Certificate.parsePem(File(chainFile).readText()))
                 }
+            }
+            http2 { settings { maxConcurrentStreams = 50 } }
+            http3 { earlyData { policy = Http3EarlyDataPolicy.Reject425() } }
+            observability {
+                logger = KuicksilverLogger.stderr(LogLevel.Info)
+                qlog = AsyncQlogSink(DirectoryQlogSink("qlog"))
+            }
+            observability {
+                eventListener =
+                    object : KuicksilverServerEventListener() {
+                        override fun requestEnded(
+                            protocol: HttpProtocolVersion,
+                            call: ApplicationCall,
+                            cause: Throwable?,
+                        ) {}
+                    }
+            }
         }) {
             module()
             launch {
@@ -98,6 +111,14 @@ fun everyServerImport(
                 connectUdp(UdpProxy())
             }
         }
+    embeddedServer(Kuicksilver, configure = {
+        tls {
+            versions = TlsVersions.Tls12And13
+            echKeys = EchServerKeys(listOf(EchKey(File(keyFile).readBytes())))
+            sniSelector = { ServerTlsOverride(identity) }
+        }
+        plainConnector { h2c = H2cMode.WithHttp11 }
+    }, module = module)
     server.engine.http3Advertising = Http3Advertising.Drain
     kotlinx.coroutines.runBlocking {
         withTimeoutOrNull(1.minutes) { while (server.engine.http3Stats.sumOf { it.connectionsActive } > 0) delay(1.seconds) }

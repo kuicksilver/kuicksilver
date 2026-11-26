@@ -26,7 +26,7 @@ internal val OK = listOf(":status" to "200")
  */
 internal class RawH2Peer(
     role: Role,
-    settings: Http2Settings = Http2Settings(),
+    settings: Http2Settings = Http2Settings.Default,
     var now: Long = 0,
     enableConnectProtocol: Boolean = false,
 ) {
@@ -135,8 +135,8 @@ internal fun RawH2Peer.assertStreamError(
 
 /** A client and a server core joined by an in-memory byte pipe; [pump] moves bytes both ways until both are quiet. */
 internal class H2Pair(
-    clientSettings: Http2Settings = Http2Settings(),
-    serverSettings: Http2Settings = Http2Settings(),
+    clientSettings: Http2Settings = Http2Settings.Default,
+    serverSettings: Http2Settings = Http2Settings.Default,
     var now: Long = 0,
 ) {
     val client = H2ConnectionCore(Role.CLIENT, clientSettings, now)

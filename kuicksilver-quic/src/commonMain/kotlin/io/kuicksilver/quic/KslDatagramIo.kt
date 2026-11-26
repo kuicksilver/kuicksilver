@@ -398,7 +398,7 @@ internal class KslDatagramIo private constructor(
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
-            logger: KuicksilverLogger = KuicksilverLogger.Stderr,
+            logger: KuicksilverLogger = KuicksilverLogger.Default,
             refused: (Throwable) -> Unit = {},
             portableNext: Boolean = true,
             configure: (fd: Int) -> Unit = {},

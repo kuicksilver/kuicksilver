@@ -1,11 +1,16 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.DelicateKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.EngineSSLConnectorConfig
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.KeyExchangeGroups
+import io.kuicksilver.tls.SessionTicketConfig
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsVersions
@@ -17,11 +22,10 @@ import java.security.PrivateKey
  * become a [TlsIdentity]; a trust store makes client certificates required, as with Ktor's Netty and Jetty engines; its
  * `enabledProtocols` ([sslVersions]) choose the TLS versions. Ktor's connector has nothing for a stapled OCSP response or a
  * trusted gateway, so such a connector staples nothing and answers `421 Misdirected Request` for a host its certificate does
- * not name; the `EngineMain` keys `kuicksilver.tls.ocspStapling` and `kuicksilver.tls.trustedGateway` (with the identity
- * files) are refused next to it, as they apply to the port of `kuicksilver.tls.certificateChain`. Without the identity files
- * `kuicksilver.tls.trustedGateway` is accepted for the cleartext deployment port, and its exemption does not reach this
- * connector. An application that needs either sets `ocspStapling` or
- * `trustedGateway` on `tlsConnector(identity)` in code, or serves the port with the `kuicksilver.tls` keys.
+ * not name; `tls { ocspStapling }` and `kuicksilver.connector.allowMisdirectedHosts` (with an identity) are refused next to it, as
+ * they apply to the connectors `tls { }` serves. Without an identity `kuicksilver.connector.allowMisdirectedHosts` is
+ * accepted for the cleartext deployment port, and its exemption does not reach this connector. An application that needs
+ * either uses `tlsConnector { }` in code, or serves the port with the `kuicksilver.tls` keys.
  */
 internal actual fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector? {
     if (c !is EngineSSLConnectorConfig) return null
@@ -37,18 +41,28 @@ internal actual fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverT
         c.trustStore?.let { ts ->
             TrustConfig.AnchoredCa(ts.aliases().toList().mapNotNull { a -> ts.getCertificate(a)?.encoded?.let { Certificate(it) } })
         }
-    return KuicksilverTlsConnector
-        .Builder(identity)
-        .apply {
-            host = c.host
-            port = c.port
-            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            this.versions = versions
-            if (trust != null) {
-                this.trust = trust
-                clientAuth = ClientAuth.Required
-            }
-        }.build()
+    return KuicksilverTlsConnector(
+        c.host,
+        c.port,
+        emptyList(),
+        null,
+        false,
+        ResolvedServerTls(
+            identity = identity,
+            clientAuth = if (trust != null) ClientAuth.Required else ClientAuth.None,
+            trust = trust,
+            cipherSuites = CipherSuites.Default,
+            sniSelector = null,
+            ocspStapling = null,
+            versions = versions,
+            keyExchangeGroups = KeyExchangeGroups.Default,
+            echKeys = null,
+            sessionTickets = SessionTicketConfig.Default,
+            keylog = null,
+            reloadInterval = null,
+            identityFiles = null,
+        ),
+    )
 }
 
 /**

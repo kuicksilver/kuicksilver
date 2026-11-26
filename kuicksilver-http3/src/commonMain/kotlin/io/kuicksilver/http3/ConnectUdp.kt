@@ -5,6 +5,8 @@ package io.kuicksilver.http3
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.SecuritySensitive
+import io.kuicksilver.config.RateLimit
 import io.kuicksilver.http3.connectudp.SystemResolver
 import io.kuicksilver.http3.connectudp.UdpProxyImpl
 import io.kuicksilver.http3.connectudp.connectUdpTunnel
@@ -283,12 +285,10 @@ public fun interface UdpProxyResolver {
  *   one more is answered 429.
  * @property clientIpv6Prefix the prefix an IPv6 client is known by for its limits: 64 by default, so a client with a /64
  *   cannot pass for 2^64 clients; 1..128 (128: each address). An IPv4 client is its address.
- * @property clientPacketRate UDP payloads per second all of a client's tunnels together may send to targets, on top of each
- *   tunnel's [packetRate][UdpProxyConfig.packetRate]: more tunnels do not multiply a client's rate.
- * @property clientPacketBurst the client bucket's size.
- * @property packetRate UDP payloads per second a tunnel may send to its target, a token bucket refilled at this rate;
- *   payloads beyond it are dropped, as UDP may drop them (section 7, CWE-400).
- * @property packetBurst the bucket's size, the payloads a tunnel may send at once.
+ * @property clientPackets the UDP payloads all of a client's tunnels together may send to targets: per second, and at once;
+ *   on top of each tunnel's [packets][UdpProxyConfig.packets], so more tunnels do not multiply a client's rate.
+ * @property packets the UDP payloads a tunnel may send to its target: a token bucket refilled at `perSecond`, `burst`
+ *   at once; payloads beyond it are dropped, as UDP may drop them (section 7, CWE-400).
  * @property unansweredLimit UDP payloads a tunnel may send before its target has answered once; later ones are dropped
  *   until it does (section 7: limits a flood of a target that never answers); 0 turns the limit off.
  * @property refuseOwnAddresses refuse the proxy's own addresses as targets, 403 with `destination_ip_prohibited` before a
@@ -334,19 +334,26 @@ public fun interface UdpProxyResolver {
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
     public val pathTemplate: String = ConnectUdp.WELL_KNOWN_PATH,
+    @property:SecuritySensitive
     public val targetFilter: UdpTargetFilter = UdpTargetFilter.PublicOnly,
     public val resolver: UdpProxyResolver = UdpProxyResolver.System,
     public val resolveTimeout: Duration = 5.seconds,
     public val idleTimeout: Duration = 2.minutes,
     public val linkMtu: Int = 1500,
+    @property:SecuritySensitive
     public val maxTunnels: Int = 4096,
+    @property:SecuritySensitive
     public val maxTunnelsPerClient: Int = 64,
+    @property:SecuritySensitive
     public val clientIpv6Prefix: Int = 64,
-    public val clientPacketRate: Int = 50_000,
-    public val clientPacketBurst: Int = 5_000,
-    public val packetRate: Int = 20_000,
-    public val packetBurst: Int = 2_000,
+    @property:SecuritySensitive
+    public val clientPackets: RateLimit = RateLimit(50_000, 5_000),
+    @property:SecuritySensitive
+    public val packets: RateLimit = RateLimit(20_000, 2_000),
+    @property:SecuritySensitive
     public val unansweredLimit: Int = 256,
+    @property:DelicateKuicksilverApi
+    @property:SecuritySensitive
     public val refuseOwnAddresses: Boolean = true,
     public val requireCapsuleProtocolField: Boolean = true,
     public val proxyName: String = "proxy",
@@ -363,11 +370,7 @@ public class UdpProxyConfig(
         require(linkMtu in 1280..65_535) { "linkMtu must be 1280..65535" }
         require(maxTunnels >= 1) { "maxTunnels must be at least 1" }
         require(maxTunnelsPerClient >= 1) { "maxTunnelsPerClient must be at least 1" }
-        require(packetRate >= 1) { "packetRate must be at least 1" }
-        require(packetBurst >= 1) { "packetBurst must be at least 1" }
         require(clientIpv6Prefix in 1..128) { "clientIpv6Prefix must be 1..128" }
-        require(clientPacketRate >= 1) { "clientPacketRate must be at least 1" }
-        require(clientPacketBurst >= 1) { "clientPacketBurst must be at least 1" }
         require(unansweredLimit >= 0) { "unansweredLimit must not be negative" }
         require(proxyName.isNotEmpty() && proxyName[0].let { it in 'a'..'z' || it in 'A'..'Z' || it == '*' }) {
             "proxyName must be a Structured Field token (RFC 8941 section 3.3.4)"
@@ -391,7 +394,7 @@ public class UdpProxyConfig(
  *   large for the path or link (EMSGSIZE: a smaller MTU toward the target), as the accelerated socket reports them or as a
  *   send failure says; each is dropped (section 5 carries "the unmodified payload", never a fragment of it) and the tunnel
  *   stays open. A failure not recognized as such a refusal ends the tunnel instead (`docs/spec/rfc/9298.md`, section 3.1).
- * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packetRate] or [UdpProxyConfig.clientPacketRate].
+ * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packets] or [UdpProxyConfig.clientPackets].
  * @property droppedUnanswered UDP payloads beyond [UdpProxyConfig.unansweredLimit] to a target that never answered.
  * @property droppedForeignSource datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").
  * @property droppedTooLargeForClient UDP payloads from targets too large for the client's QUIC DATAGRAM frames (section 6.1).

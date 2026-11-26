@@ -202,11 +202,11 @@ class UnacceptedStreamLimitTest {
                                         quic =
                                             quicConfig {
                                                 maxBidiStreams = maxStreams
-                                                maxUniStreams = maxStreams
+                                                expert { maxUniStreams = maxStreams }
                                             }
                                     }.build()
-                            crypto = NullCryptoProvider
-                            io = { sio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { sio } }
                         }.build(),
                 )
             val client =
@@ -215,8 +215,8 @@ class UnacceptedStreamLimitTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { cio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { cio } }
                         }.build(),
                 )
             try {

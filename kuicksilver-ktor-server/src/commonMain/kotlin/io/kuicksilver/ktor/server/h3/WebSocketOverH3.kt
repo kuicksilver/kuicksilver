@@ -69,7 +69,7 @@ internal class H3UpgradeResponse(
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
     private val beforeUpgradeForTest: (() -> Unit)? = null,
-    /** The engine's `webSocketMaxMessageSize`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
+    /** The engine's `webSockets { maxMessageSize }`: the largest WebSocket message a client may send (RFC 6455 section 10.4). */
     private val webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
 ) : H3Response(call, h3) {
     override suspend fun respondOutgoingContent(content: OutgoingContent) {

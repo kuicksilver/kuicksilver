@@ -59,4 +59,18 @@ class StreamLimitsTest {
         val l = StreamLimits(TlsRole.Server, 100, 100)
         assertEquals(0x05L, assertFailsWith<QuicWireException> { l.onPeerStream(1) }.code)
     }
+
+    /** RFC 9000 section 19.11: a MAX_STREAMS value "cannot exceed 2^60"; the raise stops there and then sends nothing more. */
+    @Test fun negative_maxStreamsNeverExceeds2Pow60() {
+        val l = StreamLimits(TlsRole.Server, (1L shl 60) - 1, 100)
+        l.onPeerStream(0)
+        assertEquals(-1L, l.onPeerStreamClosed(bidi = true))
+        assertEquals(1L shl 60, l.onPeerBlockedAtGranted(bidi = true), "1 closed + 2^60 - 1 is exactly the ceiling")
+        l.onPeerStream(4)
+        l.onPeerStreamClosed(bidi = true)
+        assertEquals(-1L, l.onPeerBlockedAtGranted(bidi = true), "2 + 2^60 - 1 is clamped to the 2^60 already granted")
+        assertEquals(1L shl 60, l.peerMaxStreamsGranted(bidi = true))
+        // at the ceiling a full window of closes sends nothing either
+        assertEquals(-1L, l.onPeerStreamClosed(bidi = true))
+    }
 }

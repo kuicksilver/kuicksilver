@@ -55,8 +55,6 @@ class H3QlogTest {
 
     private val secrets = listOf("Bearer s3cr3t-token", "session=c00kie-value", "q=private-query", "x-trailer-secret-value")
 
-    private fun traced(sink: QlogSink) = quicConfig { qlog = sink }
-
     /** Waits until both endpoints' traces ended (the connections released them), so their records are final. */
     private suspend fun awaitClosed(sink: MemoryQlogSink) =
         awaitCondition("both traces closed", timeout = kotlin.time.Duration.parse("10s")) {
@@ -76,7 +74,7 @@ class H3QlogTest {
 
     /** A GET and a POST with a body and trailers both ways, then a PRIORITY_UPDATE and a GOAWAY. */
     private suspend fun exchange(sink: MemoryQlogSink) {
-        H3Pair.open(serverQuic = traced(sink), clientQuic = traced(sink)).useScoped { p ->
+        H3Pair.open(serverQlog = sink, clientQlog = sink).useScoped { p ->
             launch {
                 val get = p.server.acceptRequest()
                 get.respond(200, Http3Headers.of("content-type" to "text/plain", "set-cookie" to secrets[1])).let {
@@ -201,7 +199,7 @@ class H3QlogTest {
             val sink = MemoryQlogSink(logHeaderValues = true)
             // quotes and backslashes to escape, near the 64 KiB field section limit
             val big = buildString { repeat(10_000) { append("\"\\ab") } }
-            H3Pair.open(serverQuic = traced(sink), clientQuic = traced(sink)).useScoped { p ->
+            H3Pair.open(serverQlog = sink, clientQlog = sink).useScoped { p ->
                 launch {
                     p.server
                         .acceptRequest()
@@ -222,7 +220,7 @@ class H3QlogTest {
     @Test fun aHeadersFrameTooLargeIsLoggedWithoutFields() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, http3Settings { maxFieldSectionSize = 100 })
                 val raw = RawPeer(c)
@@ -242,7 +240,7 @@ class H3QlogTest {
     @Test fun unknownFramesAndStreamTypesAreLoggedByNumber() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
@@ -282,7 +280,7 @@ class H3QlogTest {
     @Test fun anErrorMidStreamLeavesAValidTrace() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
                 Http3Connection.server(s)
                 val raw = RawPeer(c)
@@ -302,7 +300,7 @@ class H3QlogTest {
     @Test fun aStreamEndingInsideAFrameLeavesAValidTrace() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
                 Http3Connection.server(s)
                 val raw = RawPeer(c)
@@ -322,9 +320,9 @@ class H3QlogTest {
     @Test fun qpackStateAndBlockedStreamsAreLogged() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
-                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val server = Http3Connection.server(s, http3Settings { qpack { enableDynamicTable() } })
                 val raw = RawPeer(c)
                 raw.openControl()
                 val encoderStream = raw.uni(StreamType.QPACK_ENCODER)
@@ -357,7 +355,7 @@ class H3QlogTest {
     @Test fun negative_aFrameWhoseWriteFailedIsNotCreated() =
         h3Test {
             val sink = MemoryQlogSink()
-            QuicPair.open(traced(sink)).use { q ->
+            QuicPair.open(serverQlog = sink).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val streams = kotlinx.coroutines.channels.Channel<io.kuicksilver.quic.QuicStream>(1)
@@ -385,7 +383,7 @@ class H3QlogTest {
         h3Test {
             val sink = MemoryQlogSink(logHeaderValues = true)
             val n = 40
-            H3Pair.open(serverQuic = traced(sink), clientQuic = traced(sink)).useScoped { p ->
+            H3Pair.open(serverQlog = sink, clientQlog = sink).useScoped { p ->
                 launch {
                     repeat(n) {
                         val r = p.server.acceptRequest()
@@ -434,7 +432,7 @@ class H3QlogTest {
     @Test fun negative_aThrowingSinkLeavesTheConnectionAlone() =
         h3Test {
             val sink = MemoryQlogSink { if ("\"name\":\"http:" in it) throw IllegalStateException("disk full") }
-            H3Pair.open(serverQuic = traced(sink), clientQuic = traced(sink)).useScoped { p ->
+            H3Pair.open(serverQlog = sink, clientQlog = sink).useScoped { p ->
                 launch {
                     repeat(3) {
                         val r = p.server.acceptRequest()
@@ -477,7 +475,7 @@ class H3QlogTest {
             val sink = AsyncQlogSink(inner, queueCapacity = 64)
             try {
                 h3Test {
-                    H3Pair.open(serverQuic = traced(sink), clientQuic = traced(sink)).useScoped { p ->
+                    H3Pair.open(serverQlog = sink, clientQlog = sink).useScoped { p ->
                         launch {
                             repeat(20) {
                                 val r = p.server.acceptRequest()

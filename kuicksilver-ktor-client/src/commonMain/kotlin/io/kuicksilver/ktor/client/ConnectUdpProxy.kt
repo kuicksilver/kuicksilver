@@ -8,14 +8,14 @@ import io.kuicksilver.http3.UdpProxyTemplate
 import kotlin.io.encoding.Base64
 
 /**
- * A CONNECT-UDP proxy (RFC 9298, MASQUE) for the engine's HTTP/3: `engine { connectUdpProxy = ConnectUdpProxy(template) }`.
+ * A CONNECT-UDP proxy (RFC 9298, MASQUE) for the engine's HTTP/3: `engine { proxies { connectUdp = ConnectUdpProxy(template) } }`.
  * Each HTTP/3 connection to an origin it [applies][ConnectUdpProxy.applies] to runs inside a UDP tunnel through the proxy
  * (`Http3Connection.connectUdp` on a connection to the proxy, the tunnel as the inner connection's socket), with TLS end to
  * end to the origin: the proxy sees the origin's name and port and UDP, never the requests.
  *
  * @property template the proxy's URI Template (RFC 9298 section 2), checked when it was parsed; its authority is the proxy's
  *   host and port (443 when it has none), reached over HTTP/3 directly with the proxy's TLS settings
- *   (`KuicksilverEngineConfig.proxyTls`, by default the engine's trust without what names the origin and without the client
+ *   (`proxies { tls { } }`, by default the engine's trust without what names the origin and without the client
  *   certificate, as an `https://` proxy over TCP; ADR-0023); a failed handshake with it is a [ProxyTlsException].
  * @property credentials sent to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT, never to the origin;
  *   null for none. A user name with a colon, or control characters in either part, fail here with IllegalArgumentException

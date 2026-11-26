@@ -150,15 +150,16 @@ private suspend fun ByteWriteChannel.pattern(
 private fun ApplicationCall.rate(): Long? = request.queryParameters["rate"]?.toLongOrNull()?.takeIf { it > 0 }?.coerceAtLeast(MIN_RATE)
 
 /**
- * The server of the Compose demo: Kuicksilver's Ktor engine with HTTP/1.1 over TLS and HTTP/3 on [Options.httpsPort], and
- * plain HTTP/1.1 on [Options.httpPort]. `./gradlew -p samples/compose-demo :server:run`.
+ * The server of the Compose demo: Kuicksilver's Ktor engine with HTTP/1.1 over TLS (HTTP/2 off) and HTTP/3 on
+ * [Options.httpsPort], and plain HTTP/1.1 on [Options.httpPort]. `./gradlew -p samples/compose-demo :server:run`.
  */
 fun main(args: Array<String>) {
     if ("--help" in args || "-h" in args) return println(USAGE)
     val o = parseOptions(args)
     val server =
         embeddedServer(Kuicksilver, configure = {
-            tlsConnector(TlsIdentity.fromPem(DemoServerCerts.chainPem, DemoServerCerts.keyPem.toCharArray())) {
+            tlsConnector {
+                tls { identity = TlsIdentity.fromPem(DemoServerCerts.chainPem, DemoServerCerts.keyPem.toCharArray()) }
                 host = o.host
                 port = o.httpsPort
             }
@@ -166,7 +167,9 @@ fun main(args: Array<String>) {
                 host = o.host
                 port = o.httpPort
             }
-            altSvc = o.altSvc
+            http3 { altSvc = o.altSvc }
+            // the TCP references compare against HTTP/1.1 (README, "How the comparison is kept fair"): HTTP/2, on by default, is off
+            http2 { enabled = false }
         }) {
             routing {
                 get("/") { call.respondText("${call.request.httpVersion}\n$USAGE\n") }

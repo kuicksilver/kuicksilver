@@ -39,10 +39,10 @@ class FlushAllocationTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                         }.build(),
                 ) as EndpointLoop
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(30.seconds) {
                     // no accelerated socket on this host (a sandbox refusing its probe): nothing to measure, and said so

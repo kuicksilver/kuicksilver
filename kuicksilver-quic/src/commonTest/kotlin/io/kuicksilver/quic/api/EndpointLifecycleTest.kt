@@ -111,7 +111,7 @@ class EndpointLifecycleTest {
     @Test fun payloadSizeAboveTheRuntimeSlotIsRefused() =
         runBlocking {
             // the loop's datagram slots hold 1500 bytes; advertising more would let peers send datagrams the runtime truncates
-            assertFailsWith<IllegalArgumentException> { ApiPair.open(serverQuic = quicConfig { maxUdpPayloadSize = 9000 }) }
+            assertFailsWith<IllegalArgumentException> { ApiPair.open(serverQuic = quicConfig { pathMtu { maxReceive = 9000 } }) }
             ApiPair.open().use { p ->
                 assertFailsWith<IllegalArgumentException> {
                     p.client.connect(
@@ -120,7 +120,7 @@ class EndpointLifecycleTest {
                             .Builder(CoreFixtures.client())
                             .apply {
                                 quic =
-                                    quicConfig { maxUdpPayloadSize = 9000 }
+                                    quicConfig { pathMtu { maxReceive = 9000 } }
                             }.build(),
                     )
                 }
@@ -165,9 +165,9 @@ class EndpointLifecycleTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                                 acceptQueue = 2
-                                io = { net.open(serverAddr) }
+                                runtime { io = { net.open(serverAddr) } }
                             }.build(),
                     )
                 val loop = server as EndpointLoop
@@ -178,8 +178,8 @@ class EndpointLifecycleTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                this.io = { io }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { this.io = { io } }
                             }.build(),
                     )
                 val spoofed = (1..2).map { i -> client(DeafIo(net.open(InetSocketAddress("10.0.9.$i", 4000 + i)))) }
@@ -215,9 +215,9 @@ class EndpointLifecycleTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                                 acceptQueue = 2
-                                io = { net.open(serverAddr) }
+                                runtime { io = { net.open(serverAddr) } }
                             }.build(),
                     )
                 val clientIo = net.open(InetSocketAddress("10.0.1.1", 1001))
@@ -227,8 +227,8 @@ class EndpointLifecycleTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { clientIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { clientIo } }
                             }.build(),
                     )
                 val loop = server as EndpointLoop
@@ -282,9 +282,9 @@ class EndpointLifecycleTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                                 acceptQueue = 1
-                                io = { sio }
+                                runtime { io = { sio } }
                             }.build(),
                     )
                 val clients =
@@ -295,8 +295,8 @@ class EndpointLifecycleTest {
                             QuicEndpointConfig
                                 .Builder()
                                 .apply {
-                                    crypto = NullCryptoProvider
-                                    this.io = { io }
+                                    runtime { crypto = NullCryptoProvider }
+                                    runtime { this.io = { io } }
                                 }.build(),
                         )
                     }
@@ -340,9 +340,9 @@ class EndpointLifecycleTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                                 acceptQueue = 2
-                                io = { sio }
+                                runtime { io = { sio } }
                             }.build(),
                     )
                 val clients =
@@ -353,8 +353,8 @@ class EndpointLifecycleTest {
                             QuicEndpointConfig
                                 .Builder()
                                 .apply {
-                                    crypto = NullCryptoProvider
-                                    this.io = { io }
+                                    runtime { crypto = NullCryptoProvider }
+                                    runtime { this.io = { io } }
                                 }.build(),
                         )
                     }

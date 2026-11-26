@@ -8,7 +8,6 @@
 
 package io.kuicksilver.ktor.client.h2
 
-import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.client.request.ResponseAdapterAttributeKey
@@ -30,6 +29,7 @@ import io.kuicksilver.ktor.client.NeverIndexKey
 import io.kuicksilver.ktor.client.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.client.PriorityUpdater
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
+import io.kuicksilver.ktor.client.connectTimeoutException
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
 import io.kuicksilver.ktor.client.h1.expectsContinue
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.authority
@@ -38,6 +38,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool.Companion.h3Path
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.headersOf
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.unwrap
+import io.kuicksilver.ktor.client.h3.KeptRequestBodyKey
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
@@ -58,6 +59,19 @@ internal class H2NotProcessed(
     /** A body that cannot be produced again was (partly) taken: the request cannot go again. */
     val bodyConsumed: Boolean,
 ) : Exception(cause.message, cause)
+
+/**
+ * The server answered 421 (Misdirected Request) to a request sent on a connection of another origin (coalescing,
+ * ADR-0018): the response was dropped and its stream reset, and the caller sends the request once more on a connection of
+ * its own origin (RFC 9110 section 15.5.20).
+ */
+internal class H2Misdirected(
+    /** A body that cannot be produced again was (partly) taken: the request cannot go again. */
+    val bodyConsumed: Boolean,
+) : Exception("421 Misdirected Request on a connection of another origin")
+
+/** `cookie` alone, never indexed on a connection other origins may share (one set for every request). */
+private val COOKIE_ONLY: Set<String> = setOf("cookie")
 
 /** The server asked for HTTP/1.1 (HTTP_1_1_REQUIRED, RFC 9113 section 7). */
 internal class H2Http11Required(
@@ -169,6 +183,8 @@ internal suspend fun h2Exchange(
     data: HttpRequestData,
     callContext: CoroutineContext,
     events: EngineEvents,
+    // the stream is on another origin's connection (coalescing): a 421 is not the call's answer but [H2Misdirected]
+    misdirectedFails: Boolean = false,
     onReleased: (kept: Boolean) -> Unit,
 ): HttpResponseData {
     val requestTime = GMTDate()
@@ -188,7 +204,15 @@ internal suspend fun h2Exchange(
                 endStream = !hasBody,
                 urgency = local.urgency,
                 incremental = local.incremental,
-                neverIndexed = data.attributes.getOrNull(NeverIndexKey).orEmpty(),
+                // on a connection other origins may share, no cookie enters the shared HPACK table (RFC 7541 section 7.1)
+                neverIndexed =
+                    data.attributes.getOrNull(NeverIndexKey).let { marked ->
+                        when {
+                            !conn.mayCarryOthers -> marked.orEmpty()
+                            marked.isNullOrEmpty() -> COOKIE_ONLY
+                            else -> marked + "cookie"
+                        }
+                    },
             )
         } catch (e: Http2Exception) {
             onReleased(conn.client.isUsable)
@@ -246,7 +270,7 @@ internal suspend fun h2Exchange(
                     // a final response that came first does not want the body: the stream is reset when the call ends
                     if (!stream.hasResponse) {
                         bodyStarted = true
-                        val source = bodyChannel(body, callContext)
+                        val source = bodyChannel(body, callContext, data.attributes.getOrNull(KeptRequestBodyKey))
                         if (source != null) {
                             val counted = activity?.let { ConsumedBody(source, it) } ?: source
                             sender =
@@ -278,6 +302,9 @@ internal suspend fun h2Exchange(
                 stream.response()
             }
         val status = HttpStatusCode.fromValue(head.status)
+        // the server is not authoritative for the request here (RFC 9110 section 7.4): its answer is dropped, and the catch
+        // below gives the stream back (reset with CANCEL when unfinished) before the repeat, which then does not wait for it
+        if (misdirectedFails && head.status == 421) throw H2Misdirected(bodyStarted && !body.isReplayable())
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
         if (head.neverIndexed.isNotEmpty()) data.attributes.put(NeverIndexedReceivedKey, head.neverIndexed)
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
@@ -297,7 +324,7 @@ internal suspend fun h2Exchange(
         // took nothing more than its head); one whose content had started fails with the connection's end itself, so that
         // nothing takes it for a request that never left
         if (conn.client.serverPrefaceMissed && stream.openedBeforeServerSettings && !bodyStarted) {
-            throw ConnectTimeoutException(data, e)
+            throw data.connectTimeoutException(conn.connectTimeoutMillis, e)
         }
         val consumed = bodyStarted && !body.isReplayable()
         // on the stream, or for the whole connection: a GOAWAY with HTTP_1_1_REQUIRED reports the streams above its last

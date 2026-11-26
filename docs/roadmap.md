@@ -59,7 +59,7 @@ What 0.2.0 brings:
   idle close after GOAWAY with unfinished requests, QPACK on fragmented input, `te`/HEAD/204/304 edge cases,
   `keylogFile` O_NOFOLLOW, `KslLoader` directory ownership, `SessionCache` across engines; a full reassembly range
   table drops the packet instead of closing the connection (RFC 9000 §21.7).
-- `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
+- `quicConfig { expert { initialRtt } }` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
   handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide.
 - The accept queue: `acceptQueue` 128 by default, and an Initial that arrives while it is full is refused statelessly
   with CONNECTION_REFUSED (RFC 9000 §5.2.2).
@@ -83,7 +83,7 @@ What 0.2.0 brings:
   target and harsh simulator scenarios against CUBIC ([Choosing a congestion controller](guide/quic.md#choosing-a-congestion-controller)).
 
 Known limits of 0.2.0, stated on purpose:
-- A handshake under heavy loss with an ML-KEM peer, as in 0.1.0; mitigated by `QuicConfig.initialRtt`
+- A handshake under heavy loss with an ML-KEM peer, as in 0.1.0; mitigated by `quicConfig { expert { initialRtt } }`
   ([quic.md](guide/quic.md)).
 - 0-RTT is opt-in and experimental (ADR-0015); a replay into another server process that shares explicit ticket keys
   passes the freshness check only (threat model 3.8).
@@ -101,6 +101,23 @@ HTTP stacks in other languages (quic-go, quiche, OkHttp, Netty, Cronet). Release
 ships when its gate passes ([process.md](process.md)). What comes after 0.3.0 is a proposal, not a commitment; the order
 may change with user feedback, and every item still follows the release bar (each bug fixed with a test before a
 release). The [Not planned](#not-planned) list says what the project will not do, and why.
+
+### Version policy
+
+Decided on 2026-11-26:
+
+- A minor release, 0.X.0, brings new features together with the fixes found since the one before it. A fix found after
+  0.X.0 ships in 0.(X+1).0, and what does not make a minor release moves to the next one.
+- A patch release, 0.X.Y, is made only when users need a fix before the next minor release, or for a security fix that
+  cannot wait for it. An OpenSSL (or zlib, brotli) security release whose issue is reachable through Kuicksilver is such
+  a fix: it ships as a patch release of the latest line, in the times of [SECURITY.md](../SECURITY.md#openssl). A
+  Critical or High vulnerability always cannot wait: its fix ships as a patch release within 30 days of the assessment.
+  Nor can the fix for a Medium vulnerability that is publicly known, or whose disclosure date is within 60 days of the
+  assessment: it ships as a patch release within 60 days ([SECURITY.md](../SECURITY.md#what-happens-next)).
+- A non-security OpenSSL patch release (4.1.x) ships in the next minor release, not in a patch release of its own, and
+  the move to the OpenSSL 4.2 LTS branch is made in a minor release.
+- From 1.0, no breaking change within 1.x (Semantic Versioning, [stability.md](stability.md)); fixes come as patch
+  releases.
 
 ### 0.2.x — patch releases
 
@@ -125,9 +142,9 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 
 - WebTransport over HTTP/3 (draft-ietf-webtrans-http3), experimental.
 - HTTP/2 (RFC 9113, HPACK RFC 7541) in a new module `kuicksilver-http2` (ADR-0017): the client offers `h2` next to
-  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441, done in both engines); no
+  `http/1.1` over TLS, the server serves it (on by default), WebSocket over HTTP/2 (RFC 8441, done in both engines); no
   server push, h2c under [Feature parity](#feature-parity-decided-2026-11-16).
-- RFC 9460 HTTPS records as a source of h3, off by default (done: `http3 { httpsRecords }`).
+- RFC 9460 HTTPS records as a source of h3, off by default (done: `network { httpsRecords }`).
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
   dead one until the handshake timeout (the known limit in
@@ -139,7 +156,7 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - HTTP/3 priorities exposed in the Ktor engines (RFC 9218) (done; the HTTP/2 server schedules its responses by them too).
 - PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
 - Clients: SOCKS5 (CONNECT; the GSSAPI method comes in 0.4.0, see [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)) and system proxy
-  settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
+  settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a proxy resolver setting (`proxies { resolver }` since 0.3.0) whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
 - `loops > 1` on macOS, iOS and Windows: one socket routed in process by connection ID (done; the benchmark of what it buys is still to come).
 - A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).
@@ -171,17 +188,16 @@ what the peers really do, and is delivered whole or not at all.
   TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
   ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)). Done (2026-11-18).
 - Connection coalescing across origins for HTTP/2 and HTTP/3, off by default and opt-in ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md)): the address matches and the certificate covers the name,
-  with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
+  with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)). Done (2026-11-26).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy. Done in `kuicksilver-http3` over HTTP/3 (client tunnel, proxy, proxied QUIC;
-  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `connectUdpProxy`, the
+  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `proxies { connectUdp }`, the
   server's `connectUdp(proxy)` route).
 - PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources: implemented, experimental
   ([ADR-0022](adr/0022-proxy-protocol.md), [details](spec/rfc/spec-haproxy-proxy-protocol.md#receiver)).
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
 - HTTPS proxies (TLS to the proxy): implemented, experimental ([ADR-0023](adr/0023-https-proxy.md),
   [details](spec/rfc/9110.md#https-proxy)).
-- ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)) (done: on by default on both sides, brotli
   then zlib, built into libcrypto from pinned and verified releases, [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
@@ -199,14 +215,14 @@ what the peers really do, and is delivered whole or not at all.
   name check on rejection, and the move to 4.1.x has its own prerequisites; both are listed in
   [ADR-0019](adr/0019-openssl-4-and-ech.md).
 
-### 0.3.x — multipath QUIC
-
-Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), published 2026-11 from
-draft-ietf-quic-multipath) moved from 0.3.0 to a 0.3.x release on 2026-11-18: experimental and off by default, but with
-every MUST and SHOULD of the RFC. It starts with the refactoring to one packet number space per path.
-
 ### 0.4.0 (planned)
 
+- Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), published 2026-11 from
+  draft-ietf-quic-multipath): experimental and off by default, but with every MUST and SHOULD of the RFC. It starts with
+  the refactoring to one packet number space per path. It moved from 0.3.0 to a 0.3.x release on 2026-11-18 and, under
+  the [version policy](#version-policy), to 0.4.0 on 2026-11-26.
+- ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default; moved from the 0.3.0
+  [feature parity](#feature-parity-decided-2026-11-16) list on 2026-11-19.
 - The GSSAPI method of SOCKS5, a MUST of [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi): where the platform has a GSS-API
   (JGSS on the JVM, GSS.framework on Apple, SSPI on Windows, libgssapi on Linux); Android has none, so there it stays
   unavailable, documented.
@@ -215,10 +231,18 @@ every MUST and SHOULD of the RFC. It starts with the refactoring to one packet n
   and the client never offers `client_max_window_bits` (a MAY of section 7.1.2.2). Compressing such a message Huffman-only
   (no back-references, so any window size holds) would let both accept them; the Autobahn|Testsuite marks those cases
   UNIMPLEMENTED today ([interop.md](spec/interop.md#autobahntestsuite-the-websocket-server-and-client-25101-2026-11-26)).
+- Verification and measurements, moved from 0.3.0 on 2026-11-26 (none of them changes what 0.3.0 does):
+  - a mutation score of the protocol cores, starting with HTTP/3 ([how we verify](how-we-verify.md#planted-bugs-instead-of-mutation-testing));
+  - differential fuzzing of the QUIC code against quiche and quic-go;
+  - high-bandwidth benchmarks against the peer QUIC stacks on gigabit links;
+  - HTTP/3 client benchmarks against Cronet and URLSession on a phone ([why Kuicksilver](why-kuicksilver.md#performance));
+  - a benchmark against Netty's HTTP/3 server on the JVM (goodput, CPU per GB);
+  - benchmarks against OkHttp beyond `tools/bench/why-quic.sh`.
 
-### After 0.3.0, until 1.0
+### After 0.4.0, until 1.0
 
-Fixes and hardening, multipath QUIC in 0.3.x and the 0.4.0 items (above); no other new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
+Further minor releases under the [version policy](#version-policy), each with new features and fixes; patch releases
+only as that policy says. From 1.0, no breaking change within 1.x ([stability.md](stability.md)).
 
 ### After 1.0
 

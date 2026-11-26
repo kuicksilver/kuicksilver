@@ -152,7 +152,7 @@ class LifecycleTest {
                 serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
                 clientQuic =
                     quicConfig {
-                        maxIdleTimeout = kotlin.time.Duration.ZERO
+                        maxIdleTimeout = null
                         keepAlive = 1.seconds
                     },
             )
@@ -749,6 +749,23 @@ class LifecycleTest {
                 p.client.stats.memoryCeiling,
             )
         }
+    }
+
+    /** At the ceilings (2^60 streams of each kind, a 2^60 window) the sum saturates at Long.MAX_VALUE instead of wrapping negative. */
+    @Test fun memoryCeilingSaturatesAtTheCeilings() {
+        val p =
+            CorePair(
+                clientQuic =
+                    quicConfig {
+                        maxBidiStreams = 1L shl 60
+                        expert { maxUniStreams = 1L shl 60 }
+                        flowControl { maxConnectionWindow = QuicConfig.MAX_WINDOW }
+                    },
+            )
+        p.use { _ -> assertEquals(Long.MAX_VALUE, p.client.stats.memoryCeiling) }
+        assertEquals(Long.MAX_VALUE, satAdd(Long.MAX_VALUE - 1, 2))
+        assertEquals(Long.MAX_VALUE, satMul(3, Long.MAX_VALUE / 2))
+        assertEquals(6L, satMul(2, 3) + satAdd(0, 0))
     }
 
     // ---- final review fix pass ----

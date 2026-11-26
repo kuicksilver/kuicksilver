@@ -17,7 +17,7 @@ import io.kuicksilver.http3.http3Request
  * Opens a WebTransport session (draft-ietf-webtrans-http3-17) to [urlString], an `https` URL. Sessions share the
  * engine's pooled HTTP/3 connection to the URL's host and port with each other and with requests (RFC 9114 section 3.3:
  * one connection per address and port), as long as the server allows it: with WebTransport flow control on both sides
- * (draft-17 section 5.1) a connection carries up to `http3 { settings.webTransportMaxSessions }` sessions (4 by default)
+ * (draft-17 section 5.1) a connection carries up to `http3 { webTransport { maxSessionsPerConnection } }` sessions (4 by default)
  * and as many as the server accepts (section 5.2: a session it refuses with H3_REQUEST_REJECTED is opened again on
  * another connection to the same server, which the next sessions share too, unless none of this client's sessions was on
  * the refusing connection: that is the server's rate, and the refusal is thrown as
@@ -37,9 +37,9 @@ import io.kuicksilver.http3.http3Request
  * connection is lost, every session on it ends with the connection's reason ([WebTransportSession.closed]). Needs the
  * Kuicksilver engine (IllegalStateException otherwise) and an open client (IllegalStateException after `close()`).
  *
- * Refused with UnsupportedOperationException: under `http3 { discovery = H1Only }`, which turns HTTP/3 off, while
- * `http3 { http3Allowed }` returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
- * `http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }`
+ * Refused with UnsupportedOperationException: under `http3 { enabled = false }`, while
+ * `http3 { allowed }` returns false (read once per call; one that throws allows it), and when a proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
+ * `http3 { webTransport { proxyPolicy } }` asks to connect directly. At most `http3 { webTransport { maxSessions } }`
  * (64) sessions are open at once on the client; one more fails at once with IllegalStateException.
  *
  * The connection goes straight to the URL's host and port: Alt-Svc is not consulted, and the CONNECT never goes in
@@ -60,25 +60,29 @@ public suspend fun HttpClient.webTransport(
             ?: throw IllegalStateException("webTransport needs the Kuicksilver engine, not ${engine::class.simpleName}")
     val url = Url(urlString)
     require(url.protocol == URLProtocol.HTTPS) { "WebTransport needs an https URL, not ${url.protocol.name}" }
-    if (engine.config.http3.discovery == Http3DiscoveryMode.H1Only) {
-        throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { discovery = H1Only } turns off")
+    if (!engine.config.http3.enabled) {
+        throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { enabled = false } turns off")
     }
     // the kill switch, as for H3Only requests: WebTransport has no TCP fallback, so it fails before any connection
-    if (!engine.http3Allowed()) throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3Allowed turns off")
+    if (!engine.http3Allowed()) throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { allowed } turns off")
+    val policy = engine.config.http3.webTransport.proxyPolicy
     val viaConnectUdp =
-        engine.config.connectUdpProxy
+        engine.config.proxies.connectUdp
             ?.applies
             ?.invoke(url) == true
-    if (viaConnectUdp && !engine.config.http3.webTransportIgnoresConnectUdpProxy) {
+    val bypassUdp = policy == WebTransportProxyPolicy.BypassConnectUdpProxy || policy == WebTransportProxyPolicy.BypassAll
+    val bypassHttp = policy == WebTransportProxyPolicy.BypassHttpProxy || policy == WebTransportProxyPolicy.BypassAll
+    if (viaConnectUdp && !bypassUdp) {
         throw UnsupportedOperationException(
             "WebTransport does not go through the CONNECT-UDP proxy that applies to ${url.host}: exempt the host with its " +
-                "applies, or set http3 { webTransportIgnoresConnectUdpProxy = true } to connect directly",
+                "applies, or set http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassConnectUdpProxy } } to connect directly",
         )
     }
-    if (!engine.config.http3.webTransportIgnoresProxy && engine.effectiveProxyFor(url) != null) {
+    if (!bypassHttp && engine.effectiveProxyFor(url) != null) {
         throw UnsupportedOperationException(
             "WebTransport runs over UDP and cannot go through the proxy that applies to ${url.host}: exempt the host from the " +
-                "proxy (the proxy's bypass list), configure no proxy for it, or set http3 { webTransportIgnoresProxy = true } " +
+                "proxy (the proxy's bypass list), configure no proxy for it, or set " +
+                "http3 { webTransport { proxyPolicy = WebTransportProxyPolicy.BypassHttpProxy } } " +
                 "to connect directly",
         )
     }

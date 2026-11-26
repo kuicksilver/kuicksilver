@@ -66,7 +66,7 @@
 #   --central-prerelease     a prerelease to Maven Central after all: without it (or --github-prerelease) a prerelease
 #                            version is refused, also in a dry run, as Central grants a few releases a month only.
 # Env: KSL_GRADLE  the Gradle launcher, which sets its own --max-workers (default ./gradlew --max-workers=2)
-#      KSL_CENTRAL_MAX_FILES (2620), KSL_CENTRAL_MAX_BYTES (100000000)  the portal's limits for this namespace
+#      KSL_CENTRAL_MAX_FILES (3900), KSL_CENTRAL_MAX_BYTES (150000000)  the portal's limits for this namespace
 # Credentials (never in the repository, never printed): ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* variables,
 #   mavenCentralUsername / mavenCentralPassword, and signing.keyId + signing.password + signing.secretKeyRingFile
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
@@ -90,8 +90,9 @@ esac; shift; done
 # drift accepted: the LLVM tools may come from another NDK than the pinned one (tools/clean-build-env.sh)
 [ "$allow_drift" = 0 ] || ksl_allow_toolchain_drift
 
-# io.kuicksilver's grant of 2026-10-20: 7 releases, 100 MB and 2620 files per month (Sonatype's default is 1167 files, 78 MB)
-max_files="${KSL_CENTRAL_MAX_FILES:-2620}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-100000000}"
+# io.kuicksilver's grant of 2026-11-14: 7 releases, 150 MB and 3900 files per month (2026-10-20: 100 MB, 2620 files;
+# Sonatype's default is 1167 files, 78 MB)
+max_files="${KSL_CENTRAL_MAX_FILES:-3900}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-150000000}"
 if [ -n "${KSL_GRADLE:-}" ]; then read -r -a G <<< "$KSL_GRADLE"; else G=(./gradlew --max-workers=2); fi   # a launcher sets its own --max-workers
 out=build/release; logs="$out/logs"; art="$out/jni-artifacts"; m2="$root/$out/m2"
 mkdir -p "$logs"
@@ -188,7 +189,7 @@ fi
 base="${version%%-*}"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
-    samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts \
+    samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts samples/kq-cli/build.gradle.kts \
     tools/check/consumer-smoke.sh; do
   have=$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT' "$f" 2>/dev/null | sort -u | tr '\n' ' ' || true)
   [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"
@@ -567,7 +568,7 @@ order (docs/release.md, "Prereleases on GitHub only"; the Swift package tag is i
        git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
   3. The GitHub release as a draft (not public yet, and pages.yml does not run):
        gh release create v$version --draft --prerelease --verify-tag --title "Kuicksilver $version" \\
-         --notes-file <the CHANGELOG section of $version, with $repo_doc appended> \\
+         --notes-file <release notes linking https://github.com/kuicksilver/kuicksilver/blob/v$version/CHANGELOG.md#<its section> (at the tag: the final merges it away; a body takes at most 125,000 characters), with $repo_doc appended> \\
          $(printf '%s ' "${assets[@]}")
   4. The draft's zip against Package.swift (gh download, GitHub's digest, SHA-256), then publish it, then the public URL:
        tools/release/swift-package-check.sh remote $version --draft
@@ -596,7 +597,9 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
   4. Then, and only then: TZ=UTC git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
-     and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
+     and the GitHub release from the tag with release notes that link the CHANGELOG section at the tag,
+     https://github.com/kuicksilver/kuicksilver/blob/v$version/CHANGELOG.md#<its section> (a release body takes at most
+     125,000 characters), with these six files attached:
      $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).
   5. Once the GitHub release is published (the zip's URL resolves now), the Swift package:

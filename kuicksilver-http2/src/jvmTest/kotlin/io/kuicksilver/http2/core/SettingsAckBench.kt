@@ -8,6 +8,7 @@ import io.kuicksilver.http2.frame.FrameDecoder
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.http2Settings
 import java.io.File
 import java.util.Locale
 import kotlin.test.Test
@@ -56,11 +57,15 @@ class SettingsAckBench {
         shrink: Boolean,
     ): Pair<List<Long>, List<Long>> {
         var now = 0L
-        val server = H2ConnectionCore(Role.SERVER, Http2Settings(), now)
+        val server = H2ConnectionCore(Role.SERVER, Http2Settings.Default, now)
         val client =
             H2ConnectionCore(
                 Role.CLIENT,
-                Http2Settings(initialStreamWindow = BIG_WINDOW, maxStreamWindow = BIG_WINDOW, initialConnectionWindow = 15_728_640),
+                http2Settings {
+                    initialStreamWindow = BIG_WINDOW.toLong()
+                    maxStreamWindow = BIG_WINDOW.toLong()
+                    initialConnectionWindow = 15_728_640
+                },
                 now,
             )
         val link = FrameDecoder(H2.MAX_MAX_FRAME_SIZE) // watches the link for the acknowledgements

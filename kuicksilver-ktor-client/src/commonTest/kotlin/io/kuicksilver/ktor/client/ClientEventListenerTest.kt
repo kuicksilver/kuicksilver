@@ -145,7 +145,7 @@ class ClientEventListenerTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val events = Recorder()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { eventListener = events }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { observability { eventListener = events } }).use { c ->
                     repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                     eventually { events.events.count { it.startsWith("released") } == 2 }
                     val e = events.events
@@ -172,7 +172,7 @@ class ClientEventListenerTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val events = Recorder()
             try {
-                testClient(engine = { eventListener = events }).use { c ->
+                testClient(engine = { observability { eventListener = events } }).use { c ->
                     repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText()) }
                     eventually { events.events.count { it.startsWith("released") } == 2 }
                     val e = events.events
@@ -194,7 +194,7 @@ class ClientEventListenerTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             val events = Recorder()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = events }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { observability { eventListener = events } }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals("ok", r.bodyAsText())
                     val e = events.events
@@ -213,7 +213,7 @@ class ClientEventListenerTest {
     @Test fun aDeadAlternativeReportsAltSvcRaceAndBrokenMark() =
         clientTest {
             val (server, port) =
-                testServer(configure = { http3 = false }) {
+                testServer(configure = { http3 { enabled = false } }) {
                     routing {
                         get("/") {
                             call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
@@ -223,9 +223,9 @@ class ClientEventListenerTest {
                 }
             val events = Recorder()
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    eventListener = events
-                    quic = quicConfig { handshakeTimeout = 500.milliseconds }
+                testClient(Http3Discovery.Auto, engine = {
+                    observability { eventListener = events }
+                    quicHandshakeTimeoutForTest = 500.milliseconds
                 }).use { c ->
                     assertEquals("h1", c.get("https://127.0.0.1:$port/").bodyAsText()) // learns the alternative
                     assertTrue("selected HTTP/1.1 NoAlternative" in events.events, "${events.events}")
@@ -265,7 +265,7 @@ class ClientEventListenerTest {
                                 while ((input.readLine(LineEnding.Lenient) ?: "").isNotEmpty()) continue
                             }
                         }
-                    testClient(engine = { eventListener = events }).use { c ->
+                    testClient(engine = { observability { eventListener = events } }).use { c ->
                         kotlin.test.assertFails { c.post("http://127.0.0.1:$port/") { setBody("x") } }
                     }
                     server.join()
@@ -301,8 +301,10 @@ class ClientEventListenerTest {
                 }
             try {
                 testClient(engine = {
-                    eventListener = throwing
-                    this.logger = logger
+                    observability {
+                        eventListener = throwing
+                        this.logger = logger
+                    }
                 }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     assertEquals(listOf("event listener failed in callStart"), warnings.all)
@@ -347,10 +349,12 @@ class ClientEventListenerTest {
                     ): Unit = bug()
                 }
             try {
-                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.H3Only)) {
+                for (mode in listOf(null, Http3Discovery.H3Only)) {
                     testClient(mode, engine = {
-                        eventListener = throwing
-                        logger = KuicksilverLogger.None
+                        observability {
+                            eventListener = throwing
+                            logger = KuicksilverLogger.None
+                        }
                     }).use { c ->
                         repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText(), "$mode") }
                     }
@@ -395,12 +399,12 @@ class ClientEventListenerTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    this.logger = logger
-                    http3 {
+                testClient(Http3Discovery.H3Only, engine = {
+                    observability {
+                        this.logger = logger
                         this.qlog = qlog
-                        connectionListener = listener
                     }
+                    observability { connectionListener = listener }
                 }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     assertEquals(1, opened.all.size)

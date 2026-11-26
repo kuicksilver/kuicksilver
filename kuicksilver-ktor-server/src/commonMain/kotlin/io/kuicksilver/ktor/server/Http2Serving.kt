@@ -78,27 +78,7 @@ internal fun h2SettingsWithin(
     headerTimeout: Duration,
 ): Http2Settings {
     if (settings.maxHeaderBlockTime <= headerTimeout) return settings
-    return with(settings) {
-        Http2Settings(
-            headerTableSize,
-            maxConcurrentStreams,
-            initialStreamWindow,
-            maxStreamWindow,
-            initialConnectionWindow,
-            maxConnectionWindow,
-            maxFrameSize,
-            maxHeaderListSize,
-            settingsAckTimeout,
-            maxContinuationFrames,
-            maxControlFramesQueued,
-            maxEmptyFrames,
-            resetBurst,
-            resetsPerSecond,
-            headerTimeout,
-            glitchBurst,
-            glitchesPerSecond,
-        )
-    }
+    return settings.toBuilder().apply { maxHeaderBlockTime = headerTimeout }.build()
 }
 
 /**
@@ -140,7 +120,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 H2ServerConnection.start(
                     reader,
                     sock.openWriteChannel(),
-                    h2SettingsWithin(configuration.http2Settings, headerTimeout),
+                    h2SettingsWithin(h2Settings, headerTimeout),
                     this,
                     closeTransport = { sock.close() },
                     clock =
@@ -149,7 +129,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                                 .markNow()
                                 .let { m -> { m.elapsedNow().inWholeNanoseconds } },
                     ownResponseFields = { listOf("date" to httpDateNow()) }, // RFC 9110 section 6.6.1, on the 431
-                    enableConnectProtocol = configuration.webSocketsOverHttp2, // RFC 8441 section 3
+                    enableConnectProtocol = configuration.webSockets.overHttp2, // RFC 8441 section 3
                     // RFC 9113 section 9.2.1: "An endpoint MUST treat a TLS renegotiation as a connection error (Section 5.4.1) of
                     // type PROTOCOL_ERROR"; on a TLS 1.2 connection (versions = Tls12And13) the TLS layer refuses a client's
                     // renegotiation ClientHello and ends the input of an h2 connection at it
@@ -310,7 +290,7 @@ internal fun offenderToStrike(
 
 /**
  * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM for a flood limit): with
- * `http2RepeatOffenderPenalty`, one strike for its address ([offenderToStrike]: behind a PROXY protocol header the client it
+ * `http2 { repeatOffenderPenalty }`, one strike for its address ([offenderToStrike]: behind a PROXY protocol header the client it
  * names, or nobody). The
  * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
  * are the warning, rate-limited per connector ([RefusalReporter]).
@@ -321,13 +301,13 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
 ) {
     // counted after the strike is recorded: a test that waits for the count then sees the strike's effect at accept
     try {
-        val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
+        val offenders = h2Offenders ?: return // http2 { repeatOffenderPenalty } off (the default)
         // inside the try: whatever the address conversion throws, the flood end is still counted
         val client = offenderToStrike(remote?.let { peerAddressBytes(it) }, proxy)
         val struck = withContext(NonCancellable) { offenders.strike(client) }
         if (struck) {
             val who = client?.let { RepeatOffenders.describe(it) } ?: "an unknown address"
-            environment.log.debug(
+            log.debug(
                 "HTTP/2: connections from $who keep ending in ENHANCE_YOUR_CALM (flood limits); " +
                     "refusing its connections for a while",
             )
@@ -338,7 +318,7 @@ private suspend fun KuicksilverApplicationEngine.strikeOffender(
 }
 
 /**
- * GOAWAY for a connection without requests for [idle] (`connectionIdleTimeoutSeconds`); a request that arrives meanwhile
+ * GOAWAY for a connection without requests for [idle] (`tcp { idleTimeout }`); a request that arrives meanwhile
  * restarts the count. A connection that then cannot even write its GOAWAY within [sendTimeout] once its last request is
  * done (the client reads nothing) is aborted.
  */
@@ -363,7 +343,7 @@ private suspend fun closeWhenIdle(
 
 /**
  * One request stream as a Ktor call, after HTTP/3's handleHttp3: an Extended CONNECT for `websocket` (RFC 8441, with
- * `webSocketsOverHttp2`) is a WebSocket upgrade for Ktor's routes, any other CONNECT is answered 501 (the engine has no
+ * `webSockets { overHttp2 }`) is a WebSocket upgrade for Ktor's routes, any other CONNECT is answered 501 (the engine has no
  * tunnels), a request a gateway forwarded from early data and not replayable 425 (RFC 8470 section 5.1). The handler is cancelled
  * when the stream fails under it (the client's RST_STREAM, the connection), and then nothing is sent on the stream (RFC
  * 9113 section 5.4.2: no RST_STREAM in answer to one). A call that ends without a response on a live stream resets it
@@ -388,7 +368,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     var cancelled: CancellationException? = null
     try {
         // RFC 8441 section 5: `:protocol = websocket` (an upgrade token, matched in any case, RFC 9110 section 7.8); the
-        // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSocketsOverHttp2)
+        // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSockets { overHttp2 })
         val webSocket = r.method == "CONNECT" && r.protocol.equals(WebSocketOverH2.PROTOCOL, ignoreCase = true)
         if (r.method == "CONNECT" && !webSocket) {
             // a classic CONNECT (no tunnels here), or another protocol: RFC 9220 section 3's answer to an Extended CONNECT
@@ -399,7 +379,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         // RFC 9110 section 7.4 (RFC 9113 section 9.1.1): a request for a host this connection's certificate does not name
         // gets 421 and never reaches the application; the stream ends, the connection serves the client's other requests
         authorityCheck.rejection(r.scheme, r.authority)?.let { why ->
-            environment.log.debug(why)
+            log.debug(why)
             answered = runCatching { r.respond(MISDIRECTED_REQUEST, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
@@ -424,7 +404,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     webSocket,
                     engineDispatcher,
                     userDispatcher,
-                    configuration.webSocketMaxMessageSize,
+                    configuration.webSockets.maxMessageSize,
                     scheme,
                 )
             call.applyProxyHeader(proxy)
@@ -442,7 +422,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
-                        environment.log.debug("HTTP/2 stream ${r.id}: the error response failed too: $e")
+                        log.debug("HTTP/2 stream ${r.id}: the error response failed too: $e")
                     }
                 }
             } finally {
@@ -456,13 +436,13 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         throw e
     } catch (e: Throwable) {
         // the call's set-up (the application provider, the call itself) or its error handling failed: this stream only
-        environment.log.debug("HTTP/2 stream ${r.id} failed: $e")
+        log.debug("HTTP/2 stream ${r.id} failed: $e")
     } finally {
         // a call that failed after its response was committed cannot get the 500 any more: the stream is reset, unless it
         // already ended (section 5.4.2)
         if (!answered && !r.failed) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
         val release = configuration.h2ReleaseForTest
-        releaseH2Stream(r.id, environment.log, cancelled) { if (release == null) r.release() else release(r, cancelled) }
+        releaseH2Stream(r.id, log, cancelled) { if (release == null) r.release() else release(r, cancelled) }
     }
 }
 

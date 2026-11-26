@@ -67,7 +67,7 @@ public open class ProxyException(
 
 /**
  * The TLS handshake with an `https://` proxy ([ResolvedProxy.https]) or with a CONNECT-UDP proxy ([ConnectUdpProxy], over
- * QUIC) failed: its certificate did not verify against the proxy's name or trust (`KuicksilverEngineConfig.proxyTls`), it
+ * QUIC) failed: its certificate did not verify against the proxy's name or trust (`proxies { tls { } }`), it
  * refused the handshake, or it closed the connection during it. [cause][Throwable.cause] is what the TLS layer reported: a
  * `TlsException` (its `Verify` subclass says why the certificate was rejected, `AlertReceived` which alert the proxy
  * sent), or, over TCP only, an IOException for a connection that ended; over QUIC it is always a `TlsException`, and a
@@ -177,7 +177,7 @@ public class ResolvedProxy private constructor(
          * An HTTPS proxy at [host]:[port]: TLS to the proxy itself (an `https://` proxy URL), then the same requests as
          * [http] inside it, so [credentials] and the CONNECT's target never cross the network in clear. The proxy's
          * certificate is verified against [host] (a DNS name, or an IP address as an IP-ID; RFC 9525), which is also its
-         * SNI unless it is an IP address (RFC 6066 section 3), with `KuicksilverEngineConfig.proxyTls` (by default the
+         * SNI unless it is an IP address (RFC 6066 section 3), with `proxies { tls { } }` (by default the
          * engine's own trust without the origin's pins and expected name); ALPN offers `http/1.1` only. A request to an
          * `https` origin runs the origin's TLS inside the tunnel (TLS in TLS), verified as without a proxy. [host] goes
          * through the engine's `dns`. [credentials] are checked as for [http].
@@ -250,7 +250,7 @@ internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedP
 internal const val JVM_PROXY_ON_443: String =
     "an HTTP java.net.Proxy on port 443: a java.net.Proxy has no scheme (ProxyBuilder.http(Url(\"https://...\")) makes one), " +
         "and plain HTTP to an https:// proxy would send the CONNECT and the credentials in clear; for TLS to the proxy use " +
-        "proxyResolver = ProxyResolver { ResolvedProxy.https(host, 443, credentials) }, for a plain proxy on 443 use " +
+        "proxies { resolver = ProxyResolver { ResolvedProxy.https(host, 443, credentials) } }, for a plain proxy on 443 use " +
         "ResolvedProxy.http(host, 443, credentials)"
 
 /** The credentials in the proxy URL's user info, percent-decoded; null on the JVM and without user info. */
@@ -267,8 +267,8 @@ internal expect fun ProxyConfig.platformProxyIsDirect(): Boolean
 internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean?
 
 /**
- * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), else what its
- * `proxyResolver` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
+ * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxies { credentials }`), else what its
+ * `proxies { resolver }` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
  * proxy the engine cannot use, so a request never bypasses it.
  */
 @OptIn(ExperimentalKuicksilverApi::class)

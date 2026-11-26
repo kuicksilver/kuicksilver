@@ -74,7 +74,7 @@ import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocketRaw as serverWebSocketRaw
 
 /**
- * `http3 { connectionMigration }` (U.4a, RFC 9000 section 9): pooled HTTP/3 connections follow a network source. The
+ * `http3 { migration }` (U.4a, RFC 9000 section 9): pooled HTTP/3 connections follow a network source. The
  * "networks" are a test flow of numbers; a new network is a new loopback socket, and the network the connection leaves
  * goes deaf ([CuttableIo] under the engine's endpoint), as a Wi-Fi interface does when the device walks away from it.
  */
@@ -176,7 +176,7 @@ class ClientMigrationTest {
     private suspend fun server(
         g: Gates,
         allowMigration: Boolean = true,
-    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { this.allowMigration = false } }) {
+    ) = testServer(configure = { if (!allowMigration) http3 { quic { migration { allow = false } } } }) {
         routing {
             get("/big") {
                 call.respondBytesWriter {
@@ -214,19 +214,15 @@ class ClientMigrationTest {
         log: KuicksilverLogger? = null,
         block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
-        testClient(Http3DiscoveryMode.Preferred, block = block, engine = {
-            log?.let { logger = it }
-            quic = quicConfig { maxIdleTimeout = maxIdle }
-            eventListener = listener
-            engineIdle?.let { idleTimeout = it }
+        testClient(Http3Discovery.Preferred, block = block, engine = {
+            log?.let { observability { logger = it } }
+            http3 { quic { maxIdleTimeout = maxIdle } }
+            observability { eventListener = listener }
+            engineIdle?.let { pool { idleTimeout = it } }
             http3 {
-                hardDelay = Duration.INFINITE
-                connectionMigration = migration
-                endpoint =
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply { io = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } } }
-                        .build()
+                expert { raceHeadStart = RaceHeadStart.NoRace }
+                this.migration = migration
+                endpointIoForTest = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } }
             }
         })
 
@@ -358,7 +354,7 @@ class ClientMigrationTest {
         }
     }
 
-    /** Without `connectionMigration` (0.2's behaviour) the connection dies with its network; a GET in flight falls back to HTTP/1.1. */
+    /** Without `http3 { migration }` (0.2's behaviour) the connection dies with its network; a GET in flight falls back to HTTP/1.1. */
     @Test fun negative_noMigrationWithoutConfig() =
         h3Test {
             val g = Gates()
@@ -569,7 +565,7 @@ class ClientMigrationTest {
             val (server, port) = server(g)
             val nets = Networks()
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = { http3 { connectionMigration = nets.hook } }).use { c ->
+                testClient(null, engine = { http3 { migration = nets.hook } }).use { c ->
                     assertEquals("HTTP/1.1", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     assertTrue(nets.made.tryReceive().isFailure, "TCP connections do not migrate")
                 }
@@ -585,9 +581,9 @@ class ClientMigrationTest {
             val cut = CompletableDeferred<CuttableIo>()
             val log = Lines()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    logger = log
-                    http3 { connectionMigration = Http3ConnectionMigration { _, _ -> error("no network source") } }
+                testClient(Http3Discovery.H3Only, engine = {
+                    observability { logger = log }
+                    http3 { migration = Http3ConnectionMigration { _, _ -> error("no network source") } }
                 }).use { c ->
                     assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
                     withTimeout(10.seconds) {
@@ -627,7 +623,7 @@ class ClientMigrationTest {
     private suspend fun wsServer(
         s: WsScript,
         allowMigration: Boolean = true,
-    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { this.allowMigration = false } }) {
+    ) = testServer(configure = { if (!allowMigration) http3 { quic { migration { allow = false } } } }) {
         install(ServerWebSockets)
         routing {
             get("/small") { call.respondText(call.request.httpVersion) }
@@ -878,7 +874,7 @@ class ClientMigrationTest {
         }
 
     /**
-     * Without `connectionMigration` a WebSocket over HTTP/3 ends with its network: once the old path hears nothing, the
+     * Without `http3 { migration }` a WebSocket over HTTP/3 ends with its network: once the old path hears nothing, the
      * idle timeout (RFC 9000 section 10.1) ends the connection, and the session's `incoming` fails and its `closeReason` is
      * 1006 (RFC 6455 section 7.1.5: the connection closed without a Close frame) instead of waiting for ever. (Ktor's JVM
      * reader takes a failed input for its end, so `incoming` does not carry the transport's cause on every platform; the
@@ -887,7 +883,7 @@ class ClientMigrationTest {
     @Test fun negative_webSocketEndsWithItsNetworkWithoutMigration() = webSocketEndsWithItsNetwork(migration = false, allowMigration = true)
 
     /**
-     * With `connectionMigration` but a server that sent `disable_active_migration` (RFC 9000 section 9: the client "MUST
+     * With `http3 { migration }` but a server that sent `disable_active_migration` (RFC 9000 section 9: the client "MUST
      * NOT send packets ... from a different local address"), the switch is refused and the WebSocket ends with the old
      * network as without the option.
      */

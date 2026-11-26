@@ -73,7 +73,7 @@ class H2ServerFloodTest {
         val toServer = ByteChannel()
         val toClient = ByteChannel()
         val server =
-            H2ServerConnection.start(toServer, toClient, Http2Settings(), backgroundScope, {
+            H2ServerConnection.start(toServer, toClient, Http2Settings.Default, backgroundScope, {
                 toServer.close()
                 toClient.close()
             }, { testScheduler.currentTime * 1_000_000 })

@@ -86,8 +86,8 @@ class ServerMisdirectedRequestTest {
         val (server, port) =
             tlsServer(
                 configure = {
-                    this.http2 = http2
-                    this.http3 = http3
+                    http2 { this.enabled = http2 }
+                    http3 { this.enabled = http3 }
                 },
                 connector = connector,
             ) {
@@ -199,7 +199,7 @@ class ServerMisdirectedRequestTest {
     /** The exception RFC 9110 section 7.4 makes: "Unless the connection is from a trusted gateway". */
     @Test fun trustedGatewayConnectorServesAnyHost() =
         serverTest {
-            val (server, port, seen) = countingServer(connector = { trustedGateway = true })
+            val (server, port, seen) = countingServer(connector = { allowMisdirectedHosts = true })
             try {
                 val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n")
                 assertEquals("200", status(r), r)
@@ -218,7 +218,7 @@ class ServerMisdirectedRequestTest {
             val proxy = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
             val (server, port, seen) =
                 countingServer(connector = {
-                    sniSelector = { ServerTlsOverride(if (it.serverName == "proxy.internal") proxy else ServerFixtures.identity()) }
+                    tls { sniSelector = { ServerTlsOverride(if (it.serverName == "proxy.internal") proxy else ServerFixtures.identity()) } }
                 })
             try {
                 val viaProxyName =
@@ -290,7 +290,7 @@ class ServerMisdirectedRequestTest {
             }
         }
 
-    /** `plainConnector { trustedGateway = true }`: the clients are trusted gateways, so absolute-form https targets are served. */
+    /** `plainConnector { allowMisdirectedHosts = true }`: the clients are trusted gateways, so absolute-form https targets are served. */
     @Test fun trustedGatewayPlainConnectorServesAbsoluteFormHttps() =
         serverTest {
             val (server, port, seen) =
@@ -298,7 +298,7 @@ class ServerMisdirectedRequestTest {
                     plainConnector {
                         host = "127.0.0.1"
                         port = 0
-                        trustedGateway = true
+                        allowMisdirectedHosts = true
                     }
                 }
             try {
@@ -330,7 +330,7 @@ class ServerMisdirectedRequestTest {
                     H2ClientConnection.start(
                         t.openReadChannel(),
                         t.openWriteChannel(),
-                        Http2Settings(),
+                        Http2Settings.Default,
                         this,
                         Duration.INFINITE,
                         { t.close() },
@@ -391,8 +391,8 @@ class ServerMisdirectedRequestTest {
             )
         val open = ServerTlsOverride(identity)
         return countingServer(http2 = http2, http3 = http3, connector = {
-            sniSelector = { if (it.serverName == "a.wild.test") strict else open }
-            this.trustedGateway = trustedGateway
+            tls { sniSelector = { if (it.serverName == "a.wild.test") strict else open } }
+            this.allowMisdirectedHosts = trustedGateway
         })
     }
 

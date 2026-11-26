@@ -50,8 +50,8 @@ class H2HealthDeadlineRaceTest {
                     toServer.close()
                     toClient.close()
                 }
-                H2ServerConnection.start(toServer, toClient, Http2Settings(), scope, close)
-                val client = H2ClientConnection.start(toClient, toServer, Http2Settings(), scope, Duration.INFINITE, close)
+                H2ServerConnection.start(toServer, toClient, Http2Settings.Default, scope, close)
+                val client = H2ClientConnection.start(toClient, toServer, Http2Settings.Default, scope, Duration.INFINITE, close)
                 client.rt.healthAnsweredForTest = {
                     yield() // throws when the bound already fired: the run does not count
                     reached = true

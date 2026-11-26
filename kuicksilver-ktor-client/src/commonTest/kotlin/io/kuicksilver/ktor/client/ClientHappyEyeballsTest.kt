@@ -63,7 +63,7 @@ class ClientHappyEyeballsTest {
                 }
             val tried = ArrayList<String>()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     connectTimeout = 20.seconds
                     familyResolverForTest = { _, v6 -> listOf(if (v6) loopback6 else loopback4) }
                 }).use { c ->
@@ -122,7 +122,7 @@ class ClientHappyEyeballsTest {
         }
 
     /** A WebSocket's CONNECTING lock (RFC 6455 section 4.1) is keyed by the families that answered: [discovery]'s. */
-    private suspend fun webSocketWithAStalledAaaa(discovery: Http3DiscoveryMode) {
+    private suspend fun webSocketWithAStalledAaaa(discovery: Http3Discovery?) {
         val (server, port) = echoServer()
         val never = CompletableDeferred<Unit>()
         try {
@@ -147,10 +147,10 @@ class ClientHappyEyeballsTest {
     }
 
     /** Over HTTP/1.1: the keys came from both families, so a stalled AAAA cost the connect timeout (a failure). */
-    @Test fun negative_aWebSocketOverH1DoesNotWaitForAStalledAaaa() = clientTest { webSocketWithAStalledAaaa(Http3DiscoveryMode.H1Only) }
+    @Test fun negative_aWebSocketOverH1DoesNotWaitForAStalledAaaa() = clientTest { webSocketWithAStalledAaaa(null) }
 
     /** Over HTTP/3: the keys came from both families outside any timeout, so a stalled AAAA held the WebSocket for good. */
-    @Test fun negative_aWebSocketOverH3DoesNotWaitForAStalledAaaa() = h3Test { webSocketWithAStalledAaaa(Http3DiscoveryMode.H3Only) }
+    @Test fun negative_aWebSocketOverH3DoesNotWaitForAStalledAaaa() = h3Test { webSocketWithAStalledAaaa(Http3Discovery.H3Only) }
 
     /**
      * A WebSocket over HTTP/3 keys its CONNECTING lock by the URL's name and the address of the connection it uses, with no
@@ -172,7 +172,7 @@ class ClientHappyEyeballsTest {
             val stalled = MutableStateFlow(false)
             val never = CompletableDeferred<Unit>()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     connectTimeout = 20.seconds
                     familyResolverForTest = { _, v6 ->
                         if (stalled.value) never.await()

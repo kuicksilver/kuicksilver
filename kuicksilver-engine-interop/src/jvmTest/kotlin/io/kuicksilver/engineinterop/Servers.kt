@@ -55,9 +55,9 @@ internal class RunningServer(
 
 /**
  * Starts [engine] on a free loopback port: over TLS with the test identity when [tls] (Kuicksilver and Netty), with
- * HTTP/2 on Kuicksilver's connector when [http2], and HTTP/3 on Netty when [http3] (ours always listens for HTTP/3 next
- * to TCP). [deflate] installs the server's permessage-deflate: PerMessageDeflate on ours, Ktor's WebSocketDeflateExtension
- * on Ktor's engines.
+ * HTTP/2 on Kuicksilver's connector unless [http2] is false (its default is on), and HTTP/3 on Netty when [http3] (ours
+ * always listens for HTTP/3 next to TCP). [deflate] installs the server's permessage-deflate: PerMessageDeflate on ours,
+ * Ktor's WebSocketDeflateExtension on Ktor's engines.
  */
 internal fun startServer(
     engine: ServerEngine,
@@ -72,7 +72,8 @@ internal fun startServer(
             ServerEngine.Kuicksilver -> {
                 embeddedServer(Kuicksilver, configure = {
                     if (tls) {
-                        tlsConnector(Pki.identity()) {
+                        tlsConnector {
+                            tls { identity = Pki.identity() }
                             host = "127.0.0.1"
                             port = 0
                         }
@@ -82,7 +83,9 @@ internal fun startServer(
                             port = 0
                         }
                     }
-                    this.http2 = http2
+                    // HTTP/2 is the server's default since 0.3.0: the H2 pairs run the server as configured by default, the H1Tls
+                    // pairs (one per client that offers h2) turn it off to keep HTTP/1.1 over TLS covered
+                    if (!http2) http2 { enabled = false }
                     shutdownGracePeriod = 0
                 }) { interopModule(probe, if (deflate) ({ install(PerMessageDeflate) }) else null) }
             }

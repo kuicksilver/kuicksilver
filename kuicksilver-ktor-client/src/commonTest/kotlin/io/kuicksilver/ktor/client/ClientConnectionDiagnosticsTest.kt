@@ -34,6 +34,7 @@ import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
@@ -145,12 +146,12 @@ class ClientConnectionDiagnosticsTest {
             val (server, port) = testServer(module = okServer())
             val heard = Heard()
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = {
-                    eventListener = heard
+                testClient(Http3Discovery.Preferred, engine = {
+                    observability { eventListener = heard }
                     http3 {
-                        hardDelay = Duration.INFINITE
-                        connectionListener = heard.quic
+                        expert { raceHeadStart = RaceHeadStart.NoRace }
                     }
+                    observability { connectionListener = heard.quic }
                 }).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
@@ -169,6 +170,9 @@ class ClientConnectionDiagnosticsTest {
                     assertNotNull(path.remoteConnectionId)
                     assertTrue(q.smoothedRtt.isPositive(), "$q")
                     assertEquals(0, q.pathChanges)
+                    // the version the handshake settled, the one the connection listener's handle reads too
+                    assertSame(VersionProfile.V1, q.version)
+                    assertSame(handle.version, q.version)
                     assertTrue(d.connectFailures.isEmpty(), "${d.connectFailures}")
                     // the snapshot's text names no connection ID
                     assertFalse(path.localConnectionId!! in q.toString(), "$q")
@@ -187,7 +191,7 @@ class ClientConnectionDiagnosticsTest {
         clientTest {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                testClient(null).use { c ->
                     val r = c.get("https://127.0.0.1:$port/")
                     val d = assertNotNull(r.kuicksilverDiagnostics)
                     assertEquals(Transport.Tcp, d.transport)
@@ -216,9 +220,9 @@ class ClientConnectionDiagnosticsTest {
             val (udp, port) = udpOn(selector, 0)
             val heard = Heard()
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    quic = quicConfig { handshakeTimeout = 300.milliseconds }
-                    eventListener = heard
+                testClient(Http3Discovery.H3Only, engine = {
+                    quicHandshakeTimeoutForTest = 300.milliseconds
+                    observability { eventListener = heard }
                 }).use { c ->
                     val e = assertFailsWith<QuicException.ConnectionLost.Timeout> { c.get("https://127.0.0.1:$port/") }
                     val d = assertNotNull(e.kuicksilverDiagnostics, "the exception carries the call's diagnostics")
@@ -253,7 +257,7 @@ class ClientConnectionDiagnosticsTest {
             try {
                 coroutineScope {
                     val (listener, port) = alertingTcp(selector, 0)
-                    testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = heard }).use { c ->
+                    testClient(null, engine = { observability { eventListener = heard } }).use { c ->
                         val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                         assertProtocolVersionAlert(e)
                         val d = assertNotNull(e.kuicksilverDiagnostics)
@@ -295,10 +299,10 @@ class ClientConnectionDiagnosticsTest {
                             second = { p -> alertingTcp(selector, p).also { alerting = it.first } },
                             releaseSecond = { it.close() },
                         )
-                    testClient(Http3DiscoveryMode.Preferred, engine = {
-                        quic = quicConfig { handshakeTimeout = 300.milliseconds }
-                        eventListener = heard
-                        http3 { hardDelay = Duration.INFINITE }
+                    testClient(Http3Discovery.Preferred, engine = {
+                        quicHandshakeTimeoutForTest = 300.milliseconds
+                        observability { eventListener = heard }
+                        http3 { expert { raceHeadStart = RaceHeadStart.NoRace } }
                     }).use { c ->
                         val e = assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
                         assertProtocolVersionAlert(e)
@@ -354,7 +358,7 @@ class ClientConnectionDiagnosticsTest {
                             second = { p -> alertingTcp(selector, p).also { alerting = it.first } },
                             releaseSecond = { it.close() },
                         )
-                    testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = heard }).use { c ->
+                    testClient(Http3Discovery.Preferred, engine = { observability { eventListener = heard } }).use { c ->
                         // the QUIC setup waits until the TCP side failed in TLS
                         (c.engine as KuicksilverEngine).h3.beforeSetupForTest = { withTimeout(10.seconds) { heard.tlsFailed.await() } }
                         val r = c.get("https://127.0.0.1:$port/")
@@ -377,7 +381,7 @@ class ClientConnectionDiagnosticsTest {
         h3Test {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.Preferred, engine = { http3 { hardDelay = Duration.INFINITE } }).use { c ->
+                testClient(Http3Discovery.Preferred, engine = { http3 { expert { raceHeadStart = RaceHeadStart.NoRace } } }).use { c ->
                     val first = assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection)
                     val all =
                         coroutineScope {
@@ -406,9 +410,9 @@ class ClientConnectionDiagnosticsTest {
                     // kept open and silent until the end, then closed (the leak sentinel counts an accepted socket left open)
                     val sockets = AtomicReference(emptyList<io.ktor.network.sockets.Socket>())
                     val accepted = launch { runCatching { while (true) listener.accept().also { s -> sockets.update { it + s } } } }
-                    testClient(Http3DiscoveryMode.H1Only, engine = {
+                    testClient(null, engine = {
                         connectTimeout = 500.milliseconds
-                        eventListener = heard
+                        observability { eventListener = heard }
                     }).use { c ->
                         val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
                         val d = assertNotNull(e.kuicksilverDiagnostics)
@@ -432,9 +436,9 @@ class ClientConnectionDiagnosticsTest {
     /** A name lookup that never answers uses the whole connect timeout: one NameLookup failure, without an address. */
     @Test fun negative_aLookupThatNeverAnswersIsATimeoutWithoutAnAddress() =
         clientTest {
-            testClient(Http3DiscoveryMode.H1Only, engine = {
+            testClient(null, engine = {
                 connectTimeout = 300.milliseconds
-                dns = Dns { awaitCancellation() }
+                network { dns = Dns { awaitCancellation() } }
             }).use { c ->
                 val e = assertFailsWith<ConnectTimeoutException> { c.get("https://never.test/") }
                 val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
@@ -450,9 +454,9 @@ class ClientConnectionDiagnosticsTest {
             val selector = SelectorManager(Dispatchers.IO)
             val (udp, port) = udpOn(selector, 0)
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
+                testClient(Http3Discovery.H3Only, engine = {
                     connectTimeout = 500.milliseconds
-                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                    quicHandshakeTimeoutForTest = 30.seconds
                 }).use { c ->
                     val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
                     val d = assertNotNull(e.kuicksilverDiagnostics)
@@ -477,9 +481,9 @@ class ClientConnectionDiagnosticsTest {
                 try {
                     udpRelay(ep.localAddress.port) { port, relay ->
                         relay.serverDatagramsLeft = 1
-                        testClient(Http3DiscoveryMode.H3Only, engine = {
+                        testClient(Http3Discovery.H3Only, engine = {
                             connectTimeout = 1.seconds
-                            quic = quicConfig { handshakeTimeout = 30.seconds }
+                            quicHandshakeTimeoutForTest = 30.seconds
                         }).use { c ->
                             val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
                             val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
@@ -511,7 +515,7 @@ class ClientConnectionDiagnosticsTest {
                 })
             val heard = Heard()
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = heard }) {
+                testClient(null, engine = { observability { eventListener = heard } }) {
                     install(HttpTimeout) { requestTimeoutMillis = 300 }
                 }.use { c ->
                     val e = assertFailsWith<HttpRequestTimeoutException> { c.get("https://127.0.0.1:$port/slow") }
@@ -549,7 +553,7 @@ class ClientConnectionDiagnosticsTest {
                 })
             val heard = Heard()
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = heard }).use { c ->
+                testClient(null, engine = { observability { eventListener = heard } }).use { c ->
                     coroutineScope {
                         val call = async { c.get("https://127.0.0.1:$port/slow") }
                         withTimeout(10.seconds) { reached.await() }
@@ -584,7 +588,7 @@ class ClientConnectionDiagnosticsTest {
         h3Test {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val first = assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection)
                     assertFalse(first.reused)
                     val engine = c.engine as KuicksilverEngine
@@ -630,8 +634,8 @@ class ClientConnectionDiagnosticsTest {
                     }
                 })
             try {
-                testClient(Http3DiscoveryMode.H1Only, engine = {
-                    maxConnectionsPerRoute = 1
+                testClient(null, engine = {
+                    pool { maxConnectionsPerRoute = 1 }
                     connectTimeout = 500.milliseconds
                     http2 { enabled = false }
                 }).use { c ->
@@ -674,9 +678,11 @@ class ClientConnectionDiagnosticsTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = {
-                    eventListener = heard
-                    http3 { connectionListener = quic }
+                testClient(Http3Discovery.H3Only, engine = {
+                    observability {
+                        eventListener = heard
+                        connectionListener = quic
+                    }
                     resolverForTest = { _, p ->
                         listOf(
                             io.kuicksilver.ktor.network
@@ -741,7 +747,7 @@ class ClientConnectionDiagnosticsTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { http3 { connectionListener = quic } }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { observability { connectionListener = quic } }).use { c ->
                     coroutineScope {
                         // the body is read on only after the other call failed (and its diagnostics went wherever they went)
                         val aFailed = CompletableDeferred<Unit>()
@@ -876,7 +882,7 @@ class ClientConnectionDiagnosticsTest {
         h3Test {
             val (server, port) = testServer(module = okServer())
             try {
-                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                testClient(Http3Discovery.H3Only).use { c ->
                     val engine = c.engine as KuicksilverEngine
                     engine.h3.afterAcquireForTest = {
                         engine.h3.afterAcquireForTest = null
@@ -955,7 +961,7 @@ class ClientConnectionDiagnosticsTest {
                     }
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    testClient(Http3Discovery.H3Only).use { c ->
                         val waiting = async { runCatching { c.get("https://127.0.0.1:$port/hold") }.exceptionOrNull() }
                         withTimeout(20.seconds) { onThird.await() } // its third connection, the last repeat
                         val aFailed = CompletableDeferred<Unit>()
@@ -1053,7 +1059,7 @@ class ClientConnectionDiagnosticsTest {
                     }
                 }
             }) { port ->
-                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                testClient(null).use { c ->
                     coroutineScope {
                         val aFailed = CompletableDeferred<Unit>()
                         val bodyRead = CompletableDeferred<Unit>() // the other call read the first bytes of its body
@@ -1117,8 +1123,8 @@ class ClientConnectionDiagnosticsTest {
      */
     @Test fun negative_anH3OnlySetupFailureThatCannotBeCopiedCarriesTheDiagnostics() =
         clientTest {
-            testClient(Http3DiscoveryMode.H3Only, engine = {
-                dns = Dns { throw kotlinx.io.IOException("no such host") }
+            testClient(Http3Discovery.H3Only, engine = {
+                network { dns = Dns { throw kotlinx.io.IOException("no such host") } }
             }).use { c ->
                 val e = assertFailsWith<Throwable> { c.get("https://never.test/") }
                 val d = assertNotNull(e.kuicksilverDiagnostics, "the call's diagnostics: $e")

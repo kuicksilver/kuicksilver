@@ -33,6 +33,41 @@ Windows, with drop-in Ktor client and server engines.
 > the release in preparation. Until 0.3.0 is on Maven Central, build it from `main` and use `0.3.0-SNAPSHOT`
 > ([Install](docs/install.md#versions)). Try it, and tell us what breaks.
 
+## Features
+
+Experimental ones (`@ExperimentalKuicksilverApi`) are marked *exp.*
+
+- **HTTP/3, HTTP/2, HTTP/1.1** in one Ktor client engine and one server engine, on the JVM, Android, iOS, macOS, Linux
+  and Windows ([Ktor engines](docs/guide/ktor.md)).
+- **Alt-Svc discovery, protocol race and adaptive fallback**: HTTP/3 raced against TCP with a head start from the host's
+  RTT (TCP almost at once on a network where QUIC was never seen working); a broken alternative or a stalled QUIC
+  connection falls back to TCP
+  ([discovery](docs/guide/ktor.md#discovery-and-alt-svc), [racing and fallback](docs/guide/ktor.md#racing-and-fallback),
+  [stalled connections](docs/guide/ktor.md#stalled-http3-connections)).
+- **WebTransport** over HTTP/3, draft-ietf-webtrans-http3-17; servers also take drafts 16, 14 and 02 (browsers),
+  clients also offer 16 and 02 (*exp.*, [HTTP/3 guide](docs/guide/http3.md#webtransport-experimental)).
+- **QUIC datagrams** (RFC 9221) and HTTP datagrams (RFC 9297) ([QUIC guide](docs/guide/quic.md#datagrams-rfc-9221)).
+- **Encrypted Client Hello** (RFC 9849), client and server, over TCP and HTTP/3 (*exp.*,
+  [client](docs/guide/ktor.md#encrypted-client-hello-experimental), [server](docs/guide/ktor.md#encrypted-client-hello-on-the-server)).
+- **CONNECT-UDP** (RFC 9298, MASQUE): HTTP/3 through a CONNECT-UDP proxy, and the proxy side (*exp.*,
+  [client](docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental), [proxy](docs/guide/http3.md#connect-udp-experimental)).
+- **0-RTT**, opt-in on both sides, replay-guarded (*exp.*, [0-RTT](docs/guide/ktor.md#0-rtt-opt-in-experimental)).
+- **Connection migration** across networks (RFC 9000 section 9) (*exp.* in the client,
+  [Ktor](docs/guide/ktor.md#connection-migration), [QUIC](docs/guide/quic.md#migration-and-paths)).
+- **RFC-strict**: one row per requirement with the tests behind it ([RFC compliance](docs/spec/rfc-compliance.md)); every
+  departure for a specific peer is listed ([compatibility shims](docs/spec/compat-shims.md)).
+- **Interop** against 6 QUIC stacks: msquic, ngtcp2, picoquic, quic-go, quiche, quinn
+  ([interop results](docs/spec/interop.md)).
+- **qlog** per connection and per-call diagnostics (which protocol, why, which connection) (*exp.* in the Ktor engines,
+  [qlog](docs/guide/quic.md#qlog), [observability](docs/guide/ktor.md#observability-experimental)).
+
+Samples: [`kq`](samples/kq-cli/README.md), a curl-like command line on the client engine (macOS, Linux, Windows);
+[http3-server](samples/http3-server/README.md) (an HTTP/3 Ktor server from EngineMain and application.conf);
+[webtransport-chat](samples/webtransport-chat/README.md) (WebTransport streams and datagrams, a common-code client);
+[realtime-telemetry](samples/realtime-telemetry/README.md) (QUIC streams and datagrams);
+[compose-demo](samples/compose-demo/README.md) (HTTP/3 surviving a network switch on Android and iOS);
+[iOS app](samples/ios/README.md) (SwiftUI over a Kotlin facade).
+
 ## Add it
 
 ```kotlin
@@ -52,7 +87,8 @@ val client = HttpClient(Kuicksilver)   // io.kuicksilver.ktor.client.Kuicksilver
 
 // server: was embeddedServer(Netty, port = 8443, module = Application::module)
 embeddedServer(Kuicksilver, configure = {   // io.kuicksilver.ktor.server.Kuicksilver
-    tlsConnector(TlsIdentity.fromPem(chainPem, keyPem.toCharArray())) { port = 8443 }   // HTTP/1.1 over TLS and HTTP/3, one port
+    tls { pemFiles("/etc/tls/fullchain.pem", "/etc/tls/privkey.pem") }   // the key unencrypted PKCS#8
+    tlsConnector { port = 8443 }   // HTTP/1.1, HTTP/2 and HTTP/3 on one port
 }, module = Application::module).start(wait = true)
 ```
 
@@ -110,6 +146,13 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
   [docs/spec/rfc/](docs/spec/rfc/)), [interop results](docs/spec/interop.md), [compatibility
   shims](docs/spec/compat-shims.md), [reliability signals](docs/reliability.md), [benchmarks](docs/benchmarks.md),
   [threat model](docs/spec/threat-model.md).
+- Samples, each a Gradle build of its own that takes the library by coordinates: [`kq`](samples/kq-cli/README.md), a
+  curl-like command line on the client engine built as a native executable, an [HTTP/3 Ktor server in about twenty
+  lines](samples/http3-server/README.md) (TLS, Alt-Svc, HTTP/2 and HTTP/1.1 on the same port, the PROXY protocol), a
+  [WebTransport chat](samples/webtransport-chat/README.md) (Ktor server and a common-code client: streams for messages,
+  datagrams for typing indicators), a [real-time QUIC application](samples/realtime-telemetry/README.md) (streams,
+  datagrams, connection migration), a [Compose Multiplatform demo](samples/compose-demo/README.md) (a download that
+  survives a switch from Wi-Fi to the mobile network) and an [iOS app](samples/ios/README.md).
 - Internals: [architecture](docs/architecture.md), [decision records](docs/adr/README.md).
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [GOVERNANCE.md](GOVERNANCE.md) (roles, decisions, access continuity).

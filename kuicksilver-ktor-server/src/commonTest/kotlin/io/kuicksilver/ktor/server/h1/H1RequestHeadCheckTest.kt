@@ -74,7 +74,7 @@ class H1RequestHeadCheckTest {
     ): String = exchange(text.encodeToByteArray(), allowBareLf)
 
     /**
-     * RFC 9112 section 2.2: a recipient MAY take a bare LF as a line end; the server does so only with `h1AllowBareLf`
+     * RFC 9112 section 2.2: a recipient MAY take a bare LF as a line end; the server does so only with `http1 { allowBareLf }`
      * (`allowBareLf`). By default a bare LF that ends the request line, a field line or the head's empty line gets 400 and
      * the connection closes: a front proxy that reads the LF as part of the line frames the head differently (the
      * smuggling of section 11.2), and llhttp refuses it too. The pipelined request behind it is not served.

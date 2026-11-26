@@ -33,8 +33,8 @@ class NativeServerSocketTest {
                 val config =
                     quicEndpointConfig {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = NullCryptoProvider
-                        logger = KuicksilverLogger.None
+                        runtime { crypto = NullCryptoProvider }
+                        observability { logger = KuicksilverLogger.None }
                     }
                 val local = InetSocketAddress("127.0.0.1", 0)
                 if (portableServerSupported) {
@@ -57,8 +57,8 @@ class NativeServerSocketTest {
         get() =
             quicEndpointConfig {
                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                crypto = NullCryptoProvider
-                logger = KuicksilverLogger.None
+                runtime { crypto = NullCryptoProvider }
+                observability { logger = KuicksilverLogger.None }
             }
 
     /**

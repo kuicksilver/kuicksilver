@@ -1,11 +1,14 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.engine.handleFailure
 import io.ktor.util.pipeline.execute
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
@@ -27,6 +30,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.sniSelectedFor
+import io.kuicksilver.quic.specificIpOrNull
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -72,31 +76,8 @@ internal class H3Listener(
  * picks the UDP port and TCP follows).
  */
 internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnector): (suspend (Int) -> Http3Endpoint)? {
-    if (!configuration.http3) return null
-    // RFC 9114 section 6.2: refused when the engine starts, not clamped (Http3Endpoint.bind refuses it too)
-    configuration.http3Quic().maxUniStreams.let { n ->
-        require(n >= 3) {
-            "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the client opens its control and QPACK streams), not $n"
-        }
-    }
-    return { port -> configuration.http3Bind(InetSocketAddress(tls.host, port), http3EndpointConfig(tls), http3Settings()) }
-}
-
-@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
-    val s = h3SettingsWithin(configuration.http3Settings, configuration.requestHeaderTimeoutSeconds.seconds)
-
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    val connect =
-        (configuration.webSocketsOverHttp3 || configuration.webTransport || configuration.connectUdp) && !s.enableConnectProtocol
-    val wt = configuration.webTransport && !s.webTransport
-    if (!connect && !wt) return s
-    return s
-        .toBuilder()
-        .apply {
-            if (connect) enableConnectProtocol = true
-            if (wt) webTransport = true
-        }.build()
+    if (!configuration.http3.enabled) return null
+    return { port -> configuration.http3Bind(InetSocketAddress(tls.host, port), http3EndpointConfig(tls), h3Settings) }
 }
 
 /**
@@ -117,9 +98,9 @@ internal fun h3SettingsWithin(
 
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {
-    val quic = configuration.http3Quic()
-    return QuicEndpointConfig
-        .Builder()
+    val quic = h3Quic
+    return configuration
+        .endpointBase()
         .apply {
             server =
                 QuicServerConfig
@@ -127,24 +108,21 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                     .apply {
                         this.quic = quic
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                        earlyData = configuration.quicEarlyData
+                        acceptEarlyData = configuration.http3.earlyData.enabled
                     }.build()
-            connectionIdLength = quic.connectionIdLength
-            loops = configuration.udpSocketCount
-            maxConnections = configuration.quicMaxConnections
-            maxConnectionsPerIp = configuration.quicMaxConnectionsPerIp
-            acceptQueue = configuration.quicAcceptQueue
             // the HTTP/3 switch first: under Drain every new client is refused with CONNECTION_REFUSED, statelessly, whatever the
             // policy (RFC 9000 section 5.2.2: a server that refuses a new connection SHOULD send an Initial CONNECTION_CLOSE with
             // CONNECTION_REFUSED; sections 10.2.3 and 20.1)
-            val policy = configuration.quicAdmission ?: admission
+            val policy = configuration.http3.endpoint.admission
             admission =
                 ConnectionAdmission { attempt ->
                     if (advertising == Http3Advertising.Drain) REFUSED else policy.admit(attempt)
                 }
-            configuration.logger?.let { logger = it }
-            listener = configuration.connectionListener
-            loadBalancer = configuration.quicLoadBalancer
+            observability {
+                logger = quicLogger
+                connectionListener = configuration.observability.connectionListener
+                qlog = configuration.observability.qlog
+            }
         }.build()
 }
 
@@ -161,10 +139,16 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
     with(scope) {
         h3Endpoints += endpoint
         h3Ports += port
+        // a UDP port closed by a firewall leaves clients that learned the alternative to their race and fallback: say so once
+        if (configuration.http3.altSvc) {
+            log.info(
+                "HTTP/3 advertised for udp/$port (Alt-Svc ma=86400); make sure the port is open",
+            )
+        }
         val noDf = endpoint.noDontFragmentFamily
         if (noDf != null) {
             h3NoDfFamily[port] = noDf
-            environment.log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")
+            log.warn("HTTP/3 on port $port is not served for ${noDf.label}: its UDP socket cannot set Don't Fragment for it")
         }
         h3StatusList =
             h3StatusList +
@@ -193,7 +177,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                         ) {
                             throw e
                         } catch (e: Throwable) {
-                            environment.log.debug("HTTP/3 accept on port $port ended: $e")
+                            log.debug("HTTP/3 accept on port $port ended: $e")
                             break
                         }
                     afterH3AcceptForTest?.invoke()
@@ -213,7 +197,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     val served =
                         launch(
                             connections +
-                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
+                                CoroutineExceptionHandler { _, e -> log.debug("HTTP/3 connection on port $port failed: $e") },
                         ) {
                             val peer = conn.quic.peerCertificates
 
@@ -222,7 +206,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             val authorityCheck =
                                 AuthorityCheck(
                                     conn.quic.localCertificates,
-                                    tls.trustedGateway,
+                                    tls.allowMisdirectedHosts,
                                     if (tls.sniSelector != null) SniChoice(conn.quic.sniSelectedFor) else null,
                                 )
                             try {
@@ -247,11 +231,25 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                                 // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                                 try {
                                                     beforeH3HandlerForTest?.invoke()
-                                                    handleHttp3(req, local, peer, authorityCheck)
+                                                    // the address the client sent to, where the socket reports it (the
+                                                    // active path's, an IPv4 one of a dual-stack socket unmapped): the same
+                                                    // on the JVM and Native; else the socket's own when it is specific, else
+                                                    // the connector's
+                                                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                                    val here =
+                                                        conn.quic.info
+                                                            ?.paths
+                                                            ?.firstOrNull { it.active }
+                                                            ?.localAddress
+                                                            ?.specificIpOrNull()
+                                                            ?: conn.quic.activePath
+                                                                ?.localAddress
+                                                                ?.specificIpOrNull() ?: local
+                                                    handleHttp3(req, here, peer, authorityCheck)
                                                 } catch (e: CancellationException) {
                                                     throw e
                                                 } catch (e: Throwable) {
-                                                    environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                                    log.debug("HTTP/3 request on port $port failed: $e")
                                                 }
                                             }
                                         // a client that abandons the request (STOP_SENDING, or a reset) cancels its handler, which gives
@@ -303,7 +301,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
  */
 private val KuicksilverApplicationEngine.h3AltSvc: () -> String?
     get() =
-        if (!configuration.altSvc) {
+        if (!configuration.http3.altSvc) {
             { null }
         } else {
             { if (advertising == Http3Advertising.On) null else "clear" }
@@ -315,19 +313,19 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     peer: List<Certificate>,
     authorityCheck: AuthorityCheck,
 ) {
-    // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
+    // Extended CONNECT (RFC 9220): WebSockets (when webSockets { overHttp3 } is on, also with Extended CONNECT advertised for
     // WebTransport), WebTransport and, with connectUdp, CONNECT-UDP (RFC 9298) go through Ktor's pipeline; other protocols
     // are not served here and get 501 (section 3).
     // Upgrade tokens match in any case (RFC 9110 section 7.8)
     val webSocket =
-        configuration.webSocketsOverHttp3 && req.method == "CONNECT" && req.protocol.equals(WebSocketOverH3.PROTOCOL, ignoreCase = true)
+        configuration.webSockets.overHttp3 && req.method == "CONNECT" && req.protocol.equals(WebSocketOverH3.PROTOCOL, ignoreCase = true)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    val webTransport = configuration.webTransport && req.isWebTransport
+    val webTransport = configuration.http3.webTransport.enabled && req.isWebTransport
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val connectUdp =
-        configuration.connectUdp &&
+        configuration.http3.connectUdp &&
             io.kuicksilver.http3.ConnectUdp
                 .isConnectUdp(req)
     if (req.method == "CONNECT" && !webSocket && !webTransport && !connectUdp) {
@@ -337,14 +335,14 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     // RFC 9110 section 7.4 (RFC 9114 section 3.3): a request for a host this connection's certificate does not name gets 421
     // and never reaches the application; the stream ends, the connection serves the client's other requests
     authorityCheck.rejection(req.scheme, req.authority)?.let { why ->
-        environment.log.debug(why)
+        log.debug(why)
         runCatching { req.respond(MISDIRECTED_REQUEST, io.kuicksilver.http3.Http3Headers(listOf("date" to httpDateNow()))).finish() }
         return
     }
     // forwarded from early data by a gateway (RFC 8470 section 5.1): what the early-data policy does not declare replayable
     // cannot be made safe by waiting for this hop's handshake, so it gets 425 Too Early and never reaches the application
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    if (req.headers[EARLY_DATA_FIELD.lowercase()] != null && !configuration.http3Settings.earlyData.replayable(req)) {
+    if (req.headers[EARLY_DATA_FIELD.lowercase()] != null && !h3Settings.earlyData.replayable(req)) {
         // RFC 9110 section 6.6.1: Date on every 2xx to 4xx
         runCatching { req.respond(425, io.kuicksilver.http3.Http3Headers(listOf("date" to httpDateNow()))).finish() }
         return
@@ -363,7 +361,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 webTransport,
                 beforeH3UpgradeForTest,
                 h3AltSvc,
-                configuration.webSocketMaxMessageSize,
+                configuration.webSockets.maxMessageSize,
                 connectUdp,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
@@ -387,17 +385,4 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
             events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_3_0, call, failure) }
         }
     }
-}
-
-/**
- * The QUIC settings of the HTTP/3 listeners: [quic][KuicksilverApplicationEngine.Configuration.quic] with `quicMaxIdleTimeout`
- * and `qlog`, and `resetStreamAt` with [webTransport][KuicksilverApplicationEngine.Configuration.webTransport] (its streams keep
- * their header when reset, draft-ietf-webtrans-http3-17 section 4.4).
- */
-@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-internal fun KuicksilverApplicationEngine.Configuration.http3Quic(): QuicConfig {
-    val base =
-        quicMaxIdleTimeout?.takeUnless { quicAssigned }?.let { idle -> quicConfig { maxIdleTimeout = idle } } ?: quic
-    val withQlog = qlog?.let { sink -> base.toBuilder().apply { qlog = sink }.build() } ?: base
-    return if (webTransport && !withQlog.resetStreamAt) withQlog.toBuilder().apply { resetStreamAt = true }.build() else withQlog
 }

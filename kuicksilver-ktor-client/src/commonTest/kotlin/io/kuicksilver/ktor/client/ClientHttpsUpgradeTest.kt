@@ -50,10 +50,10 @@ class ClientHttpsUpgradeTest {
         follow: Boolean = true,
         source: HttpsRecordSource? = null,
         more: KuicksilverEngineConfig.() -> Unit = {},
-    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+    ) = testClient(Http3Discovery.Auto, engine = {
         resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
         connectTimeout = 30.seconds
-        http3 {
+        network {
             httpsRecords = source ?: HttpsRecordsForTest { n ->
                 lock.withLock { asked += n }
                 answers[n] ?: emptyList()
@@ -66,8 +66,10 @@ class ClientHttpsUpgradeTest {
         clientTest {
             val (tls, port) =
                 testServer(configure = {
-                    http3 = false
-                    altSvc = false
+                    http3 {
+                        enabled = false
+                        altSvc = false
+                    }
                 }) { routing { get("/") { call.respondText("secure") } } }
             try {
                 val name = "_$port._https.server.test"
@@ -99,7 +101,7 @@ class ClientHttpsUpgradeTest {
             // RFC 9460 section 12: the first http request on a new network must not use the old network's records
             var network = "wifi"
             client(mapOf("server.test" to listOf(rec("server.test", 0, "cdn.example"))), follow = false, more = {
-                http3 { networkId = { network } }
+                network { networkId = { network } }
             }).use { c ->
                 assertEquals(307, c.get("http://server.test/").status.value)
                 assertEquals(307, c.get("http://server.test/").status.value)

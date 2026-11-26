@@ -84,8 +84,11 @@ class EchPlatformTrustLinuxTest {
                     list: EchConfigList?,
                     key: String,
                 ): Pump {
-                    val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { echConfigList = list })
-                    val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(kotlin.collections.listOf(EchKey(key))) })
+                    val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { ech { configList = list } })
+                    val s =
+                        KslQuicCrypto.newSession(
+                            Fixtures.server { ech { keys = EchServerKeys(kotlin.collections.listOf(EchKey(key))) } },
+                        )
                     c.setTransportParameters(Fixtures.tp)
                     s.setTransportParameters(Fixtures.tp)
                     val p = Pump(c, s)

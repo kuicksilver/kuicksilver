@@ -92,7 +92,7 @@ class FinalSizeTest {
 
     @Test fun resetAtGivesBothSidesTheSameFinalSize() =
         runBlocking {
-            val on = quicConfig { resetStreamAt = true }
+            val on = quicConfig { expert { resetStreamAt = true } }
             ApiPair.open(serverQuic = on).use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect(on)

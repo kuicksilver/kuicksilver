@@ -60,14 +60,14 @@ class H2ExtendedConnectTest {
             H2ServerConnection.start(
                 w.toServer,
                 w.toClient,
-                Http2Settings(),
+                Http2Settings.Default,
                 backgroundScope,
                 { w.close() },
                 clock(),
                 enableConnectProtocol = enableConnectProtocol,
             )
         val client =
-            H2ClientConnection.start(w.toClient, w.toServer, Http2Settings(), backgroundScope, kotlin.time.Duration.INFINITE, {
+            H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, kotlin.time.Duration.INFINITE, {
                 w.close()
             }, clock = clock())
         return client to server
@@ -323,7 +323,7 @@ class H2ExtendedConnectTest {
         val r = RawServer(w)
         val client =
             backgroundScope.async {
-                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings(), backgroundScope, kotlin.time.Duration.INFINITE, {
+                H2ClientConnection.start(w.toClient, w.toServer, Http2Settings.Default, backgroundScope, kotlin.time.Duration.INFINITE, {
                     w.close()
                 }, clock = clock())
             }

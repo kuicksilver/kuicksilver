@@ -45,8 +45,8 @@ In short, on this setup:
   50 ms (the one qdisc carries both directions) rather than one that would add seconds of delay. The environment above
   records it, with the packets lost to a full queue rather than to the configured loss: none. The kernel's TCP metrics
   cache is off, so each TCP connection starts fresh like each QUIC connection.
-- **The clients.** Kuicksilver's Ktor engine over HTTP/3 (`H3Only`), over HTTP/2 and over HTTP/1.1 (`H1Only`, with and
-  without `http2 { enabled }`), and OkHttp 5 over HTTP/2 and HTTP/1.1 on the same JVM. OkHttp is the reference for TCP
+- **The clients.** Kuicksilver's Ktor engine over HTTP/3 (`H3Only`), over HTTP/2 and over HTTP/1.1 (`http3 { enabled = false }`,
+  with and without `http2 { enabled }`), and OkHttp 5 over HTTP/2 and HTTP/1.1 on the same JVM. OkHttp is the reference for TCP
   here: it uses the JDK's TLS and the kernel's TCP as most JVM applications do. HTTP/1.1 clients open up to 6
   connections to the server, as browsers do; HTTP/2 and HTTP/3 use one. Ktor's CIO engine is not in the tables: its
   TLS stops at 1.2, and the Kuicksilver server speaks TLS 1.3 only.
@@ -117,7 +117,7 @@ than this "all 20 done" figure shows, which this run does not measure.
 
 Time from the call to the response head of a 1-byte `GET` on a new connection, RTT 100 ms, no loss. TCP needs one round
 trip for its handshake, TLS 1.3 one more, then the request one more; QUIC carries the TLS handshake in its own first
-round trip; with 0-RTT (`earlyData = true` in the client, `quicEarlyData = true` on the server;
+round trip; with 0-RTT (`http3 { earlyData { enabled = true } }` in the client and on the server;
 [0-RTT](guide/ktor.md#0-rtt-opt-in-experimental)) a client that holds a session ticket from an earlier connection sends
 the request in its first flight. The 0-RTT runs reuse one client: its connections are closed between runs
 (`closeHttp3Connections()`), and each run's new connection resumes with a ticket from the one before.

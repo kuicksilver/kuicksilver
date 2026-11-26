@@ -66,13 +66,12 @@ class StatelessResetTest {
                     .Builder()
                     .apply {
                         this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        this.crypto =
-                            crypto
+                        runtime { this.crypto = crypto }
                     }.build(),
                 Random(serverSeed),
                 loopIndex,
             )
-        val client = EndpointCore(QuicEndpointConfig.Builder().apply { this.crypto = crypto }.build(), Random(6))
+        val client = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { this.crypto = crypto } }.build(), Random(6))
         val events = HashMap<ConnectionCore, MutableList<ConnectionEvent>>()
         val batch = PacketBatch(16)
 
@@ -255,10 +254,10 @@ class StatelessResetTest {
                 clientQuic =
                     io.kuicksilver.quic.quicConfig {
                         connectionIdLength = 20
-                        initialStreamWindow = 8_000_000
-                        maxStreamWindow = 8_000_000
-                        initialConnectionWindow = 12_000_000
-                        maxConnectionWindow = 12_000_000
+                        flowControl { initialStreamWindow = 8_000_000 }
+                        flowControl { maxStreamWindow = 8_000_000 }
+                        flowControl { initialConnectionWindow = 12_000_000 }
+                        flowControl { maxConnectionWindow = 12_000_000 }
                     },
             )
         p.use { _ ->
@@ -443,7 +442,7 @@ class StatelessResetTest {
                         .apply {
                             server =
                                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = NullCryptoProvider
+                            ; runtime { crypto = NullCryptoProvider }
                         }.build(),
                     Random(99),
                 )
@@ -493,7 +492,7 @@ class StatelessResetTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                         }.build(),
                     Random(99),
                 )
@@ -539,8 +538,8 @@ class StatelessResetTest {
                     io.kuicksilver.quic.QuicConfig
                         .Builder()
                         .apply {
-                            activeConnectionIdLimit = 2
-                            followPreferredAddress = false
+                            expert { activeConnectionIdLimit = 2 }
+                            migration { followPreferredAddress = false }
                         }.build(),
                 )
             assertTrue(p.confirmed(c))
@@ -552,7 +551,7 @@ class StatelessResetTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                         }.build(),
                     Random(99),
                 )
@@ -591,7 +590,7 @@ class StatelessResetTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                             }.build(),
                         Random(99),
                     )
@@ -646,7 +645,7 @@ class StatelessResetTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                         }.build(),
                     Random(99),
                 )

@@ -74,7 +74,7 @@ class ClientDeflateTest {
     }
 
     private suspend fun roundTrip(
-        discovery: Http3DiscoveryMode,
+        discovery: Http3Discovery?,
         url: (Int) -> String,
         plain: Boolean,
     ) {
@@ -100,9 +100,9 @@ class ClientDeflateTest {
         }
     }
 
-    @Test fun roundTripOverH1() = clientTest { roundTrip(Http3DiscoveryMode.H1Only, { "ws://127.0.0.1:$it/ws" }, plain = true) }
+    @Test fun roundTripOverH1() = clientTest { roundTrip(null, { "ws://127.0.0.1:$it/ws" }, plain = true) }
 
-    @Test fun roundTripOverH3() = h3Test { roundTrip(Http3DiscoveryMode.H3Only, { "wss://127.0.0.1:$it/ws" }, plain = false) }
+    @Test fun roundTripOverH3() = h3Test { roundTrip(Http3Discovery.H3Only, { "wss://127.0.0.1:$it/ws" }, plain = false) }
 
     /** On the wire: the server's RFC 7692 section 7.2.3 examples are read, and the client's message carries RSV1, compressed. */
     @Test fun wireFormatAgainstARawServer() =
@@ -291,7 +291,7 @@ class ClientDeflateTest {
                             s.output.flush()
                             readFrame(s.input)
                         }
-                    testClient(Http3DiscoveryMode.H3Only, block = {
+                    testClient(Http3Discovery.H3Only, block = {
                         install(WebSockets) { extensions { install(PerMessageDeflate) { maxInflatedMessageSize = 1024 * 1024 } } }
                     }).use { c ->
                         c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") {

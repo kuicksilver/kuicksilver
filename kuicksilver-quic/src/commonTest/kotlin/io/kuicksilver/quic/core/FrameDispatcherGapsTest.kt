@@ -42,7 +42,7 @@ class FrameDispatcherGapsTest {
      */
     @Test fun negative_datagramWithLengthFieldCountsTheFieldAgainstTheLimit() {
         for ((payload, ok) in listOf(97 to true, 98 to false)) {
-            val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
+            val p = CorePair(serverQuic = quicConfig { datagrams { maxFrameSize = 100 } })
             p.use { _ ->
                 assertTrue(p.handshake())
                 p.runUntil(100.milliseconds) { false }

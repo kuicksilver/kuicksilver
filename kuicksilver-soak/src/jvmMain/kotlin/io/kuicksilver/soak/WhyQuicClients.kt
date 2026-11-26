@@ -9,7 +9,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.readAvailable
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.closeHttp3Connections
 import kotlinx.coroutines.Dispatchers
@@ -267,14 +267,14 @@ private class KuicksilverClient(
         HttpClient(Kuicksilver) {
             expectSuccess = false
             engine {
-                trust = SoakPki.trust
-                maxConnectionsPerRoute = H1_CONNECTIONS
+                tls { trust = SoakPki.trust }
+                pool { maxConnectionsPerRoute = H1_CONNECTIONS }
                 http2 { enabled = protocol == "h2" }
                 http3 {
-                    discovery = if (expected == HttpProtocolVersion.HTTP_3_0) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only
-                    earlyData = protocol == "h3-0rtt"
-                    diagnosticsLogLevel = null
+                    if (expected == HttpProtocolVersion.HTTP_3_0) discovery = Http3Discovery.H3Only else enabled = false
+                    earlyData { enabled = protocol == "h3-0rtt" }
                 }
+                observability { protocolChoiceLogLevel = null }
             }
         }
 

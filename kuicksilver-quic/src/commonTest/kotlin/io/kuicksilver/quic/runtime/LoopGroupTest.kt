@@ -91,10 +91,9 @@ class LoopGroupTest {
             .Builder()
             .apply {
                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                crypto =
-                    NullCryptoProvider
+                runtime { crypto = NullCryptoProvider }
                 loops = 2
-                log?.let { logger = it }
+                log?.let { observability { logger = it } }
             }.build()
 
     private val config = configWith()
@@ -103,8 +102,8 @@ class LoopGroupTest {
         QuicEndpointConfig
             .Builder()
             .apply {
-                crypto = NullCryptoProvider
-                this.io = { io }
+                runtime { crypto = NullCryptoProvider }
+                runtime { this.io = { io } }
             }.build()
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
@@ -124,9 +123,9 @@ class LoopGroupTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
+                                runtime { crypto = NullCryptoProvider }
                                 loops = 2
-                                io = { at -> NoDfV4(net.open(at)) }
+                                runtime { io = { at -> NoDfV4(net.open(at)) } }
                             }.build(),
                     )
                 val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
@@ -274,9 +273,9 @@ class LoopGroupTest {
                             .Builder(CoreFixtures.server())
                             .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
                             .build()
-                    crypto = NullCryptoProvider
+                    runtime { crypto = NullCryptoProvider }
                     loops = 2
-                    log?.let { logger = it }
+                    log?.let { observability { logger = it } }
                 }.build()
         val preferred = if (owner == 0) listOf(listOf<DatagramIo>(real), listOf(twin)) else listOf(listOf(twin), listOf(real))
         return LoopGroup.create(withPreferred, listOf(net.open(serverAddr), net.open(otherAddr)), preferred = preferred)
@@ -400,7 +399,7 @@ class LoopGroupTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
                                     .build()
-                            crypto = NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                             loops = 2
                         }.build()
                 val group =
@@ -644,7 +643,7 @@ class LoopGroupTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = NullCryptoProvider
+                        runtime { crypto = NullCryptoProvider }
                         loops = 2
                         this.acceptQueue = acceptQueue
                     }.build()
@@ -820,9 +819,9 @@ class LoopGroupTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { earlyData = true }.build()
-                                crypto = KslQuicCrypto
-                                io = { net.open(serverAddr) }
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { acceptEarlyData = true }.build()
+                                runtime { crypto = KslQuicCrypto }
+                                runtime { io = { net.open(serverAddr) } }
                             }.build(),
                     )
                 val clients =
@@ -831,7 +830,7 @@ class LoopGroupTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = KslQuicCrypto
+                                runtime { crypto = KslQuicCrypto }
                                 loops = 2
                             }.build(),
                         listOf(net.open(clientAddr), net.open(InetSocketAddress("10.0.0.1", 1112))),
@@ -873,7 +872,7 @@ class LoopGroupTest {
                                     .apply { quic = quicConfig { connectionIdLength = 9 } }
                                     .build()
                             connectionIdLength = 9
-                            crypto = LbNullCrypto
+                            runtime { crypto = LbNullCrypto }
                             loops = 4
                             loadBalancer = QuicLbConfig(2, byteArrayOf(1, 2, 3, 4), 4, QuicLbFixtures.key())
                         }.build()
@@ -910,9 +909,9 @@ class LoopGroupTest {
             .Builder()
             .apply {
                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                crypto = LbNullCrypto
+                runtime { crypto = LbNullCrypto }
                 loadBalancer = QuicLbFixtures.config(configId = 1)
-                io = { net.open(serverAddr) }
+                runtime { io = { net.open(serverAddr) } }
             }.build()
 
     /** A caller cancelled right after its configuration was committed does not undo it: the endpoint still issues routable IDs. */
@@ -992,7 +991,7 @@ class LoopGroupTest {
                             .apply { quic = quicConfig { connectionIdLength = 9 } }
                             .build()
                     connectionIdLength = 9
-                    crypto = LbNullCrypto
+                    runtime { crypto = LbNullCrypto }
                     loops = 2
                     loadBalancer = lb
                 }.build(),

@@ -38,7 +38,7 @@ class ProxyConfigJvmTest {
                 assertFailsWith<UnsupportedOperationException> { proxy.toResolvedProxy(credentials) }
                 testClient(engine = {
                     this.proxy = proxy
-                    proxyCredentials = credentials
+                    proxies { this.credentials = credentials }
                 }).use { c ->
                     val f = assertFailsWith<UnsupportedOperationException> { c.get("https://server.test:1/") }
                     assertFalse("S3cRtQ" in f.message!!)

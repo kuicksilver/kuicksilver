@@ -141,8 +141,8 @@ internal class EndpointNet(
                                 quic = serverQuic
                                 preferredAddress = this@EndpointNet.preferredAddress
                             }.build()
-                    this.crypto = crypto
-                    logger = KuicksilverLogger.None
+                    runtime { this.crypto = crypto }
+                    observability { logger = KuicksilverLogger.None }
                     if (retry) admission = ConnectionAdmission.AlwaysRetry
                 }.build(),
             Random(5),
@@ -152,8 +152,8 @@ internal class EndpointNet(
             QuicEndpointConfig
                 .Builder()
                 .apply {
-                    this.crypto = crypto
-                    logger = KuicksilverLogger.None
+                    runtime { this.crypto = crypto }
+                    observability { logger = KuicksilverLogger.None }
                 }.build(),
             Random(6),
         )

@@ -31,6 +31,16 @@ internal class BrokenAltSvc(
     private val marks = LinkedHashMap<String, Mark>()
     private val confirmed = LinkedHashSet<String?>()
 
+    /** Whether a mark was made since the start or the last network change: the engine warns once per network. */
+    private var markedOnNetwork = false
+
+    /**
+     * Counts the network changes and full clears: a mark's warning and event, sent after the engine's lock is released,
+     * are dropped when this moved on meanwhile (the mark is gone, and the change's own notice may already be out).
+     */
+    var epoch: Long = 0
+        private set
+
     /** Broken marks plus networks where QUIC was confirmed (the resource probe). */
     val size: Int get() = marks.size + confirmed.size
 
@@ -39,16 +49,20 @@ internal class BrokenAltSvc(
         alt: String,
     ) = "$origin|$alt"
 
+    /** Marks [alt] broken; the backoff in milliseconds when this is the first mark on the network (the engine warns then), else null. */
     fun markBroken(
         origin: String,
         alt: String,
         reason: FallbackReason = FallbackReason.Other,
-    ) {
+    ): Long? {
         val level = marks[key(origin, alt)]?.let { it.level + 1 } ?: 0
         val duration = (BASE_MILLIS shl minOf(level, 20)).coerceAtMost(MAX_MILLIS)
         marks.remove(key(origin, alt))
         marks[key(origin, alt)] = Mark(clock() + duration, wallClock() + duration, level, reason)
         marks.evictEldest(AltSvcCache.MAX_ORIGINS)
+        if (markedOnNetwork) return null
+        markedOnNetwork = true
+        return duration
     }
 
     fun isBroken(
@@ -113,6 +127,8 @@ internal class BrokenAltSvc(
     fun onNetworkChanged() {
         marks.clear()
         confirmed.clear()
+        markedOnNetwork = false
+        epoch++
     }
 
     /** Forgets the marks of [origin]'s alternatives, or every mark and confirmed network when null (RFC 7838 section 9.4). */
@@ -120,6 +136,8 @@ internal class BrokenAltSvc(
         if (origin == null) {
             marks.clear()
             confirmed.clear()
+            markedOnNetwork = false
+            epoch++
         } else {
             marks.keys.removeAll { it.startsWith("$origin|") }
         }

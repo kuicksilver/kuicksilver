@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.annotations.SecuritySensitive
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
@@ -177,23 +178,23 @@ public class TlsConfig private constructor(
     @OptIn(DelicateKuicksilverApi::class) public val keylog: KeylogSink?,
     /** The deadline of a TLS-over-TCP handshake; see [Builder.handshakeTimeout]. */
     public val handshakeTimeout: Duration,
-    /** Whether every verification failure is sent as `handshake_failure`; see [Builder.genericAlerts]. */
+    /** Whether every verification failure is sent as `handshake_failure`; see [Builder.Expert.genericAlerts]. */
     public val genericAlerts: Boolean,
     /** A client's treatment of the stapled OCSP response; see [Builder.revocation]. */
     @property:ExperimentalKuicksilverApi public val revocation: RevocationPolicy,
     /** The OCSP response a server staples; see [Builder.ocspStapling]. */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
-    /** The protocol a TLS-over-TCP client without ALPN speaks, null for none; see [Builder.alpnFallback]. */
+    /** The protocol a TLS-over-TCP client without ALPN speaks, null for none; see [Builder.Expert.alpnFallback]. */
     @property:ExperimentalKuicksilverApi public val alpnFallback: String? = null,
     /** The key-exchange groups and a client's key shares; see [Builder.keyExchangeGroups]. */
     @property:ExperimentalKuicksilverApi public val keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default,
     /** Whether TLS certificate compression (RFC 8879) is offered and used; see [Builder.certificateCompression]. */
-    @property:ExperimentalKuicksilverApi public val certificateCompression: Boolean = true,
-    /** Client: the Encrypted Client Hello configurations offered; see [Builder.echConfigList]. */
+    public val certificateCompression: Boolean = true,
+    /** Client: the Encrypted Client Hello configurations offered; see [Builder.Ech.configList]. */
     @property:ExperimentalKuicksilverApi public val echConfigList: EchConfigList? = null,
-    /** Client: GREASE ECH where no configuration is offered; see [Builder.echGrease]. */
+    /** Client: GREASE ECH where no configuration is offered; see [Builder.Ech.grease]. */
     @property:ExperimentalKuicksilverApi public val echGrease: Boolean = true,
-    /** Server: the Encrypted Client Hello keys; see [Builder.echKeys]. */
+    /** Server: the Encrypted Client Hello keys; see [Builder.Ech.keys]. */
     @property:ExperimentalKuicksilverApi public val echKeys: EchServerKeys? = null,
     /** Made by [withOverride] for one sniSelector answer: its contexts are kept apart from the base configuration's ([SharedServerContexts]). */
     internal val isOverride: Boolean = false,
@@ -291,9 +292,11 @@ public class TlsConfig private constructor(
         public var serverName: String? = null
 
         /** The versions offered; default [TlsVersions.Tls13]. [TlsVersions.Tls12And13] is for TCP peers without TLS 1.3 only. */
+        @SecuritySensitive
         public var versions: TlsVersions = TlsVersions.Tls13
 
         /** The TLS 1.3 cipher suites in preference order; default [CipherSuites.Default]. QUIC takes only the suites of [CipherSuites.Default]. */
+        @SecuritySensitive
         public var cipherSuites: CipherSuites = CipherSuites.Default
 
         /**
@@ -302,6 +305,7 @@ public class TlsConfig private constructor(
          * [TlsIdentity.Reloadable] to replace the certificate at run time: each handshake then takes the identity current
          * when the ClientHello arrives.
          */
+        @SecuritySensitive
         public var identity: TlsIdentity? = null
 
         /**
@@ -310,12 +314,14 @@ public class TlsConfig private constructor(
          * [TrustConfig.AnchoredCa] or [TrustConfig.ReloadableCa] (a bundle that rotates at run time), optionally inside
          * [TrustConfig.Pinned] (ADR-0012); a client refuses a ReloadableCa. The host name check is never disabled.
          */
+        @SecuritySensitive
         public var trust: TrustConfig = TrustConfig.Platform
 
         /**
          * Whether a server requests a client certificate; default [ClientAuth.None]. Anything else needs an AnchoredCa or
          * ReloadableCa [trust].
          */
+        @SecuritySensitive
         public var clientAuth: ClientAuth = ClientAuth.None
 
         /**
@@ -335,6 +341,7 @@ public class TlsConfig private constructor(
          * Session ticket keys and lifetimes of a server; default [SessionTicketConfig.Default]. Used by TLS-over-TCP servers and by
          * QUIC servers with 0-RTT (`QuicServerConfig.earlyData`), the only QUIC servers that issue tickets; clients ignore it.
          */
+        @SecuritySensitive
         public var sessionTickets: SessionTicketConfig = SessionTicketConfig.Default
 
         /**
@@ -342,7 +349,9 @@ public class TlsConfig private constructor(
          * keep it null in production: anyone who reads the sink can decrypt the traffic. `SSLKEYLOGFILE` is not read unless
          * the application calls [keylogFromEnvironment] and assigns its sink here.
          */
-        @DelicateKuicksilverApi public var keylog: KeylogSink? = null
+        @DelicateKuicksilverApi
+        @SecuritySensitive
+        public var keylog: KeylogSink? = null
 
         /**
          * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. A server counts the
@@ -353,14 +362,6 @@ public class TlsConfig private constructor(
         public var handshakeTimeout: Duration = 10.seconds
 
         /**
-         * Send every verification failure as `handshake_failure` instead of the specific alert, except a failed stapled OCSP
-         * check, which OpenSSL always ends with `bad_certificate_status_response` (113). Default false; true hides
-         * from the peer why it was rejected at the cost of harder diagnosis on its side. The local [TlsException.Verify]
-         * keeps the real reason either way.
-         */
-        public var genericAlerts: Boolean = false
-
-        /**
          * Client: how the revocation status the server staples is treated (RFC 9325 section 7.5); default
          * [RevocationPolicy.StapledIfPresent]. Applies where `ksl` verifies the chain ([TrustConfig.AnchoredCa], and
          * [TrustConfig.Platform] on Linux Native, also inside Pinned or ExpectedName); [RevocationPolicy.RequireStapled] with any
@@ -368,6 +369,7 @@ public class TlsConfig private constructor(
          * checked against the CRLs of their [TrustConfig.AnchoredCa]).
          */
         @ExperimentalKuicksilverApi
+        @SecuritySensitive
         public var revocation: RevocationPolicy = RevocationPolicy.StapledIfPresent
 
         /**
@@ -377,23 +379,6 @@ public class TlsConfig private constructor(
          */
         @ExperimentalKuicksilverApi
         public var ocspStapling: OcspStapling? = null
-
-        /**
-         * Server, TLS over TCP: the protocol a client that sends no ALPN extension speaks (Netty's "fallback protocol"), e.g.
-         * `http/1.1` for HTTP, whose `h2` "over TLS MUST use protocol negotiation in TLS" (RFC 9113 section 3.3). Default null:
-         * such a client completes the handshake without ALPN, as with OpenSSL and Go's `crypto/tls`. Set, such a client
-         * completes it only where the protocols in effect for its connection name it: [alpn], or the [sniSelector] answer's
-         * [ServerTlsOverride.alpn]; otherwise the handshake ends with `no_application_protocol` (120), the alert RFC 7301
-         * section 3.2 gives a server that "supports no protocols that the client advertises" and RFC 9001 section 8.1 a
-         * QUIC server whose client negotiated none. The check runs at every ClientHello, a second one after HelloRetryRequest
-         * included (RFC 9846 section 4.2.2 lets a client change nothing else there, and a server is not told to compare), and
-         * again when the handshake completes. A present but malformed ALPN extension (RFC 7301 section 3.1: a non-empty list
-         * of non-empty names) gets `decode_error` (50) instead, as without the fallback. An empty list in effect (no ALPN)
-         * takes any client. QUIC ignores it: a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is
-         * 1..255 bytes of UTF-8, and not `h3`, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1).
-         */
-        @ExperimentalKuicksilverApi
-        public var alpnFallback: String? = null
 
         /**
          * The key-exchange groups, most preferred first, and the groups a client sends key shares for (RFC 9846 sections 4.3.7 and
@@ -406,6 +391,7 @@ public class TlsConfig private constructor(
          * P-256 server certificate (`handshake_failure`), a server without it a P-256 client certificate (`illegal_parameter`).
          */
         @ExperimentalKuicksilverApi
+        @SecuritySensitive
         public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
 
         /**
@@ -421,54 +407,107 @@ public class TlsConfig private constructor(
          * compressed certificate from the peer is an `unexpected_message` (10). The algorithm the peer's chain came in:
          * [TlsConnection.peerCertificateCompression].
          */
-        @ExperimentalKuicksilverApi
         public var certificateCompression: Boolean = true
 
-        /**
-         * Client: the Encrypted Client Hello configurations to offer (RFC 9849), from the origin's HTTPS record (RFC 9848) or
-         * given out of band; default none. With a usable list the ClientHello the path sees names the configuration's
-         * `public_name`, and the real [serverName] travels encrypted; when the server rejects it the handshake fails with
-         * [TlsException.EchRejected] after authenticating the `public_name`, and the caller may retry once with its
-         * [TlsException.EchRejected.retryConfigs]. [build] throws [TlsException.Config] on a server, with [TlsVersions.Tls12And13]
-         * (ECH is TLS 1.3 only, and the TLS 1.2 support of `ksl` cannot be combined with it on OpenSSL 4.1, ADR-0019), for a list
-         * without a usable configuration ([EchConfigList.isUsable]), and in a build without ECH (a system OpenSSL), each with
-         * its own message: a list given here is never replaced by GREASE and the real name in the clear.
-         */
+        /** Encrypted Client Hello (RFC 9849): the configurations a client offers, its GREASE, a server's keys. */
         @ExperimentalKuicksilverApi
-        public var echConfigList: EchConfigList? = null
+        public val ech: Ech = Ech()
 
-        /**
-         * Client: send a GREASE `encrypted_client_hello` extension when no configuration is offered (RFC 9849 section 6.2.1),
-         * so that clients with ECH do not stand out; default true. The server's answer to it is checked and ignored.
-         */
+        /** Sets the [ech] options. */
         @ExperimentalKuicksilverApi
-        public var echGrease: Boolean = true
+        public fun ech(block: Ech.() -> Unit) {
+            ech.block()
+        }
 
-        /**
-         * Server: the Encrypted Client Hello keys (RFC 9849 section 7.1, shared mode); default none (ECH from clients is
-         * ignored, and they are told nothing). The certificate presented to a client whose ECH is rejected must be valid for the
-         * keys' `public_name` (choose it with [sniSelector], which sees that name then), or the client cannot use the retry
-         * configurations. [build] throws [TlsException.Config] on a client.
-         */
+        /** Options few applications need: generic alerts and the ALPN fallback of a TLS-over-TCP server. */
         @ExperimentalKuicksilverApi
-        public var echKeys: EchServerKeys? = null
+        public val expert: Expert = Expert()
+
+        /** Sets the [expert] options. */
+        @ExperimentalKuicksilverApi
+        public fun expert(block: Expert.() -> Unit) {
+            expert.block()
+        }
+
+        /** The Encrypted Client Hello options of a [Builder] (RFC 9849); experimental. */
+        @ExperimentalKuicksilverApi
+        @KuicksilverDsl
+        public class Ech internal constructor() {
+            /**
+             * Client: the Encrypted Client Hello configurations to offer (RFC 9849), from the origin's HTTPS record (RFC 9848) or
+             * given out of band; default none. With a usable list the ClientHello the path sees names the configuration's
+             * `public_name`, and the real [serverName][Builder.serverName] travels encrypted; when the server rejects it the handshake fails with
+             * [TlsException.EchRejected] after authenticating the `public_name`, and the caller may retry once with its
+             * [TlsException.EchRejected.retryConfigs]. [build][Builder.build] throws [TlsException.Config] on a server, with [TlsVersions.Tls12And13]
+             * (ECH is TLS 1.3 only, and the TLS 1.2 support of `ksl` cannot be combined with it on OpenSSL 4.1, ADR-0019), for a list
+             * without a usable configuration ([EchConfigList.isUsable]), and in a build without ECH (a system OpenSSL), each with
+             * its own message: a list given here is never replaced by GREASE and the real name in the clear.
+             */
+            public var configList: EchConfigList? = null
+
+            /**
+             * Client: send a GREASE `encrypted_client_hello` extension when no configuration is offered (RFC 9849 section 6.2.1),
+             * so that clients with ECH do not stand out; default true. The server's answer to it is checked and ignored.
+             */
+            public var grease: Boolean = true
+
+            /**
+             * Server: the Encrypted Client Hello keys (RFC 9849 section 7.1, shared mode); default none (ECH from clients is
+             * ignored, and they are told nothing). The certificate presented to a client whose ECH is rejected must be valid for the
+             * keys' `public_name` (choose it with [sniSelector][Builder.sniSelector], which sees that name then), or the client cannot use the retry
+             * configurations. [build][Builder.build] throws [TlsException.Config] on a client.
+             */
+            @SecuritySensitive
+            public var keys: EchServerKeys? = null
+        }
+
+        /** The expert options of a [Builder]; experimental. */
+        @ExperimentalKuicksilverApi
+        @KuicksilverDsl
+        public class Expert internal constructor() {
+            /**
+             * Send every verification failure as `handshake_failure` instead of the specific alert, except a failed stapled OCSP
+             * check, which OpenSSL always ends with `bad_certificate_status_response` (113). Default false; true hides
+             * from the peer why it was rejected at the cost of harder diagnosis on its side. The local [TlsException.Verify]
+             * keeps the real reason either way.
+             */
+            public var genericAlerts: Boolean = false
+
+            /**
+             * Server, TLS over TCP: the protocol a client that sends no ALPN extension speaks (Netty's "fallback protocol"), e.g.
+             * `http/1.1` for HTTP, whose `h2` "over TLS MUST use protocol negotiation in TLS" (RFC 9113 section 3.3). Default null:
+             * such a client completes the handshake without ALPN, as with OpenSSL and Go's `crypto/tls`. Set, such a client
+             * completes it only where the protocols in effect for its connection name it: [alpn][Builder.alpn], or the [sniSelector][Builder.sniSelector] answer's
+             * [ServerTlsOverride.alpn]; otherwise the handshake ends with `no_application_protocol` (120), the alert RFC 7301
+             * section 3.2 gives a server that "supports no protocols that the client advertises" and RFC 9001 section 8.1 a
+             * QUIC server whose client negotiated none. The check runs at every ClientHello, a second one after HelloRetryRequest
+             * included (RFC 9846 section 4.2.2 lets a client change nothing else there, and a server is not told to compare), and
+             * again when the handshake completes. A present but malformed ALPN extension (RFC 7301 section 3.1: a non-empty list
+             * of non-empty names) gets `decode_error` (50) instead, as without the fallback. An empty list in effect (no ALPN)
+             * takes any client. QUIC ignores it: a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is
+             * 1..255 bytes of UTF-8, and not `h3`, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1).
+             */
+            public var alpnFallback: String? = null
+        }
 
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], an invalid [serverName] or ExpectedName, and an [echConfigList] that cannot be offered (see there). Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback][Expert.alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], an invalid [serverName] or ExpectedName, and an [ech] configuration list that cannot be offered (see there). Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
         public fun build(): TlsConfig {
             val validAlpn = alpn.toList().also { validateAlpn(it) } // copy first: the stored list is the one validated
+            val echConfigList = ech.configList
+            val echKeys = ech.keys
             if (!handshakeTimeout.isPositive()) throw TlsException.Config("handshakeTimeout must be positive")
             if (role == TlsRole.Server) {
                 if (identity == null && sniSelector == null) throw TlsException.Config("a server needs an identity or an sniSelector")
                 checkServerAuth(clientAuth, trust)
-                if (echConfigList != null) throw TlsException.Config("echConfigList applies to clients")
+                if (echConfigList != null) throw TlsException.Config("ech { configList } applies to clients")
             } else {
-                if (echKeys != null) throw TlsException.Config("echKeys applies to servers")
+                if (echKeys != null) throw TlsException.Config("ech { keys } applies to servers")
                 if (echConfigList != null && versions != TlsVersions.Tls13) {
                     throw TlsException.Config("ECH needs versions = Tls13 (RFC 9849 section 6.1; ADR-0019)")
                 }
@@ -480,11 +519,11 @@ public class TlsConfig private constructor(
                 serverName?.let { HostName.normalize(it) }
             }
             if (trust is TrustConfig.ExpectedName) HostName.normalize((trust as TrustConfig.ExpectedName).name)
-            val fallback = alpnFallback
+            val fallback = expert.alpnFallback
             if (fallback != null) {
-                if (role != TlsRole.Server) throw TlsException.Config("alpnFallback applies to servers")
+                if (role != TlsRole.Server) throw TlsException.Config("expert { alpnFallback } applies to servers")
                 // a client without ALPN over TCP never speaks HTTP/3, which is QUIC only (RFC 9114 section 3.1)
-                if (fallback == ALPN_H3) throw TlsException.Config("alpnFallback cannot be h3: HTTP/3 runs over QUIC only")
+                if (fallback == ALPN_H3) throw TlsException.Config("expert { alpnFallback } cannot be h3: HTTP/3 runs over QUIC only")
                 validateAlpn(listOf(fallback))
             }
             checkGroups(keyExchangeGroups, role, versions)
@@ -501,14 +540,14 @@ public class TlsConfig private constructor(
                 sessionTickets,
                 keylog,
                 handshakeTimeout,
-                genericAlerts,
+                expert.genericAlerts,
                 revocation,
                 ocspStapling,
                 fallback,
                 keyExchangeGroups,
                 certificateCompression,
                 echConfigList,
-                echGrease,
+                ech.grease,
                 echKeys,
             )
         }

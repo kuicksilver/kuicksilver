@@ -42,9 +42,9 @@ class ServerQuicLimitsTest {
     @Test fun defaultsAreTheEndpointDefaults() =
         h3ServerTest {
             val c = KuicksilverApplicationEngine.Configuration()
-            assertEquals(10_000, c.quicMaxConnections)
-            assertEquals(256, c.quicMaxConnectionsPerIp)
-            assertEquals(128, c.quicAcceptQueue)
+            assertEquals(10_000, c.http3.endpoint.maxConnections)
+            assertEquals(256, c.http3.endpoint.maxConnectionsPerIp)
+            assertEquals(128, c.http3.endpoint.acceptQueue)
             val (server, ep) = boundWith {}
             try {
                 assertEquals(QuicEndpointConfig.Default.maxConnections, ep.maxConnections)
@@ -59,9 +59,13 @@ class ServerQuicLimitsTest {
         h3ServerTest {
             val (server, ep) =
                 boundWith {
-                    quicMaxConnections = 50
-                    quicMaxConnectionsPerIp = 2
-                    quicAcceptQueue = 7
+                    http3 {
+                        endpoint {
+                            maxConnections = 50
+                            maxConnectionsPerIp = 2
+                            acceptQueue = 7
+                        }
+                    }
                 }
             try {
                 assertEquals(50, ep.maxConnections)
@@ -70,7 +74,7 @@ class ServerQuicLimitsTest {
             } finally {
                 server.stop(100, 500)
             }
-            val (off, ep2) = boundWith { quicMaxConnectionsPerIp = null }
+            val (off, ep2) = boundWith { http3 { endpoint { maxConnectionsPerIp = null } } }
             try {
                 assertNull(ep2.maxConnectionsPerIp, "null turns the per-IP limit off")
             } finally {
@@ -80,22 +84,22 @@ class ServerQuicLimitsTest {
 
     @Test fun negative_outOfRangeLimitsAreRefused() {
         val c = KuicksilverApplicationEngine.Configuration()
-        assertFailsWith<IllegalArgumentException> { c.quicMaxConnections = 0 }
-        assertFailsWith<IllegalArgumentException> { c.quicMaxConnectionsPerIp = 0 }
-        assertFailsWith<IllegalArgumentException> { c.quicAcceptQueue = 0 }
-        assertEquals(10_000, c.quicMaxConnections)
-        assertEquals(256, c.quicMaxConnectionsPerIp)
-        assertEquals(128, c.quicAcceptQueue)
+        assertFailsWith<IllegalArgumentException> { c.http3.endpoint.maxConnections = 0 }
+        assertFailsWith<IllegalArgumentException> { c.http3.endpoint.maxConnectionsPerIp = 0 }
+        assertFailsWith<IllegalArgumentException> { c.http3.endpoint.acceptQueue = 0 }
+        assertEquals(10_000, c.http3.endpoint.maxConnections)
+        assertEquals(256, c.http3.endpoint.maxConnectionsPerIp)
+        assertEquals(128, c.http3.endpoint.acceptQueue)
     }
 
     /**
-     * With `quicMaxConnectionsPerIp = 2` a third connection from the same address is dropped at its first Initial (the client
+     * With `http3 { endpoint { maxConnectionsPerIp = 2 } }` a third connection from the same address is dropped at its first Initial (the client
      * times out), and the engine's statistics count it as refused by the limits; the two before it are served.
      */
     @Test fun negative_perIpLimitOfTwoRefusesTheThirdConnection() =
         h3ServerTest {
             val (server, port) =
-                tlsServer({ quicMaxConnectionsPerIp = 2 }) {
+                tlsServer({ http3 { endpoint { maxConnectionsPerIp = 2 } } }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
             val client = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
@@ -106,7 +110,7 @@ class ServerQuicLimitsTest {
                 val second = client.connect(remote, tls)
                 for (c in listOf(first, second)) assertEquals(200, c.request(http3Request("GET", "server.test", "/")).status)
                 val third = runCatching { client.connect(remote, tls, quicConfig { handshakeTimeout = 2.seconds }) }
-                assertTrue(third.isFailure, "a third connection from one address was served with quicMaxConnectionsPerIp = 2")
+                assertTrue(third.isFailure, "a third connection from one address was served with maxConnectionsPerIp = 2")
                 val stats = server.engine.http3Stats.single()
                 assertTrue(stats.connectionsRefusedLimits >= 1, "the refusal is not counted: $stats")
                 assertEquals(2L, stats.connectionsAccepted, "$stats")
@@ -123,7 +127,8 @@ class ServerQuicLimitsTest {
         h3ServerTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    tlsConnector(ServerFixtures.identity()) {
+                    tlsConnector {
+                        tls { identity = ServerFixtures.identity() }
                         host = "127.0.0.1"
                         port = 0
                     }
@@ -161,7 +166,7 @@ class ServerQuicLimitsTest {
     /** A server without HTTP/3 has no QUIC endpoint and so no statistics. */
     @Test fun noStatsWithoutHttp3() =
         serverTest {
-            val (server, _) = tlsServer({ http3 = false }) {}
+            val (server, _) = tlsServer({ http3 { enabled = false } }) {}
             try {
                 assertTrue(server.engine.http3Stats.isEmpty())
             } finally {

@@ -396,7 +396,7 @@ class ServerH3Test {
 
     /**
      * A request head over HTTP/3 that never completes is rejected (H3_REQUEST_REJECTED) at the engine's
-     * `requestHeaderTimeoutSeconds`, which bounds `Http3Settings.maxHeaderBlockTime` (10 s here, cut to 1 s), and the
+     * `requestHeaderTimeout`, which bounds `Http3Settings.maxHeaderBlockTime` (10 s here, cut to 1 s), and the
      * connection still serves requests (RFC 9000 section 21.6, Slowloris).
      */
     @Test fun negative_unfinishedRequestHeadIsRejectedAtTheRequestHeadDeadline() =
@@ -404,7 +404,7 @@ class ServerH3Test {
             val (server, port) =
                 tlsServer(configure = {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    requestHeaderTimeoutSeconds = 1
+                    requestHeaderTimeout = 1.seconds
                 }) {
                     routing { get("/") { call.respondText("ok") } }
                 }
@@ -517,7 +517,7 @@ class ServerH3Test {
             val log = CapturedLog()
             val (server, port) =
                 tlsServer(configure = {
-                    logger = log.quic
+                    observability { logger = log.quic }
                     http3Bind = { a, c, s ->
                         tried += a.port
                         if (a.port != 0 && takenPorts.size < occupied && a.port !in takenPorts) {
@@ -578,7 +578,7 @@ class ServerH3Test {
             try {
                 val (started, port) =
                     tlsServer(configure = {
-                        logger = log.quic
+                        observability { logger = log.quic }
                         http3Bind = { a, c, s ->
                             tried += a.port
                             if (a.port != 0 && heldTcp == null) {
@@ -650,7 +650,7 @@ class ServerH3Test {
         }
 
     /**
-     * With port 0 and several endpoint loops on the port (udpSocketCount = 2: a socket per loop with SO_REUSEPORT on Linux
+     * With port 0 and several endpoint loops on the port (`http3 { endpoint { loops = 2 } }`: a socket per loop with SO_REUSEPORT on Linux
      * and Android, one shared socket elsewhere), a UDP twin in use is retried like any taken port and HTTP/3 is still served
      * (review of 19e3f88b: ksl's refused bind was a KslException, which the engine now takes for a configuration error, so
      * such a start failed). Every platform with a QUIC server serves it since 0.3.0.
@@ -664,7 +664,7 @@ class ServerH3Test {
             try {
                 val (server, port) =
                     tlsServer(configure = {
-                        udpSocketCount = 2
+                        http3 { endpoint { loops = 2 } }
                         http3Bind = { a, c, st ->
                             tried += a.port
                             if (tried.size ==
@@ -765,7 +765,7 @@ class ServerH3Test {
 
     @Test fun altSvcDisabled() =
         h3ServerTest {
-            val (server, port) = tlsServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = tlsServer(configure = { http3 { altSvc = false } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(!resp.contains("Alt-Svc"), resp)
@@ -952,15 +952,17 @@ class ServerH3Test {
         val opened = CompletableDeferred<Unit>()
         val (server, port) =
             tlsServer({
-                eventListener =
-                    object : KuicksilverServerEventListener() {
-                        override fun connectionOpened(
-                            protocol: io.ktor.http.HttpProtocolVersion,
-                            remote: InetSocketAddress?,
-                        ) {
-                            if (protocol == io.ktor.http.HttpProtocolVersion.HTTP_3_0) opened.complete(Unit)
+                observability {
+                    eventListener =
+                        object : KuicksilverServerEventListener() {
+                            override fun connectionOpened(
+                                protocol: io.ktor.http.HttpProtocolVersion,
+                                remote: InetSocketAddress?,
+                            ) {
+                                if (protocol == io.ktor.http.HttpProtocolVersion.HTTP_3_0) opened.complete(Unit)
+                            }
                         }
-                    }
+                }
             }) { routing { get("/") { call.respondText("ok") } } }
         val c =
             endpoint.connect(
@@ -1028,7 +1030,7 @@ class ServerH3Test {
                     InetSocketAddress("127.0.0.1", port),
                     QuicClientConfig
                         .Builder(ServerFixtures.clientTls(alpn = listOf("h3")))
-                        .apply { quic = quicConfig { maxUniStreams = 2 } }
+                        .apply { quic = quicConfig { expert { maxUniStreams = 2 } } }
                         .build(),
                 )
                 kotlinx.coroutines.withTimeout(15.seconds) {

@@ -146,7 +146,7 @@ internal class RawServer private constructor(
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
                     quicEndpointConfig {
-                        server = QuicServerConfig.Builder(SoakPki.serverTls(RawProtocol.ALPN)).apply { earlyData = true }.build()
+                        server = QuicServerConfig.Builder(SoakPki.serverTls(RawProtocol.ALPN)).apply { acceptEarlyData = true }.build()
                         this.acceptQueue = acceptQueue
                     },
                 )
@@ -190,16 +190,21 @@ internal class RawServer private constructor(
 
 internal typealias SoakHttpServer = EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>
 
-/** The Ktor server: HTTP/1.1 over TLS and HTTP/3 on one port of 127.0.0.1. */
+/**
+ * The Ktor server: HTTP/1.1 over TLS and HTTP/3 on one port of 127.0.0.1. HTTP/2 is off (it is on by default), so the
+ * KtorH1 scenario and the TCP half of KtorAbort run HTTP/1.1, as they say.
+ */
 internal object HttpServer {
     suspend fun start(): Pair<SoakHttpServer, Int> {
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(SoakPki.identity()) {
+                tlsConnector {
+                    tls { identity = SoakPki.identity() }
                     host = "127.0.0.1"
                     port = 0
                 }
-                SoakQlog.sink?.let { sink -> quic = quicConfig { qlog = sink } }
+                http2 { enabled = false }
+                SoakQlog.sink?.let { sink -> observability { qlog = sink } }
             }) {
                 routing {
                     get("/bytes/{n}") {

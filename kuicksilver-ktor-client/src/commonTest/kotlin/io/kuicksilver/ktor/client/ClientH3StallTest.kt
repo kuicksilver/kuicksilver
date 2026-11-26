@@ -59,7 +59,7 @@ import io.ktor.server.websocket.WebSockets as ServerWebSockets
 import io.ktor.server.websocket.webSocket as serverWebSocket
 
 /**
- * Stall detection (`http3 { stallDetection }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
+ * Stall detection (`http3 { stall { enabled } }`; docs/guide/ktor.md, "Stalled HTTP/3 connections"): a network that cuts UDP
  * flows. The engine's endpoint socket is a [FaultyIo] that drops everything, in both directions, after a number of
  * datagrams once armed. The QUIC idle timeout is 15 s here: without the detection every stalled call takes that long.
  */
@@ -104,7 +104,7 @@ class ClientH3StallTest {
         val posts = AtomicInt(0)
         val fullSent = CompletableDeferred<Unit>()
         val (s, port) =
-            testServer(configure = { idle?.let { quic = quicConfig { maxIdleTimeout = it } } }) {
+            testServer(configure = { idle?.let { http3 { quic { maxIdleTimeout = it } } } }) {
                 install(ServerWebSockets)
                 routing {
                     // an echo WebSocket (over HTTP/3 with Extended CONNECT once a connection allows it, RFC 9220)
@@ -165,41 +165,38 @@ class ClientH3StallTest {
         }
     }
 
-    /** Auto mode, HTTP/3 first once its alternative is known (`hardDelay = INFINITE`): every test starts on a warm HTTP/3 connection. */
+    /** Auto mode, HTTP/3 first once its alternative is known (`RaceHeadStart.NoRace`): every test starts on a warm HTTP/3 connection. */
     private fun client(
         ios: FaultyIos,
         heard: Heard,
         detection: Boolean = true,
         idle: Duration = 15.seconds,
-        hardDelay: Duration? = Duration.INFINITE,
+        raceHeadStart: RaceHeadStart = RaceHeadStart.NoRace,
         minSilence: Duration = 500.milliseconds,
         abandonAfter: Duration = 2.seconds,
         // windows that take a whole 4 MiB response before the application reads any of it
         windows: Boolean = false,
         block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
-        testClient(Http3DiscoveryMode.Auto, engine = {
-            quic =
-                quicConfig {
+        testClient(Http3Discovery.Auto, engine = {
+            http3 {
+                quic {
                     maxIdleTimeout = idle
                     if (windows) {
-                        initialStreamWindow = 8L * 1024 * 1024
-                        maxStreamWindow = 8L * 1024 * 1024
-                        initialConnectionWindow = 16L * 1024 * 1024
-                        maxConnectionWindow = 16L * 1024 * 1024
+                        flowControl { initialStreamWindow = 8L * 1024 * 1024 }
+                        flowControl { maxStreamWindow = 8L * 1024 * 1024 }
+                        flowControl { initialConnectionWindow = 16L * 1024 * 1024 }
+                        flowControl { maxConnectionWindow = 16L * 1024 * 1024 }
                     }
                 }
-            eventListener = heard
+            }
+            observability { eventListener = heard }
             http3 {
-                this.hardDelay = hardDelay
-                stallDetection = detection
-                stallMinSilence = minSilence
-                stallAbandonAfter = abandonAfter
-                endpoint =
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply { io = { local -> ios.open(local) } }
-                        .build()
+                expert { this.raceHeadStart = raceHeadStart }
+                stall { enabled = detection }
+                stall { this.minSilence = minSilence }
+                stall { this.abandonAfter = abandonAfter }
+                endpointIoForTest = { local -> ios.open(local) }
             }
         }, block = block)
 
@@ -299,7 +296,7 @@ class ClientH3StallTest {
         }
 
     /**
-     * RFC 9110 section 9.2.2: a POST is not repeated. The path stays cut past `stallAbandonAfter` (2 s here): the POST
+     * RFC 9110 section 9.2.2: a POST is not repeated. The path stays cut past `stall { abandonAfter }` (2 s here): the POST
      * fails with the stall, not at the 15 s idle timeout.
      */
     @Test fun nonIdempotentRequestFailsFastWithoutRetry() =
@@ -423,7 +420,7 @@ class ClientH3StallTest {
             val ios = FaultyIos()
             val heard = Heard()
             try {
-                client(ios, heard, hardDelay = null).use { c ->
+                client(ios, heard, raceHeadStart = RaceHeadStart.Adaptive).use { c ->
                     val url = "https://127.0.0.1:${s.port}/"
                     assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // learns the alternative
                     ios.cut()
@@ -458,7 +455,7 @@ class ClientH3StallTest {
             }
         }
 
-    /** Negative control: with `stallDetection = false` the stalled call waits for the QUIC idle timeout (3 s here), as before 0.3.0. */
+    /** Negative control: with `stall { enabled = false }` the stalled call waits for the QUIC idle timeout (3 s here), as before 0.3.0. */
     @Test fun negative_offWaitsForTheIdleTimeout() =
         h3Test {
             val s = server()
@@ -516,7 +513,7 @@ class ClientH3StallTest {
                         assertEquals(polls, engine.h3.stallPollsForTest.load(), "the whole response arrived: nothing to watch")
                         ios.cut()
                         assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "the other request stalls and goes over TCP")
-                        // abandoned at once (stallAbandonAfter is 2 s): nothing on it needs the network any more
+                        // abandoned at once (stall { abandonAfter } is 2 s): nothing on it needs the network any more
                         withTimeout(1.seconds) { conn.quic.closed.await() }
                         assertEquals("rest", ch.readBuffer().readByteArray().decodeToString())
                     }
@@ -528,7 +525,7 @@ class ClientH3StallTest {
 
     /**
      * Review finding 2: a stall drains the connection. A POST (not repeatable) waits on it, and a 3 s outage (a handover
-     * between radio networks) ends before `stallAbandonAfter` (8 s here): the POST completes over HTTP/3.
+     * between radio networks) ends before `stall { abandonAfter }` (8 s here): the POST completes over HTTP/3.
      */
     @Test fun nonRepeatableRequestSurvivesAShortOutage() =
         h3Test {
@@ -902,22 +899,22 @@ class ClientH3StallTest {
 
     @Test fun negative_stallThresholdsOutOfRangeAreRefused() {
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallProbeTimeouts = 0 } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { probeTimeouts = 0 } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallProbeTimeouts = 11 } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { probeTimeouts = 11 } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallMinSilence = 99.milliseconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { minSilence = 99.milliseconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallMinSilence = 61.seconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { minSilence = 61.seconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 99.milliseconds } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { abandonAfter = 99.milliseconds } } }).close()
         }
         assertFailsWith<IllegalArgumentException> {
-            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 11.minutes } }).close()
+            testClient(Http3Discovery.Auto, engine = { http3 { stall { abandonAfter = 11.minutes } } }).close()
         }
     }
 }

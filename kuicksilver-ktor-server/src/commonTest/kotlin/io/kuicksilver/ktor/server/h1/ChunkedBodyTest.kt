@@ -211,7 +211,7 @@ class ChunkedBodyTest {
 
     /**
      * A bare LF ends a trailer line only where [allowBareLf] (RFC 9112 section 2.2 MAY): the client always, the server
-     * with `h1AllowBareLf`. A bare CR is invalid either way.
+     * with `http1 { allowBareLf }`. A bare CR is invalid either way.
      */
     @Test fun negative_bareLfInTrailersOnlyWhereAllowed() {
         for (wire in listOf("5\r\nhello\r\n0\r\nX-A: 1\n\r\n", "5\r\nhello\r\n0\r\nX-A: 1\r\n\n", "5\r\nhello\r\n0\r\n\n")) {

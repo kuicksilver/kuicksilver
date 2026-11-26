@@ -229,7 +229,7 @@ class ConnectionCoreTimersGapsTest {
     /** The *_BLOCKED repeat timer (RFC 9000 section 4.1) of a sender the receiver never unblocks fires at each of its deadlines. */
     @Test fun blockedRepeatTimerFiresAtItsDeadlines() {
         val p =
-            CorePair(serverQuic = quicConfig { initialConnectionWindow = 4000 })
+            CorePair(serverQuic = quicConfig { flowControl { initialConnectionWindow = 4000 } })
         p.use { _ ->
             assertTrue(runExact(p) { bothConfirmed(p) })
             val id = p.client.openStream(true)

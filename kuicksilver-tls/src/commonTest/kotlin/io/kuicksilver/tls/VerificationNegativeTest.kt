@@ -260,10 +260,10 @@ class VerificationNegativeTest {
     @Test fun hostNameNormalization() = expectAccept(run(Fixtures.client(ca, name = "Server.TEST.")), "mixed case + trailing dot")
 
     @Test fun genericAlertsHideTheReason() {
-        val f = run(Fixtures.client(ca, name = "wrong.test") { genericAlerts = true }).failed
+        val f = run(Fixtures.client(ca, name = "wrong.test") { expert { genericAlerts = true } }).failed
         assertTrue(f != null)
         assertEquals(40, f.alert, "handshake_failure instead of bad_certificate")
-        val e = run(Fixtures.client(ca) { genericAlerts = true }, listOf(TestCerts.expired), TestCerts.expiredKey).failed
+        val e = run(Fixtures.client(ca) { expert { genericAlerts = true } }, listOf(TestCerts.expired), TestCerts.expiredKey).failed
         assertTrue(e != null)
         assertEquals(40, e.alert, "handshake_failure instead of certificate_expired")
     }

@@ -30,7 +30,8 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2Settings
-import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.http2.http2Settings
+import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.neverIndex
 import io.kuicksilver.ktor.client.neverIndexedHeaders
 import io.kuicksilver.native.KslLoader
@@ -68,8 +69,8 @@ class ServerH2Test {
         HttpClient(KuicksilverClient) {
             expectSuccess = false
             engine {
-                trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))
-                http3 { discovery = Http3DiscoveryMode.H1Only } // the TCP path: HTTP/2 when the server offers it
+                tls { trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))) }
+                http3 { enabled = false } // the TCP path: HTTP/2 when the server offers it
             }
         }
 
@@ -79,8 +80,7 @@ class ServerH2Test {
     ): Pair<Server, Int> =
         tlsServer(
             configure = {
-                http2 = true
-                http3 = false
+                http3 { enabled = false }
                 configure()
             },
             module = module,
@@ -93,15 +93,17 @@ class ServerH2Test {
             val opened = Channel<HttpProtocolVersion>(Channel.UNLIMITED)
             val (server, port) =
                 h2Server(configure = {
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun connectionOpened(
-                                protocol: HttpProtocolVersion,
-                                remote: InetSocketAddress?,
-                            ) {
-                                opened.trySend(protocol)
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun connectionOpened(
+                                    protocol: HttpProtocolVersion,
+                                    remote: InetSocketAddress?,
+                                ) {
+                                    opened.trySend(protocol)
+                                }
                             }
-                        }
+                    }
                 }) {
                     routing { get("/") { call.respondText("${call.request.httpVersion} ${call.request.local.scheme}") } }
                 }
@@ -167,10 +169,14 @@ class ServerH2Test {
             }
         }
 
-    /** 0.3.0: HTTP/2 is opt-in; without `http2` the ALPN of a TLS connector stays `http/1.1`, as in 0.2. */
-    @Test fun disabledByDefaultOffersOnlyHttp11() =
+    /** HTTP/2 is on by default since 0.3.0; `http2 { enabled = false }` keeps the ALPN of a TLS connector at `http/1.1`, as in 0.2. */
+    @Test fun disabledOffersOnlyHttp11() =
         serverTest {
-            val (server, port) = tlsServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) =
+                tlsServer(configure = {
+                    http3 { enabled = false }
+                    http2 { enabled = false }
+                }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port, listOf("h2", "http/1.1")).use { assertEquals("http/1.1", it.alpn) }
                 client().use { c ->
@@ -217,13 +223,14 @@ class ServerH2Test {
             val size = 8 shl 20
             val (server, port) =
                 h2Server(configure = {
-                    http2Settings =
-                        Http2Settings(
-                            initialStreamWindow = 65_536,
-                            maxStreamWindow = 65_536,
-                            initialConnectionWindow = 65_536,
-                            maxConnectionWindow = 65_536,
-                        )
+                    http2 {
+                        settings {
+                            initialStreamWindow = 65_536
+                            maxStreamWindow = 65_536
+                            initialConnectionWindow = 65_536
+                            maxConnectionWindow = 65_536
+                        }
+                    }
                 }) {
                     routing {
                         post("/") {
@@ -328,7 +335,7 @@ class ServerH2Test {
     @Test fun negative_altSvcGoesOutAsAnAltSvcFrameOnH2() =
         h3ServerTest {
             val (server, port) =
-                tlsServer(configure = { http2 = true }) {
+                tlsServer {
                     routing {
                         get("/") { call.respondText("ok") }
                         get("/own") {
@@ -489,7 +496,9 @@ class ServerH2Test {
         serverTest {
             val handled = Channel<String>(Channel.UNLIMITED)
             val (server, port) =
-                h2Server(configure = { http2Settings = Http2Settings(maxHeaderListSize = 1024) }) {
+                h2Server(configure = {
+                    http2 { settings { maxFieldSectionSize = 1024 } }
+                }) {
                     routing { get("/{...}") { handled.trySend(call.request.local.uri) } }
                 }
             try {
@@ -519,7 +528,6 @@ class ServerH2Test {
         serverTest {
             val server =
                 kuicksilverServer(null, configure = {
-                    http2 = true
                     connector {
                         host = "127.0.0.1"
                         port = 0
@@ -546,7 +554,7 @@ class ServerH2Test {
     @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
         serverTest {
             val (server, port) =
-                h2Server(configure = { requestHeaderTimeoutSeconds = 60 }) { routing { get("/") { call.respondText("ok") } } }
+                h2Server(configure = { requestHeaderTimeout = 60.seconds }) { routing { get("/") { call.respondText("ok") } } }
             RawH2Client.connect(port).use { raw ->
                 raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
                 withTimeout(10.seconds) {
@@ -565,7 +573,7 @@ class ServerH2Test {
         serverTest {
             val (server, port) =
                 h2Server(
-                    configure = { requestHeaderTimeoutSeconds = 1 },
+                    configure = { requestHeaderTimeout = 1.seconds },
                 ) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -586,7 +594,7 @@ class ServerH2Test {
         serverTest {
             val (server, port) =
                 h2Server(
-                    configure = { requestHeaderTimeoutSeconds = 1 },
+                    configure = { requestHeaderTimeout = 1.seconds },
                 ) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -743,17 +751,19 @@ class ServerH2Test {
             val statuses = Channel<Int?>(Channel.UNLIMITED)
             val (server, port) =
                 h2Server(configure = {
-                    connectionIdleTimeoutSeconds = 1
-                    eventListener =
-                        object : KuicksilverServerEventListener() {
-                            override fun requestEnded(
-                                protocol: HttpProtocolVersion,
-                                call: ApplicationCall,
-                                cause: Throwable?,
-                            ) {
-                                statuses.trySend(call.response.status()?.value)
+                    tcp { idleTimeout = 1.seconds }
+                    observability {
+                        eventListener =
+                            object : KuicksilverServerEventListener() {
+                                override fun requestEnded(
+                                    protocol: HttpProtocolVersion,
+                                    call: ApplicationCall,
+                                    cause: Throwable?,
+                                ) {
+                                    statuses.trySend(call.response.status()?.value)
+                                }
                             }
-                        }
+                    }
                 }) { routing { post("/") { call.respondText(call.receiveText()) } } }
             try {
                 RawH2Client.connect(port).use { raw ->
@@ -772,12 +782,12 @@ class ServerH2Test {
 
     /**
      * HTTP/2 connections count against the TCP connection limits like HTTP/1.1 ones (one socket each, from accept until it
-     * is released): with `maxTcpConnectionsPerIp = 1` and an HTTP/2 connection open and served, a second client from the
+     * is released): with `tcp { maxConnectionsPerIp = 1 }` and an HTTP/2 connection open and served, a second client from the
      * same address is closed at accept, before its TLS handshake; once the first is closed the address is served again.
      */
     @Test fun negative_connectionLimitCountsH2() =
         serverTest {
-            val (server, port) = h2TlsServer({ maxTcpConnectionsPerIp = 1 }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = h2TlsServer({ tcp { maxConnectionsPerIp = 1 } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 RawH2Client.connect(port).use { raw ->
                     assertEquals("h2", raw.alpn)

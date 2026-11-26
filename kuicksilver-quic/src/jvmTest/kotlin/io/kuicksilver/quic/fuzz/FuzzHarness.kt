@@ -93,7 +93,7 @@ internal class CoreDriver : AutoCloseable {
                 .Builder()
                 .apply {
                     server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                    crypto = NullCryptoProvider
+                    runtime { crypto = NullCryptoProvider }
                 }.build(),
             Random(5),
         )

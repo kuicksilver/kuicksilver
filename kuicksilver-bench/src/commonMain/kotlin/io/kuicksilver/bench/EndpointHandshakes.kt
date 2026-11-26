@@ -53,8 +53,8 @@ public class EndpointHandshakes private constructor(
             val serverTls = tlsConfig(TlsRole.Server) { alpn = listOf("bench"); this.identity = identity }
             val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
             val clientIo = net.open(InetSocketAddress("10.0.0.1", 40000))
-            val server = QuicEndpoint.bind(serverIo.localAddress, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); io = { serverIo } }.build())
-            val client = QuicEndpoint.bind(clientIo.localAddress, QuicEndpointConfig.Builder().apply { io = { clientIo } }.build())
+            val server = QuicEndpoint.bind(serverIo.localAddress, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); runtime { io = { serverIo } } }.build())
+            val client = QuicEndpoint.bind(clientIo.localAddress, QuicEndpointConfig.Builder().apply { runtime { io = { clientIo } } }.build())
             return EndpointHandshakes(identity, server, client)
         }
 
@@ -63,8 +63,8 @@ public class EndpointHandshakes private constructor(
             val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
             val serverTls = tlsConfig(TlsRole.Server) { alpn = listOf("bench"); this.identity = identity }
             val lo = InetSocketAddress("127.0.0.1", 0)
-            val server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); io = { DatagramIo.open(it, prefer) } }.build())
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { io = { DatagramIo.open(it, prefer) } }.build())
+            val server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); runtime { io = { DatagramIo.open(it, prefer) } } }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { io = { DatagramIo.open(it, prefer) } } }.build())
             return EndpointHandshakes(identity, server, client)
         }
     }

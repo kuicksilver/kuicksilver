@@ -79,10 +79,10 @@ class ClientConnectDeadlineRaceTest {
     @Test fun negative_anUpgradeDecidedAsTheConnectTimeoutFiresIsThe307() =
         race { millis ->
             Tripwire().use { origin ->
-                testClient(Http3DiscoveryMode.Auto, engine = {
+                testClient(Http3Discovery.Auto, engine = {
                     resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                     connectTimeout = millis.milliseconds
-                    http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, null, "h2")) } }
+                    network { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, null, "h2")) } }
                 }, block = { followRedirects = false }).use { c ->
                     engine(c).httpsResolvedForTest = { hold() }
                     // before: not upgraded, the request went to the plain origin
@@ -95,14 +95,14 @@ class ClientConnectDeadlineRaceTest {
     /** HTTPS records read as the connect timeout fires are the resolution: the request goes to the endpoint they name. */
     @Test fun negative_recordsReadAsTheConnectTimeoutFiresAreTheResolution() =
         race { millis ->
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
+            val (server, port) = testServer(configure = { http3 { enabled = false } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 Tripwire().use { origin ->
-                    testClient(Http3DiscoveryMode.Auto, engine = {
+                    testClient(Http3Discovery.Auto, engine = {
                         resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                         connectTimeout = millis.milliseconds
                         // the origin's own port is a tripwire; the record's endpoint is the server
-                        http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, port, "http/1.1")) } }
+                        network { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, port, "http/1.1")) } }
                     }).use { c ->
                         engine(c).httpsResolvedForTest = { hold() }
                         assertEquals("ok", c.get("https://server.test:${origin.port}/").bodyAsText())
@@ -139,8 +139,8 @@ class ClientConnectDeadlineRaceTest {
         race { millis ->
             val (server, port) =
                 testServer(configure = {
-                    http2 = true
-                    http3 = false
+                    http2 { enabled = true }
+                    http3 { enabled = false }
                 }) {
                     install(io.ktor.server.websocket.WebSockets)
                     routing {
@@ -178,7 +178,7 @@ class ClientConnectDeadlineRaceTest {
             }
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             try {
-                testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = millis.milliseconds }).use { c ->
+                testClient(Http3Discovery.H3Only, engine = { connectTimeout = millis.milliseconds }).use { c ->
                     engine(c).h3.setupMadeForTest = { hold() }
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
