@@ -17,6 +17,10 @@ import kotlin.reflect.KClass
  * `HttpClient(Kuicksilver) { engine { ... } }`: HTTP/3 with Alt-Svc discovery and HTTP/1.1 over TLS 1.3 on every platform (docs/guide/ktor.md).
  * Creating the engine fails with [IllegalStateException] when the Ktor on the classpath is not the supported 3.6.x
  * (docs/guide/ktor.md, "Supported Ktor versions").
+ *
+ * `HttpClient.close()` returns at once and the engine closes its connections once the calls in flight finished;
+ * `client.engine.coroutineContext.job.join()` returns after that: the pools, the UDP endpoints (every QUIC connection on
+ * them and its qlog trace) and the selector are closed (docs/guide/ktor.md, "Closing the client").
  */
 public data object Kuicksilver : HttpClientEngineFactory<KuicksilverEngineConfig> {
     /** Creates an engine configured by [block]. */

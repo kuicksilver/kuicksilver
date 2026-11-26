@@ -1532,9 +1532,12 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.networkChangeForgetsNonPersistentAlternativesByDefault
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.plainHttpAltSvcIgnored
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.srttMapBounded
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCloseJoinTest.joiningTheEngineJobWaitsForEveryQlogTrace
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientCloseJoinTest.joiningWaitsForACallStillReadingItsBody
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.aUrlTheProxyDoesNotApplyToGoesDirectly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.credentialsGoToTheProxy
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.http3ThroughTheProxy
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.joiningTheEngineJobWaitsForTheTunnelledConnectionsTrace
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_aRefusedTunnelNeverFallsBackToADirectConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_h1OnlyWithAConnectUdpProxyIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_tunnelsDoNotShareTicketsWithDirectConnections

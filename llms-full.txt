@@ -1353,7 +1353,10 @@ A sink is called on the endpoint loop, so a file sink on a slow disk would slow 
 `AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
 closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is
 dropped and counted in `dropped`, so a stalled disk loses trace lines, never throughput. `sampleEvery = n` traces one
-connection in n; `flush()` waits for what is queued and `close()` stops the writer after it.
+connection in n; `flush()` waits for what is queued and `close()` stops the writer after it. A trace is closed when its
+connection's resources are released, at the latest by `QuicEndpoint.closeAndJoin()`; the Ktor client engine's
+`client.engine.coroutineContext.job.join()` waits for that after `client.close()` ([Ktor: Closing the
+client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#closing-the-client)).
 
 ```kotlin
 // guide:quic:qlog-async
@@ -5207,6 +5210,15 @@ HttpClient(Kuicksilver) {
 On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the traces to a directory in the app's
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
+
+<a id="closing-the-client"></a>
+**Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
+its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
+that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
+`client.engine.coroutineContext.job.join()` (0.3.0): it returns once every endpoint finished closing, which includes
+`close()` on the qlog trace of every connection, a call still reading its body included. An `AsyncQlogSink` writes on its
+own coroutine, so `flush()` it after the join to have the files written. The join has no bound of its own (closing an
+endpoint waits for nothing on the network); wrap it in `withTimeout` where the exit must not wait at all.
 
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.

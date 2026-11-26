@@ -1068,6 +1068,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: `client.engine.coroutineContext.job.join()` after `HttpClient.close()` now returns once the engine closed
+  its pools, its UDP endpoints and its selector. That includes every QUIC connection's qlog trace, so an app that exits
+  after the join keeps complete traces (`docs/guide/ktor.md`, "Closing the client"). Before, the cleanup ran outside the
+  engine's job, and the join returned as soon as the calls had finished. The endpoints of CONNECT-UDP tunnels are now
+  also closed by `close()` instead of waiting for their connections to end.
 - Ktor client, `Alt-Svc`, and Ktor server, the application's own `Connection` field over HTTP/1.1 (breaking strictness,
   RFC 9110 section 5.6.3, RFC 7838 section 3): only SP and HTAB are OWS around a protocol, an authority, a parameter or a
   connection option, no longer any Unicode space: `<U+00A0>h3=":443"` is no `h3` alternative, `<U+00A0>ma=1` is an

@@ -120,6 +120,29 @@ class ClientConnectUdpProxyTest {
             }
         }
 
+    @Test fun joiningTheEngineJobWaitsForTheTunnelledConnectionsTrace() =
+        h3Test {
+            val proxy = loopbackProxy()
+            withProxyAndTarget(proxy) { proxyPort, targetPort, _ ->
+                val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
+                val sink = CountingQlogSink()
+
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                val c =
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        connectUdpProxy = udp
+                        http3 { qlog = sink }
+                    })
+                c.use {
+                    assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
+                }
+                // the connection to the proxy and the one to the target through the tunnel, its endpoint of its own
+                kotlinx.coroutines.withTimeout(10.seconds) { c.engine.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+                assertEquals(2, sink.opened.load())
+                assertEquals(2, sink.closed.load(), "every trace closed by the time join() returned")
+            }
+        }
+
     @Test fun credentialsGoToTheProxy() =
         h3Test {
             val proxy = loopbackProxy()

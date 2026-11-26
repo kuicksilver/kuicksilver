@@ -589,6 +589,7 @@ internal class H3Pool(
                         else -> set.loopback4
                     }
                 bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), set.config, config.http3.settings).also {
+                    bound(it)
                     endpointBindStepForTest?.invoke(it, false)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
                     // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
@@ -1045,6 +1046,48 @@ internal class H3Pool(
         closed = true
         direct.close()
         proxyHop.close()
+        for (ep in endpoints.load()) ep.close() // the tunnels' (one per connection through a CONNECT-UDP proxy)
+    }
+
+    /**
+     * Every endpoint this pool bound and has not seen finish closing: the direct ones, the proxy hop's and the CONNECT-UDP
+     * tunnels' ([bound]). [closeAndJoin] waits for them; a tunnel's leaves once its own close finished ([closeTunnelEndpoint]).
+     */
+    private val endpoints = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Endpoint>())
+
+    /** Where the endpoint of an ended tunnel closes and is then forgotten (not [ownScope]: [close] cancels that one). */
+    private val tunnelCloses = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+
+    /** Notes a newly bound endpoint for [closeAndJoin]; the binder reads [closed] after this and closes it when it is set. */
+    private fun bound(ep: Http3Endpoint) {
+        endpoints.update { it + ep }
+    }
+
+    /** Closes a tunnel's endpoint (its connection ended, or its setup failed) and forgets it once it finished closing. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun closeTunnelEndpoint(ep: Http3Endpoint) {
+        ep.close()
+        tunnelCloses.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+            try {
+                ep.closeAndJoin()
+            } finally {
+                endpoints.update { it - ep }
+            }
+        }
+    }
+
+    /**
+     * [close], then waits until every endpoint of the pool finished closing: each connection on it closed and its qlog trace
+     * closed (`QuicEndpoint.closeAndJoin`), the sockets released. An endpoint bound while this runs is closed by its binder,
+     * which sees [closed]; taking the [lock] once waits for a direct or proxy-hop bind in progress to have noted its endpoint.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    suspend fun closeAndJoin() {
+        close()
+        lock.withLock {}
+        for (ep in endpoints.load()) ep.closeAndJoin()
+        endpoints.store(emptySet())
+        tunnelCloses.cancel()
     }
 
     /**
@@ -1531,6 +1574,8 @@ internal class H3Pool(
                     config.http3.settings,
                 )
             inner = ep
+            bound(ep)
+            if (closed) throw IllegalStateException("the client is closed") // after bound(): closeAndJoin sees it or this does
             val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
             // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
@@ -1548,12 +1593,12 @@ internal class H3Pool(
                     }
                 }
             c.closed.invokeOnCompletion {
-                ep.close()
+                closeTunnelEndpoint(ep)
                 outer.close()
             }
             return c
         } catch (e: Throwable) {
-            inner?.close()
+            inner?.let { closeTunnelEndpoint(it) }
             outer.close()
             throw e
         }

@@ -2492,6 +2492,15 @@ On Android, `http3 { qlog = AsyncQlogSink(qlogDirectory(context)) }` writes the 
 cache directory, created owner-only (API 26 and up; [QUIC: qlog](quic.md#qlog)). It is the counterpart of
 `keylogFile(context)`.
 
+<a id="closing-the-client"></a>
+**Closing the client.** `client.close()` returns at once: the calls in flight finish, then the engine closes its pools,
+its UDP endpoints (every QUIC connection on them, with its CONNECTION_CLOSE) and its selector in the background. An app
+that exits right after, and wants its qlog traces complete, waits for that with the usual Ktor engine idiom,
+`client.engine.coroutineContext.job.join()` (0.3.0): it returns once every endpoint finished closing, which includes
+`close()` on the qlog trace of every connection, a call still reading its body included. An `AsyncQlogSink` writes on its
+own coroutine, so `flush()` it after the join to have the files written. The join has no bound of its own (closing an
+endpoint waits for nothing on the network); wrap it in `withTimeout` where the exit must not wait at all.
+
 Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
 never fails a call.
 

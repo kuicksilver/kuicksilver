@@ -202,7 +202,9 @@ public class Http3ClientConfig {
     /**
      * A qlog trace per HTTP/3 connection (docs/guide/quic.md, "qlog"), added to [KuicksilverEngineConfig.quic]; null (the
      * default) keeps that configuration's own. Wrap a file sink in `AsyncQlogSink` so a slow disk never stalls the endpoint:
-     * `qlog = AsyncQlogSink(DirectoryQlogSink(dir))`.
+     * `qlog = AsyncQlogSink(DirectoryQlogSink(dir))`. After `HttpClient.close()`, `client.engine.coroutineContext.job.join()`
+     * returns once every connection's trace was closed (docs/guide/ktor.md, "Closing the client"); then `flush()` an
+     * `AsyncQlogSink` to have its writer finish.
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var qlog: QlogSink? = null
