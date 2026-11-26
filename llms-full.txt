@@ -7770,7 +7770,8 @@ Not configurable, listed so you can plan around them:
 compile, and an old configuration-file key stops the start with the key that replaced it. `tools/migrate/config-0.3.py`
 rewrites most Kotlin assignments into their blocks (`python3 tools/migrate/config-0.3.py <file or directory>`, `--check`
 to only list them) and reports the ones that need a decision (a `Duration.ZERO`, `Duration.INFINITE` or `0` that meant
-"off" is `null` now). The tables list the options 0.2.x released; options added in 0.3.0 snapshots are in their sections
+"off" is `null` now). An option the 0.3.0 engines derive and refuse, or that the client's `tls { }` no longer has, is
+commented out and reported; groups it writes twice in one block are merged. The tables list the options 0.2.x released; options added in 0.3.0 snapshots are in their sections
 above under the new name only. Behaviour that changed with the defaults is in the CHANGELOG.
 
 #### Kotlin: Ktor client

@@ -166,6 +166,17 @@ The design left these cases open or met them only in the code; each was decided 
 - **The migration script handles conditional values by hand.** `tools/migrate/config-0.3.py` rewrites a plain
   `discovery = H1Only` into `enabled = false` and reports a conditional one (`if (h3Only) H3Only else H1Only`) for a hand
   rewrite; the engine-interop and soak sites were rewritten by hand.
+- **The migration script never leaves a refusal behind.** An option an engine derives and refuses (the client's
+  `quic { handshakeTimeout }`, `expert { resetStreamAt; cancelErrorCode }`, the HTTP/3 SETTINGS `enableConnectProtocol`
+  and `h3Datagram`) or that the client's `tls { }` lost (`sessionTickets`, `genericAlerts`, `handshakeTimeout`,
+  `echConfigList`) is commented out with the reason and reported, since code that compiles and fails at start is worse
+  than code that does not compile. What moved out of `http3Settings` goes to its block: the server's WebTransport options
+  to `http3 { webTransport { } }` (`webTransportMaxSessions` as `maxSessionsPerConnection`, on the client too) and its
+  `earlyData` to `http3 { earlyData { policy } }`. `expert { maxUniStreams }` is kept and reported (at least 3). A 0.2.x
+  "off" (`Duration.ZERO`, `Duration.INFINITE`, `0`) becomes `null` wherever the option lands, and a server
+  `quicMaxIdleTimeout = null` (0.2.x: "the quic block's value") is dropped, as `null` is "no idle timeout" now. Groups a
+  block ends up with twice, adjacent or not, are merged into the first. `tools/migrate/config-0.3-test.sh` holds the
+  fixtures.
 - **The checker knows the blocks.** `tools/check/config-table.sh` reads each documented class through its DSL path from a
   root declared in `config-table.spec`, so an experimental block makes its options experimental in the reference too; the
   exceptions of principle 9 are `#field-experimental` lines, the mapping tests are `#mapped` lines, and the classes without

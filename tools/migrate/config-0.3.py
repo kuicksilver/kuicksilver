@@ -9,8 +9,11 @@ wrapped in that group, a renamed option gets its new name.
 Not a parser: it reads the braces of the code the way tools/check/kotlin_scan.py does, and rewrites only direct
 statements `name = value` (or `this.name = value`) of a block whose opening matches a rule, e.g. `quicConfig {`. An
 assignment through a variable (`builder.maxIdleTimeout = ...`) is left alone, as is a value that changed its meaning
-(`Duration.ZERO`, `Duration.INFINITE`, `0` for "off"): the script prints such a line for a manual decision. What it leaves
-behind does not compile, so the compiler finds the rest.
+(`Duration.ZERO`, `Duration.INFINITE`, `0` for "off") becomes `null` where the 0.3.0 option takes that. An option the
+0.3.0 engines derive and refuse (`DERIVED_*`: the client's `handshakeTimeout`, `enableConnectProtocol`, ...) or no longer
+have (the client `tls { }`'s `sessionTickets`, `genericAlerts`, ...) is commented out and printed, as is every line that
+needs a manual decision (a conditional `H1Only`). Groups a block ends up with twice (`tls { }` from `trust` and again from
+`identity`) are merged into the first. What it leaves behind does not compile, so the compiler finds the rest.
 """
 import argparse
 import os
@@ -44,8 +47,23 @@ def builder(dsl, cls):
 # A value that meant "off" in 0.2.x and is refused now: (old option, pattern of the old value, the new value).
 NONE_VALUES = {
     "maxIdleTimeout": (r"^(?:kotlin\.time\.)?Duration\.ZERO$", "null"),
+    "quicMaxIdleTimeout": (r"^(?:kotlin\.time\.)?Duration\.ZERO$", "null"),
     "maxDatagramFrameSize": (r"^0L?$", "null"),
+    "maxFrameSize": (r"^0L?$", "null"),
+    "maxConnectionLifetime": (r"^(?:kotlin\.time\.)?Duration\.INFINITE$", "null"),
+    "connectionAttemptDelay": (r"^(?:kotlin\.time\.)?Duration\.INFINITE$", "null"),
+    "happyEyeballsDelay": (r"^(?:kotlin\.time\.)?Duration\.INFINITE$", "null"),
+    "pingInterval": (r"^(?:kotlin\.time\.)?Duration\.INFINITE$", "null"),
 }
+
+
+def _none_value(value, *names):
+    """value, or the 0.3.0 "off" (`null`) when it is the 0.2.x "off" of the old or the new option name."""
+    for n in names:
+        none = NONE_VALUES.get(n)
+        if none and re.match(none[0], value.strip()):
+            return none[1]
+    return value
 
 
 # TlsConfig.Builder (tlsConfig(role) { }, TlsConfig.Builder(role).apply { })
@@ -154,18 +172,210 @@ def _wrap(stmt, *groups):
 
 def _lambda_body(value):
     """`{ a = 1 }` -> `a = 1` (None when the value is no lambda literal)."""
+    b = _raw_lambda_body(value)
+    return b.strip() if b is not None else None
+
+
+def _raw_lambda_body(value):
+    """The inside of `{ ... }`, its lines as they are (None when the value is no lambda literal)."""
     v = value.strip()
-    return v[1:-1].strip() if v.startswith("{") and v.endswith("}") else None
+    return v[1:-1] if v.startswith("{") and v.endswith("}") else None
 
 
 def _builder_body(value, dsl):
     """`dsl { a = 1 }` -> `a = 1` (None otherwise)."""
+    b = _raw_builder_body(value, dsl)
+    return b.strip() if b is not None else None
+
+
+def _raw_builder_body(value, dsl):
     m = re.match(r"(?:[\w.]*\.)?" + dsl + r"\s*(\{.*\})\s*$", value.strip(), re.S)
-    return _lambda_body(m.group(1)) if m else None
+    return _raw_lambda_body(m.group(1)) if m else None
 
 
 def _duration_or_null(v):
     return "null" if re.match(r"^(?:kotlin\.time\.)?Duration\.INFINITE$", v.strip()) else v
+
+
+# ---- derived and removed options: commented out and reported (the 0.3.0 engines refuse or lack them) ----
+
+_CTX = {"indent": ""}  # the indent of the statement being rewritten, for the blocks of lines the moves write
+
+
+def _block(groups, body):
+    """`g1 { g2 { body } }`: one line for a one-line body, else lines under the indent of the statement rewritten."""
+    raw = body
+    body = body.strip()
+    if not groups:
+        return body
+    if "\n" not in body:
+        return _wrap(body, *groups) if body else _wrap("", *groups).replace("{  }", "{ }")
+    base = _CTX["indent"]
+    lines = raw.strip("\n").rstrip().split("\n")
+    started = raw.lstrip(" \t").startswith("\n")
+    rest = lines if started else lines[1:]
+    ind = min((len(x) - len(x.lstrip()) for x in rest if x.strip()), default=0)
+    body_lines = ([] if started else [lines[0].strip()]) + [x[ind:] if x.strip() else "" for x in rest]
+    out = []
+    for i, g in enumerate(groups):
+        out.append(f"{base}{'    ' * i}{g} {{")
+    inner = base + "    " * len(groups)
+    out += [inner + x if x else "" for x in body_lines]
+    for i in reversed(range(len(groups))):
+        out.append(f"{base}{'    ' * i}}}")
+    return "\n".join(out)[len(base):]
+
+
+def _parse(body, base=0):
+    """The direct statements of a block's inside: (path name, start, end, value or None, inner statements of a block call)."""
+    code = kotlin_scan.blank(body)
+    out = []
+    for s, eq, e, name in _direct_statements(code, 0, len(code), body):
+        if name.endswith("{}"):
+            out.append((name[:-2], base + s, base + e, None, _parse(body[eq + 1:e - 1], base + eq + 1)))
+        else:
+            out.append((name, base + s, base + e, body[eq:e].strip(), []))
+    return out
+
+
+def _cut(text, s, e):
+    """The range to drop for text[s:e]: its whole line when nothing else is on it."""
+    ls = text.rfind("\n", 0, s) + 1
+    le = text.find("\n", e)
+    le = len(text) if le < 0 else le
+    if text[ls:s].strip() == "" and text[e:le].strip() in ("", ";"):
+        return (ls - 1 if ls > 0 else ls), le
+    return s, e
+
+
+def _filter(body, table, report, where, what, allowed=None):
+    """body with the statements [table] names (dotted paths: `expert.maxUniStreams`) handled: "derived" and "removed" ones
+    commented out, "report" ones kept, "move" ones taken out; and the moved statements as (groups, statement). With
+    [allowed], a top-level name outside it is "removed" too."""
+    edits, moved = [], []
+    closing = " }" * what.count("{")
+
+    def shown(path, stmt):
+        groups = path.split(".")[:-1]
+        return "".join(f"{g} {{ " for g in groups) + stmt + " }" * len(groups)
+
+    def say(path, stmt, kind, why):
+        if kind == "report" or kind == "move":
+            report.append(f"{where}: {what}{shown(path, stmt)}{closing}: {why}")
+        else:
+            label = "derived by the engine" if kind == "derived" else "no 0.3.0 replacement"
+            report.append(f"{where}: {what}{shown(path, stmt)}{closing}: {label} ({why}): commented out")
+
+    def comment(stmt, kind, why):
+        label = "derived by the engine" if kind == "derived" else "no 0.3.0 replacement"
+        return f"/* 0.3.0, {label} ({why}): {stmt.replace('/*', '/ *').replace('*/', '* /')} */"
+
+    def foreign(stmts, prefix):
+        """Every statement of a group the 0.3.0 block lacks, reported with its own reason."""
+        for name, s, e, value, inner in stmts:
+            path = prefix + name
+            entry = table.get(path)
+            if entry is None and inner:
+                foreign(inner, path + ".")
+                continue
+            kind, why = (entry[0], entry[-1]) if entry else ("removed", "no option of the 0.3.0 block")
+            say(path, body[s:e].strip(), "removed" if kind not in ("derived", "removed") else kind, why)
+
+    def walk(stmts, prefix):
+        for name, s, e, value, inner in stmts:
+            path = prefix + name
+            entry = table.get(path)
+            stmt = body[s:e].strip()
+            if entry is None and allowed is not None and not prefix and name not in allowed:
+                if inner:  # the whole group goes: its block would not compile
+                    foreign(inner, path + ".")
+                    edits.append((s, e, comment(stmt, "removed", f"the 0.3.0 block has no {name} group")))
+                    continue
+                entry = ("removed", "no option of the 0.3.0 block")
+            if entry is None and inner:
+                walk(inner, path + ".")
+                continue
+            if entry is None:
+                continue
+            kind, why = entry[0], entry[-1]
+            say(path, stmt, kind, why)
+            if kind == "move":
+                moved.append((entry[1], f"{'this.' if value == entry[2] else ''}{entry[2]} = {value}"))
+                edits.append((*_cut(body, s, e), ""))
+            elif kind != "report":
+                edits.append((s, e, comment(stmt, kind, why)))
+
+    walk(_parse(body), "")
+    for s, e, new in sorted(edits, reverse=True):
+        body = body[:s] + new + body[e:]
+    # a group the cuts left empty goes (one that holds a comment of ours stays)
+    pos = 0
+    while True:
+        m = re.compile(r"\b(?:expert|webTransport|ech|settings|earlyData)\s*\{\s*\}").search(kotlin_scan.blank(body), pos)
+        if not m:
+            return body, moved
+        if body[m.start():m.end()].count("{") != 1 or "/*" in body[m.start():m.end()]:
+            pos = m.end()
+            continue
+        cs, ce = _cut(body, m.start(), m.end())
+        body = body[:cs] + body[ce:]
+
+
+# The client engine derives these of its http3 { quic { } } (KuicksilverEngineConfig.QUIC_DERIVED) and refuses them.
+CLIENT_QUIC_DERIVED = {
+    "handshakeTimeout": ("derived", "the engine's connectTimeout: set connectTimeout"),
+    "expert.resetStreamAt": ("derived", "on for WebTransport"),
+    "expert.cancelErrorCode": ("derived", "HTTP/3 resets with its own codes, RFC 9114 section 8.1"),
+    "expert.maxUniStreams": ("report", "now in expert { }, at least 3 (RFC 9114 section 6.2)"),
+}
+SERVER_QUIC_DERIVED = {k: v for k, v in CLIENT_QUIC_DERIVED.items() if k != "handshakeTimeout"}
+
+# The client's http3 { settings { } } (KuicksilverEngineConfig.H3_DERIVED); its webTransport { initialMax... } stays.
+CLIENT_H3_DERIVED = {
+    "enableConnectProtocol": ("derived", "on for WebSockets and WebTransport, RFC 9220"),
+    "h3Datagram": ("derived", "follows the QUIC datagrams, RFC 9297"),
+    "earlyData": ("derived", "a server's policy; the client's 0-RTT is http3 { earlyData { enabled } }"),
+    "webTransport.enabled": ("derived", "every webTransport() call turns it on"),
+    "webTransport.maxSessions": ("move", ("webTransport",), "maxSessionsPerConnection",
+                                 "now http3 { webTransport { maxSessionsPerConnection } }"),
+}
+
+# The server's http3 { settings { } }: WebTransport and the early-data policy have blocks of their own.
+SERVER_H3_DERIVED = {
+    "enableConnectProtocol": ("derived", "from webSockets { overHttp3 }, http3 { webTransport { enabled } } and http3 { connectUdp }"),
+    "h3Datagram": ("derived", "follows the QUIC datagrams, RFC 9297"),
+    "earlyData": ("move", ("earlyData",), "policy", "now http3 { earlyData { policy } }"),
+    "webTransport.enabled": ("move", ("webTransport",), "enabled", "now http3 { webTransport { enabled } }"),
+    "webTransport.maxSessions": ("move", ("webTransport",), "maxSessionsPerConnection",
+                                 "now http3 { webTransport { maxSessionsPerConnection } }"),
+    "webTransport.initialMaxStreamsBidi": ("move", ("webTransport",), "initialMaxStreamsBidi", "now http3 { webTransport { } }"),
+    "webTransport.initialMaxStreamsUni": ("move", ("webTransport",), "initialMaxStreamsUni", "now http3 { webTransport { } }"),
+    "webTransport.initialMaxData": ("move", ("webTransport",), "initialMaxData", "now http3 { webTransport { } }"),
+}
+
+# The client's tls { } is a ClientTlsConfig now; what a TlsConfig.Builder lambda set besides these is derived or gone.
+CLIENT_TLS_OPTIONS = {"trust", "identity", "versions", "cipherSuites", "keyExchangeGroups", "revocation",
+                      "certificateCompression", "keylog", "ech"}
+CLIENT_TLS_REMOVED = {
+    "alpn": ("derived", "the engine's ALPN"),
+    "serverName": ("derived", "the request's host"),
+    "handshakeTimeout": ("derived", "the engine's connectTimeout: set connectTimeout"),
+    "sessionTickets": ("removed", "a server's ticket keys; the client resumes on its own"),
+    "expert.genericAlerts": ("removed", "the client sends the specific alert; tlsConfig(role) { expert { } } for the raw API"),
+    "expert.alpnFallback": ("removed", "the engine picks the ALPN"),
+    "clientAuth": ("removed", "a server's option"),
+    "sniSelector": ("removed", "a server's option"),
+    "ocspStapling": ("removed", "a server's option"),
+    "ech.configList": ("removed", "the client takes tls { ech { configLists = mapOf(host to list) } } or the HTTPS record's"),
+    "ech.keys": ("removed", "a server's option"),
+}
+
+
+def _with_moved(main, moved, wrap=()):
+    """main followed, statement by statement, by the moved ones (each wrapped in [wrap] and its groups)."""
+    out = [main] if main else []
+    out += [_block(wrap + groups, stmt) for groups, stmt in moved]
+    return ("\n" + _CTX["indent"]).join(out)
 
 
 def _c_quic(value, report, where):
@@ -175,7 +385,8 @@ def _c_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
-    return "replace", f"http3 {{ quic {{ {body} }} }}"
+    body, _ = _filter(_raw_builder_body(value, "quicConfig"), CLIENT_QUIC_DERIVED, report, where, "http3 { quic { ")
+    return "replace", _block(("http3", "quic"), body)
 
 
 def _c_tls(value, report, where):
@@ -183,7 +394,8 @@ def _c_tls(value, report, where):
     if body is None:
         report.append(f"{where}: tls = {value}: the tls block is typed now, tls {{ ... }}")
         return "replace", f"tls {{ /* was tls = {value.replace('*/', '* /')} */ }}"
-    return "replace", f"tls {{ {body} }}"
+    body, _ = _filter(_raw_lambda_body(value), CLIENT_TLS_REMOVED, report, where, "tls { ", allowed=CLIENT_TLS_OPTIONS)
+    return "replace", _block(("tls",), body)
 
 
 def _c_proxy_tls(value, report, where):
@@ -193,7 +405,7 @@ def _c_proxy_tls(value, report, where):
     if body is None:
         report.append(f"{where}: proxyTls = {value}: now proxies {{ tls {{ ... }} }}")
         return "replace", f"proxies {{ tls {{ /* was proxyTls = {value.replace('*/', '* /')} */ }} }}"
-    return "replace", f"proxies {{ tls {{ {body} }} }}"
+    return "replace", _block(("proxies", "tls"), _raw_lambda_body(value))
 
 
 def _c_h2_settings(value, report, where):
@@ -203,17 +415,22 @@ def _c_h2_settings(value, report, where):
     if body is None:
         report.append(f"{where}: settings = {value}: now settings {{ ... }}")
         return "replace", f"settings {{ /* was settings = {value.replace('*/', '* /')} */ }}"
-    return "replace", f"settings {{ {body} }}"
+    return "replace", _block(("settings",), _raw_builder_body(value, "http2Settings"))
+
+
+def _h3_settings(value, report, where, table, what, wrap):
+    if value.strip() in ("Http3Settings.Default", "io.kuicksilver.http3.Http3Settings.Default"):
+        return "replace", ""
+    if _builder_body(value, "http3Settings") is None:
+        report.append(f"{where}: settings = {value}: now {what}settings {{ ... }}")
+        return "replace", _wrap(f"settings {{ /* was settings = {value.replace('*/', '* /')} */ }}", *wrap)
+    body, moved = _filter(_raw_builder_body(value, "http3Settings"), table, report, where, what + "settings { ")
+    main = _block(wrap + ("settings",), body) if body.strip() else ""
+    return "replace", _with_moved(main, moved, wrap)
 
 
 def _c_h3_settings(value, report, where):
-    body = _builder_body(value, "http3Settings")
-    if value.strip() in ("Http3Settings.Default", "io.kuicksilver.http3.Http3Settings.Default"):
-        return "replace", ""
-    if body is None:
-        report.append(f"{where}: settings = {value}: now settings {{ ... }}")
-        return "replace", f"settings {{ /* was settings = {value.replace('*/', '* /')} */ }}"
-    return "replace", f"settings {{ {body} }}"
+    return _h3_settings(value, report, where, CLIENT_H3_DERIVED, "http3 { ", ())
 
 
 def _c_endpoint(value, report, where):
@@ -286,8 +503,8 @@ def _c_logger(value, report, where):
     return "replace", _wrap(f"logger = {v}", "observability")
 
 
-def _hoist(path, new):
-    return lambda value, report, where: ("hoist", _wrap(f"{new} = {value}", *path))
+def _hoist(path, new, old=None):
+    return lambda value, report, where: ("hoist", _wrap(f"{new} = {_none_value(value, old or new, new)}", *path))
 
 
 ENGINE_MOVES = {
@@ -375,15 +592,25 @@ def _s_quic(value, report, where):
             return "replace", ""
         report.append(f"{where}: quic = {value}: the engine takes a block now, http3 {{ quic {{ ... }} }}: move the options in")
         return "replace", f"http3 {{ quic {{ /* was quic = {value.replace('*/', '* /')} */ }} }}"
-    return "replace", f"http3 {{ quic {{ {body} }} }}"
+    body, _ = _filter(_raw_builder_body(value, "quicConfig"), SERVER_QUIC_DERIVED, report, where, "http3 { quic { ")
+    return "replace", _block(("http3", "quic"), body)
+
+
+def _s_quic_idle(value, report, where):
+    """0.2.x `quicMaxIdleTimeout = null` was "the quic block's value"; null is "no idle timeout" in 0.3.0."""
+    if value.strip() == "null":
+        return "replace", ""
+    return "replace", _wrap(f"maxIdleTimeout = {_none_value(value, 'quicMaxIdleTimeout')}", "http3", "quic")
 
 
 def _s_h3_settings(value, report, where):
-    kind, out = _c_h3_settings(value, report, where)
-    return kind, _wrap(out, "http3") if out else out
+    return _h3_settings(value, report, where, SERVER_H3_DERIVED, "http3 { ", ("http3",))
 
 
 def _s_h2_settings(value, report, where):
+    body = _raw_builder_body(value, "http2Settings")
+    if body is not None:
+        return "replace", _block(("http2", "settings"), body)
     kind, out = _c_h2_settings(value, report, where)
     return kind, _wrap(out, "http2") if out else out
 
@@ -410,7 +637,7 @@ SERVER_MOVES = {
     "http2Settings": _s_h2_settings,
     "http2RepeatOffenderPenalty": _s_penalty,
     "quic": _s_quic,
-    "quicMaxIdleTimeout": (("http3", "quic"), "maxIdleTimeout"),
+    "quicMaxIdleTimeout": _s_quic_idle,
     "udpSocketCount": (("http3", "endpoint"), "loops"),
     "quicMaxConnections": (("http3", "endpoint"), "maxConnections"),
     "quicMaxConnectionsPerIp": (("http3", "endpoint"), "maxConnectionsPerIp"),
@@ -499,11 +726,14 @@ def rewrite_tls_connector_calls(text, report, where):
 CALLS = {
     "http3": [(re.compile(r"(?<![.\w])enableQpackDynamicTable\(\)"), "qpack { enableDynamicTable() }")],
     "client-http2": [(re.compile(r"\bpingInterval\s*=\s*(?:kotlin\.time\.)?Duration\.INFINITE\b"), "pingInterval = null")],
-    "client": [(re.compile(r"\bHttp3DiscoveryMode\.(Auto|Preferred|H3Only)\b"), "Http3Discovery.\\1")],
+    "client": [(re.compile(r"\bHttp3DiscoveryMode\.(Auto|Preferred|H3Only)\b"), "Http3Discovery.\\1"),
+               (re.compile(r"^import io\.kuicksilver\.ktor\.client\.Http3DiscoveryMode$", re.M),
+                "import io.kuicksilver.ktor.client.Http3Discovery")],
 }
 
-# The same moves in any block: the names are TlsConfig.Builder's alone (test fixtures that take a builder lambda).
-rule("tls-any", r"\{", RULES["tls"][1])
+# The same moves in any block but a tls { } (a 0.3.0 ServerTlsConfig keeps echKeys; the client tls lambda is _c_tls's): the
+# names are TlsConfig.Builder's alone (test fixtures that take a builder lambda).
+rule("tls-any", r"(?<!\btls )(?<!\btls)\{", RULES["tls"][1])
 
 _ASSIGN = re.compile(r"(?:this\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
 _BLOCK_CALL = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\{")
@@ -649,16 +879,18 @@ def _one_change(text, code, names, report, where):
                     continue
                 move = moves[st[3]]
                 if callable(move) and not st[3].endswith("{}"):
+                    _CTX["indent"] = _indent_at(text, st[0])
                     kind, out = move(text[st[1]:st[2]].strip(), [], "")
-                    if kind == "keep" or (kind == "replace" and out.strip() == text[st[0]:st[2]].strip()):
+                    if kind == "keep":
+                        continue  # left for a manual decision: _keeps reports it
+                    if kind == "replace" and out.strip() == text[st[0]:st[2]].strip():
                         continue  # already in the 0.3.0 form
                 if not callable(move):
                     path, new = move
                     if path and inside and inside.group(1) == path[-1]:
                         continue  # already in its group
                     if not path and new == st[3]:
-                        none = NONE_VALUES.get(st[3])
-                        if not (none and re.match(none[0], text[st[1]:st[2]].strip())):
+                        if _none_value(text[st[1]:st[2]].strip(), st[3]) == text[st[1]:st[2]].strip():
                             continue  # in place under the same name: only an "off" value changes
                 candidates.append((st, moves, warn, (open_pos, close)))
     if not candidates:
@@ -666,6 +898,7 @@ def _one_change(text, code, names, report, where):
     (s, eq, e, opt), moves, warn, (open_pos, close) = max(candidates, key=lambda c: c[0][0])  # the last one: earlier offsets stay valid
     move = moves[opt]
     line = text.count("\n", 0, s) + 1
+    _CTX["indent"] = _indent_at(text, s)
     if opt.endswith("{}"):  # a block call: wrapped whole
         stmt_text = text[s:e]
         if callable(move):
@@ -684,9 +917,7 @@ def _one_change(text, code, names, report, where):
             return None
         return _apply(text, s, e, kind, new_stmt, open_pos, close)
     path, new = move
-    none = NONE_VALUES.get(opt)
-    if none and re.match(none[0], value):
-        value = none[1]
+    value = _none_value(value, opt, new or opt)
     if new is None:
         report.append(f"{where}:{line}: {opt} was removed; delete `{text[s:e].strip()}`")
         return text[:s] + "/* removed in 0.3.0: " + text[s:e].strip().replace("*/", "* /") + " */" + text[e:]
@@ -705,9 +936,37 @@ def _one_change(text, code, names, report, where):
     return text[:s] + stmt + text[e:]
 
 
+def _keeps(text, names, report, where):
+    """Reports the statements a move leaves for a manual decision (a conditional H1Only)."""
+    code = kotlin_scan.blank(text)
+    closes = _braces(code)
+    seen = set()
+    for name in names:
+        openers, moves, _ = RULES[name]
+        for m in openers.finditer(code):
+            open_pos = m.end() - 1
+            for st in _direct_statements(code, open_pos + 1, closes.get(open_pos, len(code)), text):
+                move = moves.get(st[3])
+                if not callable(move) or st[3].endswith("{}") or st[0] in seen:
+                    continue
+                said = []
+                if move(text[st[1]:st[2]].strip(), said, "")[0] == "keep":
+                    seen.add(st[0])
+                    line = text.count("\n", 0, st[0]) + 1
+                    report += [f"{where}:{line}{r}" for r in said]
+
+
+def _indent_at(text, pos):
+    """The indent of the line that holds pos."""
+    ls = text.rfind("\n", 0, pos) + 1
+    return re.match(r"[ \t]*", text[ls:]).group(0)
+
+
 def _apply(text, s, e, kind, new_stmt, open_pos, close):
     """Replaces text[s:e] by new_stmt, or (hoist) removes it and puts new_stmt after the enclosing block's closing brace."""
     if kind == "replace":
+        if new_stmt == "":  # a statement that goes takes its line with it
+            s, e = _cut(text, s, e)
         return text[:s] + new_stmt + text[e:]
     # hoist: drop the statement (its line when nothing else is on it), insert after the block that held it
     ls = text.rfind("\n", 0, s) + 1
@@ -731,49 +990,75 @@ def _apply(text, s, e, kind, new_stmt, open_pos, close):
     return re.sub(r"\b(http3|http2|tls|pool|network|proxies)\s*\{\s*\}\s*\n?", "", new)
 
 
-_ONE_LINE_GROUP = re.compile(r"^([ \t]*)(tls|http1|http2|http3|webSockets|tcp|observability|endpoint|quic|earlyData|webTransport) "
-                             r"\{ (.+?) \}([ \t]*//[^\n]*)?$")
+# The groups of the 0.3.0 layout: a block that holds one of them twice gets them merged (merge_blocks).
+GROUPS = {"tls", "http1", "http2", "http3", "webSockets", "tcp", "observability", "endpoint", "quic", "earlyData",
+          "webTransport", "pool", "network", "proxies", "settings", "expert", "flowControl", "pathMtu", "datagrams",
+          "migration", "qpack", "stall", "runtime", "ech", "floodLimits"}
 
 
-def merge_groups(text):
-    """Consecutive one-line blocks of one group (`tls { a = 1 }` then `tls { b = 2 }`, as the moves write them) become one,
-    nested groups too (`http3 { endpoint { a } }` twice: one http3, then one endpoint in it)."""
+def _inside(text, open_pos, close):
+    """The statements inside the braces at open_pos..close, as lines without their common indent (one line stays one)."""
+    raw = text[open_pos + 1:close]
+    if "\n" not in raw.strip():
+        return [raw.strip()] if raw.strip() else []
+    lines = raw.strip("\n").rstrip().split("\n")
+    started = raw.lstrip(" \t").startswith("\n")
+    rest = lines if started else lines[1:]
+    ind = min((len(x) - len(x.lstrip()) for x in rest if x.strip()), default=0)
+    return ([] if started else [lines[0].strip()]) + [x[ind:] if x.strip() else "" for x in rest]
+
+
+def _merge_once(text, names):
+    code = kotlin_scan.blank(text)
+    closes = _braces(code)
+    parents = set()
+    for name in names:
+        if name == "tls-any":
+            continue
+        for m in RULES[name][0].finditer(code):
+            parents.add(m.end() - 1)
+    todo = sorted(parents)
+    seen = set()
+    while todo:
+        open_pos = todo.pop()
+        if open_pos in seen or open_pos not in closes:
+            continue
+        seen.add(open_pos)
+        by_name = {}
+        for s, eq, e, name in _direct_statements(code, open_pos + 1, closes[open_pos], text):
+            if name.endswith("{}") and name[:-2] in GROUPS and re.fullmatch(r"\w+\s*", text[s:eq]):
+                by_name.setdefault(name[:-2], []).append((s, eq, e))
+                todo.append(eq)  # its own groups are merged too
+        for group, found in sorted(by_name.items(), key=lambda kv: kv[1][0][0]):
+            if len(found) < 2:
+                continue
+            body = []
+            for s, eq, e in found:
+                body += _inside(text, eq, e - 1)
+            base = _indent_at(text, found[0][0])
+            merged = f"{group} {{\n" + "\n".join(base + "    " + x if x else "" for x in body) + f"\n{base}}}"
+            for s, eq, e in reversed(found[1:]):
+                cs, ce = _cut(text, s, e)
+                text = text[:cs] + text[ce:]
+            s, eq, e = found[0]
+            return text[:s] + merged + text[e:]
+    return text
+
+
+def merge_blocks(text, names):
+    """A group a block holds twice or more (`tls { trust = a }`, later `tls { identity = b }`, as the moves write them) is
+    merged into its first one, in the blocks the rules open and their groups, adjacent or not."""
     while True:
-        merged = _merge_once(text)
+        merged = _merge_once(text, names)
         if merged == text:
             return text
         text = merged
 
 
-def _merge_once(text):
-    lines = text.split("\n")
-    out = []
-    i = 0
-    while i < len(lines):
-        m = _ONE_LINE_GROUP.match(lines[i])
-        run = [m] if m else []
-        j = i + 1
-        while m and j < len(lines):
-            n = _ONE_LINE_GROUP.match(lines[j])
-            if not n or n.group(1) != m.group(1) or n.group(2) != m.group(2) or "{" in n.group(3).replace("{ ", "") and "}" not in n.group(3):
-                break
-            run.append(n)
-            j += 1
-        if len(run) < 2:
-            out.append(lines[i])
-            i += 1
-            continue
-        indent, name = m.group(1), m.group(2)
-        out.append(f"{indent}{name} {{")
-        for r in run:
-            out.append(f"{indent}    {r.group(3)}{r.group(4) or ''}")
-        out.append(f"{indent}}}")
-        i = j
-    return "\n".join(out)
-
-
 def rewrite_code(text, names, report, where):
     """text rewritten with the rules in names; report collects lines that need a manual decision."""
+    original = text
+    _keeps(text, names, report, where)  # at the lines of the file as given, as every other report
     for name in names:
         for pattern, replacement in CALLS.get(name, []):
             text = pattern.sub(replacement, text)
@@ -784,7 +1069,7 @@ def rewrite_code(text, names, report, where):
     while True:
         new = _one_change(text, kotlin_scan.blank(text), names, report, where)
         if new is None:
-            return merge_groups(text) if "server" in names else text
+            return merge_blocks(text, names) if text != original else text
         text = new
 
 
@@ -926,9 +1211,7 @@ def fix_from_errors(log, names, report):
                 continue
             e = _trim(code, text, am.end(), _statement_end(code, am.end(), len(code), text))
             value = text[am.end():e].strip()
-            none = NONE_VALUES.get(name)
-            if none and re.match(none[0], value):
-                value = none[1]
+            value = _none_value(value, name, new)
             stmt = f"{'this.' if value == new or explicit else ''}{new} = {value}"
             for g in reversed(group_path):
                 stmt = f"{g} {{ {stmt} }}"

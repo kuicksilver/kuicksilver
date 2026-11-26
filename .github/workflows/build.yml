@@ -120,12 +120,13 @@ jobs:
           python3 -I tools/check/wildcard-binds.py || rc=1  # test sockets reached over loopback bind loopback
           python3 -I tools/check/sentinel.py || rc=1   # the leak sentinel's allowlist only shrinks (tools/check/sentinel.allow)
           exit $rc
-      - name: 'lint: doc-refs and test-check negative controls'
+      - name: 'lint: doc-refs and test-check negative controls, migration fixtures'
         run: |
           rc=0
           for t in ar-diff llvm-tool doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
             bash "tools/check/$t-test.sh" || rc=1
           done
+          bash tools/migrate/config-0.3-test.sh || rc=1   # the 0.2.x -> 0.3.0 configuration migration on its fixtures
           exit $rc
       - name: 'lint: the carried OpenSSL patch applies exactly, and only with its pinned hash'
         run: bash tools/openssl/apply-patch-test.sh   # ADR-0019
