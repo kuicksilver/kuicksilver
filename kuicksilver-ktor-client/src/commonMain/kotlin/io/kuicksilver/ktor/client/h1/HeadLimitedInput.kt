@@ -54,6 +54,14 @@ internal class HeadLimitedInput(
     val hasUnread: Boolean
         get() = !buffer.exhausted() || runCatching { !source.readBuffer.exhausted() }.getOrDefault(true)
 
+    /**
+     * Returns once bytes wait to be read or [source] ended (or failed), taking none of them: for an idle connection, whose
+     * input no one else reads meanwhile ([H1Connection.startIdleWatch]).
+     */
+    suspend fun awaitUnsolicited() {
+        if (buffer.exhausted()) source.awaitContent(1)
+    }
+
     override val closedCause: Throwable? get() = source.closedCause
 
     override val isClosedForRead: Boolean

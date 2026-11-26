@@ -82,6 +82,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -144,12 +145,52 @@ internal class H1Connection(
      */
     override val isOpen: Boolean get() = !closed && !input.isClosedForRead && !input.hasUnread
 
+    /** The watch of the idle connection ([startIdleWatch]); guarded by [watchLock]. */
+    private var idleWatch: Job? = null
+    private val watchLock = SpinLock()
+
+    /**
+     * Watches the input of the connection while it is idle, as Go's net/http (its persistConn's read loop peeks while
+     * idle): the server's close (close_notify, its FIN, a failure) or bytes no request asked for (RFC 9112 section 9.2:
+     * "the client SHOULD close the connection") run [onSignal], which closes the connection in order when it is still
+     * idle. RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure
+     * signal and respond to it as appropriate". Before, such a connection was seen only when it was next taken, at its
+     * eviction or the engine's close, and stayed half-closed (CLOSE_WAIT) for up to `idleTimeout`. The same for TLS
+     * and cleartext, direct or through a proxy (the input is the one the exchanges read).
+     */
+    override fun startIdleWatch(
+        scope: CoroutineScope,
+        onSignal: () -> Unit,
+    ) {
+        watchLock.withLock {
+            if (idleWatch?.isActive == true) return
+            idleWatch =
+                scope.launch {
+                    try {
+                        input.awaitUnsolicited()
+                    } catch (_: Throwable) {
+                        // a failed or cancelled input is a closure signal too; this watch's own end is not (below)
+                    }
+                    if (isActive) onSignal()
+                }
+        }
+    }
+
+    override suspend fun stopIdleWatch() {
+        takeIdleWatch()?.cancelAndJoin()
+    }
+
+    private fun takeIdleWatch(): Job? = watchLock.withLock { idleWatch.also { idleWatch = null } }
+
+    // a closed connection is watched no longer (a socket's close need not end the channel the watch waits on)
     override fun closeTransport() {
+        takeIdleWatch()?.cancel()
         tls?.close()
         socket.close()
     }
 
     override fun closeTransportOrderly() {
+        takeIdleWatch()?.cancel()
         orderly?.invoke() ?: closeTransport()
     }
 
@@ -165,6 +206,7 @@ internal class H1Connection(
     // the raw socket first, with a reset: the TLS session's close ends its output, and a raw writer still draining would
     // send a FIN (and the rest it holds) ahead of the reset
     override fun abortTransport() {
+        takeIdleWatch()?.cancel()
         socket.abort()
         tls?.close()
     }
@@ -471,8 +513,15 @@ internal class H1Pool(
     /** The platform's cleartext policy (Android Network Security Configuration); replaced by tests. */
     internal var cleartextPermitted: (String) -> Boolean = { host -> platformCleartextPermitted(host) }
 
+    /**
+     * The watches of the idle HTTP/1.1 connections ([H1Connection.startIdleWatch]): not the engine's request job; cancelled
+     * by [closeAll].
+     */
+    private val idleWatchers =
+        CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-idle-watch"))
+
     /** Limits, keep-alive and idle expiry; internal for tests. */
-    internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
+    internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), idleWatchers, clock)
 
     /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
@@ -521,6 +570,7 @@ internal class H1Pool(
                 // closes still running end hard (their finally closes TLS and the socket) before the selector goes
                 closers.coroutineContext[Job]!!.cancelAndJoin()
                 h2Scope.cancel()
+                idleWatchers.cancel()
                 sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
                 proxySessions.close()
             }

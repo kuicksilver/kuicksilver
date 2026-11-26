@@ -432,6 +432,110 @@ class ClientOrderlyCloseTest {
     @Test fun negative_aRefusedLargeResponseIsCutPastTheDropBound() = clientTest { refuse(64 shl 20, cut = true) }
 
     /**
+     * RFC 9112 section 9.5: "Implementations SHOULD constantly monitor open connections for a received closure signal and
+     * respond to it as appropriate". A server that ends an idle keep-alive connection with close_notify gets the client's
+     * close_notify back (RFC 9846 section 6.1) at once, and the connection leaves the pool. Before, the client saw the
+     * close only when it next took the connection, at its eviction (idleTimeout, 5 minutes) or the engine's close, and
+     * the socket stayed half-closed until then.
+     */
+    @Test fun negative_anIdleConnectionTheServerEndsWithCloseNotifyIsClosedAtOnce() =
+        clientTest {
+            val clean = CompletableDeferred<Boolean>()
+            val idle = CompletableDeferred<Unit>()
+            val took = CompletableDeferred<kotlin.time.Duration>()
+            tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, output ->
+                readRequest(input)
+                launch { clean.complete(input.endsCleanly()) }
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                output.flush()
+                idle.await()
+                output.flushAndClose() // close_notify on the idle keep-alive connection
+                withTimeoutOrNull(60.seconds) { clean.await() }
+            }) { port ->
+                testClient().use { c ->
+                    val h1 = engine(c).h1
+                    h1.orderlyCloseTookForTest = { took.complete(it) }
+                    assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                    assertEquals(1, h1.pool.idleCount, "the connection was kept for reuse")
+                    val ended =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    idle.complete(Unit)
+                    withTimeout(30.seconds) { took.await() }
+                    val after = ended.elapsedNow()
+                    assertTrue(after < 5.seconds, "the idle connection closed $after after the server's close_notify")
+                    assertEquals(0, h1.pool.idleCount, "the closed connection left the idle list")
+                    assertEquals(0, h1.pool.liveCount, "its slot came back")
+                    assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+                }
+            }
+        }
+
+    /**
+     * RFC 9112 section 9.5, with a server that closes its idle keep-alive connection without close_notify (a TCP FIN
+     * only, a truncation): the client closes its side while the connection is idle and drops it from the pool.
+     */
+    @Test fun negative_anIdleConnectionTheServerEndsWithAFinOnlyIsClosedAtOnce() =
+        clientTest {
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
+            val listener =
+                io.kuicksilver.ktor.network
+                    .bindTcp(selector, "127.0.0.1", 0)
+            val idle = CompletableDeferred<Unit>()
+            val took = CompletableDeferred<kotlin.time.Duration>()
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    val server =
+                        launch {
+                            val socket = listener.accept()
+                            try {
+                                // the session fails once its socket is gone: that must not fail the test
+                                val sessionJob = kotlinx.coroutines.SupervisorJob(coroutineContext[kotlinx.coroutines.Job])
+                                val session =
+                                    io.kuicksilver.tls.TlsConnection.server(
+                                        socket.openReadChannel(),
+                                        socket.openWriteChannel(autoFlush = true),
+                                        io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Server) {
+                                            identity = ClientFixtures.identity()
+                                            alpn = listOf("http/1.1")
+                                        },
+                                        coroutineContext + sessionJob,
+                                    )
+                                readRequest(session.input)
+                                session.output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                                session.output.flush()
+                                idle.await()
+                            } finally {
+                                socket.close() // a FIN, no close_notify
+                            }
+                        }
+                    val port = (listener.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+                    testClient().use { c ->
+                        val h1 = engine(c).h1
+                        h1.orderlyCloseTookForTest = { took.complete(it) }
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        assertEquals(1, h1.pool.idleCount, "the connection was kept for reuse")
+                        val ended =
+                            kotlin.time.TimeSource.Monotonic
+                                .markNow()
+                        idle.complete(Unit)
+                        withTimeout(30.seconds) { took.await() }
+                        val after = ended.elapsedNow()
+                        assertTrue(after < 5.seconds, "the idle connection closed $after after the server's FIN")
+                        assertEquals(0, h1.pool.idleCount, "the closed connection left the idle list")
+                        assertEquals(0, h1.pool.liveCount, "its slot came back")
+                    }
+                    server.cancel()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /**
      * What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and last-stream-ids, in order, and whether
      * TLS ended cleanly (recorded after every GOAWAY: what came before the end). The lists are written by the server's
      * handler only; tests read them after [clean] completed, which the handler does after its last write.
