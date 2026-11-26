@@ -408,6 +408,24 @@ class HandshakeTest {
         }
     }
 
+    /**
+     * The alert a peer's CRYPTO_ERROR carries is named as over TCP: `unknown_ca`, and the message "TLS alert received from the
+     * peer: unknown_ca (48)", not "TLS alert 48" (a client without the certificate a server requires saw "TLS alert 116 (116)"
+     * over HTTP/3, "certificate_required (116)" over HTTP/2 and HTTP/1.1).
+     */
+    @Test fun negative_aReceivedCryptoErrorNamesItsAlert() {
+        val p =
+            CorePair(clientTls = CoreFixtures.client(trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa)))), crypto = ksl)
+        p.use { _ ->
+            assertFalse(p.handshake())
+            val s = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(s)
+            val alert = assertIs<TlsException.AlertReceived>(s.cause)
+            assertEquals("unknown_ca", alert.description)
+            assertEquals("TLS alert received from the peer: unknown_ca (48)", alert.message)
+        }
+    }
+
     @Test fun alpnMismatchCloses0x0178() {
         val p = CorePair(clientTls = CoreFixtures.client(alpn = "h3"), serverTls = CoreFixtures.server(alpn = "hq-interop"), crypto = ksl)
         p.use { _ ->

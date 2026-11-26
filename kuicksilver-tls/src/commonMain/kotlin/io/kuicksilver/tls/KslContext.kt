@@ -764,6 +764,14 @@ internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): P
     }
 }
 
+/**
+ * The RFC 9846 name of the TLS alert [code], `alert_<code>` for one without a known name: the
+ * [TlsException.AlertReceived.description] of an alert the QUIC layer received in a CRYPTO_ERROR (RFC 9001 section 4.8),
+ * as for one received over TCP.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public fun tlsAlertName(code: Int): String = alertName(code)
+
 internal fun alertName(code: Int): String =
     when (code) {
         0 -> "close_notify"

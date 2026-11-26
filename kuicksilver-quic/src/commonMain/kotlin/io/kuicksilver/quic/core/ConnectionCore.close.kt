@@ -5,6 +5,7 @@
 package io.kuicksilver.quic.core
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionCore.CloseFrame
@@ -16,6 +17,7 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.tlsAlertName
 
 // How a [ConnectionCore] ends: CONNECTION_CLOSE, draining, silent close, stateless reset, release of native resources and the glitch
 // budget (RFC 9000 sections 10 and 21.9).
@@ -128,7 +130,12 @@ internal fun ConnectionCore.peerClosed(
         if (!application &&
             code in 0x100..0x1ff
         ) {
-            TlsException.AlertReceived((code - 0x100).toInt(), "TLS alert ${code - 0x100}")
+            // RFC 9001 section 4.8: CRYPTO_ERROR 0x0100 + the alert; named as over TCP ("certificate_required", not "TLS
+            // alert 116"), so the message reads the same on every protocol
+            (code - 0x100).toInt().let {
+                @OptIn(InternalKuicksilverApi::class)
+                TlsException.AlertReceived(it, tlsAlertName(it))
+            }
         } else {
             null
         }

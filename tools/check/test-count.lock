@@ -4870,6 +4870,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.heldOneRt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.heldOneRttPacketIsNoStatelessResetCandidate
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.kslHandshakeAlpnHqInterop
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.largeClientHelloSpansMultipleInitials
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.negative_aReceivedCryptoErrorNamesItsAlert
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.negative_clientHelloWithLegacySessionIdIsProtocolViolation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.negative_clientInitialDatagramPaddedWhenTheNextPacketDoesNotFit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.negative_missingTransportParametersIsMissingExtension
