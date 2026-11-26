@@ -136,7 +136,7 @@ byte for byte with the published ones. What is and is not reproducible yet: [doc
 ## Documentation
 
 - [kuicksilver.github.io/kuicksilver](https://kuicksilver.github.io/kuicksilver/): the guide and the API reference
-  (Dokka) of every release, once 0.3.0 is released; until then, the guides in `docs/guide` and the KDoc in the sources.
+  (Dokka) of every release from 0.3.0-rc1 on; until then, the guides in `docs/guide` and the KDoc in the sources.
 - Guides: [quickstart](docs/guide/quickstart.md), [install](docs/install.md), the [Ktor engines](docs/guide/ktor.md) and
   their task pages, [0-RTT](docs/guide/zero-rtt.md), [migrating from OkHttp and
   Retrofit](docs/guide/migrating-from-okhttp.md), [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),

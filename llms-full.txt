@@ -154,7 +154,8 @@ suspend fun main() {
 Without configuring anything, the client falls back to TCP when HTTP/3 fails, speaks HTTP/2 or HTTP/1.1 over TCP, offers
 TLS 1.2 and 1.3 with the platform's trust store (TLS 1.2 with ECDHE key exchange and AEAD ciphers only; TLS 1.3 only is
 `tls { versions = TlsVersions.Tls13 }`), tries IPv6 and IPv4 addresses (Happy Eyeballs), logs warnings and up through the platform's
-logger (SLF4J on the JVM, which needs a binding such as `slf4j-simple`; Logcat on Android; `NSLog` on Apple platforms),
+logger (SLF4J on the JVM, standard error when no SLF4J binding is on the class path; Logcat on Android; `NSLog` on
+Apple platforms),
 and keeps 0-RTT and connection migration off.
 
 ### Next steps
@@ -652,8 +653,7 @@ val client = HttpClient(Kuicksilver) {
 The default logger, `KuicksilverLogger.Default`, is the platform's (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
 platforms, standard error elsewhere) at warnings and up: the line per call that says why HTTP/3 was not used is Info
 ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)), hence the `LogLevel.Info`
-logger while you debug. On the JVM SLF4J needs a binding (`slf4j-simple`, Logback...), or it prints "No SLF4J providers"
-and drops the lines. Every option, with its block, type, default and stability, is in the [configuration
+logger while you debug. On the JVM without an SLF4J binding on the class path, the lines go to standard error instead. Every option, with its block, type, default and stability, is in the [configuration
 reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#ktor-client).
 
 **A private CA is a separate client.** A trust other than the platform's holds for every host the client talks to: a
@@ -2495,6 +2495,22 @@ uses. From the server's certificate:
 echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
+From a live server, without the certificate file (check that you reach the real server, not a proxy that intercepts
+TLS):
+
+```sh
+echo "sha256/$(openssl s_client -connect api.example.com:443 -servername api.example.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
+```
+
+**When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`.
+Over TCP the call throws that exception (on the JVM a `TlsException` is an `javax.net.ssl.SSLException`). Over QUIC the
+connection ends with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is
+the `TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws
+the TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins the server's validated chain
+has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to
+([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-handshake-fails-with-a-certificate-error)).
+
 - The pins hold for every host the client talks to: give a pinned API a client of its own.
 - The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
   blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.
@@ -4230,6 +4246,30 @@ Notes on specific products (checked 2026-11-05):
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
   passes QUIC through at layer 4 or terminates HTTP/3.
 
+#### Behind a TLS-terminating L7 proxy
+
+When a proxy or CDN terminates TLS (and HTTP/3, if it speaks it) and forwards plain HTTP to the server, Kuicksilver only
+serves the proxy's TCP side. The simplest backend is a cleartext connector:
+
+```kotlin
+// guide:deployment:behind-l7-proxy
+embeddedServer(Kuicksilver, configure = {
+    plainConnector { port = 8080 } // cleartext HTTP/1.1 from the proxy: no TLS here, so no HTTP/3 and no Alt-Svc
+}, module = Application::module).start(wait = true)
+```
+
+- **HTTP/2 to the backend.** A proxy that speaks HTTP/2 to its upstream without TLS needs h2c on the connector:
+  `plainConnector { h2c = H2cMode.WithHttp11 }` (experimental; HTTP/1.1 and h2c on one port, told apart by the
+  preface: [h2c on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server.md#h2c-on-the-server)). Keep the hop on a trusted network.
+- **The client's address and scheme** come in the proxy's headers, `Forwarded` (RFC 7239) or `X-Forwarded-For`,
+  `-Proto` and `-Host`. Install Ktor's `ForwardedHeaders` or `XForwardedHeaders` plugin (`ktor-server-forwarded-header`)
+  so `call.request.origin` reports them, and let the proxy overwrite the headers, never pass a client's own through.
+- **No `Alt-Svc` from the backend.** A cleartext connector sends none. A backend that the proxy reaches over TLS (a
+  `tlsConnector`) sets `http3 { altSvc = false }`: its `Alt-Svc` would send clients to a UDP port they cannot reach. The
+  proxy announces HTTP/3 itself when it speaks it to clients.
+- A proxy that sends absolute-form `https://` targets on the cleartext port is answered `421` unless the connector
+  trusts it with `allowMisdirectedHosts` ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/server-proxies.md#misdirected-requests)).
+
 #### NATs and idle connections
 
 A QUIC connection with no packets for the idle timeout ends (`maxIdleTimeout`, 30 s by default, the smaller of both
@@ -4532,7 +4572,7 @@ engine in a container (`tools/check/deployment-guide.sh`), so the commands stay 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
 `response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
 the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
-alternative, a proxy), and one line per origin that advertised no HTTP/3 alternative
+alternative, a proxy), and one line per origin whose responses advertise no HTTP/3
 ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no HTTP/3
 alternative advertised, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
 with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
@@ -4692,6 +4732,7 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 | `MockWebServer` in tests | Ktor's `MockEngine`, or a local Kuicksilver server | a `MockEngine` test does not run Kuicksilver |
 | Android Network Security Config | honoured with the default trust | cleartext rules for `http://`; with `TrustConfig.Platform` (the default) its trust anchors and `<pin-set>` through the platform's `TrustManager` ([TLS: Platform trust](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#platform-trust)); another trust, `AnchoredCa` say, does not read them |
 | Android `minSdk` | 24 | the AAR brings its native library for three ABIs, its R8 rules (applied as consumer rules) and the `INTERNET` and `ACCESS_NETWORK_STATE` permissions (merged into your manifest) |
+| app size | | OkHttp is pure Kotlin; Kuicksilver brings a native library with OpenSSL inside: under 3,550,000 bytes for arm64-v8a (the release gate's limit), one per ABI ([Install: Gradle](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#gradle)) |
 
 ### Certificate pinning
 
@@ -4768,7 +4809,8 @@ routes, plugins and client calls do not change. Apps that call OkHttp directly, 
 
 <!-- guide-sync: not compiled (other engines, for comparison) -->
 ```kotlin
-val client = HttpClient(CIO) { engine { requestTimeout = 15_000 } }   // or OkHttp, Android, Darwin, Java
+// CIO here (requestTimeout is CIO's own setting); the OkHttp, Android, Darwin and Java engines swap the same way
+val client = HttpClient(CIO) { engine { requestTimeout = 15_000 } }
 ```
 
 becomes
@@ -6786,7 +6828,7 @@ is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`
 the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
 HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
-default logger at `Warn` leaves out). An origin that advertised no HTTP/3 alternative gets one line of its own, on its
+default logger at `Warn` leaves out). An origin whose responses advertise no HTTP/3 gets one line of its own, on its
 first call: "<origin>: no HTTP/3 alternative advertised, using <protocol>" means the server sends no `Alt-Svc`, while
 a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
@@ -6796,7 +6838,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 
 | Reason | Meaning and fix |
 |---|---|
-| `Configuration` | `http3 { enabled = false }`, or `discovery = Http3Discovery.H3Only` |
+| `Configuration` | the configuration decided: `http3 { enabled = false }` sends the call over TCP; `discovery = Http3Discovery.H3Only` sends it over HTTP/3 (it is not a reason HTTP/3 was left out) |
 | `NotSecure` | the URL is not `https` (or `wss`): HTTP/3 needs TLS |
 | `Proxy` | a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3 |
 | `Http3Disabled` | `http3 { allowed }` returned false: check the remote configuration behind it |
@@ -6822,7 +6864,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `BrokenAlternative` | HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling |
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
 | `HandshakeTimeout` | QUIC got no answer within the handshake or connect timeout: UDP to the port is blocked (a firewall, a VPN, a cloud security group open for TCP only), see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
-| `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
+| `UdpUnreachable` | not produced in 0.3.0; a blocked UDP port shows as `HandshakeTimeout` |
 | `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment, so QUIC is not used: [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | `H3NotReady` | TCP won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
 | `Refused` | the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other code marks the alternative broken |

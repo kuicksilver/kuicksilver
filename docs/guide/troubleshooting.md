@@ -730,7 +730,7 @@ is blocked, `NoAlternative` without `Alt-Svc`, `BrokenAlternative`, `TlsFailure`
 the `FallbackReason` table below; with
 `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }` the engine logs one line per call that
 HTTP/3 could have served and did not (at `observability { protocolChoiceLogLevel }`, `Info` by default, which the
-default logger at `Warn` leaves out). An origin that advertised no HTTP/3 alternative gets one line of its own, on its
+default logger at `Warn` leaves out). An origin whose responses advertise no HTTP/3 gets one line of its own, on its
 first call: "<origin>: no HTTP/3 alternative advertised, using <protocol>" means the server sends no `Alt-Svc`, while
 a line with `HandshakeTimeout` or `marked broken` means it announces HTTP/3 and the client cannot reach it. The
 first time an alternative is marked broken on a network the engine also logs one warning that the default logger shows:
@@ -740,7 +740,7 @@ listener tells the same story as it happens; check `KuicksilverEventListener.pro
 
 | Reason | Meaning and fix |
 |---|---|
-| `Configuration` | `http3 { enabled = false }`, or `discovery = Http3Discovery.H3Only` |
+| `Configuration` | the configuration decided: `http3 { enabled = false }` sends the call over TCP; `discovery = Http3Discovery.H3Only` sends it over HTTP/3 (it is not a reason HTTP/3 was left out) |
 | `NotSecure` | the URL is not `https` (or `wss`): HTTP/3 needs TLS |
 | `Proxy` | a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3 |
 | `Http3Disabled` | `http3 { allowed }` returned false: check the remote configuration behind it |
@@ -766,7 +766,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `BrokenAlternative` | HTTP/3 failed earlier on this network while TCP worked; skipped for 5 minutes, doubling |
 | `WebSocket` | a WebSocket without an Extended CONNECT HTTP/3 connection |
 | `HandshakeTimeout` | QUIC got no answer within the handshake or connect timeout: UDP to the port is blocked (a firewall, a VPN, a cloud security group open for TCP only), see [handshake timeout](#connect-fails-with-handshake-timeout-after-10s) |
-| `UdpUnreachable` | reserved, not produced yet: calls that would show it show `HandshakeTimeout` |
+| `UdpUnreachable` | not produced in 0.3.0; a blocked UDP port shows as `HandshakeTimeout` |
 | `QuicUnavailable` | this host's UDP socket cannot set Don't Fragment, so QUIC is not used: [QUIC is not used without Don't Fragment](#quic-is-not-used-dontfragmentunavailable) |
 | `H3NotReady` | TCP won the race before HTTP/3 answered; not a failure, the QUIC setup goes on |
 | `Refused` | the server closed the connection during setup without a TLS alert, or version negotiation failed. CONNECTION_REFUSED (0x2: the server is draining, stopping or its accept queue is full); transient, the next call tries HTTP/3 again ([refusals](#connections-are-refused-or-dropped)). Any other code marks the alternative broken |

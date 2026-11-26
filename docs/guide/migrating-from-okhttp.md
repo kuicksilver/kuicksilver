@@ -140,6 +140,7 @@ Ktor throw for them. Create the client once and share it, as with OkHttp.
 | `MockWebServer` in tests | Ktor's `MockEngine`, or a local Kuicksilver server | a `MockEngine` test does not run Kuicksilver |
 | Android Network Security Config | honoured with the default trust | cleartext rules for `http://`; with `TrustConfig.Platform` (the default) its trust anchors and `<pin-set>` through the platform's `TrustManager` ([TLS: Platform trust](tls.md#platform-trust)); another trust, `AnchoredCa` say, does not read them |
 | Android `minSdk` | 24 | the AAR brings its native library for three ABIs, its R8 rules (applied as consumer rules) and the `INTERNET` and `ACCESS_NETWORK_STATE` permissions (merged into your manifest) |
+| app size | | OkHttp is pure Kotlin; Kuicksilver brings a native library with OpenSSL inside: under 3,550,000 bytes for arm64-v8a (the release gate's limit), one per ABI ([Install: Gradle](../install.md#gradle)) |
 
 ## Certificate pinning
 

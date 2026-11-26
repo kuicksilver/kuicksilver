@@ -153,7 +153,8 @@ suspend fun main() {
 Without configuring anything, the client falls back to TCP when HTTP/3 fails, speaks HTTP/2 or HTTP/1.1 over TCP, offers
 TLS 1.2 and 1.3 with the platform's trust store (TLS 1.2 with ECDHE key exchange and AEAD ciphers only; TLS 1.3 only is
 `tls { versions = TlsVersions.Tls13 }`), tries IPv6 and IPv4 addresses (Happy Eyeballs), logs warnings and up through the platform's
-logger (SLF4J on the JVM, which needs a binding such as `slf4j-simple`; Logcat on Android; `NSLog` on Apple platforms),
+logger (SLF4J on the JVM, standard error when no SLF4J binding is on the class path; Logcat on Android; `NSLog` on
+Apple platforms),
 and keeps 0-RTT and connection migration off.
 
 ## Next steps

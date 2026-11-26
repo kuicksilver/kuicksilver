@@ -46,6 +46,22 @@ uses. From the server's certificate:
 echo "sha256/$(openssl x509 -in cert.pem -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
 ```
 
+From a live server, without the certificate file (check that you reach the real server, not a proxy that intercepts
+TLS):
+
+```sh
+echo "sha256/$(openssl s_client -connect api.example.com:443 -servername api.example.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64)"
+```
+
+**When no pin matches**, the handshake fails with `TlsException.Verify` whose `reason` is `VerifyReason.PinMismatch`.
+Over TCP the call throws that exception (on the JVM a `TlsException` is an `javax.net.ssl.SSLException`). Over QUIC the
+connection ends with `QuicException.ConnectionLost.TransportClosed` (TLS alert 42, `bad_certificate`) whose `cause` is
+the `TlsException.Verify`; in the default `Auto` mode the call then goes over TCP, fails the same way there, and throws
+the TCP failure with the HTTP/3 one in `suppressed`. `PinMismatch.chainPins` lists the pins the server's validated chain
+has, leaf first, in the same `sha256/` form: logged once, it shows what to pin, or which key the server changed to
+([troubleshooting](troubleshooting.md#the-handshake-fails-with-a-certificate-error)).
+
 - The pins hold for every host the client talks to: give a pinned API a client of its own.
 - The pins hold for every protocol: HTTP/3 over QUIC and the TCP fallback (HTTP/2, HTTP/1.1) use the one `tls { }`, so a
   blocked UDP path never leads to a connection with weaker checks. A pin never replaces the name check.

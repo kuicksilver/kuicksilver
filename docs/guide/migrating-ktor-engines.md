@@ -23,7 +23,8 @@ routes, plugins and client calls do not change. Apps that call OkHttp directly, 
 
 <!-- guide-sync: not compiled (other engines, for comparison) -->
 ```kotlin
-val client = HttpClient(CIO) { engine { requestTimeout = 15_000 } }   // or OkHttp, Android, Darwin, Java
+// CIO here (requestTimeout is CIO's own setting); the OkHttp, Android, Darwin and Java engines swap the same way
+val client = HttpClient(CIO) { engine { requestTimeout = 15_000 } }
 ```
 
 becomes

@@ -60,8 +60,7 @@ val client = HttpClient(Kuicksilver) {
 The default logger, `KuicksilverLogger.Default`, is the platform's (SLF4J on the JVM, Logcat on Android, `NSLog` on Apple
 platforms, standard error elsewhere) at warnings and up: the line per call that says why HTTP/3 was not used is Info
 ([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)), hence the `LogLevel.Info`
-logger while you debug. On the JVM SLF4J needs a binding (`slf4j-simple`, Logback...), or it prints "No SLF4J providers"
-and drops the lines. Every option, with its block, type, default and stability, is in the [configuration
+logger while you debug. On the JVM without an SLF4J binding on the class path, the lines go to standard error instead. Every option, with its block, type, default and stability, is in the [configuration
 reference](configuration.md#ktor-client).
 
 **A private CA is a separate client.** A trust other than the platform's holds for every host the client talks to: a

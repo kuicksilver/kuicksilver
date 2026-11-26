@@ -60,7 +60,10 @@ application { mainClass.set("com.example.MainKt") }
 ```
 
 An Android app with the Ktor client (`minSdk` 24; the AAR carries the native libraries for arm64-v8a, armeabi-v7a and
-x86_64, the `INTERNET` and `ACCESS_NETWORK_STATE` permissions and its R8 rules):
+x86_64, the `INTERNET` and `ACCESS_NETWORK_STATE` permissions and its R8 rules). Size: the native library is the bulk of
+what Kuicksilver adds; for arm64-v8a, `libksl.so` must stay under 3,550,000 bytes, which the release gate's Android size
+step checks (`tools/check/size.sh`), and an app split per ABI ships one such library; the `kuicksilver-native` AAR with
+its three ABIs was about 3.6 MB in the last measured release ([Why Kuicksilver](why-kuicksilver.md)):
 
 ```kotlin
 // app/build.gradle.kts

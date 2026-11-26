@@ -385,6 +385,30 @@ Notes on specific products (checked 2026-11-05):
 - **HAProxy, Envoy, Caddy, other CDNs:** **not verified**. The table above still applies: find out whether the product
   passes QUIC through at layer 4 or terminates HTTP/3.
 
+### Behind a TLS-terminating L7 proxy
+
+When a proxy or CDN terminates TLS (and HTTP/3, if it speaks it) and forwards plain HTTP to the server, Kuicksilver only
+serves the proxy's TCP side. The simplest backend is a cleartext connector:
+
+```kotlin
+// guide:deployment:behind-l7-proxy
+embeddedServer(Kuicksilver, configure = {
+    plainConnector { port = 8080 } // cleartext HTTP/1.1 from the proxy: no TLS here, so no HTTP/3 and no Alt-Svc
+}, module = Application::module).start(wait = true)
+```
+
+- **HTTP/2 to the backend.** A proxy that speaks HTTP/2 to its upstream without TLS needs h2c on the connector:
+  `plainConnector { h2c = H2cMode.WithHttp11 }` (experimental; HTTP/1.1 and h2c on one port, told apart by the
+  preface: [h2c on the server](server.md#h2c-on-the-server)). Keep the hop on a trusted network.
+- **The client's address and scheme** come in the proxy's headers, `Forwarded` (RFC 7239) or `X-Forwarded-For`,
+  `-Proto` and `-Host`. Install Ktor's `ForwardedHeaders` or `XForwardedHeaders` plugin (`ktor-server-forwarded-header`)
+  so `call.request.origin` reports them, and let the proxy overwrite the headers, never pass a client's own through.
+- **No `Alt-Svc` from the backend.** A cleartext connector sends none. A backend that the proxy reaches over TLS (a
+  `tlsConnector`) sets `http3 { altSvc = false }`: its `Alt-Svc` would send clients to a UDP port they cannot reach. The
+  proxy announces HTTP/3 itself when it speaks it to clients.
+- A proxy that sends absolute-form `https://` targets on the cleartext port is answered `421` unless the connector
+  trusts it with `allowMisdirectedHosts` ([Misdirected requests](server-proxies.md#misdirected-requests)).
+
 ### NATs and idle connections
 
 A QUIC connection with no packets for the idle timeout ends (`maxIdleTimeout`, 30 s by default, the smaller of both
@@ -687,7 +711,7 @@ engine in a container (`tools/check/deployment-guide.sh`), so the commands stay 
 From a Kuicksilver client, every response says how it was served and, if not over HTTP/3, why:
 `response.kuicksilverDiagnostics?.fallback`. With `engine { observability { logger = KuicksilverLogger.platform(LogLevel.Info) } }`
 the engine also logs one line per call that HTTP/3 could have served and did not (a lost race, a fallback, a broken
-alternative, a proxy), and one line per origin that advertised no HTTP/3 alternative
+alternative, a proxy), and one line per origin whose responses advertise no HTTP/3
 ([Why did this request not use HTTP/3?](observability.md#why-did-this-request-not-use-http3)). So: `<origin>: no HTTP/3
 alternative advertised, using HTTP/2.0` is a server that sends no `Alt-Svc` (check it with the curl lines above); a line
 with `fallback=HandshakeTimeout` or `marked broken` is a server that announces HTTP/3 that the client cannot reach. In `Auto` mode the first call to an origin goes over TCP, HTTP/2 or HTTP/1.1 (`NoAlternative`) unless a
