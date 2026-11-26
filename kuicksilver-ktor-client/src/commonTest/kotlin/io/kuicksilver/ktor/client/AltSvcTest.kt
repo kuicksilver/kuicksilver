@@ -29,20 +29,40 @@ class AltSvcTest {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         fun originOf(url: String) = AltSvcStore.originOf(Url(url))
         assertEquals("https://example.com:443", originOf("https://example.com/path?q=1"), "the port is always written")
-        assertEquals("https://example.com:443", originOf("HTTPS://Example.COM./"), "lowercase, no trailing dot")
+        assertEquals("https://example.com:443", originOf("HTTPS://Example.COM/"), "the scheme and host in lowercase")
         assertEquals("https://example.com:8443", originOf("wss://example.com:8443/chat"), "wss is its https origin")
         assertEquals("http://example.com:80", originOf("ws://example.com/"))
-        assertEquals("https://[2001:db8::1]:443", originOf("https://[2001:DB8::1]/"), "IPv6 in brackets, lowercase")
         assertEquals("https://192.0.2.1:8443", originOf("https://user:pw@192.0.2.1:8443/"), "no user info")
+        // the engine's own key is the same one: what a store is called with
+        assertEquals(originOf("https://Example.COM/"), originKeyOf(Url("https://example.com:443/")))
+    }
+
+    /** An absolute name is another origin than its relative form (RFC 6454 section 4 lowercases the host and no more). */
+    @Test fun aTrailingDotIsAnotherOrigin() {
+        assertEquals("https://example.com.:443", originKeyOf(Url("https://Example.COM./")))
+        assertTrue(originKeyOf(Url("https://example.com./")) != originKeyOf(Url("https://example.com/")))
+    }
+
+    /** `i;ascii-casemap` (RFC 4790): only A-Z is folded; an internationalised name is keyed as given, its A-label apart. */
+    @Test fun onlyAsciiLettersAreLowercased() {
+        assertEquals("https://xn--bcher-kva.example:443", originKeyOf(Url("https://XN--BCHER-KVA.example/")))
+        assertEquals("Ä.example", asciiLowercase("Ä.EXAMPLE"), "a non-ASCII letter keeps its case")
+        assertEquals("https://Ä.example:443", canonicalOrigin("https", "Ä.EXAMPLE", 443))
+    }
+
+    /** IPv6 hosts are keyed in RFC 5952 text, whatever spelling the URL used, with their brackets. */
+    @Test fun ipv6HostsAreKeyedInRfc5952Text() {
+        assertEquals("https://[2001:db8::1]:443", originKeyOf(Url("https://[2001:DB8:0:0:0:0:0:1]/")))
+        assertEquals("https://[2001:db8::1]:443", originKeyOf(Url("https://[2001:0db8::0001]/")))
+        assertEquals("https://[2001:db8:0:1:1:1:1:1]:443", canonicalOrigin("https", "2001:db8:0:1:1:1:1:1", 443), "one zero group stays")
+        assertEquals("https://[2001:db8::1:0:0:1]:443", canonicalOrigin("https", "[2001:db8:0:0:1:0:0:1]", 443), "the first of equal runs")
+        assertEquals("https://[::ffff:192.0.2.1]:443", canonicalOrigin("https", "[::FFFF:C000:0201]", 443), "IPv4-mapped in mixed notation")
         val bare =
             io.ktor.http
                 .URLBuilder("https://placeholder/")
-                .apply { host = "2001:db8::1" }
+                .apply { host = "2001:DB8::1" }
                 .build()
-        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        assertEquals("https://[2001:db8::1]:443", AltSvcStore.originOf(bare), "an IPv6 host set without brackets")
-        // the engine's own key is the same one: what a store is called with
-        assertEquals(originOf("https://Example.COM./"), originKeyOf(Url("https://example.com:443/")))
+        assertEquals("https://[2001:db8::1]:443", originKeyOf(bare), "an IPv6 host set without brackets")
     }
 
     @Test fun parsesMaAndPersist() {

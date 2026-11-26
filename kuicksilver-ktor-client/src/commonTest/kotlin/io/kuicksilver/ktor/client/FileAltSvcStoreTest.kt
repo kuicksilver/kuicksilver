@@ -7,11 +7,13 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -53,6 +55,30 @@ class FileAltSvcStoreTest {
         assertTrue(!SystemFileSystem.exists(p))
         s.put("https://a:443", listOf(entry(8443)))
         assertTrue(SystemFileSystem.exists(p))
+    }
+
+    /**
+     * A file an older version wrote keys origins as their URLs spelled them: read, they take the engine's canonical key (a
+     * lowercase host, RFC 5952 IPv6), two spellings of one origin merge, and the next write stores the canonical form.
+     */
+    @Test fun originsOfAnOlderFileAreReadInTheCanonicalForm() {
+        val p = tmp()
+        val exp = now + 60_000
+        val old =
+            listOf(
+                "https://Example.COM:443\th3\t\t443\t$exp\t0",
+                "https://example.com:443\th3\talt.example\t444\t$exp\t0",
+                "https://[2001:DB8:0:0:0:0:0:1]:443\th3\t\t445\t$exp\t1",
+            )
+        SystemFileSystem.sink(p).buffered().use { it.writeString(old.joinToString("\n", postfix = "\n")) }
+        val s = FileAltSvcStore(p) { now }
+        assertEquals(listOf(443, 444), s.get("https://example.com:443").map { it.port }.sorted())
+        assertTrue(s.get("https://Example.COM:443").isEmpty(), "no key in the old spelling")
+        assertEquals(listOf(445), s.get("https://[2001:db8::1]:443").map { it.port })
+        s.put("https://example.org:443", listOf(AltSvcEntry("h3", null, 443, exp, false))) // a change rewrites the file
+        val written = SystemFileSystem.source(p).buffered().use { it.readString() }
+        assertFalse("Example.COM" in written || "DB8" in written, written)
+        assertTrue("https://[2001:db8::1]:443\t" in written, written)
     }
 
     @Test fun entriesSurviveANewInstance() {

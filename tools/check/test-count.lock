@@ -1456,9 +1456,11 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinat
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinationTest.negative_ambiguousOrInvalidNumericAltSvcHostRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinationTest.negative_shorthandIpv4AltSvcToLocalNetworkRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinationTest.publicAlternativesAreKept
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.aTrailingDotIsAnotherOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.clearReturnsNull
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.defaultMa86400
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.expiredEntryIgnored
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.ipv6HostsAreKeyedInRfc5952Text
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.lowPortOriginRejectsHighAltPort
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.malformedEntriesSkipped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_altSvcEntriesPerOriginCapped
@@ -1475,6 +1477,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.neg
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_storedAlternativeFailingTheParserRulesIsNotUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.negative_unicodeSpaceIsNoOws
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.networkChangeClearsNonPersistent
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.onlyAsciiLettersAreLowercased
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.originOfIsTheCanonicalStoreKey
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.overflowingMaIsCapped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.parsesMaAndPersist
@@ -2221,6 +2224,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStor
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.negative_networkIdSurvivesANewInstance
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.negative_networkLineDoesNotCostARecord
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.negative_oversizedAltSvcStoreFileIsReadUpToTheLimit
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.originsOfAnOlderFileAreReadInTheCanonicalForm
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.refreshedExpiryRewrittenOnlyPastHalfLifetime
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.removeAndClearNonPersistentArePersisted
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.FileAltSvcStoreTest.shorterMaxAgeReplacesCachedExpiry

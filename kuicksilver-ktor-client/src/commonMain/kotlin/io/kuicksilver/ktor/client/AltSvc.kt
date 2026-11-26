@@ -42,10 +42,13 @@ public class AltSvcEntry(
  * so an implementation used by one engine needs no locking of its own.
  *
  * Every `origin` the engine passes has one canonical form, the one [originOf] gives for a URL: `scheme://host:port` with
- * the scheme in lowercase (`https`; a `wss` URL is its `https` origin, a `ws` URL its `http` one), the host in lowercase
- * without a trailing dot, an IPv6 address in brackets, and the port always written, the scheme's default included:
- * `https://example.com:443`, `https://[2001:db8::1]:8443`. A store that looks an origin up, or seeds one, by a key it
- * builds itself builds it with [originOf]. There is no change callback: wrap the store (the engine calls [put], [remove],
+ * the scheme in lowercase (`https`; a `wss` URL is its `https` origin, a `ws` URL its `http` one), the host with its
+ * ASCII letters in lowercase (`i;ascii-casemap`, RFC 4790) and nothing else changed, a trailing dot included
+ * (`example.com.` is another origin than `example.com`, RFC 6454 section 4), an IPv6 address in brackets in the text RFC
+ * 5952 recommends, and the port always written, the scheme's default included: `https://example.com:443`,
+ * `https://[2001:db8::1]:8443`. An internationalised name is keyed as the URL gives it, so use its A-label (`xn--...`):
+ * a Unicode spelling and its A-label are two keys. A store that looks an origin up, or seeds one, by a key it builds
+ * itself builds it with [originOf]. There is no change callback: wrap the store (the engine calls [put], [remove],
  * [clearNonPersistent] and [clear] for every change) to observe what it learns.
  */
 public interface AltSvcStore {
@@ -98,7 +101,7 @@ public interface AltSvcStore {
     public companion object {
         /**
          * The origin key the engine stores [url]'s alternatives under, in the canonical form [AltSvcStore] describes:
-         * `originOf(Url("https://Example.COM./x"))` is `https://example.com:443`, `originOf(Url("wss://[2001:DB8::1]:8443/"))`
+         * `originOf(Url("https://Example.COM/x"))` is `https://example.com:443`, `originOf(Url("wss://[2001:DB8:0::1]:8443/"))`
          * is `https://[2001:db8::1]:8443`. The path, query and user info are not part of it.
          */
         @ExperimentalKuicksilverApi
@@ -594,18 +597,46 @@ internal fun <K, V> MutableMap<K, V>.evictEldest(max: Int) {
  * [AltSvcStore.originOf]: `scheme://host:port` with a WebSocket scheme read as its HTTP one. A `wss` WebSocket goes to the
  * `https` origin (RFC 8441 section 5, which RFC 9220 applies to HTTP/3: ":scheme MUST be https for wss-schemed
  * WebSockets"), and an alternative serves all requests to its origin (RFC 7838 section 2.4), so `wss://` and `https://`
- * to one host and port share it. The host is compared case-insensitively and an absolute name (`example.com.`) names the
- * same host as its relative form (RFC 6454 section 4 lowercases it; RFC 1034 section 3.1), so both reduce to one key.
+ * to one host and port share it.
  */
-internal fun originKeyOf(url: Url): String {
-    val scheme =
-        when (val name = url.protocol.name.lowercase()) {
+internal fun originKeyOf(url: Url): String =
+    canonicalOrigin(
+        when (val name = asciiLowercase(url.protocol.name)) {
             "wss" -> "https"
             "ws" -> "http"
             else -> name
+        },
+        url.host,
+        url.port,
+    )
+
+/**
+ * `scheme://host:port` for [host], an IPv6 literal with or without its brackets: the host lowercased as RFC 6454 section 4
+ * does, ASCII letters only (`i;ascii-casemap`, RFC 4790 section 9.2; a non-ASCII name keeps its spelling), nothing else
+ * changed (a trailing dot stays: `example.com.` and `example.com` are two origins), and an IPv6 address in RFC 5952 text
+ * (lower-case hex, no leading zeros, the longest run of zero groups as `::`), a `%zone` kept as given, in brackets. Also
+ * the form a [FileAltSvcStore] record is read into, so a file written by an older version keys its origins the same way.
+ */
+internal fun canonicalOrigin(
+    scheme: String,
+    host: String,
+    port: Int,
+): String {
+    var h = asciiLowercase(socketHost(host))
+    if (':' in h) {
+        val zone = h.substringAfter('%', "")
+        val ip = parseIpLiteral(h)?.takeIf { it.size == 16 }
+        if (ip != null) {
+            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+            h = io.kuicksilver.ktor.network
+                .TcpAddress(ip, 0)
+                .hostText + if (zone.isEmpty()) "" else "%$zone"
         }
-    var host = url.host.lowercase()
-    if (host.length > 1 && host.endsWith('.')) host = host.dropLast(1)
-    if (':' in host && !host.startsWith('[')) host = "[$host]" // an IPv6 literal set without its brackets
-    return "$scheme://$host:${url.port}"
+        h = "[$h]"
+    }
+    return "$scheme://$h:$port"
 }
+
+/** [s] with A-Z mapped to a-z and every other character as it is (`i;ascii-casemap`, RFC 4790 section 9.2). */
+internal fun asciiLowercase(s: String): String =
+    if (s.none { it in 'A'..'Z' }) s else buildString(s.length) { for (c in s) append(if (c in 'A'..'Z') c + ('a' - 'A') else c) }

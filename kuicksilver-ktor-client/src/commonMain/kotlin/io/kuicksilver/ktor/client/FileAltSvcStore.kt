@@ -215,8 +215,8 @@ public class FileAltSvcStore(
         /**
          * The origin and entry of one store record, or null when any field is not what the engine writes. The file is input
          * like a header (threat-model 3.14, 3.18): written by an older version, edited by hand or by another program, it
-         * must not bring in what the `Alt-Svc` parser refuses. The origin is `https://host:port` (the engine's key,
-         * [originKeyOf]); the protocol an RFC 9110 token; the alternative's host empty (the origin's) or a connection
+         * must not bring in what the `Alt-Svc` parser refuses. The origin is `https://host:port`, returned in the engine's key
+         * form ([canonicalOrigin]); the protocol an RFC 9110 token; the alternative's host empty (the origin's) or a connection
          * target, an IPv6 address without its brackets; ports digits in 1..65535; the expiry digits; persist `0` or `1`.
          * Where the engine may use an entry (the privileged-port and destination rules) is checked when it does
          * ([AltSvcCache.h3For]), for every store.
@@ -231,7 +231,7 @@ public class FileAltSvcStore(
             val authority = origin.removePrefix("https://")
             val colon = authority.lastIndexOf(':')
             if (colon <= 0) return null
-            AltSvcParser.portOf(authority.substring(colon + 1)) ?: return null
+            val originPort = AltSvcParser.portOf(authority.substring(colon + 1)) ?: return null
             if (!AltSvcParser.isAltHost(authority.substring(0, colon), bracketed = true)) return null
             val protocol = f[1]
             if (protocol.isEmpty() || !protocol.all { it.isTchar() }) return null
@@ -246,7 +246,10 @@ public class FileAltSvcStore(
                     "0" -> false
                     else -> return null
                 }
-            return origin to AltSvcEntry(protocol, host.ifEmpty { null }, port, expires, persist)
+            // the engine's key of the origin: a file an older version wrote (an uppercase host, an IPv6 address in another
+            // spelling) is read into it, records of one origin in two spellings merged, and the next write stores it so
+            return canonicalOrigin("https", authority.substring(0, colon), originPort) to
+                AltSvcEntry(protocol, host.ifEmpty { null }, port, expires, persist)
         }
 
         /** RFC 9110 section 5.6.2 `tchar`. */
