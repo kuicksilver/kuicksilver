@@ -27,3 +27,10 @@
     *** deliver(...);
 }
 
+# H3Pool.execute's retry loop reads a failure's causes through h3FailureFacts and touches the request's attributes through
+# h3RequestMark, never itself (H3FailureFacts says why: ART 7.x). An application's R8 could inline them back into the loop;
+# kept, it does not.
+-keepclassmembers,allowobfuscation,allowshrinking class io.kuicksilver.ktor.client.h3.H3PoolKt {
+    *** h3FailureFacts(...);
+    *** h3RequestMark(...);
+}

@@ -49,6 +49,7 @@ import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.Http3Discovery
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
+import io.kuicksilver.ktor.client.QuicStalledException
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WEBSOCKET_NOT_CONNECTED
 import io.kuicksilver.ktor.client.WebSocketLifetime
@@ -68,6 +69,7 @@ import io.kuicksilver.ktor.client.originKeyOf
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.priorityUpdater
 import io.kuicksilver.ktor.client.proxyTlsConfigFor
+import io.kuicksilver.ktor.client.resumedServerCidChange
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
@@ -93,6 +95,7 @@ import io.kuicksilver.quic.handshakeStapleUntil
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
 import io.kuicksilver.quic.unmappedLiteral
+import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -268,6 +271,80 @@ private fun unmapped(b: ByteArray): ByteArray =
         b
     }
 
+/**
+ * What a failure of [H3Pool.execute]'s exchange says through its causes, read in one call of [h3FailureFacts]: the retry
+ * loop reads these fields instead of walking the causes itself.
+ *
+ * ART 7.x (API 24/25) compiles a call in a hot loop for the receiver classes it has seen and deoptimizes the loop when
+ * another comes; with a phi nothing reads copied in that loop, the GC then aborts on 0xEBADDE09
+ * ([io.kuicksilver.ktor.client.KuicksilverEngine]'s learnAltSvcFrames says how). A cause walk calls `cause` on exceptions
+ * of any class, so the walks run in [h3FailureFacts], which ART 7 does not inline (over 32 code units) and an app's R8 is
+ * kept from inlining (consumer-rules.pro).
+ */
+internal class H3FailureFacts(
+    /** A resumed handshake met a server SCID change, in the failure's causes or the connection's end ([resumedServerCidChange]). */
+    val resumedServerCidChange: Boolean,
+    /** The failure or its cause is a [QuicStalledException]: the stall is already named. */
+    val stallNamed: Boolean,
+    /** The server closed the connection with H3_NO_ERROR ([isPeerShutdownClose]). */
+    val peerShutdown: Boolean,
+    /** The ECH rejection in the failure's causes ([echRejectionIn]). */
+    val echRejected: TlsException.EchRejected?,
+)
+
+/**
+ * The [H3FailureFacts] of [e], a failure of [H3Pool.execute]'s exchange, with [connectionEnd] the end of its QUIC connection
+ * when known (none for a cancellation, whose causes are not looked for a SCID change). Pure: every value is the one the
+ * loop computed inline before.
+ */
+internal fun h3FailureFacts(
+    e: Throwable,
+    connectionEnd: Throwable?,
+): H3FailureFacts {
+    val cidChange = e !is CancellationException && (resumedServerCidChange(e) || resumedServerCidChange(connectionEnd))
+    val named = e is QuicStalledException || e.cause is QuicStalledException
+    return H3FailureFacts(cidChange, named, isPeerShutdownClose(e), echRejectionIn(e))
+}
+
+/** The request attributes [H3Pool.execute]'s retry loop reads or sets, through [h3RequestMark]. */
+internal enum class H3Mark {
+    /** Reads the [WebSocketLifetimeKey] a WebSocket's exchange set. */
+    WebSocketLifetime,
+
+    /** Sets [H3ClosedAfterGoAwayKey]. */
+    ClosedAfterGoAway,
+
+    /** Sets [io.kuicksilver.ktor.client.NoCoalescingKey]. */
+    NoCoalescing,
+}
+
+/**
+ * Reads or sets the request attribute [mark] names on [data]: the value read, or null for a write. [H3Pool.execute]'s retry
+ * loop touches the request's attributes only here. A call on them inlines Ktor's AttributesJvmBase, whose calls of its map
+ * are cached for every Attributes of the process (a request's concurrent ones, the HashMap ones of Ktor's other uses): in
+ * the loop they could deoptimize it on ART 7.x (H3FailureFacts says how). Over 32 code units, ART 7 does not inline this
+ * function, and consumer-rules.pro keeps an app's R8 from inlining it.
+ */
+internal fun h3RequestMark(
+    data: HttpRequestData,
+    mark: H3Mark,
+): Any? =
+    when (mark) {
+        H3Mark.WebSocketLifetime -> {
+            data.attributes.getOrNull(WebSocketLifetimeKey)
+        }
+
+        H3Mark.ClosedAfterGoAway -> {
+            data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
+            null
+        }
+
+        H3Mark.NoCoalescing -> {
+            data.attributes.put(io.kuicksilver.ktor.client.NoCoalescingKey, Unit)
+            null
+        }
+    }
+
 /** A failure that happened before the request could have reached the server: safe to repeat on HTTP/1.1. */
 internal class H3NotSent(
     cause: Throwable,
@@ -314,8 +391,12 @@ internal class H3Entry(
     val createdAt: Long,
     /** Set up WebTransport-capable (its SETTINGS, Extended CONNECT, `reset_stream_at`): sessions may join it, requests use it. */
     val webTransport: Boolean = false,
-    /** Called after every [release] (the pool's [H3Pool.releasesForTest]). */
-    private val released: () -> Unit = {},
+    /**
+     * Told after every [release] ([H3Pool.noteReleased], its releasesForTest); none in tests that make an entry alone. The
+     * pool, not a lambda: [release] runs in H3Pool.execute's retry loop, where a call through lambdas of more than one class
+     * lets ART 7.x deoptimize the loop (as [H3FailureFacts] says).
+     */
+    private val pool: H3Pool? = null,
     /**
      * The origin host the connection was set up for (its TLS configuration's): an entry filed under a key of another origin
      * carries that origin's requests by coalescing (ADR-0018, [H3Pool]'s `shareSameAddress`).
@@ -363,7 +444,7 @@ internal class H3Entry(
             idleSince.store(now)
             if (retiredFlag.load() != 0) closeConnection()
         }
-        released()
+        pool?.noteReleased()
     }
 
     /** Past its lifetime: no new requests; closed as soon as it has none (now, or at the last [release]). */
@@ -745,7 +826,7 @@ internal class H3Pool(
     /** Test hook: the releases of every connection's use so far (see [activeForTest]). */
     internal val releasesForTest = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
-    private fun noteReleased() {
+    internal fun noteReleased() {
         releasesForTest.update { it + 1 }
     }
 
@@ -942,7 +1023,7 @@ internal class H3Pool(
                     found.active.addAndFetch(1)
                     found to false
                 } else {
-                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased, origin = t.originHost)
+                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, pool = this@H3Pool, origin = t.originHost)
                     e.active.addAndFetch(1)
                     e.retire() // kept for the sessions of [t] and closed with its last one
                     wtExtras.getOrPut(t.key) { ArrayList() } += e
@@ -1666,7 +1747,7 @@ internal class H3Pool(
                     ) {
                         retireUnderEveryKey(existing)
                     }
-                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased, origin = t.originHost)
+                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, pool = this@H3Pool, origin = t.originHost)
                         .also { connections[t.key] = it } to true
                 }
             }
@@ -2272,7 +2353,9 @@ internal class H3Pool(
 
     /** The 0-RTT connections whose ECH offer was a retry's (RFC 9849 section 6.1.6): a rejection there sends nothing again. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    private val retryOffered = kotlin.concurrent.atomics.AtomicReference(emptySet<Http3Connection>())
+    // a LinkedHashSet from the start, as `+` and `-` make: H3Pool.execute's retry loop asks it with `in`, and a set of one class
+    // there keeps ART 7.x from deoptimizing that loop (H3FailureFacts says how)
+    private val retryOffered = kotlin.concurrent.atomics.AtomicReference<Set<Http3Connection>>(LinkedHashSet())
 
     /**
      * Lets [c] follow the network with `http3 { migration }`, if set (docs/guide/ktor.md, "Connection migration"): once
@@ -2520,8 +2603,15 @@ internal class H3Pool(
         var repeats = 0 // every repeat on a new connection, for the retry event's number and the diagnostics' attempts
         var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
+        // the request's attributes are read here, before the retry loop, and written in it through h3RequestMark only
+        // (H3FailureFacts says why): the engine sets both before the request reaches the pool and changes neither during it
+        val webSocketRequest = data.attributes.contains(WEBSOCKETS_KEY)
+
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val watched = watchStall && config.http3.stall.enabled && !data.attributes.contains(WEBSOCKETS_KEY)
+        val diagnostics = data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val watched = watchStall && config.http3.stall.enabled && !webSocketRequest
         while (true) {
             val (entry, conn) =
                 try {
@@ -2531,15 +2621,11 @@ internal class H3Pool(
                 } catch (e: Throwable) {
                     // a setup's failure reaches every call that waited for that setup as one instance (engine calls only)
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.setupShared(e)
+                    diagnostics?.setupShared(e)
                     throw H3NotSent(e)
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too
             var watch: H3StallMonitor.Watch? = null
-
-            // the call's diagnostics, read once
-            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val diagnostics = data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)
 
             // the path changes before the call took the connection are not the call's (a volatile read, no allocation)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -2579,10 +2665,7 @@ internal class H3Pool(
                     reported = true
                 }
                 val r =
-                    if (data.attributes.contains(
-                            WEBSOCKETS_KEY,
-                        )
-                    ) {
+                    if (webSocketRequest) {
                         webSocket(conn, data, callContext, extraHeaders)
                     } else {
                         // on another origin's connection (coalescing, ADR-0018) a 421 is not the call's answer
@@ -2595,7 +2678,7 @@ internal class H3Pool(
                     if (r.statusCode ==
                         HttpStatusCode.SwitchingProtocols
                     ) {
-                        data.attributes.getOrNull(WebSocketLifetimeKey)
+                        h3RequestMark(data, H3Mark.WebSocketLifetime) as WebSocketLifetime?
                     } else {
                         null
                     }
@@ -2644,18 +2727,22 @@ internal class H3Pool(
             } catch (e: Throwable) {
                 watch?.end()
                 entry.release(clock())
+                // what the failure's causes say, read once outside this loop's frame (H3FailureFacts says why)
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                val facts =
+                    h3FailureFacts(
+                        e,
+                        if (e is CancellationException) {
+                            null
+                        } else {
+                            conn.quic.closed
+                                .takeIf { it.isCompleted }
+                                ?.getCompleted()
+                        },
+                    )
                 // a resumed handshake that met a server SCID change: the host's backoff starts now, before the retry below or
                 // the caller's fallback, so a retry makes a plain full handshake
-                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                if (e !is CancellationException) {
-                    onResumedServerCidChange(
-                        t.originHost,
-                        e,
-                        conn.quic.closed
-                            .takeIf { it.isCompleted }
-                            ?.getCompleted(),
-                    )
-                }
+                if (facts.resumedServerCidChange) onServerCidChange(t.originHost)
                 // the connection the call failed on (a fallback over TCP replaces it)
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 if (diagnostics != null && e !is CancellationException) {
@@ -2678,19 +2765,17 @@ internal class H3Pool(
                 }
                 // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
                 // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
-                if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
+                if (conn.goAwayReceived.value != null && facts.peerShutdown) h3RequestMark(data, H3Mark.ClosedAfterGoAway)
                 // the connection stalled under the request: the stall is the failure, with what the request saw as its cause
                 val stall = watch?.stall
-                val named =
-                    e is io.kuicksilver.ktor.client.QuicStalledException || e.cause is io.kuicksilver.ktor.client.QuicStalledException
-                if (stall != null && e !is CancellationException && !named) {
+                if (stall != null && e !is CancellationException && !facts.stallNamed) {
                     throw if (e is H3NotSent) H3NotSent(stall.exception(e.cause)) else stall.exception(e)
                 }
                 // a 0-RTT connection whose ECH the server rejected: the server handshook on the outer ClientHello and ignored
                 // the early data (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10), and the client aborted before any
                 // 1-RTT data, so the request was not processed. It goes once more, on a new connection that offers the
                 // retry configurations (or none when the server sent none, section 6.1.6); a second rejection is the failure
-                val echRejected = echRejectionIn(e)
+                val echRejected = facts.echRejected
                 if (echRejected != null &&
                     resendsAfterEarlyEchRejection(echRetried, conn.quic.isHandshakeComplete, conn in retryOffered.load())
                 ) {
@@ -2702,7 +2787,7 @@ internal class H3Pool(
                     // a repeat on a new connection, counted as the RequestNotProcessed one below is
                     repeats++
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                    diagnostics?.let { it.attempts++ }
                     events.emit("retry") { retry(data, repeats + 1, e) }
                     continue
                 }
@@ -2713,7 +2798,7 @@ internal class H3Pool(
                     // this origin any more, and this call coalesces no more: the repeat goes on a connection of its own
                     entry.hosts.record(t.originHost, accepted = false)
                     lock.withLock { connections.entries.removeAll { (k, v) -> v === entry && originOfKey(k) == t.originHost } }
-                    data.attributes.put(io.kuicksilver.ktor.client.NoCoalescingKey, Unit)
+                    h3RequestMark(data, H3Mark.NoCoalescing)
                     if (e.bodyConsumed) {
                         throw H3BodyConsumed(
                             "421 Misdirected Request on a connection of another origin (connection coalescing), and the " +
@@ -2723,7 +2808,7 @@ internal class H3Pool(
                     }
                     repeats++
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                    data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                    diagnostics?.let { it.attempts++ }
                     events.emit("retry") { retry(data, repeats + 1, e) }
                     continue
                 }
@@ -2745,7 +2830,7 @@ internal class H3Pool(
                 if (++attempts > 2) throw H3NotSent(e)
                 repeats++
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.let { it.attempts++ }
+                diagnostics?.let { it.attempts++ }
                 events.emit("retry") { retry(data, repeats + 1, e) }
             }
         }
