@@ -506,8 +506,26 @@ Chrome 158.0.8127.38 (macOS, headless, all three `ChromeWebTransportTest` runs, 
 Chrome's `WebTransportError` constructor takes one dictionary (`new WebTransportError({streamErrorCode, message})`); the
 W3C form with a message first throws TypeError ("not of type 'WebTransportErrorInit'"). No code above 255 reached the
 server from Chrome, so the strict draft-02 policy (no receive shim) stands for Chrome; the test asserts each row above and
-fails, after printing the table, if a code above 255 ever arrives. Firefox: not run yet; `tools/interop/wt-firefox-manual.sh`
-prints the same table (a line starting with `!!!` names a code above 255).
+fails, after printing the table, if a code above 255 ever arrives.
+
+Firefox 161.0 (macOS, `tools/interop/wt-firefox-manual.sh`, PASS, 2026-11-26; the script removed its directory on PASS, so
+only its printed table and timeline are left):
+
+| direction | value | Firefox locally | on the wire (server qlog) | server API / page sees |
+|---|---|---|---|---|
+| page `writer.abort` (bidi and uni) | 0, 42, 255 | `new WebTransportError("", {streamErrorCode})` keeps it; `abort` resolves | RESET_STREAM_AT (Firefox and our server both advertise `reset_stream_at`) → WT 0 / 42 / 255 | `StreamReset.code` 0 / 42 / 255 |
+| page `writer.abort` (bidi and uni) | 256, 1000, 2^32-1 | the error object keeps the value (no clamp, no exception) | only the low 8 bits: WT 0 / 232 / 255 | `StreamReset.code` 0 / 232 / 255 |
+| page `reader.cancel` (bidi and uni) | all six | `cancel` resolves | STOP_SENDING with H3_REQUEST_CANCELLED (0x10c), not a WebTransport code, for every value; it did not arrive within the server's 10 s wait (`kuicksilver-http3` `WebTransportStreamsTest.peerStopSendingWithAnHttp3CodeFailsTheWriterWithoutACode` shows our writer fails at once on such a frame), so it most likely comes with the session's teardown, not with the cancel: to confirm with the per-frame times the probe now logs | the server's writes did not fail within 10 s |
+| server `reset` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | RESET_STREAM_AT with the code's mapping | the read fails with `WebTransportError` `streamErrorCode` = the same value, "WebTransportStream Reset" |
+| server `stopSending` (bidi and uni) | 0, 1, 42, 127, 128, 254, 255 | — | STOP_SENDING; Firefox answers with RESET_STREAM of the same code | the write fails with the same `streamErrorCode`, "WebTransportStream StopSending" |
+| server `reset` / `stopSending` | 256, 1000 | refused by the server (strict policy); FIN instead | nothing | a plain end of the stream |
+| page `close` | 2^32-1, "page-bye-32"; 2^32, "page-2^32" | `closed` resolves with 4294967295, and with 0 for 2^32 (wrapped, as in Chrome) | not recorded | not recorded: the probe logged a session's end from its handler, which the connection's end cancels first (Firefox closes the connection right after the session, `ApplicationClosed` code 256, H3_NO_ERROR). The same run's echo session, closed the same way, ended with its capsule's code 7 and "bye", and `WebTransportCloseTest.closeCapsuleRightBeforeConnectionCloseKeepsItsCode` covers the race; the probe now records the end when `closed` completes, with the capsules, CONNECT FINs and CONNECTION_CLOSEs from the qlog (`session-end:` lines). To be rerun |
+| server `close` | 2^32-2, "server-bye-32" | — | WT_CLOSE_SESSION | `closed` resolves with 4294967294 and the reason |
+
+No code above 255 reached the server from Firefox either: Firefox truncates instead of clamping, so an application's code
+above 255 arrives as another, wrong code in 0..255 (256 as 0), which no receive shim could undo. The strict policy stands
+for Firefox as well. The script now keeps its directory (qlogs, Firefox's qlog and MOZ_LOG) when the table has an
+`ANOMALY` line, PASS or not.
 
 webtransport-go's client requires `reset_stream_at`, which the Ktor server now advertises with `http3 { webTransport { enabled } }`; neither
 direction against webtransport-go is run here (it belongs to the gate's interop image). webtransport-go (2a2b547,

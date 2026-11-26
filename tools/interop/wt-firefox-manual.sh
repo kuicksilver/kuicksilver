@@ -13,7 +13,8 @@
 # the server as the raw HTTP/3 code and the mapped WebTransport code, and what the page saw of the server's resets and
 # STOP_SENDINGs; a line starting with "!!!" names a draft-02 stream code above 255 that Firefox sent), then PASS or FAIL
 # with the page's JSON, stops Firefox and the Gradle run it started (only those, by process group) and removes the directory
-# on PASS; on FAIL it keeps it and lists what to look at. Diagnostics in that directory: codes-table.txt (the table above),
+# on PASS (unless the code table has an ANOMALY or !!! line: a case the server or the page did not see as expected, such
+# as a page close the server never saw); otherwise it keeps it and lists what to look at. Diagnostics in that directory: codes-table.txt (the table above),
 # server-events.txt (the server's timeline: connections, request headers, the client's SETTINGS, how each session ended
 # and why, and per stream of the error code stage each RESET_STREAM / STOP_SENDING with its raw HTTP/3 code and the
 # WebTransport code it maps to), qlog/ (the server's
@@ -116,7 +117,12 @@ cleanup() {
   stop_profile_users
   stop_group "$gradle_pid"
   collect_firefox_qlog
-  if [ "${WT_KEEP:-}" = 1 ] || { [ "$rc" -ne 0 ] && [ "${WT_KEEP:-}" != 0 ]; }; then
+  local anomalous=0
+  if [ -f "$tmp/codes-table.txt" ] && grep -qE '^(ANOMALY|!!!)' "$tmp/codes-table.txt"; then anomalous=1; fi
+  if [ "${WT_KEEP:-}" = 1 ] || { { [ "$rc" -ne 0 ] || [ "$anomalous" = 1 ]; } && [ "${WT_KEEP:-}" != 0 ]; }; then
+    if [ "$rc" -eq 0 ] && [ "$anomalous" = 1 ]; then
+      echo "wt-firefox-manual: the code table shows anomalies (ANOMALY or !!! lines): keeping the diagnostics"
+    fi
     echo "wt-firefox-manual: kept $tmp"
     for f in codes-table.txt server-events.txt server.txt result.json qlog firefox-qlog firefox-moz.log gradle.log; do
       if compgen -G "$tmp/$f*" >/dev/null; then echo "  $tmp/$f"; fi
@@ -238,14 +244,17 @@ if [ -f "$tmp/result.json" ]; then
   if [ -f "$tmp/codes-table.txt" ]; then
     echo
     cat "$tmp/codes-table.txt"
+    if grep -q '^ANOMALY' "$tmp/codes-table.txt"; then
+      echo "wt-firefox-manual: NOTE: the code table shows anomalies (ANOMALY lines); the directory is kept"
+    fi
     if grep -q '^!!!' "$tmp/codes-table.txt"; then
       echo "wt-firefox-manual: NOTE: Firefox sent a draft-02 stream error code above 255 (see the line starting with !!!)"
     fi
     echo
   fi
   if [ -f "$tmp/server-events.txt" ]; then
-    echo "Server events (how each session and connection ended):"
-    grep -E 'ended:|closed:' "$tmp/server-events.txt" || true
+    echo "Server events (how each session and connection ended; session-end: the capsules, CONNECT FINs and CONNECTION_CLOSEs):"
+    grep -E 'ended:|ended by|closed:|accepted on|session-end:' "$tmp/server-events.txt" || true
   fi
 fi
 if [ "$gradle_rc" -eq 0 ] && [ -f "$tmp/result.json" ]; then

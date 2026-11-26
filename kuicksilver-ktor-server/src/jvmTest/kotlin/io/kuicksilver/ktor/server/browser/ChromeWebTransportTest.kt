@@ -84,7 +84,8 @@ class ChromeWebTransportTest {
                 val result = CompletableDeferred<String>()
                 val codesPosted = CompletableDeferred<String>()
                 val timeline = ConcurrentLinkedQueue<String>()
-                val probe = WtCodesProbe { line -> timeline += line }
+                val start = System.nanoTime()
+                val probe = WtCodesProbe { line -> timeline += "+${(System.nanoTime() - start) / 1_000_000} ms $line" }
                 val clientClose = CompletableDeferred<WebTransportCloseInfo>()
                 val draft02 = CompletableDeferred<Boolean>()
                 val lbChanged = CompletableDeferred<Unit>()

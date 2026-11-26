@@ -296,8 +296,11 @@ the data.
   and 2^32-1 to 255 when the `WebTransportError` is built, so `writer.abort` and `reader.cancel` send WebTransport code
   255 at most, on bidirectional and unidirectional streams alike, and it reads our codes 0..255 back unchanged; no code
   above 255 reached the server — `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`) fails loudly
-  should one ever arrive. Firefox is to be checked with `tools/interop/wt-firefox-manual.sh` (it prints the same
-  table); the shim is reconsidered if a browser is seen sending a code above 255.
+  should one ever arrive. Firefox 161 (2026-11-26, `tools/interop/wt-firefox-manual.sh`) keeps the value in the
+  `WebTransportError` but `writer.abort` sends only its low 8 bits (256 → 0, 1000 → 232, 2^32-1 → 255), and
+  `reader.cancel` sends no WebTransport code at all (STOP_SENDING with H3_REQUEST_CANCELLED, 0x10c, which the API reports
+  as `StreamStopped.code` null); nothing above 255 reached the server. A receive shim would have nothing to map: no
+  browser sends a code above 255. It is reconsidered if one is seen doing so.
 - **Discarding later long-header packets with another SCID** (an msquic server's ServerHello after its provisional SCID
   among them): the RFC 9000 §7.2 MUST itself.
 - **TLS 1.2** (`TlsVersions.Tls12And13`, for peers without 1.3 such as old Android and JDK stacks): off by default, and RFC

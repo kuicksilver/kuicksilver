@@ -23,7 +23,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -67,6 +66,7 @@ internal class WtCodesProbe(
         val streamId: Long,
         val raw: Long,
         val connection: String,
+        val nanos: Long = System.nanoTime(),
     ) {
         /** The WebTransport code [raw] carries, unbounded (draft-02 would allow only 0..255), or null outside the range. */
         val wt: Long? get() = wtCode(raw)
@@ -85,13 +85,30 @@ internal class WtCodesProbe(
         val label: String,
         val streamId: Long,
         val seq: Long,
+        val nanos: Long = System.nanoTime(),
     ) {
         @Volatile var server: String = "nothing yet"
     }
 
+    /** One session of the probe's routes: its CONNECT stream and the connection it probably runs on. */
+    private class SessionRecord(
+        val route: String,
+        val sessionId: Long,
+        val connection: String?,
+    )
+
     private val seq = AtomicLong()
     private val frames = ConcurrentLinkedQueue<Frame>()
     private val cases = ConcurrentHashMap<String, Case>()
+
+    /** Per connection, the last stream on which qlog saw a HEADERS frame parsed: a session's CONNECT, at its accept. */
+    private val lastHeaders = ConcurrentHashMap<Long, String>()
+
+    /** The CONNECT stream ids of the probe's sessions (for the FIN lines). */
+    private val connectStreams = ConcurrentHashMap.newKeySet<Long>()
+
+    /** What looked wrong, for the table's ANOMALY lines (the script keeps its directory on any). */
+    private val anomalies = ConcurrentLinkedQueue<String>()
 
     /** The page's closes of `/wt/close-probe` as the server saw them, in order. */
     val pageCloses = ConcurrentLinkedQueue<WebTransportCloseInfo>()
@@ -120,6 +137,7 @@ internal class WtCodesProbe(
         connection: String,
         record: String,
     ) {
+        scanSessionEnd(connection, record)
         if ("reset_stream" !in record && "stop_sending" !in record) return
         val received =
             when {
@@ -135,6 +153,91 @@ internal class WtCodesProbe(
             val case = cases.values.filter { it.streamId == f.streamId && it.seq < f.seq }.maxByOrNull { it.seq }
             log("codes: quic $connection stream ${f.streamId} $f; case ${case?.label ?: "?"}")
         }
+    }
+
+    /**
+     * The events that end a session, per connection: WebTransport capsules (WT_CLOSE_SESSION 0x2843, WT_DRAIN_SESSION
+     * 0x78ae, ...; `http:capsule_parsed` / `_created`), the FIN of a probe session's CONNECT stream, and CONNECTION_CLOSE,
+     * sent and received; and the stream of the last HEADERS parsed, which ties a session to its connection.
+     */
+    private fun scanSessionEnd(
+        connection: String,
+        record: String,
+    ) {
+        if ("\"http:frame_parsed\"" in record && "\"frame_type\":\"headers\"" in record) {
+            STREAM_ID.find(record)?.let { lastHeaders[it.groupValues[1].toLong()] = connection }
+        }
+        val capsule = CAPSULE.find(record)
+        if (capsule != null) {
+            val type = capsule.groupValues[3].toLongOrNull() ?: 0L
+            if (type != 0L) { // DATAGRAM capsules are not logged (the type is not in the record either)
+                val parsed = capsule.groupValues[1] == "parsed"
+                val what = "capsule ${capsuleName(
+                    type,
+                )} (0x${type.toString(16)}, ${capsule.groupValues[4]}-byte value) on stream ${capsule.groupValues[2]}"
+                log("session-end: quic $connection ${if (parsed) "rx" else "tx"} $what")
+            }
+        }
+        if ("connection_close" in record || "\"fin\":true" in record) {
+            val received =
+                when {
+                    "packet_received" in record -> true
+                    "packet_sent" in record -> false
+                    else -> return
+                }
+            val dir = if (received) "rx" else "tx"
+            for (m in CONNECTION_CLOSE.findAll(record)) log("session-end: quic $connection $dir CONNECTION_CLOSE ${m.value}")
+            for (m in FIN.findAll(record)) {
+                val id = m.groupValues[1].toLong()
+                if (id in connectStreams) log("session-end: quic $connection $dir FIN on stream $id (a CONNECT stream of the probe)")
+            }
+        }
+    }
+
+    /**
+     * Logs a probe session as accepted and, whatever cancels its handler (the connection's end cancels the call), how it
+     * ended: the capsule, a FIN without one, the connection's close or a reset of the CONNECT stream.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun track(
+        route: String,
+        session: WebTransportSession,
+        onEnd: (WebTransportCloseInfo) -> Unit = {},
+    ): SessionRecord {
+        connectStreams += session.sessionId
+        val rec = SessionRecord(route, session.sessionId, lastHeaders[session.sessionId])
+        log(
+            "$route: session ${session.sessionId} accepted on quic ${rec.connection ?: "?"} " +
+                "(the last connection with HEADERS on that stream)",
+        )
+        session.closed.invokeOnCompletion {
+            val info = session.closed.getCompleted()
+            // the `session-end:` capsule lines may come after this one: qlog writes the capsule once it was handled
+            val how =
+                when {
+                    info.cause == null && (info.code != 0L || info.reason.isNotEmpty()) -> {
+                        "WT_CLOSE_SESSION (a capsule, by the peer or us)"
+                    }
+
+                    info.cause == null -> {
+                        "WT_CLOSE_SESSION with code 0 and no reason, or a FIN without one (see the session-end lines)"
+                    }
+
+                    generateSequence(info.cause) { it.cause }.any { it is io.kuicksilver.quic.QuicException.ConnectionLost } -> {
+                        "the connection's end before any capsule"
+                    }
+
+                    else -> {
+                        "a failure of the CONNECT stream (reset or malformed)"
+                    }
+                }
+            log(
+                "$route: session ${session.sessionId} on quic ${rec.connection ?: "?"} ended by $how: " +
+                    "code=${info.code} reason=\"${info.reason}\" cause=${chain(info.cause)}",
+            )
+            onEnd(info)
+        }
+        return rec
     }
 
     /** The frames of [case]'s stream since it started. */
@@ -160,19 +263,20 @@ internal class WtCodesProbe(
     fun routes(route: Route) {
         route.webTransport("/wt/codes") { session -> codes(session) }
         route.webTransport("/wt/close-probe") { session ->
-            log("/wt/close-probe: session ${session.sessionId} accepted")
-            val info = session.closed.await()
-            log("/wt/close-probe: session ${session.sessionId} ended: code=${info.code} reason=\"${info.reason}\" cause=${info.cause}")
-            pageCloses += info
+            // recorded when it happens, not from the handler, which the connection's end may cancel first
+            track("/wt/close-probe", session) { pageCloses += it }
+            session.closed.await()
         }
         route.webTransport("/wt/server-close-32") { session ->
-            log("/wt/server-close-32: session ${session.sessionId} accepted; closing with $SERVER_CLOSE_CODE \"$SERVER_CLOSE_REASON\"")
+            track("/wt/server-close-32", session)
+            log("/wt/server-close-32: closing with $SERVER_CLOSE_CODE \"$SERVER_CLOSE_REASON\"")
             session.close(SERVER_CLOSE_CODE, SERVER_CLOSE_REASON)
         }
     }
 
     private suspend fun codes(session: WebTransportSession) {
-        log("/wt/codes: session ${session.sessionId} accepted, maxStreamErrorCode=${session.maxStreamErrorCode}")
+        track("/wt/codes", session)
+        log("/wt/codes: maxStreamErrorCode=${session.maxStreamErrorCode}")
         val control = CompletableDeferred<WebTransportSendStream>()
         val lock = Mutex()
         val have = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
@@ -292,8 +396,7 @@ internal class WtCodesProbe(
                     }
                 }
             }
-            val info = session.closed.await()
-            log("/wt/codes: session ${session.sessionId} ended: code=${info.code} reason=\"${info.reason}\"")
+            session.closed.await()
             coroutineContext.cancelChildren()
         }
     }
@@ -302,7 +405,7 @@ internal class WtCodesProbe(
     private suspend fun drain(st: WebTransportReceiveStream): String {
         val buf = ByteArray(4096)
         return try {
-            withTimeout(10.seconds) {
+            withTimeout(CASE_WAIT) {
                 @Suppress("ControlFlowWithEmptyBody")
                 while (st.input.readAvailable(buf) >= 0) {
                 }
@@ -313,15 +416,14 @@ internal class WtCodesProbe(
         }
     }
 
-    /** Writes until the peer's STOP_SENDING (or anything else) fails the output. */
+    /** Writes until the peer's STOP_SENDING (or anything else) fails the output; no fixed waits: flow control paces it. */
     private suspend fun writeUntilStopped(st: WebTransportSendStream): String {
         val chunk = ByteArray(1024) { 'x'.code.toByte() }
         return try {
-            withTimeout(10.seconds) {
+            withTimeout(CASE_WAIT) {
                 while (true) {
                     st.output.writeFully(chunk)
-                    st.output.flush()
-                    delay(20)
+                    st.output.flush() // the stream's flow control paces the loop
                 }
                 @Suppress("UNREACHABLE_CODE")
                 "unreachable"
@@ -363,7 +465,7 @@ internal class WtCodesProbe(
         causes.filterIsInstance<WebTransportException.StreamStopped>().firstOrNull()?.let {
             return "STOP_SENDING, API code ${it.code ?: "null (refused: outside the session's range)"}"
         }
-        if (e is kotlinx.coroutines.TimeoutCancellationException) return "nothing within 10 s"
+        if (e is kotlinx.coroutines.TimeoutCancellationException) return "nothing within ${CASE_WAIT.inWholeSeconds} s"
         return "failed: ${chain(e)}"
     }
 
@@ -383,7 +485,7 @@ internal class WtCodesProbe(
             val cols = line.split('\t')
             val label = cols[0]
             val c = cases[label]
-            val wire = c?.let { framesOf(it).joinToString("; ") } ?: "-"
+            val wire = c?.let { case -> framesOf(case).joinToString("; ") { "$it at +${(it.nanos - case.nanos) / 1_000_000} ms" } } ?: "-"
             val server =
                 when {
                     c != null -> c.server
@@ -392,8 +494,10 @@ internal class WtCodesProbe(
                     else -> "no stream seen"
                 }
             sb.append("$label | ${cols.getOrElse(1) { "" }} | ${cols.getOrElse(2) { "" }} | $server | $wire\n")
+            anomaly(label, cols, server)?.let { anomalies += "$label: $it" }
         }
         val above = above255()
+        for (a in anomalies.distinct()) sb.append("ANOMALY: $a\n")
         sb.append(
             if (above.isEmpty()) {
                 "No stream code above 255 received from the browser.\n"
@@ -415,6 +519,51 @@ internal class WtCodesProbe(
                     it.cause,
                 )}"
             }}"
+
+    /** What looks wrong in one row, or null: what the script keeps its diagnostics for. */
+    private fun anomaly(
+        label: String,
+        cols: List<String>,
+        server: String,
+    ): String? {
+        val local = cols.getOrElse(1) { "" }
+        val seen = cols.getOrElse(2) { "" }
+        val v = label.substringAfterLast(' ').toLongOrNull()
+        return when {
+            local.startsWith("failed") -> {
+                "the page's case failed"
+            }
+
+            label.startsWith("page-close ") -> {
+                val reason = label.removePrefix("page-close ")
+                if (!server.startsWith("session closed with code") ||
+                    "reason \"$reason\"" !in server
+                ) {
+                    "the server did not see the page's close"
+                } else {
+                    null
+                }
+            }
+
+            label.startsWith("abort-") || label.startsWith("cancel-") -> {
+                if (!server.startsWith("RESET_STREAM, API code") &&
+                    !server.startsWith("STOP_SENDING, API code")
+                ) {
+                    "the server's API saw: $server"
+                } else {
+                    null
+                }
+            }
+
+            label.startsWith("srv-") && v != null && v <= DRAFT02_MAX && local != "SAME CODE" -> {
+                "the page saw: $seen"
+            }
+
+            else -> {
+                null
+            }
+        }
+    }
 
     companion object {
         const val DRAFT02_MAX = 255L
@@ -441,6 +590,25 @@ internal class WtCodesProbe(
                 0x10cL -> "H3_REQUEST_CANCELLED"
                 0x100L -> "H3_NO_ERROR"
                 else -> "HTTP/3 0x${h.toString(16)}"
+            }
+
+        /** How long a case waits for the peer's reset, STOP_SENDING or FIN. */
+        private val CASE_WAIT = 3.seconds
+
+        private val STREAM_ID = Regex("\"stream_id\":(\\d+)")
+        private val CAPSULE =
+            Regex(
+                "\"http:capsule_(parsed|created)\".*?\"stream_id\":(\\d+).*?" +
+                    "(?:\"capsule_type_value\":(\\d+)|\"capsule_type\":\"datagram\").*?\"payload_length\":(\\d+)",
+            )
+        private val CONNECTION_CLOSE = Regex("\\{\"frame_type\":\"connection_close\"[^}]*\\}")
+        private val FIN = Regex("\\{\"frame_type\":\"stream\",\"stream_id\":(\\d+),[^}]*\"fin\":true")
+
+        private fun capsuleName(type: Long): String =
+            when (type) {
+                0x2843L -> "WT_CLOSE_SESSION"
+                0x78aeL -> "WT_DRAIN_SESSION"
+                else -> "type"
             }
 
         private val FRAME =
