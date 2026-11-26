@@ -23,6 +23,7 @@ import io.kuicksilver.quic.core.PacketReceiver
 import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Timers
+import io.kuicksilver.quic.core.TlsFacts
 import io.kuicksilver.quic.core.abandonPreferredProbe
 import io.kuicksilver.quic.core.afterInput
 import io.kuicksilver.quic.core.amplificationLeavesNoProbe
@@ -52,6 +53,7 @@ import io.kuicksilver.quic.core.probePreferredFrom
 import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
+import io.kuicksilver.quic.core.releaseCryptoIfDraining
 import io.kuicksilver.quic.core.releasePathCid
 import io.kuicksilver.quic.core.revertHandshakeMove
 import io.kuicksilver.quic.core.runDueTimers
@@ -599,7 +601,7 @@ public class ConnectionCore internal constructor(
      * as soon as it decided. Null when none was attempted or not known yet.
      */
     @ExperimentalKuicksilverApi
-    public val earlyDataAccepted: Boolean? get() = earlyAccepted ?: if (released) null else handshake.session.earlyDataAccepted
+    public val earlyDataAccepted: Boolean? get() = earlyAccepted ?: tls().earlyDataAccepted
 
     /** Server: true when any STREAM frame of stream [id] arrived in a 0-RTT packet (it may be a replay, RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
@@ -960,23 +962,26 @@ public class ConnectionCore internal constructor(
 
     // ---- public API ----
 
+    // The getters below read the TLS session while it exists and, once it was freed (a draining connection's at once, RFC
+    // 9000 section 10.2.2; every connection's when closed), what it said then ([TlsFacts]): the values stay as they were.
+
     /** The certificate chain the peer presented; empty before the handshake got that far or when the peer sent none. */
-    public val peerCertificates: List<Certificate> get() = handshake.session.peerCertificates
+    public val peerCertificates: List<Certificate> get() = tls().peerCertificates
 
     /** The certificate chain this side presents (a server's identity snapshot for this handshake); empty without one. */
     @ExperimentalKuicksilverApi
-    public val localCertificates: List<Certificate> get() = handshake.session.localCertificates
+    public val localCertificates: List<Certificate> get() = tls().localCertificates
 
     /** The ALPN protocol agreed in the handshake (RFC 9001 section 8.1); null until the handshake settled it. */
-    public val negotiatedAlpn: String? get() = handshake.session.negotiatedAlpn
+    public val negotiatedAlpn: String? get() = tls().negotiatedAlpn
 
     /** The key-exchange group of the handshake (a `KeyExchangeGroups` name); null until it completed. */
     @ExperimentalKuicksilverApi
-    public val keyExchangeGroup: String? get() = handshake.session.keyExchangeGroup
+    public val keyExchangeGroup: String? get() = tls().keyExchangeGroup
 
     /** The algorithm the peer's certificate chain came compressed with (RFC 8879); null when uncompressed or not (yet) known. */
     @ExperimentalKuicksilverApi
-    public val peerCertificateCompression: CertificateCompression? get() = handshake.session.peerCertificateCompression
+    public val peerCertificateCompression: CertificateCompression? get() = tls().peerCertificateCompression
 
     /**
      * Keying material from the TLS exporter (RFC 5705, RFC 9846 section 7.5) for [label] and [context], [length] bytes; usable once the
@@ -1012,7 +1017,7 @@ public class ConnectionCore internal constructor(
                 loss.space(it).ack.rangeCount
             },
             streams.reassemblyRanges,
-            keyPhase?.updates ?: 0L,
+            keyPhase?.updates ?: keyUpdatesAtRelease,
             authenticationFailures,
             invalidResets,
             glitch?.spent ?: 0L,
@@ -1097,6 +1102,7 @@ public class ConnectionCore internal constructor(
         out: PacketBatch,
         now: TimeMark,
     ): Int {
+        releaseCryptoIfDraining() // RFC 9000 section 10.2.2: a draining connection needs no keys
         if (state == ConnectionState.Closed || state == ConnectionState.Draining) return 0
         // past the idle deadline the connection is idle whatever is queued (RFC 9000 section 10.1): a packet sent now would
         // restart the timer ("when sending an ack-eliciting packet if no other ack-eliciting packets have been sent since
@@ -1174,7 +1180,28 @@ public class ConnectionCore internal constructor(
 
     internal var released = false
 
+    /** The TLS session and the packet protectors were freed: at [markClosed], or once draining ([releaseCryptoIfDraining]). */
+    internal var cryptoReleased = false
+
+    /** What the TLS session said when it was freed ([cryptoReleased]); null while it exists. */
+    internal var tlsFacts: TlsFacts? = null
+
+    /** The current TLS session's answers, made at the first [tls] call (a getter may run before an initializer here would). */
+    private var liveTls: TlsFacts? = null
+
+    /** The TLS session's answers: the session's own while it exists, what it said when freed after. */
+    private fun tls(): TlsFacts = tlsFacts ?: liveTls ?: TlsFacts.Live(this).also { liveTls = it }
+
+    /** Test hook: runs once, right before the TLS session and the packet protectors are freed (the session is still usable). */
+    internal var beforeCryptoReleaseForTest: (() -> Unit)? = null
+
+    /** [keyPhase]'s key update count when it was freed: the stats keep reporting it. */
+    internal var keyUpdatesAtRelease = 0L
+
     /** True once the TLS session and every packet protector were freed (test hook). */
+    internal val cryptoReleasedForTest: Boolean get() = cryptoReleased
+
+    /** True once the connection released everything at its end, its qlog trace included (test hook). */
     internal val releasedForTest: Boolean get() = released
 
     internal fun isStreamOpenForTest(id: Long): Boolean = streams.isOpen(id)
@@ -1227,7 +1254,7 @@ public class ConnectionCore internal constructor(
      * when it carried none or no selector ran (see `QuicTlsSession.sniSelectedFor`).
      */
     @io.kuicksilver.annotations.InternalKuicksilverApi
-    public val sniSelectedFor: String? get() = handshake.session.sniSelectedFor
+    public val sniSelectedFor: String? get() = tls().sniSelectedFor
 
     /** See [io.kuicksilver.quic.idleSentRecords]: the core's side, on the thread that runs the core. */
     internal fun idleSentRecords(): IntArray =

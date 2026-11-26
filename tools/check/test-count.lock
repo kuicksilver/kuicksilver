@@ -4283,6 +4283,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.openBidiSusp
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.openedStreamReportsItsPriority
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.runtimeRandomIsKslBacked
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicApiTest.uniStreamFromServer
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicSniApiTest.aDrainedConnectionsCoreStillNamesTheChosenIdentity
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicSniApiTest.aSuspendedSelectorHoldsUpOnlyItsOwnHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicSniApiTest.eachNameGetsItsIdentityThroughTheEndpoint
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.QuicSniApiTest.negative_aHandshakeThatEndsWhileItsSelectorRunsLeavesNothing
@@ -4659,8 +4660,12 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.applicati
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.applicationCloseInHandshakeSpaceIsDowngraded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closeReasonIsTruncatedToFitTheBudget
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closedConnectionReleasesTlsSessionAndKeys
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closingAfterPtosUsesThePtoWithoutItsBackoff
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closingPeriodRecordsItsPtoAndHowLateItsTimerRan
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closingStateLastsThreePto
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.closingStateSendsOnlyRateLimitedConnectionClose
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.drainingAfterClosingKeepsTheClosingEndTime
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.drainingFreesItsKeysAndClosingKeepsThem
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.drainingSendsNothing
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.errorCodeAbove2Pow62Rejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.handshakeTimeout10s

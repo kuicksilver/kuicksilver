@@ -1,8 +1,8 @@
 diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
-index b6136b6fe..76730236a 100644
+index 0702a4809..31f76f418 100644
 --- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
 +++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.close.kt
-@@ -52,7 +52,6 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
+@@ -56,7 +56,6 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
          false
      startClosePeriod()
      paths.dropAllResponses()
@@ -10,7 +10,7 @@ index b6136b6fe..76730236a 100644
      events += ConnectionEvent.Closed(reason)
      // `now` must be the moment the closing state begins (a fresh `loop.now()`, see ConnectionRuntime.close), never a cached
      // time: tools/interop/closing-challenge.py takes this connection_closed time as proof that our client was closing before a
-@@ -73,7 +72,6 @@ internal fun ConnectionCore.failInternal(e: Throwable) {
+@@ -77,7 +76,6 @@ internal fun ConnectionCore.failInternal(e: Throwable) {
  /** Idle and handshake timeouts close without a CONNECTION_CLOSE (RFC 9000 section 10.1). */
  internal fun ConnectionCore.silentClose(reason: QuicException.ConnectionLost) {
      closedReason = reason
@@ -18,17 +18,17 @@ index b6136b6fe..76730236a 100644
      events += ConnectionEvent.Closed(reason)
      qlog?.connectionClosed(reason, now)
      markClosed()
-@@ -125,7 +123,6 @@ internal fun ConnectionCore.peerClosed(
-     state = ConnectionState.Draining
-     startClosePeriod()
+@@ -161,7 +159,6 @@ internal fun ConnectionCore.peerClosed(
+     // a period now
+     if (!closing) startClosePeriod()
      paths.dropAllResponses()
 -    streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
      // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
      // own reason, reported once
      if (closing) return
-@@ -180,7 +177,6 @@ internal fun ConnectionCore.checkStatelessReset(
+@@ -219,7 +216,6 @@ internal fun ConnectionCore.checkStatelessReset(
+     if (state != ConnectionState.Closing) startClosePeriod()
      state = ConnectionState.Draining
-     startClosePeriod()
      paths.dropAllResponses()
 -    streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
      val reason = QuicException.ConnectionLost.StatelessReset()

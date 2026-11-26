@@ -15,7 +15,11 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
+import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.sniSelectedFor
 
 // How a [ConnectionCore] ends: CONNECTION_CLOSE, draining, silent close, stateless reset, release of native resources and the glitch
 // budget (RFC 9000 sections 10 and 21.9).
@@ -79,7 +83,10 @@ internal fun ConnectionCore.silentClose(reason: QuicException.ConnectionLost) {
     markClosed()
 }
 
-/** The terminal state: every native resource of this connection (TLS session, packet protectors) is freed here and only here. */
+/**
+ * The terminal state: every native resource of this connection (TLS session, packet protectors) still held is freed here; a
+ * draining connection gave them up already ([releaseCryptoIfDraining]).
+ */
 internal fun ConnectionCore.markClosed() {
     state = ConnectionState.Closed
     release()
@@ -88,6 +95,33 @@ internal fun ConnectionCore.markClosed() {
 internal fun ConnectionCore.release() {
     if (released) return
     released = true
+    releaseCrypto()
+    qlog?.close()
+}
+
+/**
+ * RFC 9000 section 10.2.2: "Retaining packet protection keys is unnecessary once a connection is in the draining state". A
+ * draining connection sends nothing and reads nothing ([handleDatagram] drops every datagram, [poll] builds none), so its
+ * packet protectors and TLS session are freed at once instead of 3 x PTO later (about 3 s before the first RTT sample);
+ * what the period needs, the connection IDs that route the peer's late packets to this connection so they are dropped
+ * without a Stateless Reset, stays until [markClosed]. Run from [poll], after the application side read what the session
+ * reported (the peer's certificates, the ALPN) with the events of the datagram that started draining; a TLS step still
+ * running when the CONNECTION_CLOSE was parsed has ended by then. The closing state keeps both: its CONNECTION_CLOSE is
+ * built anew each time it is repeated (§10.2.1), and the keys authenticate the packets it answers and find the peer's
+ * CONNECTION_CLOSE in them ("An endpoint MAY retain packet protection keys for incoming packets").
+ */
+internal fun ConnectionCore.releaseCryptoIfDraining() {
+    if (state == ConnectionState.Draining) releaseCrypto()
+}
+
+private fun ConnectionCore.releaseCrypto() {
+    if (cryptoReleased) return
+    cryptoReleased = true
+    beforeCryptoReleaseForTest?.invoke()
+    // what the session said stays readable through the core's getters (a draining connection's peer certificates, ALPN,
+    // 0-RTT outcome) once it is gone; a getter that fails here (a session that never got going) answers as nothing
+    tlsFacts = TlsFacts.of(handshake.session)
+    keyUpdatesAtRelease = keyPhase?.updates ?: 0L
     keyPhase?.close()
     keyPhase = null
     for (i in 0 until 4) {
@@ -99,7 +133,6 @@ internal fun ConnectionCore.release() {
     initialReadOriginal?.close()
     initialReadOriginal = null
     handshake.session.close()
-    qlog?.close()
 }
 
 internal fun ConnectionCore.fail(
@@ -123,7 +156,10 @@ internal fun ConnectionCore.peerClosed(
     if (state == ConnectionState.Draining || state == ConnectionState.Closed) return
     val closing = state == ConnectionState.Closing
     state = ConnectionState.Draining
-    startClosePeriod()
+    // RFC 9000 section 10.2.2: a closing endpoint MAY enter the draining state on the peer's CONNECTION_CLOSE, and "In this
+    // case, the draining state ends when the closing state would have ended"; only a connection that was not closing starts
+    // a period now
+    if (!closing) startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
@@ -177,8 +213,11 @@ internal fun ConnectionCore.checkStatelessReset(
         return false
     }
     this.now = now
+    // a Stateless Reset that reaches a closing connection ends its closing period as draining at the end the closing state
+    // had: section 10.3.1 says only that the endpoint "MUST enter the draining period"; keeping the end is our reading, by
+    // analogy with section 10.2.2's draining after closing
+    if (state != ConnectionState.Closing) startClosePeriod()
     state = ConnectionState.Draining
-    startClosePeriod()
     paths.dropAllResponses()
     streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     val reason = QuicException.ConnectionLost.StatelessReset()
@@ -218,4 +257,55 @@ private fun ConnectionCore.glitchSummary(): String {
         }
     }
     return sb.toString()
+}
+
+/** What a QUIC connection's TLS session says: [Live] while it exists, a [Snapshot] ([of]) taken as it is freed. */
+@OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal interface TlsFacts {
+    val peerCertificates: List<Certificate>
+    val localCertificates: List<Certificate>
+    val negotiatedAlpn: String?
+    val keyExchangeGroup: String?
+    val peerCertificateCompression: CertificateCompression?
+    val earlyDataAccepted: Boolean?
+    val sniSelectedFor: String?
+
+    /** The current session's own answers, read on each call (a version change replaces the session: [core] names it). */
+    class Live(
+        private val core: ConnectionCore,
+    ) : TlsFacts {
+        private val s: QuicTlsSession get() = core.handshake.session
+        override val peerCertificates: List<Certificate> get() = s.peerCertificates
+        override val localCertificates: List<Certificate> get() = s.localCertificates
+        override val negotiatedAlpn: String? get() = s.negotiatedAlpn
+        override val keyExchangeGroup: String? get() = s.keyExchangeGroup
+        override val peerCertificateCompression: CertificateCompression? get() = s.peerCertificateCompression
+        override val earlyDataAccepted: Boolean? get() = s.earlyDataAccepted
+        override val sniSelectedFor: String? get() = s.sniSelectedFor
+    }
+
+    /** The answers as they were when the session was freed. */
+    class Snapshot(
+        override val peerCertificates: List<Certificate>,
+        override val localCertificates: List<Certificate>,
+        override val negotiatedAlpn: String?,
+        override val keyExchangeGroup: String?,
+        override val peerCertificateCompression: CertificateCompression?,
+        override val earlyDataAccepted: Boolean?,
+        override val sniSelectedFor: String?,
+    ) : TlsFacts
+
+    companion object {
+        /** Each answer on its own: one getter that fails (a session that never got going) leaves the others. */
+        fun of(s: QuicTlsSession): TlsFacts =
+            Snapshot(
+                runCatching { s.peerCertificates }.getOrDefault(emptyList()),
+                runCatching { s.localCertificates }.getOrDefault(emptyList()),
+                runCatching { s.negotiatedAlpn }.getOrNull(),
+                runCatching { s.keyExchangeGroup }.getOrNull(),
+                runCatching { s.peerCertificateCompression }.getOrNull(),
+                runCatching { s.earlyDataAccepted }.getOrNull(),
+                runCatching { s.sniSelectedFor }.getOrNull(),
+            )
+    }
 }
