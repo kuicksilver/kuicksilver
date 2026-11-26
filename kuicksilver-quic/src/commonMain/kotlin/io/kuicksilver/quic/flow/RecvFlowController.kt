@@ -21,7 +21,7 @@ internal class RecvFlowController(
 ) {
     var window: Long = initialWindow
         private set
-    var limit: Long = initialWindow
+    var limit: Long = minOf(initialWindow, MAX_LIMIT)
         private set
     private var consumed: Long = 0
 
@@ -65,7 +65,9 @@ internal class RecvFlowController(
             epochStart = now
             epochStartOffset = consumed
         }
-        limit = consumed + effective
+        val next = advertised(consumed, effective)
+        if (next <= limit) return -1 // at the clamp (2^62-1): no credit left to give
+        limit = next
         return limit
     }
 
@@ -76,7 +78,7 @@ internal class RecvFlowController(
      */
     fun setFloor(w: Long): Boolean {
         floor = minOf(maxOf(w, 0L), maxWindow)
-        val l = consumed + effective
+        val l = advertised(consumed, effective)
         if (l > limit) {
             limit = l
             return true
@@ -93,7 +95,7 @@ internal class RecvFlowController(
             return false
         }
         window = target
-        val l = consumed + window
+        val l = advertised(consumed, window)
         if (l > limit) {
             limit = l
             return true
@@ -101,3 +103,16 @@ internal class RecvFlowController(
         return false
     }
 }
+
+/**
+ * The largest limit MAX_DATA and MAX_STREAM_DATA can carry, 2^62-1 (RFC 9000 sections 16, 19.9 and 19.10: a variable-length
+ * integer); a credit of [consumed] + window is clamped to it (2^62-1 bytes is never reached, but the arithmetic must not
+ * advertise more).
+ */
+internal const val MAX_LIMIT: Long = (1L shl 62) - 1
+
+/** `consumed + window`, at most [MAX_LIMIT]. */
+internal fun advertised(
+    consumed: Long,
+    window: Long,
+): Long = if (window > MAX_LIMIT - consumed) MAX_LIMIT else consumed + window

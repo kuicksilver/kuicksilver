@@ -773,7 +773,7 @@ class ServerConfigMappingTest {
      * The connection window fits the WebTransport sessions as the stream limits do: left alone, the 15 MiB default is
      * raised to `maxSessionsPerConnection x initialMaxData`; set, it is kept, and refused at the start, in the engine's
      * terms, when the sessions do not fit it (the HTTP/3 layer would name QuicConfig's options). WebTransport off or without
-     * flow control asks for nothing, and a product beyond 2^62-1 (QUIC's largest window) is refused, not wrapped.
+     * flow control asks for nothing, and a product beyond 2^60 (QuicConfig.MAX_WINDOW) is refused, not wrapped.
      */
     @Test fun negative_connectionWindowFitsTheWebTransportSessions() {
         fun window(configure: KuicksilverApplicationEngine.Configuration.() -> Unit) = config(configure).resolveQuic().maxConnectionWindow
@@ -828,8 +828,8 @@ class ServerConfigMappingTest {
                 }.resolveQuic()
             }
         assertEquals(
-            "http3 { webTransport { maxSessionsPerConnection } } (4) x initialMaxData (4611686018427387903) exceeds 2^62-1, the " +
-                "largest QUIC connection window: lower one of them",
+            "http3 { webTransport { maxSessionsPerConnection } } (4) x initialMaxData (4611686018427387903) exceeds 2^60 " +
+                "(QuicConfig.MAX_WINDOW), the largest connection window: lower one of them",
             huge.message,
         )
         val noFlowControl =
@@ -845,6 +845,17 @@ class ServerConfigMappingTest {
                 }
             }
         assertEquals(15_728_640L, noFlowControl)
+        // up to the largest window exactly: 4 sessions x 2^60 / 4
+        val top =
+            window {
+                http3 {
+                    webTransport {
+                        enabled = true
+                        initialMaxData = io.kuicksilver.quic.QuicConfig.MAX_WINDOW / 4
+                    }
+                }
+            }
+        assertEquals(io.kuicksilver.quic.QuicConfig.MAX_WINDOW, top)
     }
 
     /**

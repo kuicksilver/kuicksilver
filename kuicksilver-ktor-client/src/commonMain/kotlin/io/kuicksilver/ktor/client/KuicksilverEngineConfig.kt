@@ -871,10 +871,16 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
         val flowControl = wt.initialMaxStreamsBidi != 0L || wt.initialMaxStreamsUni != 0L || wt.initialMaxData != 0L
         val (bidi, uni) = quicStreamLimits(built, assigned, sessions, wt.initialMaxStreamsBidi, wt.initialMaxStreamsUni, flowControl)
         val window =
-            if ("flowControl.maxConnectionWindow" in assigned || !flowControl) {
+            if ("flowControl.maxConnectionWindow" in assigned || !flowControl || sessions <= 0L) {
                 built.maxConnectionWindow
             } else {
-                maxOf(built.maxConnectionWindow, product(sessions, wt.initialMaxData, (1L shl 62) - 1))
+                // never saturated: a product the largest window cannot hold is refused, naming the options
+                require(wt.initialMaxData <= QuicConfig.MAX_WINDOW / sessions) {
+                    "http3 { webTransport { maxSessionsPerConnection } } ($sessions) x http3 { settings { webTransport { " +
+                        "initialMaxData } } } (${wt.initialMaxData}) exceeds 2^60 (QuicConfig.MAX_WINDOW), the largest " +
+                        "connection window: lower one of them"
+                }
+                maxOf(built.maxConnectionWindow, sessions * wt.initialMaxData)
             }
         if (built.handshakeTimeout == handshake &&
             bidi == built.maxBidiStreams &&
@@ -998,13 +1004,6 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
                 }
             return bidi to uni
         }
-
-        /** `a x b`, at most [max]; both non-negative. */
-        fun product(
-            a: Long,
-            b: Long,
-            max: Long,
-        ): Long = if (a != 0L && b > max / a) max else a * b
 
         /** `extra + sessions x perSession`, at most 2^60 (the most streams QUIC can grant, RFC 9000 section 4.6). */
         private fun atLeast(

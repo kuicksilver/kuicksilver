@@ -1297,6 +1297,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   least 0 (breaking strictness, RFC 9000 section 18.2). Both go on the wire in milliseconds while the connection timed
   itself on the full `Duration`: a fraction was advertised rounded down (`500.microseconds` as 0, "no idle timeout"). The
   `EngineMain` duration keys take whole milliseconds too (`kuicksilver.http3.quic.maxIdleTimeout = 0.5ms` is refused).
+- QUIC: `flowControl { maxStreamWindow }` and `{ maxConnectionWindow }` take at most 2^60 (`QuicConfig.MAX_WINDOW`), and
+  every MAX_DATA and MAX_STREAM_DATA is clamped to 2^62-1, the largest variable-length integer (RFC 9000 sections 16,
+  19.9, 19.10). A client whose WebTransport sessions needed a larger connection window got one saturated at 2^62-1, which
+  could advertise limits beyond the range; both engines now refuse that configuration, naming the options. The
+  connection's `stats.memoryCeiling` saturates at `Long.MAX_VALUE` instead of wrapping.
 - WebTransport (experimental), draft-02 sessions, which Chrome and Firefox negotiate (breaking strictness,
   draft-ietf-webtrans-http3-02 section 4.3: stream codes are "limited to an unsigned 8-bit integer"): `reset(code)`,
   `reset(code, reliableOffset)` and `stopSending(code)` with a code above 255 now throw IllegalArgumentException there,

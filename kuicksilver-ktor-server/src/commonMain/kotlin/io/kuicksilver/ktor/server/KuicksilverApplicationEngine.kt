@@ -438,8 +438,9 @@ public class KuicksilverApplicationEngine(
              * is kept, and refused when [sessions] WebTransport sessions at [dataPerSession] (`http3 { webTransport {
              * initialMaxData } }`) do not fit in it (draft-ietf-webtrans-http3-17 section 5.1: one session could otherwise
              * hold the whole window); one left alone is the default raised to `sessions x initialMaxData`. Without
-             * WebTransport flow control ([flowControl]) nothing is raised or refused. A product above 2^62-1, the largest
-             * window QUIC can advertise (RFC 9000 section 16), is refused.
+             * WebTransport flow control ([flowControl]) nothing is raised or refused. A product above
+             * [QuicConfig.MAX_WINDOW] (2^60, which keeps every advertised limit within RFC 9000 section 16's 2^62-1) is
+             * refused.
              */
             @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
             fun quicConnectionWindow(
@@ -451,8 +452,9 @@ public class KuicksilverApplicationEngine(
             ): Long {
                 if (!flowControl || sessions == 0L) return built.maxConnectionWindow
                 val sessionsOption = "http3 { webTransport { maxSessionsPerConnection } } ($sessions)"
-                require(dataPerSession <= ((1L shl 62) - 1) / sessions) {
-                    "$sessionsOption x initialMaxData ($dataPerSession) exceeds 2^62-1, the largest QUIC connection window: lower one of them"
+                require(dataPerSession <= QuicConfig.MAX_WINDOW / sessions) {
+                    "$sessionsOption x initialMaxData ($dataPerSession) exceeds 2^60 (QuicConfig.MAX_WINDOW), the largest " +
+                        "connection window: lower one of them"
                 }
                 val need = sessions * dataPerSession
                 if ("flowControl.maxConnectionWindow" in assigned) {

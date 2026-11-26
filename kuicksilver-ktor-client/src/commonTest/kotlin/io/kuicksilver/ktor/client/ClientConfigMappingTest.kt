@@ -7,6 +7,7 @@ import io.kuicksilver.config.RateLimit
 import io.kuicksilver.ktor.client.h1.poolLimits
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
@@ -265,9 +266,19 @@ class ClientConfigMappingTest {
             assertEquals(8L * 3_932_160, eight.resolveQuic().maxConnectionWindow)
             eight.requireWebTransportFits(eight.resolveQuic())
             config { }.let { it.requireWebTransportFits(it.resolveQuic()) }
-            // a huge per-session limit saturates at 2^62-1 instead of overflowing
-            val huge = config { http3 { settings { webTransport { initialMaxData = (1L shl 62) - 1 } } } }
-            assertEquals((1L shl 62) - 1, huge.resolveQuic().maxConnectionWindow)
+            // up to the largest window (2^60, 4 sessions at the default) the window is raised exactly; one byte more per session
+            // is refused, never saturated (an advertised MAX_DATA must stay within 2^62-1, RFC 9000 section 16)
+            val top = config { http3 { settings { webTransport { initialMaxData = QuicConfig.MAX_WINDOW / 4 } } } }
+            assertEquals(QuicConfig.MAX_WINDOW, top.resolveQuic().maxConnectionWindow)
+            for (bad in listOf(QuicConfig.MAX_WINDOW / 4 + 1, (1L shl 62) - 1)) {
+                val huge = config { http3 { settings { webTransport { initialMaxData = bad } } } }
+                val e = assertFailsWith<IllegalArgumentException>("$bad") { huge.resolveQuic() }
+                assertEquals(
+                    "http3 { webTransport { maxSessionsPerConnection } } (4) x http3 { settings { webTransport { initialMaxData } } } " +
+                        "($bad) exceeds 2^60 (QuicConfig.MAX_WINDOW), the largest connection window: lower one of them",
+                    e.message,
+                )
+            }
             // without WebTransport flow control nothing is raised
             val noFlowControl =
                 config {

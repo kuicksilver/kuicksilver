@@ -623,8 +623,8 @@ are the endpoint's ([`quicEndpointConfig { }`](#quicendpointconfig--)). Guide: [
 |---|---|---|---|---|---|---|
 | `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 0.3.0 | stable | | receive window of each stream at its start (`initial_max_stream_data_*`), 1..`maxStreamWindow`; doubles while the application reads a whole window in under four RTTs. HTTP/3 (`Http3Endpoint`, both Ktor engines) refuses less than 1024 (RFC 9114 section 6.2) |
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 0.3.0 | stable | | receive window of the connection at its start (`initial_max_data`), 1..`maxConnectionWindow`; kept at least 1.5 x the largest stream window |
-| `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | 0.3.0 | stable | | ceiling of a stream's receive window, at least `initialStreamWindow`: the most unread data one stream holds |
-| `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow`; the Ktor engines raise the default to fit their WebTransport sessions |
+| `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | 0.3.0 | stable | | ceiling of a stream's receive window, at least `initialStreamWindow`, at most 2^60 (`QuicConfig.MAX_WINDOW`): the most unread data one stream holds |
+| `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | 0.3.0 | stable | | ceiling of the connection's receive window, at least `initialConnectionWindow`, at most 2^60 (`QuicConfig.MAX_WINDOW`); the Ktor engines raise the default to fit their WebTransport sessions, and refuse sessions whose need exceeds 2^60 |
 | `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 0.3.0 | stable | | unacknowledged send data the connection buffers over all streams, 1..2^62; writers wait beyond it |
 
 ### `quicConfig { pathMtu { } }`

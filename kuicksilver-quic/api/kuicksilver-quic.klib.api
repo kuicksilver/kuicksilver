@@ -1364,6 +1364,9 @@ final class io.kuicksilver.quic/QuicConfig { // io.kuicksilver.quic/QuicConfig|n
     }
 
     final object Companion { // io.kuicksilver.quic/QuicConfig.Companion|null[0]
+        final const val MAX_WINDOW // io.kuicksilver.quic/QuicConfig.Companion.MAX_WINDOW|{}MAX_WINDOW[0]
+            final fun <get-MAX_WINDOW>(): kotlin/Long // io.kuicksilver.quic/QuicConfig.Companion.MAX_WINDOW.<get-MAX_WINDOW>|<get-MAX_WINDOW>(){}[0]
+
         final val Default // io.kuicksilver.quic/QuicConfig.Companion.Default|{}Default[0]
             final fun <get-Default>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicConfig.Companion.Default.<get-Default>|<get-Default>(){}[0]
     }

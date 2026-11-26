@@ -838,6 +838,7 @@ public final class io/kuicksilver/quic/QuicClientConfig$Builder {
 
 public final class io/kuicksilver/quic/QuicConfig {
 	public static final field Companion Lio/kuicksilver/quic/QuicConfig$Companion;
+	public static final field MAX_WINDOW J
 	public final fun toBuilder ()Lio/kuicksilver/quic/QuicConfig$Builder;
 }
 

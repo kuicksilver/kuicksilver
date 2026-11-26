@@ -103,6 +103,39 @@ class QuicConfigTest {
     }
 
     /** RFC 9000 section 18.2: `max_idle_timeout` is in milliseconds; 0.5 ms would be advertised as 0, "no idle timeout". */
+
+    /** The windows stop at 2^60 (QuicConfig.MAX_WINDOW), so every limit they advertise stays within RFC 9000 section 16's 2^62-1. */
+    @Test fun negative_windowsAboveTheirCeilingAreRefused() {
+        val top =
+            quicConfig {
+                flowControl {
+                    maxStreamWindow = QuicConfig.MAX_WINDOW
+                    maxConnectionWindow = QuicConfig.MAX_WINDOW
+                }
+            }
+        assertEquals(1L shl 60, top.maxStreamWindow)
+        assertEquals(1L shl 60, top.maxConnectionWindow)
+        for ((stream, connection) in listOf(
+            (1L shl 60) + 1 to 15_728_640L,
+            6_291_456L to (1L shl 60) + 1,
+            Long.MAX_VALUE to Long.MAX_VALUE,
+        )) {
+            val e =
+                assertFailsWith<IllegalArgumentException>("$stream $connection") {
+                    quicConfig {
+                        flowControl {
+                            maxStreamWindow = stream
+                            maxConnectionWindow = connection
+                        }
+                    }
+                }
+            assertEquals(
+                "flowControl { maxStreamWindow } and { maxConnectionWindow } must be at most 2^60 (MAX_WINDOW), not $stream and $connection",
+                e.message,
+            )
+        }
+    }
+
     @Test fun negative_maxIdleTimeoutMustBeWholeMilliseconds() {
         for (bad in listOf(500.microseconds, 1500.microseconds, 1.nanoseconds)) {
             val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }

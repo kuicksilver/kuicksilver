@@ -4314,6 +4314,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxA
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBePositiveAndFiniteOrNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBeWholeMilliseconds
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxSendBufferMustBePositive
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_windowsAboveTheirCeilingAreRefused
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.toBuilderKeepsEverySetting
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.versionsOptInV1V2
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicDslTest.clientBuildRejectsCcm8
@@ -4871,6 +4872,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.keepAlive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.keepAlivePingsKeepConnectionAlive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.keepAliveWithoutLocalIdleTimeoutKeepsPeerAlive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.memoryCeilingIsSumOfCeilings
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.memoryCeilingSaturatesAtTheCeilings
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.negative_closingConnectionProcessesOnlyConnectionClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.negative_noPingBeforeTheHandshakeCompleted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.negative_nothingIsSentPastTheIdleDeadline
@@ -5541,7 +5543,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.dataBey
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.dataBlockedOncePerLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.floorRaisesTheWindowAndLetsItShrinkBack
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.maxStreamDataAfterQuarterRead
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.negative_aCreditNearTheEndOfTheVarintRangeIsClamped
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.negative_connectionFlowControlSum
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.negative_floorAndConnectionWindowRaisesAreClampedToo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowCappedAtSixMiB
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowDoesNotDoubleForAReaderJustBelowThatRate
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.FlowControlTest.windowDoesNotDoubleWhenUpdatesAreSlow

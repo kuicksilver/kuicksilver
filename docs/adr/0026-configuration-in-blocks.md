@@ -300,3 +300,9 @@ The design left these cases open or met them only in the code; each was decided 
   active path's `PathInfo.localAddress` (the destination the accelerated socket reports, unmapped), on the JVM and
   Native alike, and falls back to the socket's specific address, then the connector's, only where the socket cannot
   tell (the portable one).
+- **The QUIC windows stop at 2^60, and every advertised limit at 2^62-1.** A derived connection window
+  (`sessions x initialMaxData`) was saturated at 2^62-1 on the client, and the limit it advertised is consumed + window,
+  which then left the variable-length integer range (RFC 9000 section 16). `QuicConfig.MAX_WINDOW` (2^60) bounds both
+  window ceilings, which keeps the auto-tuning's doubling and the received count far from the range end; the receive
+  flow controller clamps every limit to 2^62-1 anyway; and both engines refuse sessions whose product exceeds 2^60
+  rather than saturate, since a silently smaller window would stall those sessions.

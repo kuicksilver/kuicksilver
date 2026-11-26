@@ -249,6 +249,10 @@ public class QuicConfig private constructor(
         require(initialStreamWindow in 1..maxStreamWindow && initialConnectionWindow in 1..maxConnectionWindow) {
             "flowControl windows out of range: initial windows must be 1..their max"
         }
+        require(maxStreamWindow <= MAX_WINDOW && maxConnectionWindow <= MAX_WINDOW) {
+            "flowControl { maxStreamWindow } and { maxConnectionWindow } must be at most 2^60 (MAX_WINDOW), not " +
+                "$maxStreamWindow and $maxConnectionWindow"
+        }
         require(maxBidiStreams in 0..(1L shl 60) && maxUniStreams in 0..(1L shl 60)) {
             "maxBidiStreams and expert { maxUniStreams } must be 0..2^60"
         }
@@ -463,11 +467,12 @@ public class QuicConfig private constructor(
              */
             public var initialConnectionWindow: Long = 786_432
 
-            /** Default 6 MiB, at least [initialStreamWindow]: the most data one stream can hold unread. */
+            /** Default 6 MiB, at least [initialStreamWindow], at most [MAX_WINDOW]: the most data one stream can hold unread. */
             public var maxStreamWindow: Long = 6_291_456
 
             /**
-             * Default 15 MiB, at least [initialConnectionWindow]: the most unread stream data the whole connection can hold.
+             * Default 15 MiB, at least [initialConnectionWindow], at most [MAX_WINDOW]: the most unread stream data the whole
+             * connection can hold.
              * A Ktor engine raises the default to fit its WebTransport sessions.
              */
             public var maxConnectionWindow: Long = 15_728_640
@@ -771,10 +776,19 @@ public class QuicConfig private constructor(
             it.assigned.clear()
         }
 
-    /** Holds [Default]. */
+    /** Holds [Default] and [MAX_WINDOW]. */
     public companion object {
         /** The default ceilings. */
         public val Default: QuicConfig = Builder().build()
+
+        /**
+         * The largest `flowControl { maxStreamWindow }` and `{ maxConnectionWindow }`: 2^60 bytes. The limits a window
+         * advertises (MAX_DATA, MAX_STREAM_DATA) are variable-length integers of at most 2^62-1 (RFC 9000 section 16), and
+         * a window of at most 2^60 leaves the received count three times that before the clamp at 2^62-1 has to act; the
+         * window doubling of the auto-tuning cannot overflow below it. No memory holds such a window: it is a bound of the
+         * arithmetic, not a tuning value.
+         */
+        public const val MAX_WINDOW: Long = 1L shl 60
     }
 }
 
