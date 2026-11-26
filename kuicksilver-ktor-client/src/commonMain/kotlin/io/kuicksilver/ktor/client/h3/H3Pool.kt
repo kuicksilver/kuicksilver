@@ -438,14 +438,6 @@ internal class H3Pool(
     internal var webSocketConnectedForTest: (suspend () -> Unit)? = null
 
     /**
-     * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
-     * with it): whichever of `quic` and `http3.endpoint` left the default follows the other; two different explicit values
-     * are refused here, when the engine is created.
-     */
-    private val connectionIdLength: Int =
-        resolveConnectionIdLength(config.quic.connectionIdLength, config.http3.endpoint.connectionIdLength)
-
-    /**
      * The session tickets of every endpoint of this pool (the wildcard one and the loopback ones): a name that resolves to
      * both ::1 and 127.0.0.1 (`localhost`) resumes, with 0-RTT, whichever family its next connection takes. Closed by
      * [closeSessions] after the endpoints.
@@ -466,33 +458,20 @@ internal class H3Pool(
     /** The number of session tickets the pool holds (tests: a 0-RTT test waits for its ticket before it drops the connection). */
     internal suspend fun ticketsForTest(): Int = tickets.size()
 
-    /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
+    /** The engine's endpoint with its logger, connection listener, qlog sink and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
         config.http3.endpoint
             .toBuilder()
             .apply {
-                config.logger?.let { logger = it }
-                config.http3.connectionListener?.let { listener = it }
-                connectionIdLength = this@H3Pool.connectionIdLength
+                config.logger?.let { observability { logger = it } }
+                config.http3.connectionListener?.let { observability { connectionListener = it } }
+                config.http3.qlog?.let { observability { qlog = it } }
                 sessionCache = tickets
             }.build()
 
-    /** The engine's QUIC settings with its qlog sink and [connectionIdLength]. */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val quic: io.kuicksilver.quic.QuicConfig =
-        config.quic.let { q ->
-            if (config.http3.qlog == null && q.connectionIdLength == connectionIdLength) {
-                q
-            } else {
-                q
-                    .toBuilder()
-                    .apply {
-                        config.http3.qlog?.let { qlog = it }
-                        connectionIdLength = this@H3Pool.connectionIdLength
-                    }.build()
-            }
-        }
+    /** The engine's QUIC settings; the endpoint applies its connection ID length and qlog sink to them. */
+    private val quic: io.kuicksilver.quic.QuicConfig = config.quic
 
     init {
         // RFC 9114 section 6.2: refused when the engine is created, not clamped (Http3Endpoint.connect refuses it too)
@@ -1868,7 +1847,7 @@ internal class H3Pool(
                 endpointConfig
                     .toBuilder()
                     .apply {
-                        io = { tunnel.asDatagramIo() }
+                        runtime { io = { tunnel.asDatagramIo() } }
                         sessionCache = cache // never the direct connections' tickets
                     }.build()
             tunnelTicketsUsedForTest = tunnelConfig.sessionCache
@@ -1881,7 +1860,7 @@ internal class H3Pool(
             inner = ep
             bound(ep)
             if (closed) throw IllegalStateException("the client is closed") // after bound(): closeAndJoin sees it or this does
-            val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
+            val tunnelled = quic.toBuilder().apply { migration { followPreferredAddress = false } }.build()
             // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
             // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
             val c =
@@ -3115,26 +3094,6 @@ internal class H3Pool(
     internal companion object {
         /** Rounds of [shareSameAddress] a filing of another origin made meanwhile may cost a request. */
         const val MAX_SHARE_ROUNDS = 3
-
-        /** See [connectionIdLength]: the explicit one of the two lengths, or the common one. */
-        fun resolveConnectionIdLength(
-            quic: Int,
-            endpoint: Int,
-        ): Int {
-            val default = io.kuicksilver.quic.QuicConfig.Default.connectionIdLength
-            return when {
-                quic == endpoint -> quic
-
-                endpoint == default -> quic
-
-                quic == default -> endpoint
-
-                else -> throw IllegalArgumentException(
-                    "quic.connectionIdLength ($quic) and http3.endpoint.connectionIdLength ($endpoint) differ: " +
-                        "set one of them, the other follows",
-                )
-            }
-        }
 
         /** How long `closeHttp3Connections()` waits for each GOAWAY to be written (WT_DRAIN_SESSION has drain()'s own 5 s). */
         val GOAWAY_TIMEOUT = 5.seconds

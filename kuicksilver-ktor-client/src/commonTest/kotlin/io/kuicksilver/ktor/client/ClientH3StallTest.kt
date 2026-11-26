@@ -183,10 +183,10 @@ class ClientH3StallTest {
                 quicConfig {
                     maxIdleTimeout = idle
                     if (windows) {
-                        initialStreamWindow = 8L * 1024 * 1024
-                        maxStreamWindow = 8L * 1024 * 1024
-                        initialConnectionWindow = 16L * 1024 * 1024
-                        maxConnectionWindow = 16L * 1024 * 1024
+                        flowControl { initialStreamWindow = 8L * 1024 * 1024 }
+                        flowControl { maxStreamWindow = 8L * 1024 * 1024 }
+                        flowControl { initialConnectionWindow = 16L * 1024 * 1024 }
+                        flowControl { maxConnectionWindow = 16L * 1024 * 1024 }
                     }
                 }
             eventListener = heard
@@ -198,7 +198,7 @@ class ClientH3StallTest {
                 endpoint =
                     QuicEndpointConfig
                         .Builder()
-                        .apply { io = { local -> ios.open(local) } }
+                        .apply { runtime { io = { local -> ios.open(local) } } }
                         .build()
             }
         }, block = block)

@@ -53,9 +53,9 @@ class TokenStoreRaceTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = KslQuicCrypto
+                            runtime { crypto = KslQuicCrypto }
                             admission = ConnectionAdmission.AlwaysRetry
-                            io = { b }
+                            runtime { io = { b } }
                         }.build(),
                 )
             val client =
@@ -64,8 +64,8 @@ class TokenStoreRaceTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { a } }
                         }.build(),
                 )
             try {

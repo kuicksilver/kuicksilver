@@ -201,7 +201,7 @@ class ConnectionIdTest {
                 clientQuic =
                     io.kuicksilver.quic.QuicConfig
                         .Builder()
-                        .apply { activeConnectionIdLimit = 20 }
+                        .apply { expert { activeConnectionIdLimit = 20 } }
                         .build(),
             )
         p.use { _ ->

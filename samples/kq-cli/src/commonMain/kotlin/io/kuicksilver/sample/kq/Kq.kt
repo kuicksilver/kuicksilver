@@ -133,7 +133,7 @@ private suspend fun run(
                 engine {
                     trust?.let { this.trust = it }
                     o.connectTimeout?.let { connectTimeout = it }
-                    offered = quic.versions
+                    offered = listOf(VersionProfile.V1) // the engine's QUIC versions: the default
                     http3 {
                         discovery =
                             when (o.mode) {

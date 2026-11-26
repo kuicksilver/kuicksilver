@@ -143,7 +143,12 @@ class NegotiatedVersionTest {
                 // both sides v2 only: a version left at the v1 default could not pass
                 val v2 = versions(VersionProfile.V2)
                 ApiPair
-                    .open(serverQuic = v2, crypto = KslQuicCrypto, serverEarlyData = true, serverConfigure = { listener = serverListener })
+                    .open(serverQuic = v2, crypto = KslQuicCrypto, serverEarlyData = true, serverConfigure = {
+                        observability {
+                            connectionListener =
+                                serverListener
+                        }
+                    })
                     .use { p ->
                         val clientConfig =
                             io.kuicksilver.quic.QuicClientConfig

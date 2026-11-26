@@ -214,10 +214,10 @@ and range is in the [configuration reference](configuration.md).
 // guide:quic:config
 val quic = quicConfig {
     maxIdleTimeout = 30.seconds
-    initialStreamWindow = 512 * 1024L
+    flowControl { initialStreamWindow = 512 * 1024L }
     maxBidiStreams = 100
     versions = listOf(VersionProfile.V1)   // preference order; listOf(VersionProfile.V2, VersionProfile.V1) opts into v2 (RFC 9368/9369)
-    greaseQuicBit = true                    // RFC 9287
+    expert { greaseQuicBit = true }                    // RFC 9287
 }
 ```
 
@@ -237,7 +237,7 @@ validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 
 ```kotlin
 // guide:quic:initial-rtt
-val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+val lossyMobile = quicConfig { expert { initialRtt = 100.milliseconds } }
 ```
 
 Flow control: each stream starts with a receive window of `initialStreamWindow` (default 512 KiB) and the connection
@@ -364,7 +364,7 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 // guide:quic:zero-rtt
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = QuicEndpoint.bind(addr, quicEndpointConfig {
-    this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
+    this.server = quicServerConfig(tlsServerConfig) { acceptEarlyData = true }   // tickets that allow 0-RTT
 })
 val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
 val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
@@ -606,8 +606,8 @@ address (a migration) starts at 1200, since its MTU is unknown; a NAT rebinding 
 // guide:quic:wireguard
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val tunnel = quicConfig {
-    initialUdpPayloadSize = 1350   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
-    maxSendUdpPayloadSize = 1372   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
+    pathMtu { initial = 1350 }   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
+    pathMtu { maxSend = 1372 }   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
 }
 ```
 
@@ -1186,8 +1186,8 @@ receiver's slot is dropped rather than truncated, and `open` on port 0 binds a f
 // guide:quic:memory-network
 val network = MemoryNetwork()
 val wifi = InetSocketAddress("10.0.0.1", 50000)
-val server = QuicEndpoint.bind(InetSocketAddress("10.0.0.2", 443), quicEndpointConfig { this.server = serverConfig; io = { network.open(it) } })
-val client = QuicEndpoint.bind(wifi, quicEndpointConfig { io = { network.open(it) } })
+val server = QuicEndpoint.bind(InetSocketAddress("10.0.0.2", 443), quicEndpointConfig { this.server = serverConfig; runtime { io = { network.open(it) } } })
+val client = QuicEndpoint.bind(wifi, quicEndpointConfig { runtime { io = { network.open(it) } } })
 val connection = client.connect(server.localAddress, quicClientConfig(tlsClientConfig))
 val accepted = server.accept()
 echo(connection, accepted, 1024)                                       // ... the application talks
@@ -1297,12 +1297,12 @@ never logs these IDs, and `PathInfo.toString()` leaves them out.
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val observed = quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig)
-    logger = KuicksilverLogger.stderr(LogLevel.Info)
-    listener = object : ConnectionListener {
+    observability { logger = KuicksilverLogger.stderr(LogLevel.Info) }
+    observability { connectionListener = object : ConnectionListener {
         override fun onClosed(connection: ConnectionInfo, reason: QuicException.ConnectionLost) {
             println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
         }
-    }
+    } }
 }
 ```
 

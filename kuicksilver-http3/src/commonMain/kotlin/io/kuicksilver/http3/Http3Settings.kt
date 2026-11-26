@@ -1,10 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
 
 package io.kuicksilver.http3
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds

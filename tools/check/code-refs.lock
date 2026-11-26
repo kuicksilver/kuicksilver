@@ -13,7 +13,7 @@ kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVers
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:228	const val LEGACY: String = "webtransport"
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:234	const val DRAFT02_RESPONSE_FIELD: String = "sec-webtransport-http3-draft"
 kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient.kt:123	private fun request(st: QuicStream, url: String) { val req = "GET ${Url.parse(url).path}\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size) }
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:273	(old.resetStreamAt && !tp.resetStreamAt)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:274	(old.resetStreamAt && !tp.resetStreamAt)
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:44	private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:133	empty(RESET_STREAM_AT_LEGACY)
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:332	RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {

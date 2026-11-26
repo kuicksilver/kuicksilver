@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -227,7 +229,7 @@ public class Http3Endpoint private constructor(
         /**
          * The server side of an HTTP/3 endpoint. A 0-RTT server binds its SETTINGS into its tickets (RFC 9114 section 7.2.4.2):
          * changed SETTINGS refuse early data. A request stream the QUIC layer gives up before the server saw it (its acceptor was
-         * cancelled) is reset with `QuicConfig.defaultStreamErrorCode`: QUIC's default 0 is no HTTP/3 code (a client reads it as
+         * cancelled) is reset with the QuicConfig `expert { cancelErrorCode }`: QUIC's default 0 is no HTTP/3 code (a client reads it as
          * H3_NO_ERROR, section 9), so it becomes H3_REQUEST_REJECTED, which says the request was not processed and may be
          * retried (sections 4.1.1 and 8.1). A code set explicitly is kept. Every stream the HTTP/3 layer handled is reset with a
          * code of its own, never this default.
@@ -240,13 +242,13 @@ public class Http3Endpoint private constructor(
                     if (q.defaultStreamErrorCode == 0L) {
                         q
                             .toBuilder()
-                            .apply { defaultStreamErrorCode = Http3ErrorCode.REQUEST_REJECTED }
+                            .apply { expert { cancelErrorCode = Http3ErrorCode.REQUEST_REJECTED } }
                             .build()
                     } else {
                         q
                     }
                 }
-            if (!s.earlyData && quic === s.quic) return this
+            if (!s.acceptEarlyData && quic === s.quic) return this
             return toBuilder()
                 .apply {
                     server =
@@ -257,8 +259,8 @@ public class Http3Endpoint private constructor(
                                 newTokenLifetime = s.newTokenLifetime
                                 newTokenReplayCapacity = s.newTokenReplayCapacity
                                 preferredAddress = s.preferredAddress
-                                if (s.earlyData) {
-                                    earlyData = true
+                                if (s.acceptEarlyData) {
+                                    acceptEarlyData = true
                                     earlyDataContext = settings.earlyDataContext()
                                 }
                             }.build()
@@ -267,13 +269,13 @@ public class Http3Endpoint private constructor(
 
         /**
          * draft-ietf-webtrans-http3-17 section 3.1: "both the client and the server enable the extension by sending an empty
-         * reset_stream_at transport parameter", so WebTransport turns [QuicConfig.resetStreamAt] on; without it no session
+         * reset_stream_at transport parameter", so WebTransport turns the QuicConfig `expert { resetStreamAt }` on; without it no session
          * of draft-14 or later could be opened or accepted, and our streams could not be reset as section 4.4 requires.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig {
             settings.requireWebTransportFits(this)
-            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
+            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { expert { resetStreamAt = true } }.build() else this
         }
 
         /** Test hook: binds a server that breaks section 6.2 (its peer's critical streams), to test the peer's side of it. */
@@ -286,7 +288,7 @@ public class Http3Endpoint private constructor(
          */
         private fun requireCriticalStreams(q: QuicConfig) {
             require(q.maxUniStreams >= 3 || allowFewerUniStreamsForTest) {
-                "HTTP/3 needs QuicConfig.maxUniStreams >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
+                "HTTP/3 needs QuicConfig expert { maxUniStreams } >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
                     "streams), not ${q.maxUniStreams}"
             }
         }
@@ -297,7 +299,7 @@ public class Http3Endpoint private constructor(
                 q.maxDatagramFrameSize == 0L
             ) {
                 // WebTransport sessions carry HTTP datagrams: refused, never quietly turned off with them
-                require(!webTransport) { "Http3Settings.webTransport needs QUIC datagrams: QuicConfig.maxDatagramFrameSize is 0" }
+                require(!webTransport) { "Http3Settings.webTransport needs QUIC datagrams: QuicConfig datagrams { maxFrameSize } is null" }
                 toBuilder().apply { h3Datagram = false }.build()
             } else {
                 this

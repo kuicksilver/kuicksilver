@@ -101,9 +101,8 @@ class ShutdownTest {
                             QuicEndpointConfig
                                 .Builder()
                                 .apply {
-                                    crypto = NullCryptoProvider
-                                    io =
-                                        { other }
+                                    runtime { crypto = NullCryptoProvider }
+                                    runtime { io = { other } }
                                 }.build(),
                         )
                     try {

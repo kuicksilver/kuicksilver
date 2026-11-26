@@ -1028,7 +1028,7 @@ class ServerH3Test {
                     InetSocketAddress("127.0.0.1", port),
                     QuicClientConfig
                         .Builder(ServerFixtures.clientTls(alpn = listOf("h3")))
-                        .apply { quic = quicConfig { maxUniStreams = 2 } }
+                        .apply { quic = quicConfig { expert { maxUniStreams = 2 } } }
                         .build(),
                 )
                 kotlinx.coroutines.withTimeout(15.seconds) {

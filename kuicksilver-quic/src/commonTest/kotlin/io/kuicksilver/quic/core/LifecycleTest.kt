@@ -152,7 +152,7 @@ class LifecycleTest {
                 serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
                 clientQuic =
                     quicConfig {
-                        maxIdleTimeout = kotlin.time.Duration.ZERO
+                        maxIdleTimeout = null
                         keepAlive = 1.seconds
                     },
             )

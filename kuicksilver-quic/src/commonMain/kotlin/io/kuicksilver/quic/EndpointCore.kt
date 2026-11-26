@@ -1,9 +1,12 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.VersionProfile
@@ -377,12 +380,11 @@ public class EndpointCore internal constructor(
         remote: InetSocketAddress,
         now: TimeMark,
     ): ConnectionCore {
-        require(client.quic.connectionIdLength == cidLength) {
-            "QuicConfig.connectionIdLength (${client.quic.connectionIdLength}) must equal the endpoint's connectionIdLength ($cidLength)"
-        }
+        // the endpoint is the one place for the connection ID length and the qlog sink
+        val own = client.quic.withEndpoint(cidLength, config.qlog)
         // RFC 9002 section 6.2.2: a connection to a server this endpoint already measured starts from that RTT, so a lost first flight
         // is probed at about 3 x that RTT instead of 1 s, 2 s, 4 s ... (a peer like quic-go drops a half-open connection after 5 s of silence)
-        val quic = rttMemory[AddressClass.addrKey(remote)]?.let { client.quic.withInitialRtt(it) } ?: client.quic
+        val quic = rttMemory[AddressClass.addrKey(remote)]?.let { own.withInitialRtt(it) } ?: own
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
         // in a group the server's answers may land on another loop's socket: the routing byte in our CIDs brings them back
         // an ID no connection of this loop routes now (RFC 9000 section 10.3.2); a collision, rare, costs a second core

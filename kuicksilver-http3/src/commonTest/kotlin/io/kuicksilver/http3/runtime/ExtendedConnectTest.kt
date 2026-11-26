@@ -786,7 +786,7 @@ class H3DatagramTest {
     @Test fun negative_h3DatagramWithoutTransportIsNoErrorAndNothingIsSent() =
         h3Test {
             QuicPair.open().use { q ->
-                val (c, s) = q.connect(clientQuic = quicConfig { maxDatagramFrameSize = 0 })
+                val (c, s) = q.connect(clientQuic = quicConfig { datagrams { maxFrameSize = null } })
                 val h = Http3Connection.server(s)
                 RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
                 val seen = withTimeoutOrNull(10.seconds) { h.peerSettings.filterNotNull().first() }
@@ -804,7 +804,7 @@ class H3DatagramTest {
     @Test fun h3DatagramWithATinyTransportLimitIsNoSettingsError() =
         h3Test {
             QuicPair.open().use { q ->
-                val (c, s) = q.connect(clientQuic = quicConfig { maxDatagramFrameSize = 2 })
+                val (c, s) = q.connect(clientQuic = quicConfig { datagrams { maxFrameSize = 2 } })
                 val h = Http3Connection.server(s)
                 RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
                 val seen = withTimeoutOrNull(10.seconds) { h.peerSettings.filterNotNull().first() }
@@ -819,7 +819,7 @@ class H3DatagramTest {
      */
     @Test fun h3DatagramOverAOneByteTransportLimitIsTooLarge() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn, serverQuic = quicConfig { maxDatagramFrameSize = 1 }).useScoped { p ->
+            H3Pair.open(serverSettings = connectOn, serverQuic = quicConfig { datagrams { maxFrameSize = 1 } }).useScoped { p ->
                 val ps =
                     p.client.peerSettings
                         .filterNotNull()

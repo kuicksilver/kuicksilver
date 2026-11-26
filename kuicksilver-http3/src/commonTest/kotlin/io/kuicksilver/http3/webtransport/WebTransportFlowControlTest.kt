@@ -425,8 +425,8 @@ class WebTransportFlowControlTest {
             // WebTransport ones: the first open takes the QUIC stream, the second a session slot and waits for QUIC credit
             val quic =
                 io.kuicksilver.quic.quicConfig {
-                    resetStreamAt = true
-                    maxUniStreams = 4
+                    expert { resetStreamAt = true }
+                    expert { maxUniStreams = 4 }
                 }
             val server = wtLimits(uni = 2).toBuilder().apply { grease = false }.build()
             val client = wtOn.toBuilder().apply { grease = false }.build()
@@ -469,8 +469,8 @@ class WebTransportFlowControlTest {
             // and one more
             val quic =
                 io.kuicksilver.quic.quicConfig {
-                    resetStreamAt = true
-                    if (waitsForQuic) maxUniStreams = 4
+                    expert { resetStreamAt = true }
+                    if (waitsForQuic) expert { maxUniStreams = 4 }
                 }
             val server = wtLimits(uni = if (waitsForQuic) 5 else 1).toBuilder().apply { grease = false }.build()
             val client = wtOn.toBuilder().apply { grease = false }.build()

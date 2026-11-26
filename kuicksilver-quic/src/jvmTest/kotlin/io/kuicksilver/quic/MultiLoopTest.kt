@@ -60,7 +60,7 @@ class MultiLoopTest {
         .apply {
             server =
                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-            ; crypto = KslQuicCrypto
+            ; runtime { crypto = KslQuicCrypto }
             this.loops = loops
             this.acceptQueue = acceptQueue
         }.build()
@@ -77,7 +77,8 @@ class MultiLoopTest {
             val server = QuicEndpoint.bind(lo, serverConfig(4, acceptQueue = 100))
             val group = server as LoopGroup
             assertMode(group)
-            val clients = List(20) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build()) }
+            val clients =
+                List(20) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build()) }
             try {
                 withTimeout(300.seconds) {
                     var acceptedCount = 0
@@ -134,7 +135,7 @@ class MultiLoopTest {
             assumeTrue(ready(), "needs the accelerated socket")
             val server = QuicEndpoint.bind(lo, serverConfig(2))
             val group = server as LoopGroup
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(120.seconds) {
                     val accepted = async { server.accept() }
@@ -186,13 +187,12 @@ class MultiLoopTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto =
-                            KslQuicCrypto
+                        runtime { crypto = KslQuicCrypto }
                         loops = 2
-                        io = { DatagramIo.open(it, IoPreference.Portable) }
+                        runtime { io = { DatagramIo.open(it, IoPreference.Portable) } }
                     }.build()
             val server = QuicEndpoint.bind(lo, cfg) as LoopGroup
-            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build())
             try {
                 withTimeout(30.seconds) {
                     kotlin.test.assertNotNull(server.dispatcherForTest(), "dispatched in process")
@@ -219,8 +219,8 @@ class MultiLoopTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { earlyData = true }.build()
-                            crypto = KslQuicCrypto
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { acceptEarlyData = true }.build()
+                            runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
             val clients = QuicEndpoint.bind(lo, serverConfig(2)) as LoopGroup

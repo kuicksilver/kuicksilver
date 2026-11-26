@@ -338,8 +338,8 @@ class AdmissionTest {
         val p =
             EndpointPair {
                 acceptQueue = 1
-                statelessPerAddressPerSecond = 2
-                statelessTotalPerSecond = 3
+                expert { statelessPerAddressPerSecond = 2 }
+                expert { statelessTotalPerSecond = 3 }
             }
         p.use { _ ->
             p.server.acceptBacklog = { 1 }
@@ -418,7 +418,7 @@ class AdmissionTest {
                 assertEquals(1L, p.server.stats.initialsDropped)
             }
         }
-        val p = EndpointPair { rejectInitialFromReflectivePorts = false }
+        val p = EndpointPair { expert { rejectInitialFromReflectivePorts = false } }
         p.use { _ ->
             assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.0.0.5", 53)), "the option opens the ports")
         }
@@ -472,7 +472,7 @@ class AdmissionTest {
     }
 
     @Test fun statsSnapshotCountsStatelessAnswers() {
-        val p = EndpointPair { statelessPerAddressPerSecond = 1 }
+        val p = EndpointPair { expert { statelessPerAddressPerSecond = 1 } }
         p.use { _ ->
             val initial = firstInitial(p)
             val vn = initial.copyOf()

@@ -60,10 +60,10 @@ class MemoryNetworkTest {
                 serverAddr,
                 quicEndpointConfig {
                     this.server = quicServerConfig(serverTls)
-                    io = { net.open(it) }
+                    runtime { io = { net.open(it) } }
                 },
             )
-        val client = QuicEndpoint.bind(clientAddr, quicEndpointConfig { io = { net.open(it) } })
+        val client = QuicEndpoint.bind(clientAddr, quicEndpointConfig { runtime { io = { net.open(it) } } })
         return server to client
     }
 
@@ -182,11 +182,10 @@ class MemoryNetworkTest {
                         InetSocketAddress("10.0.0.2", 443),
                         quicEndpointConfig {
                             this.server = serverConfig
-                            io =
-                                { network.open(it) }
+                            runtime { io = { network.open(it) } }
                         },
                     )
-                val client = QuicEndpoint.bind(wifi, quicEndpointConfig { io = { network.open(it) } })
+                val client = QuicEndpoint.bind(wifi, quicEndpointConfig { runtime { io = { network.open(it) } } })
                 val connection = client.connect(server.localAddress, quicClientConfig(tlsClientConfig))
                 val accepted = server.accept()
                 echo(connection, accepted, 1024) // ... the application talks

@@ -104,8 +104,8 @@ class IdleDrainTest {
                                 .Builder(CoreFixtures.server())
                                 .apply { quic = quicConfig { maxIdleTimeout = idle } }
                                 .build()
-                        crypto = NullCryptoProvider
-                        io = { sio }
+                        runtime { crypto = NullCryptoProvider }
+                        runtime { io = { sio } }
                     }.build(),
             )
         val client =
@@ -114,8 +114,8 @@ class IdleDrainTest {
                 QuicEndpointConfig
                     .Builder()
                     .apply {
-                        crypto = NullCryptoProvider
-                        io = { cio }
+                        runtime { crypto = NullCryptoProvider }
+                        runtime { io = { cio } }
                     }.build(),
             ) as EndpointLoop
         return Endpoints(net, cio, server, client)

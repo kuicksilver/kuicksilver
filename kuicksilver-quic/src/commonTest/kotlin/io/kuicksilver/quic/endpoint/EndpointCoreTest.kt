@@ -67,7 +67,7 @@ class EndpointCoreTest {
                 .apply {
                     this.server =
                         QuicServerConfig.Builder(CoreFixtures.server()).apply { this.quic = quic }.build()
-                    ; this.crypto = crypto
+                    ; runtime { this.crypto = crypto }
                     this.maxConnections =
                         maxConnections
                     this.acceptQueue = acceptQueue
@@ -80,8 +80,7 @@ class EndpointCoreTest {
             QuicEndpointConfig
                 .Builder()
                 .apply {
-                    this.crypto =
-                        crypto
+                    runtime { this.crypto = crypto }
                 }.build(),
             Random(6),
         )
@@ -246,7 +245,7 @@ class EndpointCoreTest {
     /** A client connection ID that collides 16 times is a documented ConnectionLost.Internal, not an undocumented exception. */
     @Test fun negative_clientIdThatKeepsCollidingFailsTheConnect() {
         val cr = ScriptedRandom(Random(6))
-        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), cr)
+        val ep = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build(), cr)
         try {
             val cfg = QuicClientConfig.Builder(CoreFixtures.client()).build()
             val first = ep.connect(cfg, a2, now)
@@ -487,7 +486,7 @@ class EndpointCoreTest {
                 .Builder()
                 .apply {
                     server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                    crypto = NullCryptoProvider
+                    runtime { crypto = NullCryptoProvider }
                     maxConnectionsPerIp = 1
                     admission?.let { this.admission = it }
                 }.build()
@@ -619,17 +618,18 @@ class EndpointCoreTest {
         )
     }
 
-    @Test fun connectionIdLengthMustMatchTheEndpoint() {
-        assertFailsWith<IllegalArgumentException> {
+    /** The endpoint is the one place for the connection ID length: a QuicConfig's own (this module's internal one) gives way to it. */
+    @Test fun connectionsTakeTheEndpointsConnectionIdLength() {
+        val e =
             QuicEndpointConfig
                 .Builder()
                 .apply {
                     server =
                         QuicServerConfig.Builder(CoreFixtures.server()).apply { quic = quicConfig { connectionIdLength = 12 } }.build()
                 }.build()
-        }
+        assertEquals(8, e.server!!.quic.connectionIdLength)
         val cep = clientEndpoint()
-        assertFailsWith<IllegalArgumentException> { cep.connect(clientConfig(quicConfig { connectionIdLength = 4 }), a2, now) }
+        assertEquals(8, cep.connect(clientConfig(quicConfig { connectionIdLength = 4 }), a2, now).localCid.length)
     }
 
     @Test fun exceptionInsideOneConnectionClosesOnlyThatConnection() {
@@ -701,7 +701,7 @@ class EndpointCoreTest {
                 .Builder()
                 .apply {
                     server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                    crypto = NullCryptoProvider
+                    runtime { crypto = NullCryptoProvider }
                     loops = 2
                 }.build(),
             Random(10L + index),
@@ -780,8 +780,7 @@ class EndpointCoreTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto =
-                            NullCryptoProvider
+                        runtime { crypto = NullCryptoProvider }
                     }.build(),
                 Random(3),
                 loopIndex = 3,
@@ -821,8 +820,7 @@ class EndpointCoreTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto =
-                            NullCryptoProvider
+                        runtime { crypto = NullCryptoProvider }
                     }.build(),
                 Random(3),
                 loopIndex = 3,
@@ -1062,7 +1060,7 @@ class EndpointCoreTest {
         // client's address there; until then they keep leaving the original socket
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
         p.use { _ ->
-            val c = p.connect(quicConfig { followPreferredAddress = false }) // moved by hand, step by step
+            val c = p.connect(quicConfig { migration { followPreferredAddress = false } }) // moved by hand, step by step
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             moveClientToPreferred(p, c)
@@ -1102,11 +1100,11 @@ class EndpointCoreTest {
     @Test fun preferredMoveAllowedWithAllowMigrationFalse() {
         // the server disabled active migration, yet a move to its preferred address is the client's right (RFC 9000 section 18.2);
         // on the preferred socket only the client's current address is taken, as ngtcp2 does
-        val noMigration = quicConfig { allowMigration = false }
+        val noMigration = quicConfig { migration { allow = false } }
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred, serverQuic = noMigration)
         val captured = ArrayList<ByteArray>()
         p.use { _ ->
-            val c = p.connect(quicConfig { followPreferredAddress = false })
+            val c = p.connect(quicConfig { migration { followPreferredAddress = false } })
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             p.filterToServer = { _, b ->
@@ -1529,7 +1527,7 @@ class EndpointCoreTest {
         val ec = QuicLbFixtures.endpointConfig(cfg, loops = 4, admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
         val state = QuicLbState(LbNullCrypto, Random(1), cfg, 4, 8, poolSize = 2, maxExceptions = 8)
         val cores = List(4) { EndpointCore(ec, Random(10L + it), it, null, state) }
-        val client = EndpointCore(QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider }.build(), Random(6))
+        val client = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider } }.build(), Random(6))
         try {
             repeat(120) {
                 val from = InetSocketAddress("10.1.${it / 200}.${it % 200 + 1}", 4000 + it)

@@ -54,7 +54,7 @@ class PmtudStartTest {
 
     private fun quic(block: QuicConfig.Builder.() -> Unit): QuicConfig =
         quicConfig {
-            maxIdleTimeout = Duration.ZERO // the long scenarios outlive the 30 s idle timer
+            maxIdleTimeout = null // the long scenarios outlive the 30 s idle timer
             block()
         }
 
@@ -101,18 +101,18 @@ class PmtudStartTest {
     @Test fun negative_aStartBelow1200IsRefused() {
         // RFC 9000 section 14.1: datagrams carrying Initial packets are at least 1200 bytes; section 14: "QUIC MUST NOT be used if the
         // network path cannot support a maximum datagram size of at least 1200 bytes"
-        val e = assertFailsWith<IllegalArgumentException> { quicConfig { initialUdpPayloadSize = 1199 } }
-        assertEquals("initialUdpPayloadSize must be 1200..65527", e.message)
-        assertFailsWith<IllegalArgumentException> { quicConfig { initialUdpPayloadSize = 0 } }
-        assertFailsWith<IllegalArgumentException> { quicConfig { initialUdpPayloadSize = 65528 } }
-        assertFailsWith<IllegalArgumentException> { quicConfig { maxSendUdpPayloadSize = 1199 } }
-        assertFailsWith<IllegalArgumentException> { quicConfig { maxSendUdpPayloadSize = 65528 } }
+        val e = assertFailsWith<IllegalArgumentException> { quicConfig { pathMtu { initial = 1199 } } }
+        assertEquals("pathMtu { initial } must be 1200..65527", e.message)
+        assertFailsWith<IllegalArgumentException> { quicConfig { pathMtu { initial = 0 } } }
+        assertFailsWith<IllegalArgumentException> { quicConfig { pathMtu { initial = 65528 } } }
+        assertFailsWith<IllegalArgumentException> { quicConfig { pathMtu { maxSend = 1199 } } }
+        assertFailsWith<IllegalArgumentException> { quicConfig { pathMtu { maxSend = 65528 } } }
         assertEquals(1200, QuicConfig.Default.initialUdpPayloadSize)
         assertEquals(65527, QuicConfig.Default.maxSendUdpPayloadSize)
         val c =
             quicConfig {
-                initialUdpPayloadSize = 1350
-                maxSendUdpPayloadSize = 1380
+                pathMtu { initial = 1350 }
+                pathMtu { maxSend = 1380 }
             }
         assertEquals(1350, c.toBuilder().build().initialUdpPayloadSize, "toBuilder keeps it")
         assertEquals(1380, c.toBuilder().build().maxSendUdpPayloadSize)
@@ -121,7 +121,7 @@ class PmtudStartTest {
     // the start and Initial padding
 
     @Test fun theClientsInitialIsPaddedToTheConfiguredStart() {
-        val (p, c) = start(clientQuic = quic { initialUdpPayloadSize = 1350 })
+        val (p, c) = start(clientQuic = quic { pathMtu { initial = 1350 } })
         p.use { _ ->
             assertEquals(1350, c.stats.pathMtu, "the first path starts there")
             assertTrue(p.confirmed(c))
@@ -132,7 +132,7 @@ class PmtudStartTest {
     }
 
     @Test fun theServersFirstFlightUsesItsConfiguredStart() {
-        val (p, c) = start(serverQuic = quic { initialUdpPayloadSize = 1350 })
+        val (p, c) = start(serverQuic = quic { pathMtu { initial = 1350 } })
         p.use { _ ->
             assertTrue(p.confirmed(c))
             val first = p.serverSent.first().second
@@ -144,7 +144,7 @@ class PmtudStartTest {
 
     @Test fun negative_withoutDfTheStartStaysAt1200() {
         // RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer"; a socket that cannot set DF stays at 1200
-        val (p, c) = start(clientQuic = quic { initialUdpPayloadSize = 1400 }, caps = IoCapabilities.Portable)
+        val (p, c) = start(clientQuic = quic { pathMtu { initial = 1400 } }, caps = IoCapabilities.Portable)
         p.use { _ ->
             assertTrue(p.confirmed(c))
             transfer(p, c)
@@ -160,8 +160,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1450
-                        maxUdpPayloadSize = 1300
+                        pathMtu { initial = 1450 }
+                        pathMtu { maxReceive = 1300 }
                     },
             )
         p.use { _ ->
@@ -172,9 +172,9 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1450
-                        maxSendUdpPayloadSize = 1380
-                        pmtud = true
+                        pathMtu { initial = 1450 }
+                        pathMtu { maxSend = 1380 }
+                        pathMtu { discovery = true }
                     },
             )
         p2.use { _ ->
@@ -190,7 +190,7 @@ class PmtudStartTest {
     @Test fun negative_aStartAboveThePeersLimitComesDownWhenItsParametersArrive() {
         // RFC 9000 section 18.2: max_udp_payload_size "does act as an additional constraint on datagram size in the same way as the
         // path MTU"; the first flight goes before the client knows it
-        val (p, c) = start(clientQuic = quic { initialUdpPayloadSize = 1450 }, serverQuic = quic { maxUdpPayloadSize = 1250 })
+        val (p, c) = start(clientQuic = quic { pathMtu { initial = 1450 } }, serverQuic = quic { pathMtu { maxReceive = 1250 } })
         p.use { _ ->
             assertTrue(p.runUntil { c.peerTp != null })
             val sent = p.clientDatagramSizes.size
@@ -206,7 +206,7 @@ class PmtudStartTest {
 
     @Test fun negative_aServerStartAboveTheClientsLimitIsClampedFromItsFirstDatagram() {
         // the server reads the client's parameters from the ClientHello, before it sends anything
-        val (p, c) = start(clientQuic = quic { maxUdpPayloadSize = 1250 }, serverQuic = quic { initialUdpPayloadSize = 1450 })
+        val (p, c) = start(clientQuic = quic { pathMtu { maxReceive = 1250 } }, serverQuic = quic { pathMtu { initial = 1450 } })
         p.use { _ ->
             assertTrue(p.confirmed(c))
             val s = p.server.connections().single()
@@ -221,7 +221,7 @@ class PmtudStartTest {
 
     @Test fun negative_aClientStartThePathCannotCarryFallsBackTo1200DuringTheHandshake() {
         // a WireGuard-like path: 1300 bytes of UDP payload pass, the configured 1400 vanish without ICMP
-        val (p, c) = start(clientQuic = quic { initialUdpPayloadSize = 1400 }, linkToServer = 1300, linkToClient = 1300)
+        val (p, c) = start(clientQuic = quic { pathMtu { initial = 1400 } }, linkToServer = 1300, linkToClient = 1300)
         p.use { _ ->
             assertTrue(p.confirmed(c), "the handshake completes: state ${c.state}, mtu ${c.stats.pathMtu}")
             assertEquals(1200, c.stats.pathMtu, "back to the base")
@@ -236,7 +236,7 @@ class PmtudStartTest {
     @Test fun negative_bothEndsStartingAboveTheLinkStillHandshakeWithinTheTimeout() {
         // each side's fallback waits for the other's datagrams: one PTO each while nothing was acknowledged keeps the whole well
         // inside the default 10 s handshake timeout (two each did not, with 0-RTT data in flight)
-        val both = quic { initialUdpPayloadSize = 1400 }
+        val both = quic { pathMtu { initial = 1400 } }
         val (p, c) = start(clientQuic = both, serverQuic = both, linkToServer = 1300, linkToClient = 1300)
         p.use { _ ->
             val t0 = p.now
@@ -260,8 +260,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1400
-                        pmtud = false
+                        pathMtu { initial = 1400 }
+                        pathMtu { discovery = false }
                     },
             )
         p.use { _ ->
@@ -276,7 +276,7 @@ class PmtudStartTest {
     }
 
     @Test fun negative_aServerStartTheClientsPathCannotCarryFallsBackTo1200() {
-        val (p, c) = start(serverQuic = quic { initialUdpPayloadSize = 1400 }, linkToClient = 1300)
+        val (p, c) = start(serverQuic = quic { pathMtu { initial = 1400 } }, linkToClient = 1300)
         p.use { _ ->
             assertTrue(p.runUntil(15.seconds) { c.state == ConnectionState.Confirmed }, "the handshake completes: state ${c.state}")
             val s = p.server.connections().single()
@@ -290,8 +290,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1400
-                        pmtud = false
+                        pathMtu { initial = 1400 }
+                        pathMtu { discovery = false }
                     },
             )
         p.use { _ ->
@@ -309,8 +309,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1400
-                        pmtud = false
+                        pathMtu { initial = 1400 }
+                        pathMtu { discovery = false }
                     },
                 linkToServer = 1300,
                 linkToClient = 1300,
@@ -338,8 +338,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1400
-                        pmtud = false
+                        pathMtu { initial = 1400 }
+                        pathMtu { discovery = false }
                     },
             )
         p.use { _ ->
@@ -381,7 +381,7 @@ class PmtudStartTest {
     // the search from the start
 
     @Test fun pmtudSearchesUpwardsFromTheConfiguredStart() {
-        val (p, c) = start(clientQuic = quic { initialUdpPayloadSize = 1300 })
+        val (p, c) = start(clientQuic = quic { pathMtu { initial = 1300 } })
         p.use { _ ->
             assertTrue(p.confirmed(c))
             transfer(p, c)
@@ -398,8 +398,8 @@ class PmtudStartTest {
             start(
                 clientQuic =
                     quic {
-                        initialUdpPayloadSize = 1350
-                        pmtud = false
+                        pathMtu { initial = 1350 }
+                        pathMtu { discovery = false }
                     },
             )
         p.use { _ ->
@@ -421,8 +421,8 @@ class PmtudStartTest {
                 clientQuic = quic { },
                 serverQuic =
                     quic {
-                        initialUdpPayloadSize = 1400
-                        pmtud = false
+                        pathMtu { initial = 1400 }
+                        pathMtu { discovery = false }
                     },
             )
         p.use { _ ->
@@ -486,14 +486,14 @@ class PmtudStartTest {
             val what = "round $round: start $start cap $cap pmtud $pmtud serverMax $serverMax links $toServer/$toClient"
             val cfg =
                 quic {
-                    initialUdpPayloadSize = start
-                    maxSendUdpPayloadSize = cap
-                    this.pmtud = pmtud
+                    pathMtu { initial = start }
+                    pathMtu { maxSend = cap }
+                    pathMtu { discovery = pmtud }
                 }
             val (p, c) =
                 start(
                     clientQuic = cfg,
-                    serverQuic = cfg.toBuilder().apply { maxUdpPayloadSize = serverMax }.build(),
+                    serverQuic = cfg.toBuilder().apply { pathMtu { maxReceive = serverMax } }.build(),
                     linkToServer = toServer,
                     linkToClient = toClient,
                 )

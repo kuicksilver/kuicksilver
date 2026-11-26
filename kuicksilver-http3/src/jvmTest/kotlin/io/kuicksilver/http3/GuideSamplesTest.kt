@@ -175,7 +175,7 @@ class GuideSamplesTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(H3Fixtures.server()).build()
-                                io = { net.open(webAt) }
+                                runtime { io = { net.open(webAt) } }
                             }.build(),
                     )
                 val webServing =
@@ -223,8 +223,7 @@ class GuideSamplesTest {
                             QuicEndpointConfig
                                 .Builder()
                                 .apply {
-                                    io =
-                                        { tunnel.asDatagramIo() }
+                                    runtime { io = { tunnel.asDatagramIo() } }
                                 }.build(),
                         )
                     val h3 = inner.connect(tunnel.remoteAddress, tls)

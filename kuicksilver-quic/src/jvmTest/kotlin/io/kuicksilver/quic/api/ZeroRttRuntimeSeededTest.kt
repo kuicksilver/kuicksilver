@@ -213,7 +213,7 @@ class ZeroRttRuntimeSeededTest {
             earlyData = mode
             quic =
                 quicConfig {
-                    resetStreamAt = true
+                    expert { resetStreamAt = true }
                     if (vn) versions = listOf(VersionProfile.V1, VersionProfile.V2)
                     if (lost) handshakeTimeout = 1.seconds
                 }
@@ -274,9 +274,9 @@ class ZeroRttRuntimeSeededTest {
                     quicConfig {
                         if (small) {
                             maxBidiStreams = 2
-                            maxUniStreams = 1
-                            initialStreamWindow = 3000
-                            initialConnectionWindow = 5000
+                            expert { maxUniStreams = 1 }
+                            flowControl { initialStreamWindow = 3000 }
+                            flowControl { initialConnectionWindow = 5000 }
                         }
                     },
                 crypto = KslQuicCrypto,
@@ -300,12 +300,21 @@ class ZeroRttRuntimeSeededTest {
                 val server =
                     when (o) {
                         // a server restarted with another configuration (and other ticket keys) refuses the early data
-                        Outcome.Reject, Outcome.Required -> p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                        Outcome.Reject, Outcome.Required -> {
+                            p.restartServer(
+                                quicConfig { flowControl { initialConnectionWindow = 700_000 } },
+                                KslQuicCrypto,
+                            )
+                        }
 
                         // one that speaks only v2 answers the v1 first flight with a Version Negotiation
-                        Outcome.VersionNegotiation -> p.restartServer(quicConfig { versions = listOf(VersionProfile.V2) }, KslQuicCrypto)
+                        Outcome.VersionNegotiation -> {
+                            p.restartServer(quicConfig { versions = listOf(VersionProfile.V2) }, KslQuicCrypto)
+                        }
 
-                        else -> p.server
+                        else -> {
+                            p.server
+                        }
                     }
                 if (server !== p.server) {
                     restarted = server

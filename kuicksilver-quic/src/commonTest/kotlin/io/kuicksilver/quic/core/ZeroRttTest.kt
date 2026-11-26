@@ -591,7 +591,7 @@ class ZeroRttTest {
 
     /** RESET_STREAM_AT with reliable size 0 (WebTransport's reset of a stream without header) waits the same way. */
     @Test fun earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept() {
-        val withAt = quicConfig { resetStreamAt = true }
+        val withAt = quicConfig { expert { resetStreamAt = true } }
         val (p, id) = resetEarlyUni(ticket(serverQuic = withAt, clientQuic = withAt), early(withAt), withAt, withAt, reliable = 0)
         p.use { _ ->
             assertTrue(p.handshake())
@@ -1049,7 +1049,7 @@ class ZeroRttTest {
      * 1-RTT, the new one after.
      */
     @Test fun negative_zeroRttUsesTheRememberedResetStreamAt() {
-        val withAt = quicConfig { resetStreamAt = true }
+        val withAt = quicConfig { expert { resetStreamAt = true } }
         val t = ticket(clientQuic = withAt)
         val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
         assertEquals(false, tp.resetStreamAt, "the ticket's server did not offer reset_stream_at")
@@ -1217,7 +1217,7 @@ class ZeroRttTest {
     /** Rejected with lower limits than the 0-RTT data used: nothing is resent, so the connection goes on with the reset streams. */
     @Test fun rejectedWithSmallerLimitsResetsStreamsAndContinues() {
         val big = "x".repeat(4000)
-        val small = quicConfig { initialConnectionWindow = 1000 }
+        val small = quicConfig { flowControl { initialConnectionWindow = 1000 } }
         val (p, id) = resumed(ticket(), request = big, serverQuic = small, serverEarly = early(small))
         assertTrue(p.handshake())
         assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
@@ -1242,7 +1242,7 @@ class ZeroRttTest {
      */
     @Test fun negative_resetStreamAtIsPartOfTheEarlyDataContext() {
         val off = early(QuicConfig.Default).context
-        val on = early(quicConfig { resetStreamAt = true }).context
+        val on = early(quicConfig { expert { resetStreamAt = true } }).context
         assertTrue(!off.contentEquals(on), "a change of reset_stream_at refuses earlier tickets' 0-RTT")
     }
 
@@ -1340,8 +1340,8 @@ class ZeroRttTest {
         // remembered ones (RFC 9000 section 7.4.1), or it would exceed the new limits (FLOW_CONTROL_ERROR / STREAM_LIMIT_ERROR)
         val lower =
             quicConfig {
-                initialConnectionWindow = 1000
-                initialStreamWindow = 1500
+                flowControl { initialConnectionWindow = 1000 }
+                flowControl { initialStreamWindow = 1500 }
                 maxBidiStreams = 2
             }
         val (p, id) = resumed(ticket(), request = "GET /a", serverQuic = lower, serverEarly = early(lower))

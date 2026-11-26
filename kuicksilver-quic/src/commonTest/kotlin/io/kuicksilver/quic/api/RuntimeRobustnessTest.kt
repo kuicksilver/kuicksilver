@@ -110,17 +110,17 @@ class RuntimeRobustnessTest {
         .apply {
             server =
                 QuicServerConfig.Builder(CoreFixtures.server()).build()
-            ; crypto = NullCryptoProvider
-            this.io = { io }
-            log?.let { logger = it }
+            ; runtime { crypto = NullCryptoProvider }
+            runtime { this.io = { io } }
+            log?.let { observability { logger = it } }
         }.build()
 
     private fun clientConfig(io: DatagramIo) =
         QuicEndpointConfig
             .Builder()
             .apply {
-                crypto = NullCryptoProvider
-                this.io = { io }
+                runtime { crypto = NullCryptoProvider }
+                runtime { this.io = { io } }
             }.build()
 
     private val a = InetSocketAddress("10.0.0.1", 1111)

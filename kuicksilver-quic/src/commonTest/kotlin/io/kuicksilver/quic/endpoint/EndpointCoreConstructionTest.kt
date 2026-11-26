@@ -25,7 +25,7 @@ class EndpointCoreConstructionTest {
             .Builder()
             .apply {
                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                this.crypto = crypto
+                runtime { this.crypto = crypto }
             }.build()
 
     @Test fun aFailureAfterTheResetKeyClosesIt() {

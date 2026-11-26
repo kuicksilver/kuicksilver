@@ -55,8 +55,8 @@ class ProxiedQuicTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(H3Fixtures.server()).build()
-                                crypto = NullCryptoProvider
-                                io = { targetIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { targetIo } }
                             }.build(),
                     )
                 val seenFrom = CompletableDeferred<InetSocketAddress>()
@@ -75,8 +75,8 @@ class ProxiedQuicTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { tunnel.asDatagramIo() }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { tunnel.asDatagramIo() } }
                             }.build(),
                     )
                 try {

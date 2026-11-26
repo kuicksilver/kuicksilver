@@ -150,7 +150,11 @@ class RealUdpConnectUdpTest {
                         }
                     val conn = client.connect(proxyEndpoint.localAddress, H3Fixtures.client())
                     val tunnel = conn.connectUdp(UdpProxyTemplate.wellKnown("server.test"), "127.0.0.1", target.localAddress.port)
-                    val inner = Http3Endpoint.bind(loopback, QuicEndpointConfig.Builder().apply { io = { tunnel.asDatagramIo() } }.build())
+                    val inner =
+                        Http3Endpoint.bind(
+                            loopback,
+                            QuicEndpointConfig.Builder().apply { runtime { io = { tunnel.asDatagramIo() } } }.build(),
+                        )
                     try {
                         val h3 = withTimeout(30.seconds) { inner.connect(tunnel.remoteAddress, H3Fixtures.client()) }
                         val response = withTimeout(10.seconds) { h3.request(http3Request("GET", "server.test", "/masque")) }

@@ -277,7 +277,7 @@ class ClientKillSwitchTest {
                 InetSocketAddress("127.0.0.1", 0),
                 QuicEndpointConfig
                     .Builder()
-                    .apply { server = QuicServerConfig.Builder(tls).apply { this.earlyData = earlyData }.build() }
+                    .apply { server = QuicServerConfig.Builder(tls).apply { acceptEarlyData = earlyData }.build() }
                     .build(),
             )
         launch {

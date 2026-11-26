@@ -229,14 +229,14 @@ class WebTransportServerSessionsTest {
             serverQuic =
                 H3Fixtures.quic
                     .toBuilder()
-                    .apply { maxSendBuffer = BUFFER }
+                    .apply { flowControl { maxSendBuffer = BUFFER } }
                     .build(),
             clientQuic =
                 H3Fixtures.quic
                     .toBuilder()
                     .apply {
-                        initialStreamWindow = 16_384
-                        maxStreamWindow = 16_384
+                        flowControl { initialStreamWindow = 16_384 }
+                        flowControl { maxStreamWindow = 16_384 }
                     }.build(),
             block = block,
         )

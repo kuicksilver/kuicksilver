@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.quic.core
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.Reassembler

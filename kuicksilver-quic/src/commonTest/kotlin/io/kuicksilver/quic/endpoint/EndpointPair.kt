@@ -74,18 +74,18 @@ internal class EndpointPair(
                             .Builder(CoreFixtures.server())
                             .apply {
                                 quic = serverQuic
-                                earlyData = serverEarlyData
+                                acceptEarlyData = serverEarlyData
                                 this.newTokenLifetime = newTokenLifetime
                                 preferredAddress = serverPreferred
                             }.build()
-                    ; this.crypto = leaks
+                    ; runtime { this.crypto = leaks }
                     configure()
                 }.build(),
             serverRandom,
             loopIndex,
             sharedTokens,
         )
-    val client: EndpointCore = EndpointCore(QuicEndpointConfig.Builder().apply { this.crypto = leaks }.build(), clientRandom)
+    val client: EndpointCore = EndpointCore(QuicEndpointConfig.Builder().apply { runtime { this.crypto = leaks } }.build(), clientRandom)
     val events: HashMap<ConnectionCore, MutableList<ConnectionEvent>> = HashMap()
     val batch: PacketBatch = PacketBatch(16)
 

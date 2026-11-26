@@ -64,11 +64,11 @@ internal class ApiPair private constructor(
                                     .Builder(serverTls)
                                     .apply {
                                         quic = serverQuic
-                                        earlyData = serverEarlyData
+                                        acceptEarlyData = serverEarlyData
                                     }.build()
-                            ; this.crypto = crypto
-                            io = { b }
-                            serverLogger?.let { logger = it }
+                            ; runtime { this.crypto = crypto }
+                            runtime { io = { b } }
+                            serverLogger?.let { observability { logger = it } }
                             serverConfigure()
                             admission?.let { this.admission = it }
                         }.build(),
@@ -79,9 +79,9 @@ internal class ApiPair private constructor(
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            this.crypto = crypto
-                            io = { a }
-                            clientListener?.let { listener = it }
+                            runtime { this.crypto = crypto }
+                            runtime { io = { a } }
+                            clientListener?.let { observability { connectionListener = it } }
                         }.build(),
                 )
             return ApiPair(server, client, net, a, b)
@@ -110,10 +110,10 @@ internal class ApiPair private constructor(
                             .Builder(CoreFixtures.server())
                             .apply {
                                 quic = serverQuic
-                                earlyData = true
+                                acceptEarlyData = true
                             }.build()
-                    this.crypto = crypto
-                    this.io = { io }
+                    runtime { this.crypto = crypto }
+                    runtime { this.io = { io } }
                     configure()
                     admission?.let { this.admission = it }
                 }.build(),

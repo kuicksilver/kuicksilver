@@ -109,7 +109,7 @@ class AppleNetworksTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = KslQuicCrypto
+                                runtime { crypto = KslQuicCrypto }
                             }.build(),
                     )
                 val io = assertIs<KslDatagramIo>(DatagramIo.open(lo))
@@ -119,8 +119,8 @@ class AppleNetworksTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = KslQuicCrypto
-                                this.io = { io }
+                                runtime { crypto = KslQuicCrypto }
+                                runtime { this.io = { io } }
                             }.build(),
                     )
                 return Loopback(server, client, io)

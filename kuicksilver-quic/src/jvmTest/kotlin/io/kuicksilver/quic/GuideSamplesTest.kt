@@ -55,21 +55,21 @@ class GuideSamplesTest {
         val quic =
             quicConfig {
                 maxIdleTimeout = 30.seconds
-                initialStreamWindow = 512 * 1024L
+                flowControl { initialStreamWindow = 512 * 1024L }
                 maxBidiStreams = 100
                 // preference order; listOf(VersionProfile.V2, VersionProfile.V1) opts into v2 (RFC 9368/9369)
                 versions = listOf(VersionProfile.V1)
-                greaseQuicBit = true // RFC 9287
+                expert { greaseQuicBit = true } // RFC 9287
             }
         assertEquals(listOf(VersionProfile.V1), quic.versions)
         val prefersV2 =
             quicConfig {
                 versions = listOf(VersionProfile.V2, VersionProfile.V1)
-                initialVersion = VersionProfile.V1
+                expert { initialVersion = VersionProfile.V1 }
             }
         assertEquals(VersionProfile.V1, prefersV2.firstVersion)
         // guide:quic:initial-rtt
-        val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+        val lossyMobile = quicConfig { expert { initialRtt = 100.milliseconds } }
         assertEquals(100.milliseconds, lossyMobile.initialRtt)
     }
 
@@ -77,8 +77,8 @@ class GuideSamplesTest {
         // guide:quic:wireguard
         val tunnel =
             quicConfig {
-                initialUdpPayloadSize = 1350 // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
-                maxSendUdpPayloadSize = 1372 // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
+                pathMtu { initial = 1350 } // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
+                pathMtu { maxSend = 1372 } // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
             }
         assertEquals(1350, tunnel.initialUdpPayloadSize)
         assertEquals(1372, tunnel.maxSendUdpPayloadSize)
@@ -97,7 +97,7 @@ class GuideSamplesTest {
                     QuicEndpoint.bind(
                         addr,
                         quicEndpointConfig {
-                            this.server = quicServerConfig(tlsServerConfig) { earlyData = true } // tickets that allow 0-RTT
+                            this.server = quicServerConfig(tlsServerConfig) { acceptEarlyData = true } // tickets that allow 0-RTT
                         },
                     )
                 addr = server.localAddress
@@ -252,16 +252,18 @@ class GuideSamplesTest {
             val observed =
                 quicEndpointConfig {
                     this.server = quicServerConfig(tlsServerConfig)
-                    logger = KuicksilverLogger.stderr(LogLevel.Info)
-                    listener =
-                        object : ConnectionListener {
-                            override fun onClosed(
-                                connection: ConnectionInfo,
-                                reason: QuicException.ConnectionLost,
-                            ) {
-                                println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
+                    observability { logger = KuicksilverLogger.stderr(LogLevel.Info) }
+                    observability {
+                        connectionListener =
+                            object : ConnectionListener {
+                                override fun onClosed(
+                                    connection: ConnectionInfo,
+                                    reason: QuicException.ConnectionLost,
+                                ) {
+                                    println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
+                                }
                             }
-                        }
+                    }
                 }
             val server = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), observed)
             val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
@@ -490,13 +492,13 @@ class GuideSamplesTest {
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(tlsServerConfig).build()
-                            ; crypto = KslQuicCrypto
+                            ; runtime { crypto = KslQuicCrypto }
                         }.build(),
                 )
             val client =
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
-                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                    QuicEndpointConfig.Builder().apply { runtime { crypto = KslQuicCrypto } }.build(),
                 )
             try {
                 withTimeout(60.seconds) {

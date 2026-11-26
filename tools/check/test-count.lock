@@ -1933,7 +1933,6 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3StallT
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.aCallRacingCloseFailsAsClosed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.cancelledCallResetsStream
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.chunkedAndH3BodiesReadWhole
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.conflictingConnectionIdLengthsAreRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.earlyResponseStopsAnEndlessUpload
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.engineRetriesRequestNotProcessedOnNewConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.h1ToIpv6Loopback
@@ -4178,6 +4177,14 @@ kuicksilver-quic/src/appleTest	io.kuicksilver.quic.NwPathIdentityTest.liveSource
 kuicksilver-quic/src/appleTest	io.kuicksilver.quic.NwPathIdentityTest.negative_identityToStringRevealsNoAddress
 kuicksilver-quic/src/appleTest	io.kuicksilver.quic.NwPathIdentityTest.negative_sameInterfaceAnotherNetworkIsAnotherIdentity
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ApiLocationTest.versionProfileLivesInTheRootPackage
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.derivedOptionsAreRecordedWhenAssigned
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.endpointAppliesItsConnectionIdLengthAndQlogToClientConnections
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.endpointAppliesItsConnectionIdLengthAndQlogToTheServer
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyEndpointOptionReachesTheConfig
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.everyQuicOptionReachesTheConfig
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroDatagramFrameSizeIsRefusedNullIsOff
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.negative_zeroIdleTimeoutIsRefusedNullIsNone
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ConfigGroupsTest.serverAcceptEarlyDataReachesTheConfig
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultNetworkUpdatesTest.availableAndLostBecomeNetworksAndNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.DefaultNetworkUpdatesTest.lostOfAnOldNetworkAfterTheSwitchIsIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.aPairThatEndsCleanlyCloses
@@ -4205,7 +4212,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.localTranspor
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_handshakeTimeoutMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_initialRttMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_keepAliveMustBePositiveAndFinite
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBeZeroOrFinite
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxIdleTimeoutMustBePositiveAndFiniteOrNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.negative_maxSendBufferMustBePositive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.toBuilderKeepsEverySetting
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.versionsOptInV1V2
@@ -5235,8 +5242,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreConstru
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.acceptBacklogIsTheApplicationsNotTheLoops
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.acceptQueueCap32
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.cidRoutingByteIsLoopIndex
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.connectionIdLengthMustMatchTheEndpoint
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.connectionRandomnessComesFromTheEndpointSource
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.connectionsTakeTheEndpointsConnectionIdLength
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.dcidShorterThan8Dropped
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.exceptionInsideOneConnectionClosesOnlyThatConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.EndpointCoreTest.flushVisitsOnlyDirtyConnections

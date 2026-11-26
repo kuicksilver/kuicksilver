@@ -275,10 +275,10 @@ public object EngineMain {
         fun value(key: String): String? = config.propertyOrNull(key)?.getString()?.trim()
         val b = base.toBuilder()
         value("kuicksilver.quic.initialUdpPayloadSize")?.let {
-            b.initialUdpPayloadSize = parseCount("kuicksilver.quic.initialUdpPayloadSize", it)
+            b.pathMtu.initial = parseCount("kuicksilver.quic.initialUdpPayloadSize", it)
         }
         value("kuicksilver.quic.maxSendUdpPayloadSize")?.let {
-            b.maxSendUdpPayloadSize = parseCount("kuicksilver.quic.maxSendUdpPayloadSize", it)
+            b.pathMtu.maxSend = parseCount("kuicksilver.quic.maxSendUdpPayloadSize", it)
         }
         value("kuicksilver.quic.maxUdpPayloadSize")?.let {
             val n = parseCount("kuicksilver.quic.maxUdpPayloadSize", it)
@@ -286,17 +286,19 @@ public object EngineMain {
             require(n <= QUIC_ENDPOINT_SLOT) {
                 "kuicksilver.quic.maxUdpPayloadSize must be at most $QUIC_ENDPOINT_SLOT (the endpoint's datagram slots), not $n"
             }
-            b.maxUdpPayloadSize = n
+            b.pathMtu.maxReceive = n
         }
-        value("kuicksilver.quic.pmtud")?.let { b.pmtud = parseBoolean("kuicksilver.quic.pmtud", it) }
-        value("kuicksilver.quic.maxIdleTimeout")?.let { b.maxIdleTimeout = parseDuration("kuicksilver.quic.maxIdleTimeout", it) }
+        value("kuicksilver.quic.pmtud")?.let { b.pathMtu.discovery = parseBoolean("kuicksilver.quic.pmtud", it) }
+        value("kuicksilver.quic.maxIdleTimeout")?.let {
+            b.maxIdleTimeout = parseDuration("kuicksilver.quic.maxIdleTimeout", it).takeUnless { d -> d == Duration.ZERO }
+        }
         value("kuicksilver.quic.handshakeTimeout")?.let { b.handshakeTimeout = parseDuration("kuicksilver.quic.handshakeTimeout", it) }
         value("kuicksilver.quic.keepAlive")?.let {
             b.keepAlive = parseDuration("kuicksilver.quic.keepAlive", it).takeUnless { d -> d == Duration.ZERO }
         }
         value("kuicksilver.quic.maxBidiStreams")?.let { b.maxBidiStreams = parseLong("kuicksilver.quic.maxBidiStreams", it) }
-        value("kuicksilver.quic.maxUniStreams")?.let { b.maxUniStreams = parseLong("kuicksilver.quic.maxUniStreams", it) }
-        value("kuicksilver.quic.allowMigration")?.let { b.allowMigration = parseBoolean("kuicksilver.quic.allowMigration", it) }
+        value("kuicksilver.quic.maxUniStreams")?.let { b.expert.maxUniStreams = parseLong("kuicksilver.quic.maxUniStreams", it) }
+        value("kuicksilver.quic.allowMigration")?.let { b.migration.allow = parseBoolean("kuicksilver.quic.allowMigration", it) }
         return try {
             b.build()
         } catch (e: IllegalArgumentException) {

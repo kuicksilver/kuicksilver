@@ -244,7 +244,7 @@ internal class Workload(
      */
     private suspend fun statelessReset(): Outcome {
         val gate = GateIo(DatagramIo.open(local))
-        val ep = QuicEndpoint.bind(local, quicEndpointConfig { io = { gate } })
+        val ep = QuicEndpoint.bind(local, quicEndpointConfig { runtime { io = { gate } } })
         try {
             val c = ep.connect(rawAddr, plain)
             c.get(1024)
@@ -410,7 +410,7 @@ internal fun soakHttpClient(discovery: Http3DiscoveryMode): HttpClient =
         engine {
             trust = SoakPki.trust
             http3 { this.discovery = discovery }
-            SoakQlog.sink?.let { sink -> quic = quicConfig { qlog = sink } }
+            SoakQlog.sink?.let { sink -> http3 { qlog = sink } }
         }
     }
 

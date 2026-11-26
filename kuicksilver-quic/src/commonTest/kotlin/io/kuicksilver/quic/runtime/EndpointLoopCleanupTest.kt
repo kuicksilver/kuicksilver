@@ -48,9 +48,9 @@ class EndpointLoopCleanupTest {
                     .Builder(CoreFixtures.server())
                     .apply { preferredAddress = PreferredAddress(preferredAddr, null) }
                     .build()
-            this.crypto = crypto
+            runtime { this.crypto = crypto }
             this.loops = loops
-            open?.let { o -> io = { at -> o(at) } }
+            open?.let { o -> runtime { io = { at -> o(at) } } }
         }.build()
 
     @Test fun aLoopThatCannotBeBuiltClosesTheSocketsBindOpened() =
@@ -237,8 +237,8 @@ class EndpointLoopCleanupTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = NullCryptoProvider
-                            io = { sio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { sio } }
                         }.build(),
                 )
             val client =
@@ -247,8 +247,8 @@ class EndpointLoopCleanupTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { cio }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { cio } }
                         }.build(),
                 )
             try {

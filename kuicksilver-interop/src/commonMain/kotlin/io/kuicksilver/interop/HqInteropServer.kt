@@ -87,8 +87,8 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     companion object {
         suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }, earlyData: Boolean = false): HqInteropServer {
             val tls = tlsConfig(TlsRole.Server) { alpn = listOf("hq-interop"); this.identity = identity; this.cipherSuites = cipherSuites }
-            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
-            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic; this.earlyData = earlyData }.build(); this.admission = admission }.build()
+            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
+            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic; acceptEarlyData = earlyData }.build(); this.admission = admission; observability { this.qlog = qlog } }.build()
             val v4 = QuicEndpoint.bind(InetSocketAddress(host, port), config)
             val endpoints = ArrayList<QuicEndpoint>(2); endpoints += v4
             if (ipv6 && host == "0.0.0.0") try { endpoints += QuicEndpoint.bind(InetSocketAddress("::", port), config) } catch (e: Exception) { Files.log("IPv6 endpoint not bound: ${e.message}") }

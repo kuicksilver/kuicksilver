@@ -134,7 +134,7 @@ internal object H3Fixtures {
     val testCa = Certificate(TestCerts.testCa)
 
     /** The transport of WebTransport tests: `reset_stream_at` on, as draft-14 and later need it on both sides (draft-16 section 3.1). */
-    val quic: QuicConfig = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+    val quic: QuicConfig = io.kuicksilver.quic.quicConfig { expert { resetStreamAt = true } }
 
     fun client(alpn: String = "h3"): TlsConfig =
         tlsConfig(TlsRole.Client) {
@@ -176,6 +176,8 @@ internal class QuicPair private constructor(
         suspend fun open(
             serverQuic: QuicConfig = QuicConfig.Default,
             df: Boolean = false,
+            serverQlog: io.kuicksilver.quic.QlogSink? = null,
+            clientQlog: io.kuicksilver.quic.QlogSink? = null,
         ): QuicPair {
             val net = MemoryNet()
             val caps = if (df) IoCapabilities(false, false, 1, false, true, 1) else IoCapabilities.Portable
@@ -189,8 +191,11 @@ internal class QuicPair private constructor(
                         .apply {
                             this.server =
                                 QuicServerConfig.Builder(H3Fixtures.server()).apply { quic = serverQuic }.build()
-                            ; crypto = NullCryptoProvider
-                            io = { b }
+                            runtime {
+                                crypto = NullCryptoProvider
+                                io = { b }
+                            }
+                            observability { qlog = serverQlog }
                         }.build(),
                 )
             val client =
@@ -199,8 +204,11 @@ internal class QuicPair private constructor(
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { a }
+                            runtime {
+                                crypto = NullCryptoProvider
+                                io = { a }
+                            }
+                            observability { qlog = clientQlog }
                         }.build(),
                 )
             return QuicPair(server, client, net)
@@ -228,8 +236,10 @@ internal class H3Pair(
             serverQuic: QuicConfig = if (serverSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
             clientQuic: QuicConfig = if (clientSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
             df: Boolean = false,
+            serverQlog: io.kuicksilver.quic.QlogSink? = null,
+            clientQlog: io.kuicksilver.quic.QlogSink? = null,
         ): H3Pair {
-            val q = QuicPair.open(serverQuic, df)
+            val q = QuicPair.open(serverQuic, df, serverQlog, clientQlog)
             val (c, s) = q.connect(clientQuic)
             return coroutineScope {
                 val server = async { Http3Connection.server(s, serverSettings) }

@@ -506,7 +506,7 @@ class WtStreamRoutingTest {
                     serverQuic =
                         quicConfig {
                             maxBidiStreams = 10
-                            resetStreamAt = true
+                            expert { resetStreamAt = true }
                         },
                 ).useScoped { q ->
                     val (c, s) = q.connect(H3Fixtures.quic)

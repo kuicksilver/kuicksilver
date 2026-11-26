@@ -78,8 +78,8 @@ class WindowAutoTuneTest {
         // 16 KiB windows limit the transfer (a window goes by in well under 4 RTT): they grow
         val small =
             quicConfig {
-                initialStreamWindow = 16_384
-                initialConnectionWindow = 24_576
+                flowControl { initialStreamWindow = 16_384 }
+                flowControl { initialConnectionWindow = 24_576 }
             }
         val (stream, conn) = upload(4 shl 20, 1 shl 20, Duration.ZERO, small)
         assertTrue(stream >= 4 * 16_384L, "stream window $stream")

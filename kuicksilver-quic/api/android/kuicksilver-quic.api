@@ -847,118 +847,103 @@ public final class io/kuicksilver/quic/QuicClientConfig$Builder {
 
 public final class io/kuicksilver/quic/QuicConfig {
 	public static final field Companion Lio/kuicksilver/quic/QuicConfig$Companion;
-	public final fun getAckDelayExponent ()I
-	public final fun getActiveConnectionIdLimit ()I
-	public final fun getAllowMigration ()Z
-	public final fun getAllowMigrationToLoopback ()Z
-	public final fun getCongestionController ()Lkotlin/jvm/functions/Function0;
-	public final fun getConnectionIdLength ()I
-	public final fun getDatagramReceiveQueue ()I
-	public final fun getDatagramSendQueue ()I
-	public final fun getDatagramSendQueueBytes ()J
-	public final fun getDefaultStreamErrorCode ()J
-	public final fun getFirstVersion ()Lio/kuicksilver/quic/VersionProfile;
-	public final fun getFollowPreferredAddress ()Z
-	public final fun getGlitchProtection ()Z
-	public final fun getGreaseQuicBit ()Z
-	public final fun getHandshakeTimeout-UwyO8pc ()J
-	public final fun getInitialConnectionWindow ()J
-	public final fun getInitialRtt-UwyO8pc ()J
-	public final fun getInitialStreamWindow ()J
-	public final fun getInitialUdpPayloadSize ()I
-	public final fun getInitialVersion ()Lio/kuicksilver/quic/VersionProfile;
-	public final fun getKeepAlive-FghU774 ()Lkotlin/time/Duration;
-	public final fun getMaxAckDelay-UwyO8pc ()J
-	public final fun getMaxBidiStreams ()J
-	public final fun getMaxConnectionWindow ()J
-	public final fun getMaxDatagramFrameSize ()J
-	public final fun getMaxIdleTimeout-UwyO8pc ()J
-	public final fun getMaxSendBuffer ()J
-	public final fun getMaxSendUdpPayloadSize ()I
-	public final fun getMaxStreamWindow ()J
-	public final fun getMaxUdpPayloadSize ()I
-	public final fun getMaxUniStreams ()J
-	public final fun getPmtud ()Z
-	public final fun getPmtudIcmpHints ()Z
-	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
-	public final fun getResetStreamAt ()Z
-	public final fun getVersions ()Ljava/util/List;
 	public final fun toBuilder ()Lio/kuicksilver/quic/QuicConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/quic/QuicConfig;
+	public final fun datagrams (Lkotlin/jvm/functions/Function1;)V
+	public final fun expert (Lkotlin/jvm/functions/Function1;)V
+	public final fun flowControl (Lkotlin/jvm/functions/Function1;)V
+	public final fun getCongestionController ()Lkotlin/jvm/functions/Function0;
+	public final fun getDatagrams ()Lio/kuicksilver/quic/QuicConfig$Builder$Datagrams;
+	public final fun getExpert ()Lio/kuicksilver/quic/QuicConfig$Builder$Expert;
+	public final fun getFlowControl ()Lio/kuicksilver/quic/QuicConfig$Builder$FlowControl;
+	public final fun getHandshakeTimeout-UwyO8pc ()J
+	public final fun getKeepAlive-FghU774 ()Lkotlin/time/Duration;
+	public final fun getMaxBidiStreams ()J
+	public final fun getMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
+	public final fun getMigration ()Lio/kuicksilver/quic/QuicConfig$Builder$Migration;
+	public final fun getPathMtu ()Lio/kuicksilver/quic/QuicConfig$Builder$PathMtu;
+	public final fun getVersions ()Ljava/util/List;
+	public final fun migration (Lkotlin/jvm/functions/Function1;)V
+	public final fun pathMtu (Lkotlin/jvm/functions/Function1;)V
+	public final fun setCongestionController (Lkotlin/jvm/functions/Function0;)V
+	public final fun setHandshakeTimeout-LRDsOJo (J)V
+	public final fun setKeepAlive-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setMaxBidiStreams (J)V
+	public final fun setMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setVersions (Ljava/util/List;)V
+}
+
+public final class io/kuicksilver/quic/QuicConfig$Builder$Datagrams {
+	public final fun getMaxFrameSize ()Ljava/lang/Long;
+	public final fun getReceiveQueue ()I
+	public final fun getSendQueue ()I
+	public final fun getSendQueueBytes ()J
+	public final fun setMaxFrameSize (Ljava/lang/Long;)V
+	public final fun setReceiveQueue (I)V
+	public final fun setSendQueue (I)V
+	public final fun setSendQueueBytes (J)V
+}
+
+public final class io/kuicksilver/quic/QuicConfig$Builder$Expert {
 	public final fun getAckDelayExponent ()I
 	public final fun getActiveConnectionIdLimit ()I
-	public final fun getAllowMigration ()Z
-	public final fun getAllowMigrationToLoopback ()Z
-	public final fun getCongestionController ()Lkotlin/jvm/functions/Function0;
-	public final fun getConnectionIdLength ()I
-	public final fun getDatagramReceiveQueue ()I
-	public final fun getDatagramSendQueue ()I
-	public final fun getDatagramSendQueueBytes ()J
-	public final fun getDefaultStreamErrorCode ()J
-	public final fun getFollowPreferredAddress ()Z
+	public final fun getCancelErrorCode ()J
 	public final fun getGlitchProtection ()Z
 	public final fun getGreaseQuicBit ()Z
-	public final fun getHandshakeTimeout-UwyO8pc ()J
-	public final fun getInitialConnectionWindow ()J
 	public final fun getInitialRtt-UwyO8pc ()J
-	public final fun getInitialStreamWindow ()J
-	public final fun getInitialUdpPayloadSize ()I
 	public final fun getInitialVersion ()Lio/kuicksilver/quic/VersionProfile;
-	public final fun getKeepAlive-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxAckDelay-UwyO8pc ()J
-	public final fun getMaxBidiStreams ()J
-	public final fun getMaxConnectionWindow ()J
-	public final fun getMaxDatagramFrameSize ()J
-	public final fun getMaxIdleTimeout-UwyO8pc ()J
-	public final fun getMaxSendBuffer ()J
-	public final fun getMaxSendUdpPayloadSize ()I
-	public final fun getMaxStreamWindow ()J
-	public final fun getMaxUdpPayloadSize ()I
 	public final fun getMaxUniStreams ()J
-	public final fun getPmtud ()Z
-	public final fun getPmtudIcmpHints ()Z
-	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getResetStreamAt ()Z
-	public final fun getVersions ()Ljava/util/List;
 	public final fun setAckDelayExponent (I)V
 	public final fun setActiveConnectionIdLimit (I)V
-	public final fun setAllowMigration (Z)V
-	public final fun setAllowMigrationToLoopback (Z)V
-	public final fun setCongestionController (Lkotlin/jvm/functions/Function0;)V
-	public final fun setConnectionIdLength (I)V
-	public final fun setDatagramReceiveQueue (I)V
-	public final fun setDatagramSendQueue (I)V
-	public final fun setDatagramSendQueueBytes (J)V
-	public final fun setDefaultStreamErrorCode (J)V
-	public final fun setFollowPreferredAddress (Z)V
+	public final fun setCancelErrorCode (J)V
 	public final fun setGlitchProtection (Z)V
 	public final fun setGreaseQuicBit (Z)V
-	public final fun setHandshakeTimeout-LRDsOJo (J)V
-	public final fun setInitialConnectionWindow (J)V
 	public final fun setInitialRtt-LRDsOJo (J)V
-	public final fun setInitialStreamWindow (J)V
-	public final fun setInitialUdpPayloadSize (I)V
 	public final fun setInitialVersion (Lio/kuicksilver/quic/VersionProfile;)V
-	public final fun setKeepAlive-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setMaxAckDelay-LRDsOJo (J)V
-	public final fun setMaxBidiStreams (J)V
-	public final fun setMaxConnectionWindow (J)V
-	public final fun setMaxDatagramFrameSize (J)V
-	public final fun setMaxIdleTimeout-LRDsOJo (J)V
-	public final fun setMaxSendBuffer (J)V
-	public final fun setMaxSendUdpPayloadSize (I)V
-	public final fun setMaxStreamWindow (J)V
-	public final fun setMaxUdpPayloadSize (I)V
 	public final fun setMaxUniStreams (J)V
-	public final fun setPmtud (Z)V
-	public final fun setPmtudIcmpHints (Z)V
-	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setResetStreamAt (Z)V
-	public final fun setVersions (Ljava/util/List;)V
+}
+
+public final class io/kuicksilver/quic/QuicConfig$Builder$FlowControl {
+	public final fun getInitialConnectionWindow ()J
+	public final fun getInitialStreamWindow ()J
+	public final fun getMaxConnectionWindow ()J
+	public final fun getMaxSendBuffer ()J
+	public final fun getMaxStreamWindow ()J
+	public final fun setInitialConnectionWindow (J)V
+	public final fun setInitialStreamWindow (J)V
+	public final fun setMaxConnectionWindow (J)V
+	public final fun setMaxSendBuffer (J)V
+	public final fun setMaxStreamWindow (J)V
+}
+
+public final class io/kuicksilver/quic/QuicConfig$Builder$Migration {
+	public final fun getAllow ()Z
+	public final fun getAllowToLoopback ()Z
+	public final fun getFollowPreferredAddress ()Z
+	public final fun setAllow (Z)V
+	public final fun setAllowToLoopback (Z)V
+	public final fun setFollowPreferredAddress (Z)V
+}
+
+public final class io/kuicksilver/quic/QuicConfig$Builder$PathMtu {
+	public final fun getDiscovery ()Z
+	public final fun getIcmpHints ()Z
+	public final fun getInitial ()I
+	public final fun getMaxReceive ()I
+	public final fun getMaxSend ()I
+	public final fun setDiscovery (Z)V
+	public final fun setIcmpHints (Z)V
+	public final fun setInitial (I)V
+	public final fun setMaxReceive (I)V
+	public final fun setMaxSend (I)V
 }
 
 public final class io/kuicksilver/quic/QuicConfig$Companion {
@@ -1074,66 +1059,65 @@ public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
 
 public final class io/kuicksilver/quic/QuicEndpointConfig {
 	public static final field Companion Lio/kuicksilver/quic/QuicEndpointConfig$Companion;
-	public final fun getAcceptQueue ()I
-	public final fun getAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
-	public final fun getConnectionIdLength ()I
-	public final fun getCrypto ()Lio/kuicksilver/tls/QuicCrypto;
-	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
-	public final fun getInitialQueueCap ()I
-	public final fun getIo ()Lkotlin/jvm/functions/Function2;
-	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
-	public final fun getLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
-	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
-	public final fun getLoops ()I
-	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
-	public final fun getMaxConnections ()I
-	public final fun getMaxConnectionsPerIp ()Ljava/lang/Integer;
-	public final fun getRejectInitialFromReflectivePorts ()Z
-	public final fun getServer ()Lio/kuicksilver/quic/QuicServerConfig;
-	public final fun getStatelessPerAddressPerSecond ()I
-	public final fun getStatelessTotalPerSecond ()I
 	public final fun toBuilder ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/quic/QuicEndpointConfig;
+	public final fun expert (Lkotlin/jvm/functions/Function1;)V
 	public final fun getAcceptQueue ()I
 	public final fun getAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
 	public final fun getConnectionIdLength ()I
-	public final fun getCrypto ()Lio/kuicksilver/tls/QuicCrypto;
-	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
-	public final fun getInitialQueueCap ()I
-	public final fun getIo ()Lkotlin/jvm/functions/Function2;
-	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getExpert ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder$Expert;
 	public final fun getLoadBalancer ()Lio/kuicksilver/quic/QuicLbConfig;
-	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxConnections ()I
 	public final fun getMaxConnectionsPerIp ()Ljava/lang/Integer;
-	public final fun getRejectInitialFromReflectivePorts ()Z
+	public final fun getObservability ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder$Observability;
+	public final fun getRuntime ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder$Runtime;
 	public final fun getServer ()Lio/kuicksilver/quic/QuicServerConfig;
-	public final fun getStatelessPerAddressPerSecond ()I
-	public final fun getStatelessTotalPerSecond ()I
+	public final fun observability (Lkotlin/jvm/functions/Function1;)V
+	public final fun runtime (Lkotlin/jvm/functions/Function1;)V
 	public final fun setAcceptQueue (I)V
 	public final fun setAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
 	public final fun setConnectionIdLength (I)V
-	public final fun setCrypto (Lio/kuicksilver/tls/QuicCrypto;)V
-	public final fun setDispatcher (Lkotlinx/coroutines/CoroutineDispatcher;)V
-	public final fun setInitialQueueCap (I)V
-	public final fun setIo (Lkotlin/jvm/functions/Function2;)V
-	public final fun setListener (Lio/kuicksilver/quic/ConnectionListener;)V
 	public final fun setLoadBalancer (Lio/kuicksilver/quic/QuicLbConfig;)V
-	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setLoops (I)V
 	public final fun setMaxConnectionLifetime-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setMaxConnections (I)V
 	public final fun setMaxConnectionsPerIp (Ljava/lang/Integer;)V
-	public final fun setRejectInitialFromReflectivePorts (Z)V
 	public final fun setServer (Lio/kuicksilver/quic/QuicServerConfig;)V
+}
+
+public final class io/kuicksilver/quic/QuicEndpointConfig$Builder$Expert {
+	public final fun getInitialAdmissionQueue ()I
+	public final fun getRejectInitialFromReflectivePorts ()Z
+	public final fun getStatelessPerAddressPerSecond ()I
+	public final fun getStatelessTotalPerSecond ()I
+	public final fun setInitialAdmissionQueue (I)V
+	public final fun setRejectInitialFromReflectivePorts (Z)V
 	public final fun setStatelessPerAddressPerSecond (I)V
 	public final fun setStatelessTotalPerSecond (I)V
+}
+
+public final class io/kuicksilver/quic/QuicEndpointConfig$Builder$Observability {
+	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
+	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
+	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
+	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
+	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
+}
+
+public final class io/kuicksilver/quic/QuicEndpointConfig$Builder$Runtime {
+	public final fun getCrypto ()Lio/kuicksilver/tls/QuicCrypto;
+	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
+	public final fun getIo ()Lkotlin/jvm/functions/Function2;
+	public final fun setCrypto (Lio/kuicksilver/tls/QuicCrypto;)V
+	public final fun setDispatcher (Lkotlinx/coroutines/CoroutineDispatcher;)V
+	public final fun setIo (Lkotlin/jvm/functions/Function2;)V
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig$Companion {
@@ -1315,7 +1299,7 @@ public abstract interface class io/kuicksilver/quic/QuicPath {
 }
 
 public final class io/kuicksilver/quic/QuicServerConfig {
-	public final fun getEarlyData ()Z
+	public final fun getAcceptEarlyData ()Z
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNewTokenReplayCapacity ()I
 	public final fun getPreferredAddress ()Lio/kuicksilver/quic/PreferredAddress;
@@ -1326,14 +1310,14 @@ public final class io/kuicksilver/quic/QuicServerConfig {
 public final class io/kuicksilver/quic/QuicServerConfig$Builder {
 	public fun <init> (Lio/kuicksilver/tls/TlsConfig;)V
 	public final fun build ()Lio/kuicksilver/quic/QuicServerConfig;
-	public final fun getEarlyData ()Z
+	public final fun getAcceptEarlyData ()Z
 	public final fun getEarlyDataContext ()[B
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNewTokenReplayCapacity ()I
 	public final fun getPreferredAddress ()Lio/kuicksilver/quic/PreferredAddress;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
-	public final fun setEarlyData (Z)V
+	public final fun setAcceptEarlyData (Z)V
 	public final fun setEarlyDataContext ([B)V
 	public final fun setNewTokenLifetime-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setNewTokenReplayCapacity (I)V

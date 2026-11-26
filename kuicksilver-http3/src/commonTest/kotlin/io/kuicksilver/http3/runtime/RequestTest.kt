@@ -163,10 +163,10 @@ class RequestTest {
             val big = 4 * 1024 * 1024
             val windows =
                 quicConfig {
-                    initialStreamWindow = 8L * 1024 * 1024
-                    maxStreamWindow = 8L * 1024 * 1024
-                    initialConnectionWindow = 16L * 1024 * 1024
-                    maxConnectionWindow = 16L * 1024 * 1024
+                    flowControl { initialStreamWindow = 8L * 1024 * 1024 }
+                    flowControl { maxStreamWindow = 8L * 1024 * 1024 }
+                    flowControl { initialConnectionWindow = 16L * 1024 * 1024 }
+                    flowControl { maxConnectionWindow = 16L * 1024 * 1024 }
                 }
             H3Pair.open(clientQuic = windows).useScoped { p ->
                 launch {

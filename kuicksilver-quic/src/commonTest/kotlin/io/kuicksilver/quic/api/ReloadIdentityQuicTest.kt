@@ -106,7 +106,7 @@ class ReloadIdentityQuicTest {
             server =
                 QuicServerConfig
                     .Builder(CoreFixtures.server { identity = r })
-                    .apply { earlyData = true }
+                    .apply { acceptEarlyData = true }
                     .build()
         }
 

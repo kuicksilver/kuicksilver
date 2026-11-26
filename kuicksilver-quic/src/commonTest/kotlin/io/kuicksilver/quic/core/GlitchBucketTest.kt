@@ -82,7 +82,7 @@ class GlitchBucketTest {
     }
 
     @Test fun disabledNeverCloses() {
-        val p = CorePair(serverQuic = quicConfig { glitchProtection = false })
+        val p = CorePair(serverQuic = quicConfig { expert { glitchProtection = false } })
         p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { false }

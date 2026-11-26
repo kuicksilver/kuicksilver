@@ -170,7 +170,7 @@ class ClientEarlyDataTest {
                         endpoint =
                             io.kuicksilver.quic.QuicEndpointConfig
                                 .Builder()
-                                .apply { io = { local -> ios.open(local) } }
+                                .apply { runtime { io = { local -> ios.open(local) } } }
                                 .build()
                     }
                 }).use { c ->

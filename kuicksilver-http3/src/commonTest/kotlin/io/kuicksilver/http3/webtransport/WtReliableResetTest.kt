@@ -94,11 +94,7 @@ class WtReliableResetTest {
                 .open(
                     clientSettings = wtOn,
                     serverSettings = wtOn,
-                    clientQuic =
-                        quicConfig {
-                            resetStreamAt = true
-                            qlog = sizes
-                        },
+                    clientQlog = sizes,
                 ).useScoped { p ->
                     val (client, server) = sessions(p)
                     val clientAddr =
@@ -128,11 +124,7 @@ class WtReliableResetTest {
                 .open(
                     clientSettings = wtOn,
                     serverSettings = wtOn,
-                    clientQuic =
-                        quicConfig {
-                            resetStreamAt = true
-                            qlog = sizes
-                        },
+                    clientQlog = sizes,
                 ).useScoped { p ->
                     val (client, server) = sessions(p)
                     val out = client.openUni()
@@ -162,11 +154,7 @@ class WtReliableResetTest {
                 .open(
                     clientSettings = wtOn,
                     serverSettings = wtOn,
-                    clientQuic =
-                        quicConfig {
-                            resetStreamAt = true
-                            qlog = sizes
-                        },
+                    clientQlog = sizes,
                 ).useScoped { p ->
                     val (client, server) = sessions(p)
                     val clientAddr =
@@ -199,11 +187,7 @@ class WtReliableResetTest {
                 .open(
                     clientSettings = wtOn,
                     serverSettings = wtLimits(data = 2),
-                    clientQuic =
-                        quicConfig {
-                            resetStreamAt = true
-                            qlog = sizes
-                        },
+                    clientQlog = sizes,
                 ).useScoped { p ->
                     val (client, server) = sessions(p)
                     val out = client.openUni()

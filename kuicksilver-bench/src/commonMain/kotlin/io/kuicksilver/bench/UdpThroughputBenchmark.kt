@@ -64,8 +64,8 @@ public class UdpThroughputBenchmark {
         val clientTls = tlsConfig(TlsRole.Client) { alpn = listOf("bench"); serverName = "server.test"; trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) } }
         val quic = quicConfig { if (cc == "bbr") congestionController = { Bbr() } }
         val lo = InetSocketAddress("127.0.0.1", 0)
-        server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).apply { this.quic = quic }.build(); crypto = NullCryptoProvider; this.io = { DatagramIo.open(it, prefer) } }.build())
-        client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider; this.io = { DatagramIo.open(it, prefer) } }.build())
+        server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).apply { this.quic = quic }.build(); runtime { crypto = NullCryptoProvider }; runtime { io = { DatagramIo.open(it, prefer) } } }.build())
+        client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { runtime { crypto = NullCryptoProvider }; runtime { io = { DatagramIo.open(it, prefer) } } }.build())
         val accepted = async { server.accept() }
         connection = client.connect(server.localAddress, QuicClientConfig.Builder(clientTls).apply { this.quic = quic }.build())
         val serverConnection = accepted.await()

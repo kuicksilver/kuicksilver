@@ -69,8 +69,8 @@ class EcnFailureTest {
                             .apply {
                                 this.server =
                                     QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                ; crypto = NullCryptoProvider
-                                io = { sio }
+                                ; runtime { crypto = NullCryptoProvider }
+                                runtime { io = { sio } }
                             }.build(),
                     )
                 val client =
@@ -79,8 +79,8 @@ class EcnFailureTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { first }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { first } }
                             }.build(),
                     )
                 try {
@@ -132,8 +132,8 @@ class EcnFailureTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
-                                io = { sio }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { sio } }
                             }.build(),
                     )
                 val client =
@@ -142,8 +142,8 @@ class EcnFailureTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { first }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { first } }
                             }.build(),
                     )
                 try {

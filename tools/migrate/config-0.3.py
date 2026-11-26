@@ -25,8 +25,27 @@ import kotlin_scan  # noqa: E402
 RULES = {}
 
 
-def rule(name, openers, moves, warn=None):
+RECEIVERS = {}  # rule name -> the builder class the compiler names ("QuicConfig.Builder")
+
+
+def rule(name, openers, moves, warn=None, receiver=None):
     RULES[name] = (re.compile(openers), moves, warn or {})
+    if receiver:
+        RECEIVERS[name] = receiver
+
+
+def builder(dsl, cls):
+    """The openings of a builder block: `dsl {`, `dsl(...) {`, `Cls.Builder(...).apply {`, `.toBuilder().apply {`."""
+    return (r"\b" + dsl + r"\s*(?:\([^()]*\))?\s*\{|\b" + r"\s*\.\s*".join(map(re.escape, cls.split("."))) +
+            r"\s*\.\s*Builder\s*\([^()]*\)\s*\.\s*(?:apply|run|also)\s*\{"
+            r"|\.toBuilder\(\)\s*\.\s*(?:apply|run|also)\s*\{")
+
+
+# A value that meant "off" in 0.2.x and is refused now: (old option, pattern of the old value, the new value).
+NONE_VALUES = {
+    "maxIdleTimeout": (r"^(?:kotlin\.time\.)?Duration\.ZERO$", "null"),
+    "maxDatagramFrameSize": (r"^0L?$", "null"),
+}
 
 
 # TlsConfig.Builder (tlsConfig(role) { }, TlsConfig.Builder(role).apply { })
@@ -41,6 +60,65 @@ rule(
         "alpnFallback": (("expert",), "alpnFallback"),
     },
 )
+
+# QuicConfig.Builder (quicConfig { }); connectionIdLength and qlog moved to the endpoint (QuicEndpointConfig.Builder
+# connectionIdLength, observability { qlog }): the compiler finds them.
+rule(
+    "quic",
+    builder("quicConfig", "QuicConfig"),
+    {
+        "initialStreamWindow": (("flowControl",), "initialStreamWindow"),
+        "initialConnectionWindow": (("flowControl",), "initialConnectionWindow"),
+        "maxStreamWindow": (("flowControl",), "maxStreamWindow"),
+        "maxConnectionWindow": (("flowControl",), "maxConnectionWindow"),
+        "maxSendBuffer": (("flowControl",), "maxSendBuffer"),
+        "maxUdpPayloadSize": (("pathMtu",), "maxReceive"),
+        "initialUdpPayloadSize": (("pathMtu",), "initial"),
+        "maxSendUdpPayloadSize": (("pathMtu",), "maxSend"),
+        "pmtud": (("pathMtu",), "discovery"),
+        "pmtudIcmpHints": (("pathMtu",), "icmpHints"),
+        "maxDatagramFrameSize": (("datagrams",), "maxFrameSize"),
+        "datagramReceiveQueue": (("datagrams",), "receiveQueue"),
+        "datagramSendQueue": (("datagrams",), "sendQueue"),
+        "datagramSendQueueBytes": (("datagrams",), "sendQueueBytes"),
+        "allowMigration": (("migration",), "allow"),
+        "allowMigrationToLoopback": (("migration",), "allowToLoopback"),
+        "followPreferredAddress": (("migration",), "followPreferredAddress"),
+        "maxUniStreams": (("expert",), "maxUniStreams"),
+        "maxAckDelay": (("expert",), "maxAckDelay"),
+        "ackDelayExponent": (("expert",), "ackDelayExponent"),
+        "activeConnectionIdLimit": (("expert",), "activeConnectionIdLimit"),
+        "initialVersion": (("expert",), "initialVersion"),
+        "initialRtt": (("expert",), "initialRtt"),
+        "defaultStreamErrorCode": (("expert",), "cancelErrorCode"),
+        "greaseQuicBit": (("expert",), "greaseQuicBit"),
+        "glitchProtection": (("expert",), "glitchProtection"),
+        "resetStreamAt": (("expert",), "resetStreamAt"),
+        "maxIdleTimeout": ((), "maxIdleTimeout"),
+    },
+    receiver="QuicConfig.Builder",
+)
+
+# QuicEndpointConfig.Builder (quicEndpointConfig { })
+rule(
+    "endpoint",
+    builder("quicEndpointConfig", "QuicEndpointConfig"),
+    {
+        "logger": (("observability",), "logger"),
+        "listener": (("observability",), "connectionListener"),
+        "dispatcher": (("runtime",), "dispatcher"),
+        "io": (("runtime",), "io"),
+        "crypto": (("runtime",), "crypto"),
+        "initialQueueCap": (("expert",), "initialAdmissionQueue"),
+        "rejectInitialFromReflectivePorts": (("expert",), "rejectInitialFromReflectivePorts"),
+        "statelessPerAddressPerSecond": (("expert",), "statelessPerAddressPerSecond"),
+        "statelessTotalPerSecond": (("expert",), "statelessTotalPerSecond"),
+    },
+    receiver="QuicEndpointConfig.Builder",
+)
+
+# QuicServerConfig.Builder (quicServerConfig(tls) { })
+rule("quic-server", builder("quicServerConfig", "QuicServerConfig"), {"earlyData": ((), "acceptEarlyData")}, receiver="QuicServerConfig")
 
 # The same moves in any block: the names are TlsConfig.Builder's alone (test fixtures that take a builder lambda).
 rule("tls-any", r"\{", RULES["tls"][1])
@@ -162,7 +240,12 @@ def _one_change(text, code, names, report, where):
             inside = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", code[max(0, open_pos - 80):open_pos])
             for st in _direct_statements(code, open_pos + 1, close, text):
                 if st[3] in moves:
-                    path = moves[st[3]][0]
+                    path, new = moves[st[3]]
+                    if not path and new == st[3]:
+                        none = NONE_VALUES.get(st[3])
+                        value = text[st[1]:st[2]].strip()
+                        if not (none and re.match(none[0], value)):
+                            continue  # in place under the same name: only an "off" value changes
                     if path and inside and inside.group(1) == path[-1]:
                         continue  # already in its group
                     candidates.append((st, moves, warn))
@@ -171,6 +254,9 @@ def _one_change(text, code, names, report, where):
     (s, eq, e, opt), moves, warn = max(candidates, key=lambda c: c[0][0])  # the last one: earlier offsets stay valid
     path, new = moves[opt]
     value = text[eq:e].strip()
+    none = NONE_VALUES.get(opt)
+    if none and re.match(none[0], value):
+        value = none[1]
     line = text.count("\n", 0, s) + 1
     if new is None:
         report.append(f"{where}:{line}: {opt} was removed; delete `{text[s:e].strip()}`")
@@ -178,8 +264,9 @@ def _one_change(text, code, names, report, where):
     for pattern, why in warn.get(opt, []):
         if re.search(pattern, value):
             report.append(f"{where}:{line}: {opt} = {value}: {why}")
-    # `keys = keys` inside the group would assign the caller's variable of that name
-    stmt = f"{'this.' if value == new else ''}{new} = {value}"
+    # `keys = keys` inside the group would assign the caller's variable of that name, as would `this.io = ...` without this
+    this = value == new or re.match(r"this\s*\.", text[s:eq]) is not None
+    stmt = f"{'this.' if this else ''}{new} = {value}"
     for group in reversed(path):
         stmt = f"{group} {{ {stmt} }}"
     return text[:s] + stmt + text[e:]
@@ -192,6 +279,67 @@ def rewrite_code(text, names, report, where):
         if new is None:
             return text
         text = new
+
+
+_ERROR = re.compile(r"^e: (?:file://)?(\S+?\.kts?):(\d+):(\d+) (Unresolved reference '(\w+)'(?: on receiver of type '([\w.<>?]+)')?"
+                    r"|Expression expected, but package name found\.)", re.M)
+
+
+def fix_from_errors(log, names, report):
+    """Rewrites the assignments and reads a compiler log names as unresolved (`e: file:///x.kt:12:5 Unresolved reference
+    'pmtud'.`): whatever block they sit in, through `this.` or another receiver (`it.pmtud` becomes `it.pathMtu.discovery`)."""
+    by_file = {}
+    for m in _ERROR.finditer(log):
+        by_file.setdefault(m.group(1), set()).add((int(m.group(2)), int(m.group(3)), m.group(5), m.group(6)))
+    for path, errs in sorted(by_file.items()):
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        starts = [0] + [i + 1 for i, c in enumerate(text) if c == "\n"]
+        # from the end of the file, so earlier offsets stay valid
+        for line, col, name, receiver in sorted(errs, reverse=True):
+            pos = starts[line - 1] + col - 1
+            m = re.match(r"\w+", text[pos:])
+            if not m:
+                continue
+            name = name or m.group(0)
+            if m.group(0) != name:
+                continue
+            cands = [r for r in names if name in RULES[r][1]]
+            if receiver:
+                cands = [r for r in cands if RECEIVERS.get(r) == receiver.rstrip("?")] or cands
+            if not cands:
+                continue
+            if len(cands) > 1:
+                report.append(f"{path}:{line}: `{name}` belongs to {', '.join(cands)}; took {cands[0]}")
+            group_path, new = RULES[cands[0]][1][name]
+            if new is None:
+                report.append(f"{path}:{line}: {name} was removed")
+                continue
+            before = text[:pos]
+            explicit = re.search(r"(\w+|\))\s*\.\s*$", before)
+            if explicit and explicit.group(1) != "this":
+                text = text[:pos] + ".".join(group_path + (new,)) + text[m.end() + pos:]
+                continue
+            start = pos - len(explicit.group(0)) if explicit else pos
+            code = kotlin_scan.blank(text)
+            am = re.compile(r"\s*=(?!=)").match(code, pos + len(name))
+            if not am:  # a read: the dotted path
+                text = text[:pos] + ".".join(group_path + (new,)) + text[m.end() + pos:]
+                continue
+            e = _trim(code, text, am.end(), _statement_end(code, am.end(), len(code), text))
+            value = text[am.end():e].strip()
+            none = NONE_VALUES.get(name)
+            if none and re.match(none[0], value):
+                value = none[1]
+            stmt = f"{'this.' if value == new or explicit else ''}{new} = {value}"
+            for g in reversed(group_path):
+                stmt = f"{g} {{ {stmt} }}"
+            text = text[:start] + stmt + text[e:]
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print(f"rewrote {path}")
 
 
 _FENCE = re.compile(r"(^```kotlin[^\n]*\n)(.*?)(^```)", re.M | re.S)
@@ -211,12 +359,20 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rules", default=",".join(RULES), help="comma-separated rule names (default: all): " + ", ".join(RULES))
     ap.add_argument("--check", action="store_true", help="only list the files that would change")
-    ap.add_argument("paths", nargs="+")
+    ap.add_argument("--errors", metavar="LOG", help="fix the unresolved references a compiler log names, instead of reading paths")
+    ap.add_argument("paths", nargs="*")
     a = ap.parse_args()
     names = [n for n in a.rules.split(",") if n]
     unknown = [n for n in names if n not in RULES]
     if unknown:
         ap.error("unknown rules: " + ", ".join(unknown))
+    if a.errors:
+        report = []
+        with open(a.errors, encoding="utf-8", errors="replace") as fh:
+            fix_from_errors(fh.read(), names, report)
+        for r in report:
+            print("CHECK " + r, file=sys.stderr)
+        return
     files = []
     for p in a.paths:
         if os.path.isdir(p):

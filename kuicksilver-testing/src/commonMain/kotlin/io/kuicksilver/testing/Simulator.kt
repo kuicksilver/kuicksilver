@@ -105,7 +105,7 @@ public class Simulator(
     private val clientEndpoint: EndpointCore =
         try {
             EndpointCore(
-                QuicEndpointConfig.Builder().apply { this.crypto = this@Simulator.crypto }.build(),
+                QuicEndpointConfig.Builder().apply { runtime { crypto = this@Simulator.crypto } }.build(),
                 Random(seed + 3),
             )
         } catch (e: Throwable) {
@@ -206,7 +206,7 @@ public class Simulator(
                                     quic = server
                                     this.preferredAddress = preferredAddress
                                 }.build()
-                        ; this.crypto = this@Simulator.crypto
+                        ; runtime { crypto = this@Simulator.crypto }
                     }.build(),
                 Random(seed + 5),
             )

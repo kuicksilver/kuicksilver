@@ -176,7 +176,7 @@ class ClientMigrationTest {
     private suspend fun server(
         g: Gates,
         allowMigration: Boolean = true,
-    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { this.allowMigration = false } }) {
+    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { migration { allow = false } } }) {
         routing {
             get("/big") {
                 call.respondBytesWriter {
@@ -225,7 +225,7 @@ class ClientMigrationTest {
                 endpoint =
                     QuicEndpointConfig
                         .Builder()
-                        .apply { io = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } } }
+                        .apply { runtime { io = { local -> CuttableIo(DatagramIo.open(local)).also { cut.complete(it) } } } }
                         .build()
             }
         })
@@ -627,7 +627,7 @@ class ClientMigrationTest {
     private suspend fun wsServer(
         s: WsScript,
         allowMigration: Boolean = true,
-    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { this.allowMigration = false } }) {
+    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { migration { allow = false } } }) {
         install(ServerWebSockets)
         routing {
             get("/small") { call.respondText(call.request.httpVersion) }

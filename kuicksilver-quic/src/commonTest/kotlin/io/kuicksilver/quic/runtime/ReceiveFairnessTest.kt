@@ -96,8 +96,8 @@ class ReceiveFairnessTest {
                             .Builder()
                             .apply {
                                 server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                                crypto = NullCryptoProvider
-                                io = { b }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { b } }
                             }.build(),
                     )
                 val client =
@@ -106,8 +106,8 @@ class ReceiveFairnessTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { a }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { a } }
                             }.build(),
                     )
                 // not a child of runBlocking: a starved loop never runs the queued connect, and a cancelled command that was never dispatched cannot complete
@@ -125,7 +125,7 @@ class ReceiveFairnessTest {
                                         quic =
                                             quicConfig {
                                                 maxIdleTimeout = 500.milliseconds
-                                                initialRtt = 50.milliseconds
+                                                expert { initialRtt = 50.milliseconds }
                                             }
                                     }.build(),
                             )

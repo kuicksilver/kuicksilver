@@ -43,7 +43,7 @@ class ClientH3SharedTicketsTest {
                 local,
                 QuicEndpointConfig
                     .Builder()
-                    .apply { server = QuicServerConfig.Builder(tls).apply { earlyData = true }.build() }
+                    .apply { server = QuicServerConfig.Builder(tls).apply { acceptEarlyData = true }.build() }
                     .build(),
             )
         launch {

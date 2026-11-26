@@ -83,8 +83,8 @@ internal class H3InteropServer private constructor(private val endpoints: List<H
     companion object {
         suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }): H3InteropServer {
             val tls = tlsConfig(TlsRole.Server) { alpn = listOf(Http3Endpoint.H3); this.identity = identity; this.cipherSuites = cipherSuites }
-            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
-            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic }.build(); this.admission = admission }.build()
+            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
+            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic }.build(); this.admission = admission; observability { this.qlog = qlog } }.build()
             val endpoints = ArrayList<Http3Endpoint>(2); endpoints += Http3Endpoint.bind(InetSocketAddress(host, port), config)
             if (ipv6 && host == "0.0.0.0") try { endpoints += Http3Endpoint.bind(InetSocketAddress("::", port), config) } catch (e: Exception) { Files.log("IPv6 endpoint not bound: ${e.message}") }
             return H3InteropServer(endpoints, www).also { it.run() }
@@ -99,9 +99,9 @@ internal object H3InteropClient {
         if (requests.isEmpty()) return false
         val first = Url.parse(requests[0])
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf(Http3Endpoint.H3); serverName = first.host.takeUnless { it.contains(':') }; this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
-        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
+        val quic = quicConfig { versions = plan.quic.versions; expert { initialVersion = plan.quic.initialVersion }; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController }
         val remote = InetSocketAddress(first.host, first.port)
-        val endpoint = Http3Endpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().build())
+        val endpoint = Http3Endpoint.bind(clientLocalAddress(remote.resolveAddressOrNull()), QuicEndpointConfig.Builder().apply { observability { this.qlog = qlog } }.build())
         try {
             return withTimeout(600.seconds) {
                 val conn = endpoint.connect(remote, tls, quic)

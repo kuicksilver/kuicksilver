@@ -146,7 +146,7 @@ internal class RawServer private constructor(
                 QuicEndpoint.bind(
                     InetSocketAddress("127.0.0.1", 0),
                     quicEndpointConfig {
-                        server = QuicServerConfig.Builder(SoakPki.serverTls(RawProtocol.ALPN)).apply { earlyData = true }.build()
+                        server = QuicServerConfig.Builder(SoakPki.serverTls(RawProtocol.ALPN)).apply { acceptEarlyData = true }.build()
                         this.acceptQueue = acceptQueue
                     },
                 )

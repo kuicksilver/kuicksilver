@@ -347,8 +347,8 @@ class PathInfoTest {
                                     .Builder(CoreFixtures.server())
                                     .apply { preferredAddress = PreferredAddress(pref, null) }
                                     .build()
-                            crypto = KslQuicCrypto
-                            io = { at -> if (at == pref) net.open(pref) else b }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { at -> if (at == pref) net.open(pref) else b } }
                         }.build(),
                 )
             val client =
@@ -357,9 +357,9 @@ class PathInfoTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { a }
-                            listener = heard
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { a } }
+                            observability { connectionListener = heard }
                         }.build(),
                 )
             try {

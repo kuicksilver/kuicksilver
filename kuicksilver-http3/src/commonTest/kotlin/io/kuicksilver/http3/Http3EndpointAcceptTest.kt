@@ -48,8 +48,8 @@ class Http3EndpointAcceptTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(H3Fixtures.server()).build()
-                                crypto = NullCryptoProvider
-                                io = { serverIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { serverIo } }
                             }.build(),
                     )
                 val stuck =
@@ -58,8 +58,8 @@ class Http3EndpointAcceptTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { stuckIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { stuckIo } }
                             }.build(),
                     )
                 val good =
@@ -68,14 +68,14 @@ class Http3EndpointAcceptTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                io = { goodIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { goodIo } }
                             }.build(),
                     )
                 try {
                     stuck.connect(
                         server.localAddress,
-                        QuicClientConfig.Builder(H3Fixtures.client()).apply { quic = quicConfig { maxUniStreams = 2 } }.build(),
+                        QuicClientConfig.Builder(H3Fixtures.client()).apply { quic = quicConfig { expert { maxUniStreams = 2 } } }.build(),
                     )
                     withTimeout(10.seconds) { server.accept() } // the stuck client's connection
                     coroutineScope {
@@ -104,7 +104,7 @@ class Http3EndpointAcceptTest {
         runBlocking {
             val net = MemoryNet()
             val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
-            val two = quicConfig { maxUniStreams = 2 }
+            val two = quicConfig { expert { maxUniStreams = 2 } }
             val e =
                 assertFailsWith<IllegalArgumentException> {
                     Http3Endpoint.bind(
@@ -113,8 +113,8 @@ class Http3EndpointAcceptTest {
                             .Builder()
                             .apply {
                                 this.server = QuicServerConfig.Builder(H3Fixtures.server()).apply { quic = two }.build()
-                                crypto = NullCryptoProvider
-                                io = { serverIo }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { io = { serverIo } }
                             }.build(),
                     )
                 }
@@ -126,8 +126,8 @@ class Http3EndpointAcceptTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = NullCryptoProvider
-                            io = { clientIo }
+                            runtime { crypto = NullCryptoProvider }
+                            runtime { io = { clientIo } }
                         }.build(),
                 )
             try {

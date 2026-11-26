@@ -192,7 +192,7 @@ internal suspend fun CoroutineScope.h3Origin(
             QuicEndpointConfig
                 .Builder()
                 .apply {
-                    server = QuicServerConfig.Builder(tls).apply { this.earlyData = earlyData }.build()
+                    server = QuicServerConfig.Builder(tls).apply { acceptEarlyData = earlyData }.build()
                 }.build(),
         )
     launch {

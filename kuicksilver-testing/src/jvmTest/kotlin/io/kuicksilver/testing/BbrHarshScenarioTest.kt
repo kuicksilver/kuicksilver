@@ -44,10 +44,10 @@ class BbrHarshScenarioTest {
         val cc = congestionController
         return quicConfig {
             congestionController = cc
-            initialStreamWindow = 64_000_000
-            initialConnectionWindow = 64_000_000
-            maxStreamWindow = 64_000_000
-            maxConnectionWindow = 64_000_000
+            flowControl { initialStreamWindow = 64_000_000 }
+            flowControl { initialConnectionWindow = 64_000_000 }
+            flowControl { maxStreamWindow = 64_000_000 }
+            flowControl { maxConnectionWindow = 64_000_000 }
         }
     }
 

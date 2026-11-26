@@ -475,7 +475,7 @@ connection runs end to end through the proxy (TLS to the target, the proxy sees 
 ```kotlin
 // guide:http3:connect-udp (proxied QUIC)
 val tunnel = connection.connectUdp(template, "example.com", 443)    // the proxy resolves the name
-val inner = Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), QuicEndpointConfig.Builder().apply { io = { tunnel.asDatagramIo() } }.build())
+val inner = Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), QuicEndpointConfig.Builder().apply { runtime { io = { tunnel.asDatagramIo() } } }.build())
 val h3 = inner.connect(tunnel.remoteAddress, tls)                   // tls names example.com
 val response = h3.request(http3Request("GET", "example.com", "/"))
 ```

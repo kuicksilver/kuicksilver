@@ -77,9 +77,9 @@ class ObservabilityTest {
                 QuicEndpointConfig
                     .Builder()
                     .apply {
-                        this.server = QuicServerConfig.Builder(serverTls).apply { earlyData = serverEarlyData }.build()
-                        this.crypto = crypto
-                        io = { net.open(it) }
+                        this.server = QuicServerConfig.Builder(serverTls).apply { acceptEarlyData = serverEarlyData }.build()
+                        runtime { this.crypto = crypto }
+                        runtime { io = { net.open(it) } }
                         server()
                     }.build(),
             )
@@ -90,8 +90,8 @@ class ObservabilityTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            this.crypto = crypto
-                            io = { net.open(it) }
+                            runtime { this.crypto = crypto }
+                            runtime { io = { net.open(it) } }
                             client()
                         }.build(),
                 )
@@ -245,7 +245,8 @@ class ObservabilityTest {
                         heard += outcome
                     }
                 }
-            endpoints(crypto = KslQuicCrypto, serverEarlyData = true, client = { this.listener = listener }).use { e ->
+            val observed: QuicEndpointConfig.Builder.() -> Unit = { observability { connectionListener = listener } }
+            endpoints(crypto = KslQuicCrypto, serverEarlyData = true, client = observed).use { e ->
                 withTimeout(20.seconds) {
                     val server = async { repeat(2) { serveEcho(e.server.accept()) } }
                     val first = e.clients[0].connect(e.server.localAddress, clientConfig(early = EarlyDataState.Allowed))
@@ -276,7 +277,7 @@ class ObservabilityTest {
                     .Builder()
                     .apply {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = NullCryptoProvider
+                        runtime { crypto = NullCryptoProvider }
                         loops = 2
                     }.build()
             val group = LoopGroup.create(config, listOf(net.open(serverAddr), net.open(other)))
@@ -288,8 +289,8 @@ class ObservabilityTest {
                         QuicEndpointConfig
                             .Builder()
                             .apply {
-                                crypto = NullCryptoProvider
-                                this.io = { io }
+                                runtime { crypto = NullCryptoProvider }
+                                runtime { this.io = { io } }
                             }.build(),
                     )
                 }
@@ -338,7 +339,10 @@ class ObservabilityTest {
         runBlocking {
             val server = Recorder()
             val client = Recorder()
-            endpoints(server = { listener = server }, client = { listener = client }).use { e ->
+            endpoints(
+                server = { observability { connectionListener = server } },
+                client = { observability { connectionListener = client } },
+            ).use { e ->
                 withTimeout(20.seconds) {
                     val accepted = async { e.server.accept() }
                     val c = e.clients[0].connect(e.server.localAddress, clientConfig())
@@ -380,8 +384,8 @@ class ObservabilityTest {
                     }
                 }
             endpoints(server = {
-                listener = throwing
-                this.logger = logger
+                observability { connectionListener = throwing }
+                observability { this.logger = logger }
             }).use { e ->
                 withTimeout(20.seconds) {
                     val accepted = async { e.server.accept().also { serveEcho(it) } }
@@ -412,12 +416,12 @@ class ObservabilityTest {
             endpoints(
                 clients = 2,
                 server = {
-                    listener = throwing
-                    logger = KuicksilverLogger.None
+                    observability { connectionListener = throwing }
+                    observability { logger = KuicksilverLogger.None }
                 },
                 client = {
-                    listener = throwing
-                    logger = KuicksilverLogger.None
+                    observability { connectionListener = throwing }
+                    observability { logger = KuicksilverLogger.None }
                 },
             ).use { e ->
                 withTimeout(20.seconds) {
@@ -451,7 +455,7 @@ class ObservabilityTest {
                         cause: Throwable?,
                     ): Unit = throw kotlinx.coroutines.CancellationException("logger bug")
                 }
-            endpoints(server = { logger = throwing }, client = { logger = throwing }).use { e ->
+            endpoints(server = { observability { logger = throwing } }, client = { observability { logger = throwing } }).use { e ->
                 withTimeout(20.seconds) {
                     val accepted = async { e.server.accept().also { serveEcho(it) } }
                     val c = e.clients[0].connect(e.server.localAddress, clientConfig())
@@ -488,7 +492,7 @@ class ObservabilityTest {
                     ): io.kuicksilver.quic.QlogTrace = throw kotlinx.coroutines.CancellationException("EMFILE")
                 }
             endpoints(server = {
-                this.logger = logger
+                observability { this.logger = logger }
                 this.server =
                     QuicServerConfig
                         .Builder(CoreFixtures.server())
@@ -548,8 +552,8 @@ class ObservabilityTest {
                 crypto = KslQuicCrypto,
                 serverTls = CoreFixtures.server { this.keylog = keylog },
                 serverEarlyData = true,
-                server = { this.logger = logger },
-                client = { this.logger = logger },
+                server = { observability { this.logger = logger } },
+                client = { observability { this.logger = logger } },
             ).use { e ->
                 withTimeout(20.seconds) {
                     val accepted = async { repeat(2) { e.server.accept().also { serveEcho(it) } } }

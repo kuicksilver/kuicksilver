@@ -33,8 +33,8 @@ class StreamStateTest {
             StreamManager(
                 TlsRole.Server,
                 io.kuicksilver.quic.quicConfig {
-                    initialStreamWindow = 1_000_000
-                    maxStreamWindow = 6_291_456
+                    flowControl { initialStreamWindow = 1_000_000 }
+                    flowControl { maxStreamWindow = 6_291_456 }
                 },
                 RecvFlowController(786_432, 15_728_640),
                 SendFlowController(1L shl 40),

@@ -303,7 +303,7 @@ class LossDetectionTest {
 
     @Test fun initialPtoFollowsInitialRtt() {
         // RFC 9002 section 6.2.2: before the first sample PTO = 3 x initial RTT (quic-go's 100 ms default gives 300 ms), doubling per expiry
-        val (ld, _) = ld(config = quicConfig { initialRtt = 100.milliseconds })
+        val (ld, _) = ld(config = quicConfig { expert { initialRtt = 100.milliseconds } })
         send(ld, SpaceId.Initial, 0, t0)
         assertEquals(t0 + 300.milliseconds, ld.timeout())
         assertNotNull(ld.onTimeout(t0 + 300.milliseconds))

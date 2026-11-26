@@ -135,12 +135,7 @@ class WebTransportSessionTest {
             val sink =
                 io.kuicksilver.http3.runtime
                     .MemoryQlogSink()
-            val traced =
-                quicConfig {
-                    resetStreamAt = true
-                    qlog = sink
-                }
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = traced, clientQuic = traced).useScoped { p ->
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQlog = sink, clientQlog = sink).useScoped { p ->
                 val (client, server) = sessions(p)
                 val bidi = client.openBidi()
                 bidi.output.writeFully("b".encodeToByteArray())
@@ -179,12 +174,7 @@ class WebTransportSessionTest {
             val sink =
                 io.kuicksilver.http3.runtime
                     .MemoryQlogSink()
-            val traced =
-                quicConfig {
-                    resetStreamAt = true
-                    qlog = sink
-                }
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = traced, clientQuic = traced).useScoped { p ->
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQlog = sink, clientQlog = sink).useScoped { p ->
                 val (client, server) = sessions(p)
                 client.close(7, "a secret reason")
                 withTimeout(5.seconds) { server.closed.await() }
@@ -577,7 +567,7 @@ class WebTransportSessionTest {
                         clientSettings = wtOn,
                         serverSettings = wtOn,
                         serverQuic = QuicConfig.Default,
-                        clientQuic = quicConfig { qlog = frames },
+                        clientQlog = frames,
                     ).useScoped { p ->
                         val (client, server) = sessions(p)
                         assertEquals("1", server.headers[WtTokens.DRAFT02_REQUEST_FIELD])

@@ -389,7 +389,7 @@ class PathTest {
         for (allow in listOf(true, false)) {
             val a = InetSocketAddress("192.0.2.10", 443)
             val b = InetSocketAddress("192.0.2.11", 443)
-            val p = EndpointPair(serverQuic = io.kuicksilver.quic.quicConfig { allowMigration = allow })
+            val p = EndpointPair(serverQuic = io.kuicksilver.quic.quicConfig { migration { this.allow = allow } })
             p.use { _ ->
                 p.serverLocal = a
                 val c = p.connect()
@@ -637,7 +637,7 @@ class PathTest {
 
     @Test fun validationTimeoutFollowsInitialRtt() {
         // RFC 9000 section 8.2.4 with initialRtt = 100 ms: 3 x max(PTO, 100 + 4 x 50 + 25 ms) — the 20 ms pair's PTO is below 325 ms
-        val (p, c) = connected(serverQuic = quicConfig { initialRtt = 100.milliseconds })
+        val (p, c) = connected(serverQuic = quicConfig { expert { initialRtt = 100.milliseconds } })
         p.use { _ ->
             p.clientListensOnSource = false
             val s = p.server()
@@ -764,7 +764,7 @@ class PathTest {
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
         // a 1 ms initialRtt keeps the new path's PTO small: the deadline is 3 x the larger PTO, at least 3 x the current one
-        val (p, c) = connected(clientQuic = quicConfig { initialRtt = 1.milliseconds })
+        val (p, c) = connected(clientQuic = quicConfig { expert { initialRtt = 1.milliseconds } })
         p.use { _ ->
             assertEquals(maxOf(c.pto(), 1.milliseconds + 2.milliseconds + c.loss.peerMaxAckDelay) * 3, c.validationTimeout())
             val id = c.addPath(p.serverAddr, p.now)
@@ -802,7 +802,7 @@ class PathTest {
     }
 
     @Test fun allowMigrationFalseAdvertisesAndDrops() {
-        val (p, c) = connected(serverQuic = quicConfig { allowMigration = false })
+        val (p, c) = connected(serverQuic = quicConfig { migration { allow = false } })
         p.use { _ ->
             assertTrue(c.peerTp!!.disableActiveMigration, "disable_active_migration advertised")
             val s = p.server()
@@ -2260,7 +2260,7 @@ class PathTest {
                 "nothing went to the attacker",
             )
         }
-        val q = EndpointPair(serverQuic = quicConfig { allowMigration = false })
+        val q = EndpointPair(serverQuic = quicConfig { migration { allow = false } })
         q.use { _ ->
             val newPort = InetSocketAddress("10.0.0.1", 40002)
             q.rebindDuringHandshake(newPort)
@@ -3187,7 +3187,7 @@ class PathTest {
     @Test fun negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne() {
         val p = EndpointPair()
         p.use { _ ->
-            val c = p.connect(QuicConfig.Builder().apply { activeConnectionIdLimit = 2 }.build())
+            val c = p.connect(QuicConfig.Builder().apply { expert { activeConnectionIdLimit = 2 } }.build())
             assertTrue(p.confirmed(c))
             repeat(5) { p.step() }
             val pid = c.addPath(p.serverAddr, p.now)

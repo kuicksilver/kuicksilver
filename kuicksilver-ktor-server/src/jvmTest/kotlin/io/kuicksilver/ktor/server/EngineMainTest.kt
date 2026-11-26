@@ -359,11 +359,11 @@ class EngineMainTest {
             }.message!!
         // RFC 9000 section 14: below 1200 is no QUIC datagram size
         assertEquals(
-            "kuicksilver.quic: initialUdpPayloadSize must be 1200..65527",
+            "kuicksilver.quic: pathMtu { initial } must be 1200..65527",
             refused("-P:kuicksilver.quic.initialUdpPayloadSize=1199"),
         )
         assertEquals(
-            "kuicksilver.quic: maxSendUdpPayloadSize must be 1200..65527",
+            "kuicksilver.quic: pathMtu { maxSend } must be 1200..65527",
             refused("-P:kuicksilver.quic.maxSendUdpPayloadSize=1000"),
         )
         assertEquals(
@@ -375,7 +375,7 @@ class EngineMainTest {
             "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 1501",
             refused("-P:kuicksilver.quic.maxUdpPayloadSize=1501"),
         )
-        assertEquals("kuicksilver.quic: maxUdpPayloadSize must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=1199"))
+        assertEquals("kuicksilver.quic: pathMtu { maxReceive } must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=1199"))
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         assertEquals(
             1500,
@@ -399,7 +399,10 @@ class EngineMainTest {
             "kuicksilver.quic: keepAlive must be at most 3/4 of maxIdleTimeout",
             refused("-P:kuicksilver.quic.maxIdleTimeout=10s", "-P:kuicksilver.quic.keepAlive=9s"),
         )
-        assertEquals("kuicksilver.quic: stream limits must be at most 2^60", refused("-P:kuicksilver.quic.maxBidiStreams=-1"))
+        assertEquals(
+            "kuicksilver.quic: maxBidiStreams and expert { maxUniStreams } must be 0..2^60",
+            refused("-P:kuicksilver.quic.maxBidiStreams=-1"),
+        )
         assertEquals("kuicksilver.quic.maxUniStreams: \"many\" is not a whole number", refused("-P:kuicksilver.quic.maxUniStreams=many"))
         // a misspelt key does not leave the default in place silently
         val typo = refused("-P:kuicksilver.quic.initialPacketSize=1350")

@@ -188,7 +188,7 @@ class NetworkMigratorTest {
     @Test fun negative_disableActiveMigrationIsRespected() =
         runBlocking {
             // RFC 9000 section 18.2: a server that sent disable_active_migration is never migrated to
-            ApiPair.open(serverQuic = quicConfig { allowMigration = false }).use { p ->
+            ApiPair.open(serverQuic = quicConfig { migration { allow = false } }).use { p ->
                 withTimeout(60.seconds) {
                     val (c, s) = p.connect()
                     val nets = MutableStateFlow<Int?>(1)
@@ -498,7 +498,7 @@ class NetworkMigratorTest {
                 withTimeout(60.seconds) {
                     (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
                     // a short initial RTT keeps the validation timeout, 3 x the larger of the PTO and a new path's PTO, short in real time
-                    val (c, s) = p.connect(quicConfig { initialRtt = 10.milliseconds })
+                    val (c, s) = p.connect(quicConfig { expert { initialRtt = 10.milliseconds } })
                     val nets = MutableStateFlow<Int?>(1)
                     val o = Opener(p)
                     val m = NetworkMigrator(c, nets, { o.open(it) }, this)
@@ -530,7 +530,7 @@ class NetworkMigratorTest {
             ApiPair.open().use { p ->
                 withTimeout(60.seconds) {
                     (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
-                    val (c, s) = p.connect(quicConfig { initialRtt = 10.milliseconds })
+                    val (c, s) = p.connect(quicConfig { expert { initialRtt = 10.milliseconds } })
                     val io = p.net.open(addr(2))
                     val e = assertFailsWith<PathValidationException> { c.migrate(io) }
                     assertEquals(PathFailureReason.NoSpareConnectionId, e.reason)

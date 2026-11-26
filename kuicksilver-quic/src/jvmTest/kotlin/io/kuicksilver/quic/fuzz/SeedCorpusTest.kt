@@ -122,8 +122,7 @@ class SeedCorpusTest {
                         .Builder()
                         .apply {
                             server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto =
-                                NullCryptoProvider
+                            runtime { crypto = NullCryptoProvider }
                             admission = ConnectionAdmission.AlwaysRetry
                         }.build(),
                     Random(5),

@@ -76,7 +76,7 @@ class PmtudTest {
 
     private fun probesTo(p: EndpointPair): List<Int> = p.clientDatagramSizes.filter { it > 1200 }
 
-    private val noIdle = quicConfig { maxIdleTimeout = kotlin.time.Duration.ZERO } // the long scenarios outlive the 30 s idle timer
+    private val noIdle = quicConfig { maxIdleTimeout = null } // the long scenarios outlive the 30 s idle timer
 
     @Test fun searchConvergesTo1452OnCleanPath() {
         val (p, c) = pair()
@@ -388,7 +388,7 @@ class PmtudTest {
     }
 
     @Test fun peerMaxUdpPayloadCapsSearch() {
-        val (p, c) = pair(serverQuic = quicConfig { maxUdpPayloadSize = 1300 })
+        val (p, c) = pair(serverQuic = quicConfig { pathMtu { maxReceive = 1300 } })
         p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest })
@@ -426,7 +426,7 @@ class PmtudTest {
     }
 
     @Test fun pmtudOffKeeps1200() {
-        val (p, c) = pair(clientQuic = quicConfig { pmtud = false })
+        val (p, c) = pair(clientQuic = quicConfig { pathMtu { discovery = false } })
         p.use { _ ->
             transfer(p, c)
             p.runUntil(5.seconds) { false }
@@ -1085,7 +1085,7 @@ class PmtudTest {
     }
 
     @Test fun negative_ptbIgnoredWhenHintsAreOff() {
-        val (p, c) = pair(clientQuic = quicConfig { pmtudIcmpHints = false })
+        val (p, c) = pair(clientQuic = quicConfig { pathMtu { icmpHints = false } })
         p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })

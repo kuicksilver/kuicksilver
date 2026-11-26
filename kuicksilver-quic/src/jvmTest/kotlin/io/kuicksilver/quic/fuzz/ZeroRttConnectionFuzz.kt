@@ -528,16 +528,16 @@ internal class ZeroRttConnectionFuzz(
         QuicConfig
             .Builder()
             .apply {
-                resetStreamAt = flags and ZeroRttProgram.NO_RESET_AT == 0
+                expert { resetStreamAt = flags and ZeroRttProgram.NO_RESET_AT == 0 }
                 if (vn) versions = listOf(VersionProfile.V1, VersionProfile.V2)
                 mtuOptions()
             }.build()
 
     private fun QuicConfig.Builder.mtuOptions() {
         if (!mtuOn) return
-        initialUdpPayloadSize = start
-        if (capped) maxSendUdpPayloadSize = start
-        if (pmtudOff) pmtud = false
+        pathMtu { initial = start }
+        if (capped) pathMtu { maxSend = start }
+        if (pmtudOff) pathMtu { discovery = false }
     }
 
     private fun serverQuic(): QuicConfig =
@@ -545,7 +545,7 @@ internal class ZeroRttConnectionFuzz(
             .originQuic(small)
             .apply {
                 if (outcome == ZeroRttProgram.REJECT_LIMITS) {
-                    initialConnectionWindow = 1000
+                    flowControl { initialConnectionWindow = 1000 }
                     maxBidiStreams = 1
                 }
                 // one that still offered v1 would make the Version Negotiation a downgrade (RFC 9368 section 4)
@@ -1242,12 +1242,12 @@ internal object Tickets {
 
     fun originQuic(small: Boolean): QuicConfig.Builder =
         QuicConfig.Builder().apply {
-            resetStreamAt = true
+            expert { resetStreamAt = true }
             if (small) {
                 maxBidiStreams = 3
-                maxUniStreams = 2
-                initialStreamWindow = 2048
-                initialConnectionWindow = 6000
+                expert { maxUniStreams = 2 }
+                flowControl { initialStreamWindow = 2048 }
+                flowControl { initialConnectionWindow = 6000 }
             }
         }
 
@@ -1267,7 +1267,7 @@ internal object Tickets {
             CorePair(
                 clientTls = clientTls,
                 serverTls = serverTls,
-                clientQuic = QuicConfig.Builder().apply { resetStreamAt = true }.build(),
+                clientQuic = QuicConfig.Builder().apply { expert { resetStreamAt = true } }.build(),
                 serverQuic = quic,
                 crypto = ksl,
                 clientEarly = EarlyDataState.Allowed,

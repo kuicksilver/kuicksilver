@@ -89,7 +89,7 @@ class BlockedBackoffTest {
         fun gapsSince(i: Int): List<Duration> = (i + 1 until reports.size).map { reports[it] - reports[it - 1] }
     }
 
-    private fun blocked(idle: Duration): Blocked {
+    private fun blocked(idle: Duration?): Blocked {
         val q = quicConfig { maxIdleTimeout = idle }
         val p = CorePair(clientQuic = q, serverQuic = q)
         assertTrue(p.handshake())
@@ -162,7 +162,7 @@ class BlockedBackoffTest {
     }
 
     @Test fun withoutIdleTimeoutTheGapStopsAtTheFixedCap() {
-        val b = blocked(Duration.ZERO)
+        val b = blocked(null)
         try {
             b.run(3.minutes)
             val gaps = b.gapsSince(0)

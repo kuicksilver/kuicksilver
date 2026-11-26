@@ -43,7 +43,7 @@ class ServerQuicConfigTest {
                             trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
                         }) {}
                     }
-                assertEquals("earlyData cannot be combined with client certificates", e.message, "clientAuth $auth")
+                assertEquals("acceptEarlyData cannot be combined with client certificates", e.message, "clientAuth $auth")
             }
         }
 
@@ -120,14 +120,14 @@ class ServerQuicConfigTest {
         serverTest {
             val e =
                 assertFailsWith<IllegalArgumentException> {
-                    val (server, _) = tlsServer({ quic = quicConfig { maxUniStreams = 2 } }) {}
+                    val (server, _) = tlsServer({ quic = quicConfig { expert { maxUniStreams = 2 } } }) {}
                     server.stop(100, 500)
                 }
             assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
             val (server, _) =
                 tlsServer({
                     http3 = false
-                    quic = quicConfig { maxUniStreams = 2 }
+                    quic = quicConfig { expert { maxUniStreams = 2 } }
                 }) {}
             server.stop(100, 500)
         }
@@ -151,7 +151,7 @@ class ServerQuicConfigTest {
                 probe.close()
                 val server =
                     kuicksilverServer(null, configure = {
-                        quic = quicConfig { maxUniStreams = 2 }
+                        quic = quicConfig { expert { maxUniStreams = 2 } }
                         connector {
                             host = "127.0.0.1"
                             this.port = port

@@ -142,8 +142,8 @@ class QueuedReceiveTest {
                         .Builder()
                         .apply {
                             this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            crypto = KslQuicCrypto
-                            io = { DatagramIo.open(it, prefer) }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { DatagramIo.open(it, prefer) } }
                         }.build(),
                 )
             val client =
@@ -152,8 +152,8 @@ class QueuedReceiveTest {
                     QuicEndpointConfig
                         .Builder()
                         .apply {
-                            crypto = KslQuicCrypto
-                            io = { DatagramIo.open(it, prefer) }
+                            runtime { crypto = KslQuicCrypto }
+                            runtime { io = { DatagramIo.open(it, prefer) } }
                         }.build(),
                 ) as EndpointLoop
             try {

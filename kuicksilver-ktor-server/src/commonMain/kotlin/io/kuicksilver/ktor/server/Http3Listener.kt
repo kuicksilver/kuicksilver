@@ -1,11 +1,14 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.engine.handleFailure
 import io.ktor.util.pipeline.execute
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
@@ -127,9 +130,8 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                     .apply {
                         this.quic = quic
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                        earlyData = configuration.quicEarlyData
+                        acceptEarlyData = configuration.quicEarlyData
                     }.build()
-            connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
             maxConnections = configuration.quicMaxConnections
             maxConnectionsPerIp = configuration.quicMaxConnectionsPerIp
@@ -142,8 +144,11 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
                 ConnectionAdmission { attempt ->
                     if (advertising == Http3Advertising.Drain) REFUSED else policy.admit(attempt)
                 }
-            configuration.logger?.let { logger = it }
-            listener = configuration.connectionListener
+            configuration.logger?.let { observability { logger = it } }
+            observability {
+                connectionListener = configuration.connectionListener
+                qlog = configuration.qlog
+            }
             loadBalancer = configuration.quicLoadBalancer
         }.build()
 }
@@ -390,14 +395,13 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
 }
 
 /**
- * The QUIC settings of the HTTP/3 listeners: [quic][KuicksilverApplicationEngine.Configuration.quic] with `quicMaxIdleTimeout`
- * and `qlog`, and `resetStreamAt` with [webTransport][KuicksilverApplicationEngine.Configuration.webTransport] (its streams keep
+ * The QUIC settings of the HTTP/3 listeners: [quic][KuicksilverApplicationEngine.Configuration.quic] with `quicMaxIdleTimeout`,
+ * and `resetStreamAt` with [webTransport][KuicksilverApplicationEngine.Configuration.webTransport] (its streams keep
  * their header when reset, draft-ietf-webtrans-http3-17 section 4.4).
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.Configuration.http3Quic(): QuicConfig {
     val base =
         quicMaxIdleTimeout?.takeUnless { quicAssigned }?.let { idle -> quicConfig { maxIdleTimeout = idle } } ?: quic
-    val withQlog = qlog?.let { sink -> base.toBuilder().apply { qlog = sink }.build() } ?: base
-    return if (webTransport && !withQlog.resetStreamAt) withQlog.toBuilder().apply { resetStreamAt = true }.build() else withQlog
+    return if (webTransport && !base.resetStreamAt) base.toBuilder().apply { expert { resetStreamAt = true } }.build() else base
 }

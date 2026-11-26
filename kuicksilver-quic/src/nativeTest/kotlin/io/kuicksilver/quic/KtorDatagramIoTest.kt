@@ -105,8 +105,8 @@ class KtorDatagramIoTest {
                 val server =
                     quicEndpointConfig {
                         server = QuicServerConfig.Builder(CoreFixtures.server()).build()
-                        crypto = NullCryptoProvider
-                        logger = KuicksilverLogger.None
+                        runtime { crypto = NullCryptoProvider }
+                        observability { logger = KuicksilverLogger.None }
                     }
                 val s =
                     runCatching { QuicEndpoint.bind(InetSocketAddress("unresolvable.test", 0), server).closeAndJoin() }
@@ -137,7 +137,11 @@ class KtorDatagramIoTest {
                 assertSame(name, name.withLiteralHost())
                 assertEquals("unresolvable.test", name.withLiteralHost(444).hostname)
                 assertNull(name.resolveAddressOrNull())
-                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                val client =
+                    QuicEndpoint.bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        quicEndpointConfig { runtime { crypto = NullCryptoProvider } },
+                    )
                 try {
                     val e =
                         assertFailsWith<QuicException.ConnectionLost.NoViablePath> {
@@ -173,7 +177,11 @@ class KtorDatagramIoTest {
                 }
             }
             try {
-                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), quicEndpointConfig { crypto = NullCryptoProvider })
+                val client =
+                    QuicEndpoint.bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        quicEndpointConfig { runtime { crypto = NullCryptoProvider } },
+                    )
                 client.close()
                 assertFailsWith<QuicException.EndpointClosing> {
                     client.connect(InetSocketAddress("unresolvable.test", 443), QuicClientConfig.Builder(CoreFixtures.client()).build())
