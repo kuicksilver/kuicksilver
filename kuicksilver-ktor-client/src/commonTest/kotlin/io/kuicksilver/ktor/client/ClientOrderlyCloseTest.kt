@@ -281,13 +281,38 @@ class ClientOrderlyCloseTest {
      * (which resets the connection). With [cut], what is left is far beyond the bound and every buffer on the way: the
      * client stops reading once it dropped its bound and closes under the rest, so the server's writes fail instead of
      * running to the end (a response nobody reads is not downloaded for the length of the close's wait).
+     *
+     * With [leftAfter] the server sends only that much of the body, then waits until [call] returned (the application
+     * left the response) before it sends the rest: the rest arrives only after the response was left. Without that order,
+     * a response that fits every buffer on the way (192 KiB; the body's channel alone holds 1 MiB) could arrive whole
+     * while the application, descheduled under load, still held it. The body then ended by its length, and the
+     * connection was rightly kept for reuse instead of closed: the test no longer tested an abandoned response. It
+     * waited for a close that came only at the idle timeout (5 minutes; an Android device run under load timed out at
+     * 60 s). The connection must be released as not kept, so a run that falls back into reuse fails on that, not on time.
      */
     private suspend fun assertOrderlyCloseOfUnreadBody(
         head: String,
         size: Int,
         cut: Boolean,
+        leftAfter: Int? = null,
         call: suspend (io.ktor.client.HttpClient, String) -> Unit,
     ) {
+        val chunkSize = 16 * 1024
+        require(leftAfter == null || (leftAfter % chunkSize == 0 && leftAfter in chunkSize until size)) {
+            "leftAfter ($leftAfter) must be a whole number of ${chunkSize shr 10} KiB chunks inside the body ($size bytes)"
+        }
+        val left = CompletableDeferred<Unit>()
+        val released = CompletableDeferred<Boolean>()
+        val events =
+            object : KuicksilverEventListener() {
+                override fun connectionReleased(
+                    request: io.ktor.client.request.HttpRequestData,
+                    protocol: HttpProtocolVersion,
+                    kept: Boolean,
+                ) {
+                    released.complete(kept)
+                }
+            }
         val clean = CompletableDeferred<Boolean>()
         val took = CompletableDeferred<kotlin.time.Duration>()
         val sent = CompletableDeferred<Boolean>()
@@ -297,8 +322,14 @@ class ClientOrderlyCloseTest {
             sent.complete(
                 runCatching {
                     output.writeStringUtf8(head)
-                    val chunk = ByteArray(16 * 1024)
-                    repeat(size / chunk.size) { output.writeFully(chunk) }
+                    val chunk = ByteArray(chunkSize)
+                    repeat(size / chunk.size) { i ->
+                        if (leftAfter != null && i * chunk.size == leftAfter) {
+                            output.flush()
+                            left.await()
+                        }
+                        output.writeFully(chunk)
+                    }
                     output.flushAndClose() // then the server's close_notify
                 }.isSuccess,
             )
@@ -310,10 +341,18 @@ class ClientOrderlyCloseTest {
                 clean.await()
             }
         }) { port ->
-            testClient().use { c ->
+            testClient(engine = { eventListener = events }).use { c ->
                 engine(c).h1.orderlyCloseTimeoutForTest = 30.seconds
                 engine(c).h1.orderlyCloseTookForTest = { took.complete(it) }
-                call(c, "https://127.0.0.1:$port/")
+                try {
+                    call(c, "https://127.0.0.1:$port/")
+                } finally {
+                    left.complete(Unit) // also after a call that failed: the server does not wait for ever
+                }
+                assertFalse(
+                    withTimeout(10.seconds) { released.await() },
+                    "the connection was kept for reuse: the response arrived whole before the application left it",
+                )
                 val t = withTimeout(60.seconds) { took.await() }
                 assertTrue(t < 10.seconds, "the orderly close took $t behind a response nobody reads")
                 if (cut) {
@@ -329,11 +368,19 @@ class ClientOrderlyCloseTest {
         }
     }
 
-    /** A response of [size] bytes the application leaves after its first 64 KiB. */
+    /**
+     * A response of [size] bytes the application leaves after its first 64 KiB, which is all the server sends before the
+     * application left it (once `execute` returned: the response was cleaned up, its body cancelled).
+     */
     private suspend fun abandonAfter64KiB(
         size: Int,
         cut: Boolean,
-    ) = assertOrderlyCloseOfUnreadBody("HTTP/1.1 200 OK\r\nContent-Length: $size\r\n\r\n", size, cut) { c, url ->
+    ) = assertOrderlyCloseOfUnreadBody(
+        "HTTP/1.1 200 OK\r\nContent-Length: $size\r\n\r\n",
+        size,
+        cut,
+        leftAfter = 64 * 1024,
+    ) { c, url ->
         c.prepareGet(url).execute { r ->
             val ch = r.bodyAsChannel()
             val buf = ByteArray(16 * 1024)
