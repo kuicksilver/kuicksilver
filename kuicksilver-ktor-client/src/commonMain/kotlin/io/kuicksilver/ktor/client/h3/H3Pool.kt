@@ -40,7 +40,9 @@ import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.runtime.cancelAndJoinSender
 import io.kuicksilver.http3.webTransport
+import io.kuicksilver.ktor.client.AbandonResponseKey
 import io.kuicksilver.ktor.client.Activity
+import io.kuicksilver.ktor.client.CallHeldBody
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
@@ -2941,6 +2943,8 @@ internal class H3Pool(
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)
             if (cause != null) response.body.cancel(cause) // as the HTTP/1.1 body: closed with the call's own cancellation
             response.cancel()
+            // the request no longer keeps this response through the abandon it was given (set below)
+            data.attributes.remove(AbandonResponseKey)
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
         }
         val status = HttpStatusCode.fromValue(response.status)
@@ -2950,10 +2954,25 @@ internal class H3Pool(
             data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
         }
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
-        val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else response.body.withSocketTimeout(data)
+        // the call goes on while its body is read, also when Ktor completed the call's job before (an SSE session): the
+        // stream is abandoned only then (CallHeldBody)
+        val bodyChannel: ByteReadChannel =
+            if (noBody) ByteReadChannel.Empty else CallHeldBody.of(response.body.withSocketTimeout(data), callContext)
+        // the engine may drop this response (an alternative's 421) and send the request again: it is then abandoned at once,
+        // whatever a ResponseAdapter made of its body
+        data.attributes.put(AbandonResponseKey) { cause ->
+            bodyChannel.cancel(cause)
+            response.cancel()
+        }
         val responseBody: Any =
-            data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
-                ?: bodyChannel
+            try {
+                data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
+                    ?: bodyChannel
+            } catch (e: Throwable) {
+                // a body handed to no one holds the call no longer
+                bodyChannel.cancel(e)
+                throw e
+            }
         return HttpResponseData(status, requestTime, headers, HttpProtocolVersion.HTTP_3_0, responseBody, callContext)
     }
 

@@ -482,6 +482,7 @@ internal class KuicksilverEngine(
         data.attributes.put(KuicksilverDiagnosticsKey, diagnostics)
         data.attributes.remove(NeverIndexedReceivedKey) // a redirect or a retry copies the previous response's
         data.attributes.remove(NoCoalescingKey) // a 421 of the previous call's coalesced attempt is not this call's
+        data.attributes.remove(AbandonResponseKey) // nor the previous call's response (a redirect or a retry copies them)
         data.attributes.remove(io.kuicksilver.ktor.client.h3.KeptRequestBodyKey) // nor the channel it kept (released at its end)
         val r =
             try {
@@ -1355,6 +1356,7 @@ internal class KuicksilverEngine(
                 // nothing (RFC 9110 section 15.5.20), except that one from the alternative removes it (below, RFC 7838 section 6)
                 learnAltSvc(url, r, verifiedTls = url.protocol.isSecure())
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
+                r.drop(data)
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
                 if (!data.body.isReplayable()) {
                     throw H3BodyConsumed(
@@ -1575,6 +1577,7 @@ internal class KuicksilverEngine(
                 learnAltSvc(url, r, verifiedTls = true)
                 // a 421 from an Alt-Svc alternative removes it (RFC 7838 section 6); the request goes on without it
                 if (!a.altSvc || alt == null || r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
+                r.drop(data)
                 altSvcUpdate { altSvc.removeAlternative(url, alt) }
                 if (!data.body.isReplayable()) {
                     throw H3BodyConsumed("421 Misdirected Request from the alternative, and the request body was already consumed")
@@ -2060,3 +2063,17 @@ private inline fun checkTlsBlock(
 
 /** How many origins [KuicksilverEngine] remembers having logged "no usable HTTP/3 alternative" for (least recently seen forgotten first). */
 internal const val NO_ALTERNATIVE_LOG_ORIGINS = 1024
+
+/**
+ * A response the engine does not hand out (the alternative's 421: the request goes again over TCP) is abandoned at once,
+ * not at the call's end: its HTTP/3 stream is stopped (STOP_SENDING H3_REQUEST_CANCELLED, and RESET_STREAM with it while
+ * the request's content is still being sent, RFC 9114 section 4.1.1) and its body no longer holds the call
+ * ([CallHeldBody]), which the repeat's response continues. Through the [AbandonResponseKey] the attempt left, so a body a
+ * `ResponseAdapter` turned into something else is reached too; a response without one has its channel body cancelled.
+ */
+private fun HttpResponseData.drop(data: HttpRequestData) {
+    val cause = kotlinx.coroutines.CancellationException("421 Misdirected Request from the alternative: the request goes again")
+    val abandon = data.attributes.getOrNull(AbandonResponseKey)
+    data.attributes.remove(AbandonResponseKey)
+    if (abandon != null) abandon(cause) else (body as? io.ktor.utils.io.ByteReadChannel)?.cancel(cause)
+}

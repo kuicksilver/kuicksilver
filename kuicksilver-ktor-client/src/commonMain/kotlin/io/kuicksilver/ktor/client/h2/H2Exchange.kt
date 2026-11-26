@@ -23,6 +23,7 @@ import io.kuicksilver.http2.runtime.H2ClientStream
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.Activity
+import io.kuicksilver.ktor.client.CallHeldBody
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.NeverIndexKey
@@ -261,6 +262,7 @@ internal suspend fun h2Exchange(
     }
     val activity = data.socketTimeoutMillis()?.let { Activity() }
     var bodyStarted = false
+    var held: ByteReadChannel? = null
     try {
         val head =
             withSocketInactivityTimeout(data, activity, onExpiry = { stream.cancel() }) {
@@ -308,12 +310,17 @@ internal suspend fun h2Exchange(
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
         if (head.neverIndexed.isNotEmpty()) data.attributes.put(NeverIndexedReceivedKey, head.neverIndexed)
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
-        val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else stream.body.withSocketTimeout(data)
+        // the call goes on while its body is read, also when Ktor completed the call's job before (an SSE session): the
+        // stream is released only then (CallHeldBody)
+        val bodyChannel: ByteReadChannel =
+            if (noBody) ByteReadChannel.Empty else CallHeldBody.of(stream.body.withSocketTimeout(data), callContext).also { held = it }
         val responseBody: Any =
             data.attributes.getOrNull(ResponseAdapterAttributeKey)?.adapt(data, status, headers, bodyChannel, data.body, callContext)
                 ?: bodyChannel
         return HttpResponseData(status, requestTime, headers, HttpProtocolVersion.HTTP_2_0, responseBody, callContext)
     } catch (e: Throwable) {
+        // a body handed to no one holds the call no longer
+        held?.cancel(e)
         // this attempt is over: its stream must not hold the connection or a stream slot for the repeat. The call fails
         // with e (or goes again for it) whatever the release throws
         releaseUnder(events, stream, e) { release() }
