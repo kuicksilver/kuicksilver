@@ -1530,7 +1530,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffSurvivesAWorkingHandshake
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.stallBackoffWalksBackDown
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.workingResetsBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcWarningTest.epochMovesOnANetworkChangeAndAFullClearOnly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcWarningTest.onlyTheFirstMarkOnANetworkIsReported
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenMarkOrderTest.aMarkReportedAfterANetworkChangeIsDropped
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenMarkOrderTest.negative_aFullClearDropsTheReportButAnOriginClearDoesNot
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.aMappedIpv4AddressIsAskedAboutAsItsDottedQuad
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.leadingZerosAreDropped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.namesAndDottedQuadsStayAsTheyAre

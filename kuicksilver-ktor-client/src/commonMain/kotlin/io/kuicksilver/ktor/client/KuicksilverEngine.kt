@@ -253,7 +253,7 @@ internal class KuicksilverEngine(
         }
     }
 
-    private val altSvcLock = Mutex()
+    internal val altSvcLock = Mutex()
 
     /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released; internal for tests. */
     internal val altSvcWriteLock = Mutex()
@@ -282,6 +282,37 @@ internal class KuicksilverEngine(
         } catch (_: Throwable) {
             // a failing logger is never the call's failure
         }
+    }
+
+    /** A broken mark made under [altSvcLock]: its first-on-the-network backoff ([BrokenAltSvc.markBroken]) and epoch. */
+    internal class Marked(
+        val reason: FallbackReason,
+        val backoffMillis: Long?,
+        val epoch: Long,
+    )
+
+    /** Marks [alt] of [origin] broken; the caller holds [altSvcLock] and passes the result to [reportMark] after it. */
+    internal fun markBrokenLocked(
+        origin: String,
+        alt: String,
+        reason: FallbackReason,
+    ): Marked = Marked(reason, brokenAltSvc.markBroken(origin, alt, reason), brokenAltSvc.epoch)
+
+    /**
+     * The warning ([warnFirstBroken]) and the `altSvcMarkedBroken` event of [marked], outside [altSvcLock] (neither the logger
+     * nor a listener runs under the lock every request's Alt-Svc lookup waits for). Dropped when the network changed (or
+     * every mark was cleared) since the mark: the mark is gone then, and a warning or event for it would follow the change's
+     * own. A change that lands between this check and the emit is not caught: the order is kept for every change that
+     * completed before the check.
+     */
+    internal suspend fun reportMark(
+        origin: String,
+        alt: String,
+        marked: Marked,
+    ) {
+        if (altSvcLock.withLock { brokenAltSvc.epoch != marked.epoch }) return
+        warnFirstBroken(origin, marked.reason, marked.backoffMillis)
+        events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
     }
 
     /** Races HTTP/3 against TCP with the configured head start (`http3 { expert { raceHeadStart } }`). */
@@ -1142,15 +1173,12 @@ internal class KuicksilverEngine(
                         } else if (outcome !is CancellationException && !isTransientRefusal(outcome) && !resumptionOnly(outcome)) {
                             // a refusal (CONNECTION_REFUSED) is no failure of the alternative: the next call tries it again
                             val reason = classifyH3Failure(outcome) ?: FallbackReason.Other
-                            reason to brokenAltSvc.markBroken(origin, alt, reason)
+                            markBrokenLocked(origin, alt, reason)
                         } else {
                             null
                         }
                     }
-                if (marked != null) {
-                    warnFirstBroken(origin, marked.first, marked.second)
-                    events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
-                }
+                if (marked != null) reportMark(origin, alt, marked)
                 raceLoserSettledForTest?.invoke()
             }
         }
@@ -1607,8 +1635,7 @@ internal class KuicksilverEngine(
             } catch (e: Throwable) {
                 if (!isTransientRefusal(e) && !resumptionOnly(e)) {
                     val reason = classifyH3Failure(e) ?: FallbackReason.Other
-                    warnFirstBroken(origin, reason, altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) })
-                    events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
+                    reportMark(origin, alt, altSvcLock.withLock { markBrokenLocked(origin, alt, reason) })
                 }
                 throw EndpointUnreachable(e)
             }
@@ -1807,12 +1834,7 @@ internal class KuicksilverEngine(
         alt: String,
     ) {
         if (!stall.claim("$origin|$alt")) return
-        warnFirstBroken(
-            origin,
-            FallbackReason.QuicStalled,
-            altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, FallbackReason.QuicStalled) },
-        )
-        events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
+        reportMark(origin, alt, altSvcLock.withLock { markBrokenLocked(origin, alt, FallbackReason.QuicStalled) })
     }
 
     private suspend fun fallbackToH1(
@@ -1842,9 +1864,9 @@ internal class KuicksilverEngine(
         ) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
-            warnFirstBroken(origin, reason, altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) })
+            val marked = altSvcLock.withLock { markBrokenLocked(origin, alt, reason) }
             d.markedBroken = true
-            events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
+            reportMark(origin, alt, marked)
         }
         return r
     }

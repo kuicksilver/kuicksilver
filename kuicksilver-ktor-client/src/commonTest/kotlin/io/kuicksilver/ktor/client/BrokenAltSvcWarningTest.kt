@@ -26,4 +26,15 @@ class BrokenAltSvcWarningTest {
         broken.clear("c.test:443")
         assertNull(broken.markBroken("d.test:443", "d.test:443", FallbackReason.Other), "clearing one origin keeps the network's warning")
     }
+
+    @Test fun epochMovesOnANetworkChangeAndAFullClearOnly() {
+        val start = broken.epoch
+        broken.markBroken("a.test:443", "a.test:443", FallbackReason.Other)
+        broken.clear("a.test:443")
+        assertEquals(start, broken.epoch, "a mark or one origin's clear is no new epoch")
+        broken.onNetworkChanged()
+        assertEquals(start + 1, broken.epoch)
+        broken.clear(null)
+        assertEquals(start + 2, broken.epoch)
+    }
 }
