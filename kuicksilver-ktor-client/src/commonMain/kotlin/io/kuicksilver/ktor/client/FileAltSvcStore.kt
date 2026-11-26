@@ -178,7 +178,28 @@ public class FileAltSvcStore(
             val (origin, e) = recordOf(line) ?: continue
             if (e.expiresAtEpochMillis <= now) continue
             val had = map.remove(origin).orEmpty()
-            map[origin] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
+            // one alternative once (two spellings of an origin merged, or a file with a repeated record): the later expiry
+            val same = had.indexOf(e)
+            map[origin] =
+                when {
+                    same >= 0 -> {
+                        if (had[same].expiresAtEpochMillis >=
+                            e.expiresAtEpochMillis
+                        ) {
+                            had
+                        } else {
+                            had.toMutableList().also { it[same] = e }
+                        }
+                    }
+
+                    had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN -> {
+                        had + e
+                    }
+
+                    else -> {
+                        had
+                    }
+                }
         }
         map.evictEldest(AltSvcCache.MAX_ORIGINS)
         persisted = LinkedHashMap(map)

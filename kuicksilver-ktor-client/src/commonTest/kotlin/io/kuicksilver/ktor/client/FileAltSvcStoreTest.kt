@@ -69,10 +69,13 @@ class FileAltSvcStoreTest {
                 "https://Example.COM:443\th3\t\t443\t$exp\t0",
                 "https://example.com:443\th3\talt.example\t444\t$exp\t0",
                 "https://[2001:DB8:0:0:0:0:0:1]:443\th3\t\t445\t$exp\t1",
+                // the same alternative under two spellings of the origin: kept once, with the later expiry
+                "https://EXAMPLE.com:443\th3\talt.example\t444\t${exp + 1000}\t0",
             )
         SystemFileSystem.sink(p).buffered().use { it.writeString(old.joinToString("\n", postfix = "\n")) }
         val s = FileAltSvcStore(p) { now }
         assertEquals(listOf(443, 444), s.get("https://example.com:443").map { it.port }.sorted())
+        assertEquals(exp + 1000, s.get("https://example.com:443").single { it.port == 444 }.expiresAtEpochMillis)
         assertTrue(s.get("https://Example.COM:443").isEmpty(), "no key in the old spelling")
         assertEquals(listOf(445), s.get("https://[2001:db8::1]:443").map { it.port })
         s.put("https://example.org:443", listOf(AltSvcEntry("h3", null, 443, exp, false))) // a change rewrites the file

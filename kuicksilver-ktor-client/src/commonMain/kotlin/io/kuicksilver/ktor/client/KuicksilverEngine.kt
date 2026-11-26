@@ -340,7 +340,14 @@ internal class KuicksilverEngine(
                         step { h3.closeSessions() }
                         step { selector.close() }
                     }
-                    failure?.let { throw it }
+                    failure?.let { f ->
+                        runCatching {
+                            if (events.logger.isEnabled(LogLevel.Warn)) {
+                                events.logger.log(LogLevel.Warn, "the engine's cleanup after close() failed; its other steps ran", f)
+                            }
+                        }
+                        throw f
+                    }
                 }
             }
         // the leak sentinel's record of this engine (off in production: one read): it ends once the cleanup after close() ran

@@ -569,15 +569,36 @@ public suspend fun HttpClient.clearAlternativeServices(origin: Url? = null): Boo
  * the origin triple", ":" and the port), names the origin of [url]: RFC 7838 section 4,
  * "An association with an origin that the client does not consider authoritative for the current connection MUST be
  * ignored". The client's HTTP/2 connections serve one origin each (no coalescing), so only that one is authoritative.
- * Scheme and host compare case-insensitively; an explicit default port is taken too.
+ * Both are compared as [canonicalOrigin] keys (scheme and host case-insensitively in ASCII, an IPv6 address in any
+ * spelling), the port of [origin] being the scheme's default when it is left out (an explicit default port is taken too).
+ * Anything but `scheme://host[:port]` with an `http` or `https` scheme (a path, user info, an empty host) matches nothing.
  */
 internal fun isAltSvcFrameOrigin(
     origin: String,
     url: Url,
 ): Boolean {
-    val base = "${url.protocol.name}://${url.host}".lowercase()
-    val o = origin.lowercase()
-    return o == "$base:${url.port}" || (url.port == url.protocol.defaultPort && o == base)
+    val sep = origin.indexOf("://")
+    if (sep <= 0) return false
+    val scheme = asciiLowercase(origin.substring(0, sep))
+    val default =
+        when (scheme) {
+            "https" -> 443
+            "http" -> 80
+            else -> return false
+        }
+    val authority = origin.substring(sep + 3)
+    if (authority.isEmpty() || authority.any { it == '/' || it == '?' || it == '#' || it == '@' }) return false
+    val portAt = if (authority.startsWith('[')) authority.indexOf("]:").let { if (it < 0) -1 else it + 1 } else authority.lastIndexOf(':')
+    val host = if (portAt < 0) authority else authority.substring(0, portAt)
+    if (host.isEmpty() || host == "[]") return false
+    val port =
+        if (portAt < 0) {
+            default
+        } else {
+            authority.substring(portAt + 1).takeIf { p -> p.isNotEmpty() && p.length <= 5 && p.all { it in '0'..'9' } }?.toInt()
+                ?: return false
+        }
+    return canonicalOrigin(scheme, host, port) == canonicalOrigin(asciiLowercase(url.protocol.name), url.host, url.port)
 }
 
 /** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */
@@ -622,19 +643,21 @@ internal fun canonicalOrigin(
     host: String,
     port: Int,
 ): String {
-    var h = asciiLowercase(socketHost(host))
-    if (':' in h) {
-        val zone = h.substringAfter('%', "")
-        val ip = parseIpLiteral(h)?.takeIf { it.size == 16 }
-        if (ip != null) {
-            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-            h = io.kuicksilver.ktor.network
+    val raw = socketHost(host)
+    if (':' !in raw) return "$scheme://${asciiLowercase(raw)}:$port"
+    // an IPv6 literal: its zone (an interface name, `%eth0`) is split off first and kept as given, case included
+    val zoneAt = raw.indexOf('%')
+    val zone = if (zoneAt >= 0) raw.substring(zoneAt) else ""
+    var h = asciiLowercase(if (zoneAt >= 0) raw.substring(0, zoneAt) else raw)
+    val ip = parseIpLiteral(h)?.takeIf { it.size == 16 }
+    if (ip != null) {
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        h =
+            io.kuicksilver.ktor.network
                 .TcpAddress(ip, 0)
-                .hostText + if (zone.isEmpty()) "" else "%$zone"
-        }
-        h = "[$h]"
+                .hostText
     }
-    return "$scheme://$h:$port"
+    return "$scheme://[$h$zone]:$port"
 }
 
 /** [s] with A-Z mapped to a-z and every other character as it is (`i;ascii-casemap`, RFC 4790 section 9.2). */

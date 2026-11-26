@@ -140,36 +140,42 @@ class NegotiatedVersionTest {
                             }
                         }
                     }
-                ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true, serverConfigure = { listener = serverListener }).use { p ->
-                    val clientConfig =
-                        io.kuicksilver.quic.QuicClientConfig
-                            .Builder(
-                                io.kuicksilver.quic.CoreFixtures
-                                    .client(),
-                            ).apply { earlyData = io.kuicksilver.tls.EarlyDataState.Allowed }
-                            .build()
-                    // a first connection leaves the client a ticket
-                    val firstAccepted = async { p.server.accept() }
-                    val first = p.client.connect(p.server.localAddress, clientConfig)
-                    firstAccepted.await().awaitHandshake()
-                    val sessions = (p.client as io.kuicksilver.quic.runtime.EndpointLoop).sessions
-                    while (sessions.size() == 0) yield()
-                    first.close()
-                    // the client's packets wait: the server accepts the early connection before the handshake can complete
-                    p.net.hold(p.clientIo.localAddress)
-                    val accepted = async { p.server.accept() }
-                    val second = p.client.connectEarly(p.server.localAddress, clientConfig)
-                    second.openUni().output.flushAndClose() // something early, so the server has 0-RTT to accept
-                    p.net.release(p.clientIo.localAddress)
-                    val (version, complete) = atZeroRtt.await()
-                    assertSame(VersionProfile.V1, version, "set when the early data was accepted")
-                    assertEquals(false, complete, "before the handshake completed")
-                    val s = accepted.await()
-                    assertSame(VersionProfile.V1, s.version, "from accept(), whether or not the handshake completed since")
-                    second.awaitHandshake()
-                    assertSame(VersionProfile.V1, second.version)
-                    second.close()
-                }
+                // both sides v2 only: a version left at the v1 default could not pass
+                val v2 = versions(VersionProfile.V2)
+                ApiPair
+                    .open(serverQuic = v2, crypto = KslQuicCrypto, serverEarlyData = true, serverConfigure = { listener = serverListener })
+                    .use { p ->
+                        val clientConfig =
+                            io.kuicksilver.quic.QuicClientConfig
+                                .Builder(
+                                    io.kuicksilver.quic.CoreFixtures
+                                        .client(),
+                                ).apply {
+                                    earlyData = io.kuicksilver.tls.EarlyDataState.Allowed
+                                    quic = v2
+                                }.build()
+                        // a first connection leaves the client a ticket
+                        val firstAccepted = async { p.server.accept() }
+                        val first = p.client.connect(p.server.localAddress, clientConfig)
+                        firstAccepted.await().awaitHandshake()
+                        val sessions = (p.client as io.kuicksilver.quic.runtime.EndpointLoop).sessions
+                        while (sessions.size() == 0) yield()
+                        first.close()
+                        // the client's packets wait: the server accepts the early connection before the handshake can complete
+                        p.net.hold(p.clientIo.localAddress)
+                        val accepted = async { p.server.accept() }
+                        val second = p.client.connectEarly(p.server.localAddress, clientConfig)
+                        second.openUni().output.flushAndClose() // something early, so the server has 0-RTT to accept
+                        p.net.release(p.clientIo.localAddress)
+                        val (version, complete) = atZeroRtt.await()
+                        assertSame(VersionProfile.V2, version, "set when the early data was accepted")
+                        assertEquals(false, complete, "before the handshake completed")
+                        val s = accepted.await()
+                        assertSame(VersionProfile.V2, s.version, "from accept(), whether or not the handshake completed since")
+                        second.awaitHandshake()
+                        assertSame(VersionProfile.V2, second.version)
+                        second.close()
+                    }
             }
         }
 }

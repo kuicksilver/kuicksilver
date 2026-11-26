@@ -1457,6 +1457,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinat
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinationTest.negative_shorthandIpv4AltSvcToLocalNetworkRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcDestinationTest.publicAlternativesAreKept
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.aTrailingDotIsAnotherOrigin
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.anIpv6ZoneKeepsItsCase
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.clearReturnsNull
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.defaultMa86400
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.AltSvcTest.expiredEntryIgnored

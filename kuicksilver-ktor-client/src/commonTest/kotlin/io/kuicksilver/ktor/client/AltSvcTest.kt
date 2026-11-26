@@ -362,6 +362,16 @@ class AltSvcTest {
         }
         assertFalse(isAltSvcFrameOrigin("https://example.com", Url("https://example.com:8443/")))
         assertTrue(isAltSvcFrameOrigin("https://[2001:db8::1]", Url("https://[2001:db8::1]/")))
+        // compared as canonical keys: another spelling of the IPv6 address, an explicit default port
+        assertTrue(isAltSvcFrameOrigin("https://[2001:DB8:0::1]:443", Url("https://[2001:db8::1]/")))
+        for (bad in listOf("https://[2001:db8::1]:", "https://example.com:x", "https://user@example.com", "ftp://example.com")) {
+            assertFalse(isAltSvcFrameOrigin(bad, origin), bad)
+        }
+    }
+
+    /** An IPv6 zone is an interface name: kept as given, its case included, while the address is lowercased. */
+    @Test fun anIpv6ZoneKeepsItsCase() {
+        assertEquals("https://[fe80::1%Eth0]:443", canonicalOrigin("https", "[FE80:0::1%Eth0]", 443))
     }
 
     /**

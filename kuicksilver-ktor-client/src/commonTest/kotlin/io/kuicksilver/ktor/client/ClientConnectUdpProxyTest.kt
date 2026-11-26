@@ -151,6 +151,7 @@ class ClientConnectUdpProxyTest {
                     assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
                     assertEquals(2, sink.opened.load())
                     assertTrue(tunnelled.load() != null, "the tunnelled connection was seen")
+                    assertEquals(2, (c.engine as KuicksilverEngine).h3.endpointCountForTest, "the proxy hop's endpoint and the tunnel's")
                     c.close()
                     assertEquals(
                         null,
