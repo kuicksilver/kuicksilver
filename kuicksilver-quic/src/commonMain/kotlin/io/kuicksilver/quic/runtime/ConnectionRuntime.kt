@@ -80,7 +80,28 @@ internal class ConnectionRuntime(
     private val leakId = LeakRegistry.open("quic.connection")
 
     /** The loop dropped this connection from its table: it is released, or goes with the endpoint's core. */
-    internal fun forgotten() = LeakRegistry.close(leakId)
+    internal fun forgotten() = LeakRegistry.close(leakId, core.timers.closedLateBy)
+
+    /** Tests: this connection's leak record. */
+    internal val leakIdForTest: Long get() = leakId
+
+    /** The end of the closing or draining period last told the registry ([noteClosingPeriod]); loop only. */
+    private var closingPeriodNoted: io.kuicksilver.quic.TimeMark? = null
+
+    /**
+     * Tells the leak sentinel's record that this connection is in its closing or draining period (RFC 9000 section 10.2) and
+     * when that ends: it stays in the loop's table until then by design, which is no slow teardown (an in-process server's
+     * connection that drains for 3 x PTO before its first RTT sample, about 3 s, after its client went away mid-handshake).
+     * Nothing in production (the record is 0) beyond the state check. Loop only.
+     */
+    private fun noteClosingPeriod() {
+        if (leakId == 0L) return
+        if (core.state != ConnectionState.Closing && core.state != ConnectionState.Draining) return
+        val end = core.timers.closeDeadline ?: return
+        if (end == closingPeriodNoted) return
+        closingPeriodNoted = end
+        LeakRegistry.closing(leakId, end - loop.now(), core.timers.closePto)
+    }
 
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
@@ -796,6 +817,7 @@ internal class ConnectionRuntime(
 
     internal fun drainEvents() {
         refreshPathRemotes()
+        noteClosingPeriod()
         val limit = core.datagramPayloadLimit
         datagramLimit = if (core.peerAcceptsDatagrams) limit else NO_DATAGRAMS
         resetStreamAtBoth = core.streams.peerResetStreamAt

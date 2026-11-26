@@ -50,23 +50,34 @@ class EchRejectionFlightTest {
                     }
                 }
             CorePair(client, server, crypto = KslQuicCrypto).use { p ->
-                p.runUntil { p.closedReason(p.serverEvents) != null && p.closedReason(p.clientEvents) != null }
+                // the server drains on the CONNECTION_CLOSE and drives its TLS no more; the flight that came with it was
+                // handed to its TLS session, which completes on it. A draining connection frees the session at its next
+                // poll (RFC 9000 section 10.2.2), so it is read right before that
+                var done = false
+                var drive: io.kuicksilver.tls.DriveResult? = null
+                var emptyCertificate = false
+                p.runUntil { p.server != null }
+                p.server!!.beforeCryptoReleaseForTest = {
+                    val session = p.server!!.handshake.session
+                    drive = session.drive()
+                    while (true) {
+                        val ev = session.nextEvent() ?: break
+                        if (ev is io.kuicksilver.tls.TlsEvent.HandshakeDone) done = true
+                        if (ev is io.kuicksilver.tls.TlsEvent.Keys) ev.protector.close()
+                    }
+                    emptyCertificate = session.peerCertificates.isEmpty()
+                }
+                p.runUntil {
+                    p.closedReason(p.serverEvents) != null &&
+                        p.closedReason(p.clientEvents) != null &&
+                        p.server!!.cryptoReleasedForTest
+                }
                 val atServer = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.serverEvents))
                 assertEquals(Initiator.Peer, atServer.initiator)
                 assertEquals(0x100L + 121, atServer.code, "ech_required (CRYPTO_ERROR 0x179)")
-                // the server drains on the CONNECTION_CLOSE and drives its TLS no more; the flight that came with it was
-                // handed to its TLS session, which completes on it
-                val session = p.server!!.handshake.session
-                val r = session.drive()
-                assertTrue(r !is io.kuicksilver.tls.DriveResult.Failed, "$r")
-                var done = false
-                while (true) {
-                    val ev = session.nextEvent() ?: break
-                    if (ev is io.kuicksilver.tls.TlsEvent.HandshakeDone) done = true
-                    if (ev is io.kuicksilver.tls.TlsEvent.Keys) ev.protector.close()
-                }
+                assertTrue(drive !is io.kuicksilver.tls.DriveResult.Failed, "$drive")
                 assertTrue(done, "the server read the client's Finished before the close (askForCertificate=$askForCertificate)")
-                assertTrue(session.peerCertificates.isEmpty(), "the client sent an empty Certificate")
+                assertTrue(emptyCertificate, "the client sent an empty Certificate")
             }
         }
     }

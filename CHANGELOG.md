@@ -1816,6 +1816,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   streams are not open yet waits for them. Encoder instructions made for a dropped encoder stream close the connection
   with H3_INTERNAL_ERROR instead of going silently, and, as defence in depth, the client reads no server stream until
   the 0-RTT's answer is known.
+- QUIC: a closing connection that receives the peer's CONNECTION_CLOSE now drains until the end its closing state had.
+  RFC 9000 section 10.2.2: "In this case, the draining state ends when the closing state would have ended." A Stateless
+  Reset that reaches a closing connection keeps that end too; section 10.3.1 says only that the endpoint "MUST enter the
+  draining period", and keeping the end is our reading by analogy with section 10.2.2. Before, draining started a new
+  period of 3 x PTO, so a connection whose peer closed at about the same time stayed up to twice as long.
+- QUIC: a draining connection frees its packet protection keys and its TLS session at once (RFC 9000 section 10.2.2:
+  "Retaining packet protection keys is unnecessary once a connection is in the draining state."). It sends and reads
+  nothing then; its connection IDs stay for the rest of the period, so the peer's late packets are still dropped quietly.
+  Before, the keys and the session were kept for the whole period, about 3 s for a connection closed before its first
+  RTT sample. A closing connection keeps them: it builds its CONNECTION_CLOSE anew each time it repeats it.
+  - `ConnectionCore`'s `peerCertificates`, `localCertificates`, `negotiatedAlpn`, `keyExchangeGroup`,
+    `peerCertificateCompression` and `earlyDataAccepted` keep answering what the session said when it was freed, also
+    once the connection is closed. Before, a closed connection's `peerCertificates` turned empty unless read earlier,
+    and its `earlyDataAccepted` null.
+  - `ConnectionCore.exportKeyingMaterial` on a draining connection now throws IllegalStateException, as on a closed
+    one. `QuicConnection.exportKeyingMaterial` already failed with the close reason.
 - HTTP/1.1 client: an idle pooled connection is now watched for the server's close (RFC 9112 section 9.5: "Implementations
   SHOULD constantly monitor open connections for a received closure signal and respond to it as appropriate"). When the
   server ends it (close_notify, or a FIN alone) or sends bytes no request asked for, the client closes it in order at once

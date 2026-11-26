@@ -68,7 +68,30 @@ other three variables, when set: `KUICKSILVER_LEAK_SITES=1` names the opener of 
 of another architecture than the host runs emulated (linux/amd64 on an Apple Silicon Mac), where a QUIC connection's
 closing period (3 x PTO) grows with the slower round trips: 6 connections took 1636 ms to close there, while no teardown
 of the native linux-arm64 run reached 1500 ms. Such a container gets `KUICKSILVER_LEAK_SLOW_MS=6000` unless it was set
-([`sentinel-slow.sh`](../tools/ci/sentinel-slow.sh), tested by `sentinel-slow-test.sh`); native runs keep 1.5 s. A
+([`sentinel-slow.sh`](../tools/ci/sentinel-slow.sh), tested by `sentinel-slow-test.sh`); native runs keep 1.5 s.
+The wait for a closing period the protocol requires is no slow teardown. A QUIC connection in its closing or draining
+state (RFC 9000 section 10.2, 3 x PTO) tells its record when the period ends (`LeakRegistry.closing`). Before its first
+RTT sample a connection's PTO is 999 ms (RFC 9002 section 6.2.2), so such a period lasts about 3 s: the in-process test
+server's connection drained that long after a 10 ms request timeout cut its client's handshake
+(`HttpTimeoutTest.testGetRequestTimeoutPerRequestAttributes`, 3009 ms on the 3-CPU macOS runner, 2026-11-26), while the
+client's close took no time. Each object that closed later than the bound is judged on its own (while the sentinel waits
+the registry logs every close, so one opened and closed between two looks is seen too): it passes only when it noted
+its period within the bound, the period is at most 3 x the PTO the connection set it from (the core reports that PTO
+with the period: a 500 ms RTT sample on a starved host makes a 4.5 s period, which passes, while a period of 6 x PTO
+does not, whatever the RTT) and no longer than the sentinel's 10 s wait, and it closed within the bound of the period's
+end, plus how late its own deadline timer ran when that ended it (the connection measures it: a held-up loop under a
+GC pause or a starved host, never a longer period). The trade-off: a stalled loop's lateness is excused up to the
+10 s wait, so a timer that fires late for another reason is excused as well, and the "not slow" line prints each
+lateness ("timer 2094 ms late") so a stall shows in the CI log. The PTO is the connection's own report: a bug that
+inflated the PTO itself would be excused up to the wait, and the recovery tests (`LossDetectionTest`) pin the PTO
+formula (RFC 9002 section 6.2.1) and `LifecycleTest` that the period uses it without the backoff. ksl's counters belong to no object: after the bound only TLS sessions and keys are excused, at most one
+session and 16 keys per object in its period (a closing connection keeps them to repeat its CONNECTION_CLOSE; a draining
+one frees them at once, RFC 9000 section 10.2.2), never UDP sockets, wake descriptors or session references. Marks on
+another clock excuse nothing (`LeakSentinelTest`, `ClosingPeriodRecordTest`). An object a look saw whose close
+was not logged fails the bound (nothing tells when it closed); time over the bound after every close and free was
+accounted for is the sentinel's own looks (each empties the process caches) and passes. A blind spot remains: ksl's
+counters are read at each look only, so a native object allocated and freed between two looks is not seen, however late. The emulated containers keep their 6000 ms:
+the 1636 ms seen there was closing periods, which this excuses, but no emulated run has checked 1.5 s since. A
 Kotlin/Native test task passes the sentinel's variables to its executable, on the iOS simulator as `SIMCTL_CHILD_*`
 (simctl hands the app only those, without the prefix); the Windows VM runner and the Android device runs do not get it. Its first finding was a product one: a TLS client's close waited
 up to its 3 s bound for the server's `close_notify` behind a response the application never read (`TlsSocketCloseTest`).

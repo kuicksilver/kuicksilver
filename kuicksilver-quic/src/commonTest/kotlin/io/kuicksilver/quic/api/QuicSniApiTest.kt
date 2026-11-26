@@ -124,6 +124,33 @@ class QuicSniApiTest {
         s.output.flushAndClose()
     }
 
+    /**
+     * The core of a connection that drained (its peer closed) still names the identity the selector chose once its TLS session
+     * was freed (RFC 9000 section 10.2.2): `sniSelectedFor` and the presented chain answer as before. The core is the
+     * endpoint's own, with an unwrapped TLS session (the core test pairs wrap theirs, which hides `sniSelectedFor`).
+     */
+    @Test fun aDrainedConnectionsCoreStillNamesTheChosenIdentity(): Unit =
+        runBlocking {
+            val tls = serverTls { h -> if (h.serverName == "server.test") ServerTlsOverride(a()) else null }
+            ApiPair.open(crypto = KslQuicCrypto, serverTls = tls).use { p ->
+                withTimeout(20.seconds) {
+                    val accepted = async { p.server.accept().also { it.serveEcho() } }
+                    val c = p.client.connect(p.server.localAddress, clientConfig("server.test"))
+                    assertEquals("server.test!", c.echo("server.test"))
+                    val s = accepted.await()
+                    val core = (s as io.kuicksilver.quic.runtime.ConnectionRuntime).core
+                    assertEquals("server.test", core.sniSelectedFor)
+                    c.close()
+                    s.closed.await() // the CONNECTION_CLOSE was read: draining
+                    // runs on the loop after the turn that drained the connection and, at its poll, freed the session
+                    s.close(0, "")
+                    assertTrue(core.cryptoReleasedForTest, "draining: the session is freed")
+                    assertEquals("server.test", core.sniSelectedFor, "still the chosen name")
+                    assertEquals(leafA, core.localCertificates[0], "still the chosen chain")
+                }
+            }
+        }
+
     @Test fun eachNameGetsItsIdentityThroughTheEndpoint(): Unit =
         runBlocking {
             val ids = mapOf("server.test" to a(), "proxy.internal" to b())

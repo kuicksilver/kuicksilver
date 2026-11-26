@@ -8,6 +8,9 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.ComparableTimeMark
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /**
  * The library-owned objects alive now, for the test harness's leak sentinel (docs/process.md, "The leak sentinel"): QUIC
@@ -27,6 +30,34 @@ public object LeakRegistry {
         public val id: Long,
         public val kind: String,
         public val site: String?,
+    ) {
+        /**
+         * Set by [closing]: the object is in a closing period the protocol requires and ends by itself at this time (a QUIC
+         * connection's closing or draining state, three times its PTO, RFC 9000 section 10.2); null while it is not. On
+         * [clockForTest], like [closingNoted].
+         */
+        @Volatile public var closingUntil: ComparableTimeMark? = null
+            internal set
+
+        /** When [closing] was called for this object, null before. */
+        @Volatile public var closingNoted: ComparableTimeMark? = null
+            internal set
+
+        /** The PTO [closing] said the period was set from (3 x it), null before or when it named none. */
+        @Volatile public var closingPto: Duration? = null
+            internal set
+    }
+
+    /** An object [close] removed while closes were logged ([logCloses]): no opening stack, only what judging its close needs. */
+    public class Closed internal constructor(
+        public val id: Long,
+        public val kind: String,
+        public val closingUntil: ComparableTimeMark?,
+        public val closingNoted: ComparableTimeMark?,
+        public val closingPto: Duration?,
+        public val closedAt: ComparableTimeMark,
+        /** How late its period's own deadline timer ran, when the period ended it ([close]); null otherwise. */
+        public val periodLateBy: Duration? = null,
     )
 
     @Volatile private var on = false
@@ -75,10 +106,84 @@ public object LeakRegistry {
         return id
     }
 
+    /**
+     * The clock of [Entry.closingUntil], [Entry.closingNoted] and [Closed.closedAt]: `TimeSource.Monotonic`. The sentinel's
+     * own tests set a TestTimeSource and put this one back when they end; nothing else changes it.
+     */
+    @Volatile public var clockForTest: TimeSource.WithComparableMarks = TimeSource.Monotonic
+
+    /** Whether [close] logs what it removes ([logCloses]); off except while a sentinel waits for teardown. */
+    @Volatile private var logging = false
+
+    /** The objects closed while [logging], newest last; at most [CLOSED_LOG] (the oldest go first). Under [lock]. */
+    private val closedLog = ArrayDeque<Closed>()
+
     /** The owner [open] answered [id] released everything; 0 and a second close do nothing. Never throws; any thread. */
-    public fun close(id: Long) {
+    public fun close(id: Long): Unit = close(id, null)
+
+    /**
+     * [close], for an owner whose closing period ([closing]) ended by its own deadline: [periodLateBy] is how long after that
+     * deadline its timer ran, by the owner's own clock (a held-up event loop: a GC pause, a starved host). The sentinel
+     * allows that lateness on top of its bound; a close by any other path names none.
+     */
+    public fun close(
+        id: Long,
+        periodLateBy: Duration?,
+    ) {
         if (id == 0L) return
-        if (locked { live.remove(id) } != null) listener?.invoke()
+        val log = logging
+        val at = if (log) clockForTest.markNow() else null
+        val e =
+            locked {
+                live.remove(id)?.also {
+                    if (at != null) {
+                        closedLog.addLast(Closed(it.id, it.kind, it.closingUntil, it.closingNoted, it.closingPto, at, periodLateBy))
+                        if (closedLog.size > CLOSED_LOG) closedLog.removeFirst()
+                    }
+                }
+            }
+        if (e != null) listener?.invoke()
+    }
+
+    /**
+     * Starts ([on]) or stops logging what [close] removes, and drops what was logged: the sentinel logs while it waits for a
+     * test's teardown, so each object that closed meanwhile is judged on its own, also one opened and closed between two of
+     * its looks ([takeClosed]). Starting while logging already throws IllegalStateException: one sentinel at a time.
+     */
+    public fun logCloses(on: Boolean) {
+        locked {
+            // one sentinel at a time: a second one would take or end the other's log
+            check(!(on && logging)) { "closes are logged already: another sentinel is waiting" }
+            closedLog.clear()
+            logging = on
+        }
+    }
+
+    /** The objects closed since logging started or since the last call, oldest first, and forgets them. */
+    public fun takeClosed(): List<Closed> = locked { closedLog.toList().also { closedLog.clear() } }
+
+    /**
+     * The owner [open] answered [id] entered a closing period the protocol requires (RFC 9000 section 10.2: a QUIC connection
+     * that sent or received CONNECTION_CLOSE stays for three times its PTO, about 3 s before its first RTT sample) that ends
+     * by itself [left] from now, a period set as 3 x [pto] (null: no PTO to check it against, which excuses nothing): the
+     * sentinel does not take the wait for it for slow teardown when it is no longer than the RFC allows (see
+     * `LeakSentinel.end`). The end is set on [clockForTest] (`TimeSource.Monotonic`). A QUIC connection reports its period once:
+     * draining after closing keeps the closing state's end (RFC 9000 section 10.2.2). Another call sets both the end and
+     * the time it was noted anew. 0 and an id already closed do nothing. Wakes a sentinel waiting for teardown. Never throws;
+     * any thread.
+     */
+    public fun closing(
+        id: Long,
+        left: Duration,
+        pto: Duration?,
+    ) {
+        if (id == 0L) return
+        val now = clockForTest.markNow()
+        val e = locked { live[id] } ?: return
+        e.closingPto = pto
+        e.closingNoted = now
+        e.closingUntil = now + left
+        listener?.invoke()
     }
 
     /** A native object was freed (ksl's live counters fell): wakes a sentinel waiting for teardown. */
@@ -131,6 +236,9 @@ public object LeakRegistry {
             lock.store(0)
         }
     }
+
+    /** The most closed objects [takeClosed] hands over at once: far more than a test closes after it returned. */
+    private const val CLOSED_LOG = 100_000
 
     /** The opener's frames: the stack without this object's own and the runtime's first lines, at most 16 of them. */
     private fun site(): String =
