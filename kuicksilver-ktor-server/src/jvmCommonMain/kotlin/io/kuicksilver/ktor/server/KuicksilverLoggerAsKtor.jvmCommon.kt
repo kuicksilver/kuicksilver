@@ -61,3 +61,5 @@ private class KuicksilverSlf4jLogger(
 
     override fun toString(): String = guard.toString()
 }
+
+internal actual fun Throwable.isVirtualMachineError(): Boolean = this is VirtualMachineError

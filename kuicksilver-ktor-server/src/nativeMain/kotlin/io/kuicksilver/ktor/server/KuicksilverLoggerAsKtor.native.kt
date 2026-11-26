@@ -58,3 +58,6 @@ private class KuicksilverKtorLogger(
 
     override fun toString(): String = guard.toString()
 }
+
+// Kotlin/Native has no VirtualMachineError: running out of memory there ends the process rather than throwing
+internal actual fun Throwable.isVirtualMachineError(): Boolean = false

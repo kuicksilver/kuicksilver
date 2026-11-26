@@ -951,10 +951,14 @@ public class ServerObservability internal constructor() {
  */
 internal expect fun kuicksilverLoggerAsKtor(logger: KuicksilverLogger): Logger
 
+/** Whether this is a virtual machine error (`java.lang.VirtualMachineError`: out of memory, stack overflow); never on Native. */
+internal expect fun Throwable.isVirtualMachineError(): Boolean
+
 /**
  * [logger] behind a guard, for [kuicksilverLoggerAsKtor]: a level is checked before the message is built, an `isEnabled`
  * that throws reads as false, and what [logger] (or building the message) throws is dropped, a CancellationException too
- * (as the QUIC endpoints' own guard does: rethrowing it would end the caller's coroutine for a logging failure).
+ * (as the QUIC endpoints' own guard does: rethrowing it would end the caller's coroutine for a logging failure), except a
+ * virtual machine error (out of memory, stack overflow on the JVM), which no logging failure may hide.
  */
 internal class LoggerGuard(
     private val logger: KuicksilverLogger,
@@ -962,18 +966,21 @@ internal class LoggerGuard(
     fun enabled(level: LogLevel): Boolean =
         try {
             logger.isEnabled(level)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            if (e.isVirtualMachineError()) throw e
             false
         }
 
+    // crossinline: a `return` in [message] cannot leave the caller from inside the guard's try
     inline fun log(
         level: LogLevel,
         cause: Throwable? = null,
-        message: () -> String,
+        crossinline message: () -> String,
     ) {
         try {
             if (enabled(level)) logger.log(level, message(), cause)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            if (e.isVirtualMachineError()) throw e
         }
     }
 
