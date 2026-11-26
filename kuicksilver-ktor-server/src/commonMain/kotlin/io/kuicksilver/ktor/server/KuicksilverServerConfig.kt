@@ -59,7 +59,8 @@ public class ServerTlsConfig internal constructor() {
     /**
      * The certificate chain and key, shared by TCP and QUIC; null by default. A `TlsIdentity.Reloadable` lets the
      * certificate be replaced while the server runs (docs/guide/ktor.md, "Certificate rotation"); [pemFiles] reads one from
-     * files. Setting it in a block that called [pemFiles] fails with IllegalArgumentException: one identity, one source.
+     * files. Setting it in a block that called [pemFiles] fails with IllegalArgumentException: one identity, one source
+     * (null sets none, so [pemFiles] may follow it).
      */
     @SecuritySensitive
     public var identity: TlsIdentity?
@@ -69,7 +70,8 @@ public class ServerTlsConfig internal constructor() {
                 "tls { identity } and tls { pemFiles(...) } are two sources of one identity: set one"
             }
             identityValue = value
-            identitySource = Source.Value
+            // null sets no identity: pemFiles may still give the one source
+            identitySource = if (value == null) Source.None else Source.Value
             identityFiles = null
         }
 
@@ -147,7 +149,7 @@ public class ServerTlsConfig internal constructor() {
                 trustSource != Source.Files,
             ) { "tls { clientTrust } and tls { clientCaFile(...) } are two sources of one trust: set one" }
             clientTrustValue = value
-            trustSource = Source.Value
+            trustSource = if (value == null) Source.None else Source.Value
             clientCaFile = null
         }
 
@@ -243,7 +245,7 @@ public class ServerTlsConfig internal constructor() {
                 ocspSource != Source.Files,
             ) { "tls { ocspStapling } and tls { ocspStaplingFile(...) } are two sources of one response: set one" }
             ocspValue = value
-            ocspSource = Source.Value
+            ocspSource = if (value == null) Source.None else Source.Value
             ocspFile = null
         }
 

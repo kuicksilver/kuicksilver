@@ -743,6 +743,28 @@ class ServerConfigMappingTest {
         assertFailsWith<IllegalArgumentException> { o.tls.ocspStaplingFile("/nonexistent/ocsp.der") }
     }
 
+    /** `identity = null` (a value the application computed, say) sets no identity: `pemFiles` may follow it, as the others. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun aNullValueIsNoSource() {
+        // the files are read, so the source check passed: the missing file is what fails
+        val c =
+            config {
+                tls {
+                    identity = null
+                    clientTrust = null
+                    ocspStapling = null
+                }
+            }
+        assertFailsWith<kotlinx.io.IOException> { c.tls.pemFiles("/nonexistent/chain.pem", "/nonexistent/key.pem") }
+        assertFailsWith<kotlinx.io.IOException> { c.tls.clientCaFile("/nonexistent/ca.pem") }
+        assertFailsWith<kotlinx.io.IOException> { c.tls.ocspStaplingFile("/nonexistent/ocsp.der") }
+        // a value after null is still one source with a file: refused
+        val again = config { tls { identity = null } }
+        again.tls.identity = ServerFixtures.identity()
+        assertFailsWith<IllegalArgumentException> { again.tls.pemFiles("/nonexistent/chain.pem", "/nonexistent/key.pem") }
+    }
+
     @Test fun negative_clientAuthWithoutTrustIsRefused() {
         for (auth in listOf(ClientAuth.Optional, ClientAuth.Required)) {
             val e = assertFailsWith<IllegalArgumentException> { config { tls { clientAuth = auth } }.tls.resolve("tls") }

@@ -144,7 +144,8 @@ The design left these cases open or met them only in the code; each was decided 
   assignment inside `settings { webTransport { } }`.
 - **Contradictions fail early.** The client refuses `http3 { enabled = false }` with `discovery = H3Only` when the engine is
   created; the server refuses at its start `clientAuth` without a client trust, `reloadInterval` without `pemFiles`, an
-  identity given twice in one block, a TLS connector without an identity, and h2c on a port its identity turns into TLS.
+  identity given twice in one block (a `null` assignment is no source: `identity = null` then `pemFiles` is one identity,
+  and the same holds for `clientTrust` and `ocspStapling`), a TLS connector without an identity, and h2c on a port its identity turns into TLS.
   A connector whose TLS configuration is refused fails before it registers anything.
 - **`RateLimit` needs at least one token a second.** The HTTP/2 mode "`resetsPerSecond = 0` never refills" is gone.
 - **The first screen is compiled without opt-in.** Each engine module has a `jvmFirstScreenTest` compilation, outside every
