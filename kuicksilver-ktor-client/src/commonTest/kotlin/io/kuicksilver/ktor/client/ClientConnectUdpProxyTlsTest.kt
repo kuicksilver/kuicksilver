@@ -577,7 +577,7 @@ class ClientConnectUdpProxyTlsTest {
                             "",
                             ByteArray(0),
                             io.kuicksilver.quic.Initiator.Peer,
-                            TlsException.AlertReceived(116, "TLS alert 116"),
+                            TlsException.AlertReceived(116, "certificate_required"), // as the QUIC layer names it
                         )
                     }
                     val e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:$originPort/").bodyAsText() }

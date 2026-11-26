@@ -2104,6 +2104,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigratio
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.throwingHookLeavesConnectionAlone
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.webSocketSurvivesNetworkSwitch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.webSocketSurvivesNetworkSwitchServerCloses
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp11TheCallNamesTheAlert
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp2TheCallNamesTheAlert
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMissingCertificateTest.negative_overHttp3TheCallNamesTheAlert
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.connectionCloseResponseEndsWithCloseNotify
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.firstContactEndsWithCloseNotify
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientOrderlyCloseTest.h2ConnectionClosedWithTheEngineSendsGoAwayAndCloseNotify

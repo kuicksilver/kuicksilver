@@ -948,8 +948,15 @@ internal class H1Pool(
                                     data.attributes.getOrNull(io.kuicksilver.ktor.client.KuicksilverDiagnosticsKey)?.h2Refused = true
                                 } else {
                                     // a new connection that takes no request (a GOAWAY at once, SETTINGS_MAX_CONCURRENT_STREAMS 0):
-                                    // the call fails rather than open connection after connection to a server that refuses them
+                                    // the call fails rather than open connection after connection to a server that refuses them.
+                                    // A connection that ended already fails the call with its end: over TLS 1.3 the client's
+                                    // handshake completes before the server checks its certificate, and the server's alert
+                                    // (certificate_required) is what the caller must see, not a refusal
                                     c.client.shutdown()
+                                    (c.client.closeCause as? io.kuicksilver.http2.runtime.Http2Exception.ConnectionClosed)?.let {
+                                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                        throw it.copyForCall()
+                                    }
                                     throw kotlinx.io.IOException(
                                         "the server took no request on a new HTTP/2 connection (GOAWAY or SETTINGS_MAX_CONCURRENT_STREAMS 0)",
                                     )
