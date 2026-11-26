@@ -443,6 +443,56 @@ class TlsIdentityTest {
 
 class AlertNameTest {
     /** RFC 9846 sections 6.2 and 11.1 add general_error (117); a received alert is reported by its RFC name. */
+    /**
+     * The whole AlertDescription registry (RFC 9846 section 6 and the IANA TLS Alerts registry; ech_required from
+     * draft-ietf-tls-esni): every assigned code has its name, the reserved ones theirs, any other is alert_<code>.
+     */
+    @Test fun everyRegisteredAlertHasItsName() {
+        val registry =
+            mapOf(
+                0 to "close_notify",
+                10 to "unexpected_message",
+                20 to "bad_record_mac",
+                21 to "decryption_failed_RESERVED",
+                22 to "record_overflow",
+                30 to "decompression_failure_RESERVED",
+                40 to "handshake_failure",
+                41 to "no_certificate_RESERVED",
+                42 to "bad_certificate",
+                43 to "unsupported_certificate",
+                44 to "certificate_revoked",
+                45 to "certificate_expired",
+                46 to "certificate_unknown",
+                47 to "illegal_parameter",
+                48 to "unknown_ca",
+                49 to "access_denied",
+                50 to "decode_error",
+                51 to "decrypt_error",
+                60 to "export_restriction_RESERVED",
+                70 to "protocol_version",
+                71 to "insufficient_security",
+                80 to "internal_error",
+                86 to "inappropriate_fallback",
+                90 to "user_canceled",
+                100 to "no_renegotiation_RESERVED",
+                109 to "missing_extension",
+                110 to "unsupported_extension",
+                111 to "certificate_unobtainable_RESERVED",
+                112 to "unrecognized_name",
+                113 to "bad_certificate_status_response",
+                114 to "bad_certificate_hash_value_RESERVED",
+                115 to "unknown_psk_identity",
+                116 to "certificate_required",
+                117 to "general_error",
+                120 to "no_application_protocol",
+                121 to "ech_required",
+            )
+        for (code in 0..255) {
+            assertEquals(registry[code] ?: "alert_$code", alertName(code), "alert $code")
+            assertEquals(alertName(code), @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class) tlsAlertName(code))
+        }
+    }
+
     @Test fun alertNames() {
         assertEquals("general_error", alertName(117))
         assertEquals("internal_error", alertName(80))
